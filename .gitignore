@@ -29,3 +29,8 @@ yarn-error.log*
 # supabase
 /supabase/.branches
 /supabase/.temp
+.env*
+
+# Personal background art — not shared (app falls back to gradient; add your own)
+public/art/*
+!public/art/README.md

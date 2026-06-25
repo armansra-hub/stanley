@@ -1,6 +1,7 @@
 import "server-only";
 import Parser from "rss-parser";
 import { PRESS_RELEASE_FEEDS, PRESS_KEYWORDS } from "@/config/news";
+import { parseDateLoose } from "@/lib/time";
 import type { Candidate } from "@/lib/ingest/types";
 
 /**
@@ -30,7 +31,7 @@ export async function fetchPressReleaseCandidates(perFeed = 6): Promise<Candidat
           name: title,
           source: "discovered",
           sources: ["press_release"],
-          signals: [{ source_name: feed.name, source_url: link, raw_excerpt: title }],
+          signals: [{ source_name: feed.name, source_url: link, raw_excerpt: title, signal_date: parseDateLoose(item.isoDate ?? item.pubDate) }],
         });
         kept++;
       }

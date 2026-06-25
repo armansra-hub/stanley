@@ -6,7 +6,7 @@ import { recordExport } from "@/lib/db/companies";
 // resurface as new. The client builds the payload with the tested export engine
 // (lib/export) and sends it here to persist atomically.
 export async function POST(req: NextRequest) {
-  let body: { ids?: string[]; type?: string; payload?: string };
+  let body: { ids?: string[]; type?: string; payload?: string; origin?: string };
   try {
     body = await req.json();
   } catch {
@@ -14,9 +14,10 @@ export async function POST(req: NextRequest) {
   }
   const ids = body?.ids ?? [];
   const type = body?.type ?? "";
+  const origin = body?.origin === "net_new" ? "net_new" : "discovered";
   if (!Array.isArray(ids) || ids.length === 0 || (type !== "sql" && type !== "csv")) {
     return NextResponse.json({ error: "ids[] and type sql|csv required" }, { status: 400 });
   }
-  await recordExport(type, ids, body.payload ?? "");
+  await recordExport(type, ids, body.payload ?? "", origin);
   return NextResponse.json({ ok: true, count: ids.length });
 }

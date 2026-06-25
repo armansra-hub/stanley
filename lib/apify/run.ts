@@ -35,3 +35,46 @@ export async function runActor(
   const data = await res.json();
   return Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
 }
+
+/**
+ * Fire-and-forget run. Triggers the actor ASYNC and registers a webhook that
+ * pings `webhookUrl` when the run succeeds — so the caller (a cron) returns in
+ * <2s instead of waiting out the run (no Vercel 60s timeout). Returns the runId.
+ */
+export async function runActorAsync(
+  actorId: string,
+  input: Record<string, unknown>,
+  webhookUrl: string,
+  maxItems = 25,
+  maxTotalChargeUsd?: number,
+): Promise<string> {
+  if (!TOKEN) throw new Error("APIFY_TOKEN missing");
+  const id = actorId.replace("/", "~");
+  const webhooks = Buffer.from(
+    JSON.stringify([{ eventTypes: ["ACTOR.RUN.SUCCEEDED"], requestUrl: webhookUrl }]),
+  ).toString("base64");
+  let url = `https://api.apify.com/v2/acts/${id}/runs?token=${TOKEN}&maxItems=${maxItems}&webhooks=${webhooks}`;
+  if (maxTotalChargeUsd != null) url += `&maxTotalChargeUsd=${maxTotalChargeUsd}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Apify async ${actorId} ${res.status}: ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return String((data as { data?: { id?: string } })?.data?.id ?? "");
+}
+
+/** Pull items from a finished run's dataset (used by the webhook ingest). */
+export async function fetchDatasetItems(datasetId: string, maxItems = 60): Promise<Record<string, unknown>[]> {
+  if (!TOKEN) throw new Error("APIFY_TOKEN missing");
+  const res = await fetch(
+    `https://api.apify.com/v2/datasets/${datasetId}/items?token=${TOKEN}&limit=${maxItems}&clean=true`,
+  );
+  if (!res.ok) throw new Error(`Apify dataset ${datasetId} ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+}

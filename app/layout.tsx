@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import BackgroundCycler from "@/components/BackgroundCycler";
 
 export const metadata: Metadata = {
-  title: "Jarvis — Prospecting",
-  description: "Signal-driven prospecting for a NetSuite AE.",
+  title: "Stanley",
+  description: "The all-in-one toolkit for a NetSuite AE.",
 };
 
 export default function RootLayout({
@@ -13,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body style={{ minHeight: "100vh" }}>{children}</body>
+      <body style={{ minHeight: "100vh" }}>
+        <BackgroundCycler />
+        {children}
+      </body>
     </html>
   );
 }

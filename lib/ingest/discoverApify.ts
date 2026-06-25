@@ -1,5 +1,6 @@
 import "server-only";
 import { ingestCandidates, type IngestResult } from "./orchestrator";
+import { addToPool } from "@/lib/db/leadPool";
 import { ACTORS } from "@/config/actors";
 import { fetchGoogleMapsCandidates } from "@/lib/sources/googleMaps";
 import {
@@ -39,7 +40,12 @@ export interface ApifyDiscoveryResult extends IngestResult {
   sources: string[];
   fetched_by_source: Record<string, number | string>;
   fetched: number;
+  pooled: number;
 }
+
+// Net-new actors: results go to the lead pool (qualified before Signals), never
+// straight into Discovered — matching the daily automation.
+const POOL_SOURCES = new Set(["google_maps"]);
 
 export async function runApifyDiscovery(keys: string[]): Promise<ApifyDiscoveryResult> {
   let wanted = keys;
@@ -49,7 +55,8 @@ export async function runApifyDiscovery(keys: string[]): Promise<ApifyDiscoveryR
       .filter(([k, a]) => (overrides[k]?.enabled ?? a.enabled) && k in ADAPTERS)
       .map(([k]) => k);
   }
-  const candidates: Candidate[] = [];
+  const candidates: Candidate[] = []; // signal-bearing → enriched into Discovered
+  const poolCandidates: Candidate[] = []; // net-new (Maps) → lead pool, qualified later
   const fetched_by_source: Record<string, number | string> = {};
 
   for (const k of wanted) {
@@ -60,13 +67,21 @@ export async function runApifyDiscovery(keys: string[]): Promise<ApifyDiscoveryR
     }
     try {
       const c = await fn();
-      candidates.push(...c);
+      if (POOL_SOURCES.has(k)) poolCandidates.push(...c);
+      else candidates.push(...c);
       fetched_by_source[k] = c.length;
     } catch (e) {
       fetched_by_source[k] = `error: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
 
+  const pooled = poolCandidates.length > 0 ? await addToPool(poolCandidates) : 0;
   const result = await ingestCandidates(candidates);
-  return { sources: Object.keys(fetched_by_source), fetched_by_source, fetched: candidates.length, ...result };
+  return {
+    sources: Object.keys(fetched_by_source),
+    fetched_by_source,
+    fetched: candidates.length + poolCandidates.length,
+    pooled,
+    ...result,
+  };
 }

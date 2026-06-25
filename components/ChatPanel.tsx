@@ -129,9 +129,9 @@ export default function ChatPanel() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 rounded-full bg-[var(--accent)] px-4 py-3 text-sm font-medium text-white shadow-lg"
+        className="western fixed bottom-5 right-5 z-40 rounded-full bg-[var(--accent)] px-5 py-3 text-base text-white shadow-lg"
       >
-        Ask Jarvis
+        Ask Stanley
       </button>
     );
   }
@@ -139,7 +139,7 @@ export default function ChatPanel() {
   return (
     <div className="fixed bottom-0 right-0 z-40 flex h-full w-[400px] flex-col border-l bg-[var(--surface)]" style={{ borderColor: "var(--border)" }}>
       <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
-        <span className="font-semibold">Ask Jarvis</span>
+        <span className="western text-lg">Ask Stanley</span>
         <button onClick={() => setOpen(false)} className="text-[var(--text-muted)]">✕</button>
       </div>
 
@@ -166,7 +166,7 @@ export default function ChatPanel() {
           </div>
         )}
         {busy && (streaming === null || streaming === "") && (
-          <div className="text-xs text-[var(--text-muted)]">Jarvis is thinking…</div>
+          <div className="text-xs text-[var(--text-muted)]">Stanley is thinking…</div>
         )}
       </div>
 

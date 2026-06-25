@@ -1,6 +1,7 @@
 import "server-only";
 import Parser from "rss-parser";
 import { googleNewsRss } from "@/config/news";
+import { parseDateLoose } from "@/lib/time";
 import type { Candidate } from "@/lib/ingest/types";
 
 /**
@@ -15,7 +16,7 @@ const parser = new Parser({ timeout: 12000 });
 export async function fetchNewsForCompany(
   name: string,
   n = 2,
-): Promise<{ source_name: string; source_url: string; raw_excerpt: string }[]> {
+): Promise<{ source_name: string; source_url: string; raw_excerpt: string; signal_date: string | null }[]> {
   try {
     const feed = await parser.parseURL(googleNewsRss(`"${name}"`));
     return (feed.items ?? [])
@@ -24,6 +25,7 @@ export async function fetchNewsForCompany(
         source_name: "Google News",
         source_url: (item.link ?? "").trim(),
         raw_excerpt: (item.title ?? "").trim(),
+        signal_date: parseDateLoose(item.isoDate ?? item.pubDate),
       }))
       .filter((s) => s.source_url && s.raw_excerpt);
   } catch {
@@ -50,11 +52,12 @@ export async function fetchGoogleNewsCandidates(
       const link = (item.link ?? "").trim();
       if (!title || !link || seen.has(link)) continue;
       seen.add(link);
+      const signal_date = parseDateLoose(item.isoDate ?? item.pubDate);
       out.push({
         name: title,
         source: "discovered",
         sources: ["google_news"],
-        signals: [{ source_name: "Google News", source_url: link, raw_excerpt: title }],
+        signals: [{ source_name: "Google News", source_url: link, raw_excerpt: title, signal_date }],
       });
       kept++;
       if (out.length >= maxTotal) return out;

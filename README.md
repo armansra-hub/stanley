@@ -9,6 +9,33 @@ Prospecting finds **in-territory companies showing growth signals**, scores
 them, shows them on a dashboard, and lets you select + export them to NetSuite
 (copy-paste only — Jarvis never calls a NetSuite API).
 
+> Externally branded **Stanley**; the codebase/dirs stay `jarvis`.
+
+## Quick start (fork & run)
+
+Prereqs: **Node ≥ 20**, a free **Supabase** project, an **Anthropic** API key,
+and an **Apify** token (for the paid scrapers; the free sources work without it).
+
+```bash
+npm install
+cp .env.example .env.local      # then fill in the values (see comments in the file)
+```
+
+Run the SQL migrations in the **Supabase SQL editor**, in order:
+`supabase/migrations/0001_init.sql` … `0009_ratings_learning.sql`.
+
+```bash
+npm run dev                     # http://localhost:3000
+```
+
+Leave `APP_PASSWORD` blank locally (no login). On a deploy (Vercel), set
+`APP_PASSWORD` + `APP_SESSION_TOKEN` to enable the single-user password gate and
+add all env vars from `.env.example`. Scheduled discovery runs via the crons in
+`vercel.json` (free sources + paid Apify actors + Sales Navigator).
+
+Background art isn't included — drop any wide images into `public/art/` and they
+cycle as the backdrop (until then a gradient shows). See `public/art/README.md`.
+
 ## Hard rules
 - **Never fabricate a signal.** Every `signals` row carries a real `source_url`.
 - **Subindustry is the hard territory gate.** Out-of-territory companies never

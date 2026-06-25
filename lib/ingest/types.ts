@@ -15,5 +15,9 @@ export interface Candidate {
   revenue_band?: string | null;
   source?: CompanySource; // discovered (default) | imported
   sources?: string[]; // which adapters found it (ids from config)
+  /** Territory-pre-qualified by the source (e.g. an industry-filtered Sales Nav
+   * search) — keep even if the LLM can't re-confirm the subindustry from a bare
+   * company name. Still subject to the size/3PL/finance/recency gates. */
+  trusted?: boolean;
   signals: RawSignalInput[];
 }

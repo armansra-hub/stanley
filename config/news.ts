@@ -22,26 +22,27 @@ export function googleNewsRss(query: string): string {
  * stands in for the Business Wire filters (Communications, Professional
  * Services, Transport, US). Overlap is fine — the adapter dedupes by article.
  */
+// NOTE: blocked verticals (accounting/CPA/tax, law/legal, call centers) are
+// excluded from every query below. Freight & logistics IS in territory (only
+// true 3PLs are filtered downstream), so those queries stay.
 export const DISCOVERY_QUERIES: string[] = [
   // ── M&A / acquisitions ──
-  "accounting firm acquires", "accounting firm acquired", "CPA firm merger", "tax advisory firm acquires",
   "consulting firm acquires", "management consulting firm acquired", "advisory firm acquires",
-  "law firm merges", "law firm combination",
   "staffing firm acquires", "staffing agency acquired", "recruiting firm acquires", "HR services company acquires",
   "facilities management company acquires", "janitorial company acquired", "commercial cleaning company acquires",
   "document management company acquires", "translation company acquires",
   "advertising agency acquires", "marketing agency acquired", "creative agency acquires", "digital agency acquires",
   "media company acquires", "PR firm acquires", "public relations agency acquires", "communications firm acquires",
-  "publisher acquires", "broadcasting company acquires",
-  "logistics company acquires", "3PL acquires", "freight company acquired", "trucking company acquires",
-  "carrier acquires", "moving company acquires", "transportation company acquired", "warehousing company acquires",
+  "publisher acquires", "broadcasting company acquires", "production company acquires",
+  "trucking company acquires", "carrier acquires", "moving company acquires", "transportation company acquired",
+  "logistics company acquires", "freight company acquired",
   // ── Expansion / new facilities ──
-  "logistics company opens new warehouse", "3PL new distribution center", "trucking company new terminal",
-  "carrier adds new lane", "staffing firm opens new office", "accounting firm opens new office",
+  "trucking company new terminal", "carrier adds new lane", "staffing firm opens new office",
   "consulting firm expands", "agency opens new office", "company opens new headquarters",
+  "moving company expands", "production studio opens", "logistics company opens new warehouse",
   // ── Capital / PE ──
-  "staffing firm private equity", "accounting firm private equity investment", "logistics company private equity",
-  "marketing agency private equity", "consulting firm recapitalization", "transportation company funding round",
+  "staffing firm private equity", "marketing agency private equity", "consulting firm recapitalization",
+  "transportation company funding round", "media company private equity", "logistics company private equity",
   // ── Finance leadership / ERP pain ──
   "company appoints chief financial officer", "names new controller", "company outgrew QuickBooks",
   "implements NetSuite ERP", "company hires VP of finance",

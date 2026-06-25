@@ -1,5 +1,6 @@
 import "server-only";
 import Parser from "rss-parser";
+import { parseDateLoose } from "@/lib/time";
 import type { Candidate } from "@/lib/ingest/types";
 
 /**
@@ -10,7 +11,7 @@ import type { Candidate } from "@/lib/ingest/types";
  * startups, so the in-territory hit rate for B2B services/transport is low —
  * the territory gate drops the rest.
  */
-const EDGAR_EMAIL = process.env.EDGAR_USER_AGENT_EMAIL || "armansra@gmail.com";
+const EDGAR_EMAIL = process.env.EDGAR_USER_AGENT_EMAIL || "you@example.com";
 const parser = new Parser({
   timeout: 12000,
   headers: { "User-Agent": `Jarvis-Prospecting ${EDGAR_EMAIL}` },
@@ -46,6 +47,7 @@ export async function fetchEdgarFormDCandidates(limit = 12): Promise<Candidate[]
             source_name: "SEC EDGAR (Form D)",
             source_url: link,
             raw_excerpt: `Filed an SEC Form D exempt securities offering (${title}).`,
+            signal_date: parseDateLoose(item.isoDate ?? item.pubDate ?? (item as { updated?: string }).updated),
           },
         ],
       });

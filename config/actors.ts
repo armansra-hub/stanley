@@ -111,8 +111,8 @@ export const ACTORS: Record<string, ActorSlot> = {
     output: "Apollo-style company list + emails (industry/geo/size filters)",
     input_template: { company_industry: "", contact_location: "", size: "", fetch_count: 25 },
     wired: true,
-    enabled: false, // FREE Apify plan restricts this actor to UI-only (can't run via API)
-    setup_note: "Permissions approved + inputs valid, BUT the free Apify plan only allows running this actor through the Apify UI, not the API. Needs a paid Apify plan to run from the app.",
+    enabled: true, // unblocked: paid Apify (Starter) plan active
+    setup_note: "Live on the paid Apify plan. Rotates industry × geo via the coverage tracker.",
   },
   sales_nav: {
     actor_id: "bestscrapers/linkedin-sales-navigator-scraper",

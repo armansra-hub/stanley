@@ -11,6 +11,25 @@
  *  - Revenue / employee bands are display-only, NOT filters.
  */
 
+/**
+ * BLOCKED subindustries (2026-06-25 decision): never prospect these — low fit /
+ * not worth the AE's time. Excluded from the active subindustry enum below, so
+ * the classifier can't tag a company into them (→ out_of_territory → dropped),
+ * they vanish from the UI filter, and the discovery actors stop searching for
+ * them (config/coverage.ts + config/news.ts).
+ *   • Accounting Services (incl. tax/CPA/bookkeeping — see enrich prompt)
+ *   • Call Centers & Business Centers
+ *   • Law Firms & Legal Services
+ * NOTE: "Freight & Logistics Services" stays IN territory. We block only true
+ * 3PLs (third-party logistics providers) via the LLM `is_3pl` gate in enrich.ts
+ * — NOT freight/logistics broadly.
+ */
+export const BLOCKED_SUBINDUSTRIES = new Set<string>([
+  "Accounting Services",
+  "Call Centers & Business Centers",
+  "Law Firms & Legal Services",
+]);
+
 export const SUBINDUSTRIES_BY_BUCKET = {
   "Media / Advertising / Publishing": [
     "Advertising & Marketing",
@@ -23,14 +42,11 @@ export const SUBINDUSTRIES_BY_BUCKET = {
     "Social Networks",
   ],
   "Business Services": [
-    "Accounting Services",
     "Business Services",
-    "Call Centers & Business Centers",
     "Facilities Management & Commercial Cleaning",
     "HR & Staffing",
     "Information & Document Management",
     "Translation & Linguistic Services",
-    "Law Firms & Legal Services",
   ],
   Consulting: ["Management Consulting"],
   "Transportation / Logistics": [

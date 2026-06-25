@@ -44,7 +44,8 @@ export interface Signal {
   raw_excerpt?: string | null;
   signal_summary?: string | null;
   subindustry_relevant: boolean;
-  detected_at: string;
+  detected_at: string; // when WE ingested it
+  signal_date?: string | null; // when the event/post actually happened (from the source), if known
 }
 
 export interface Company {
@@ -67,6 +68,10 @@ export interface Company {
   score_tier: ScoreTier | null; // independent LLM tier
   score_reason: string | null;
   has_new_signal: boolean;
+  already_on_netsuite: boolean;
+  starred: boolean;
+  rating: number | null; // 1..5 quality rating from the AE
+  rating_comment: string | null;
   sources: string[];
   notes: string | null;
   first_seen_at: string;

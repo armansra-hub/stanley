@@ -1,9 +1,7 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
+import { markPoolExported } from "@/lib/db/leadPool";
 import type { Company, Signal, CompanySource, ScoreTier, SignalType, SignalStrength } from "@/lib/types";
-
-const COMPANY_COLUMNS =
-  "id, name, domain, website_raw, description, subindustry, ns_industry, in_territory, territory_fit, source, status, state, city, employee_band, revenue_band, signal_score, score_tier, score_reason, has_new_signal, sources, import_batch_id, notes, first_seen_at, last_updated_at, exported_at";
 
 function mapSignal(r: Record<string, unknown>): Signal {
   return {
@@ -18,6 +16,7 @@ function mapSignal(r: Record<string, unknown>): Signal {
     signal_summary: (r.signal_summary as string) ?? null,
     subindustry_relevant: Boolean(r.subindustry_relevant),
     detected_at: String(r.detected_at ?? ""),
+    signal_date: (r.signal_date as string) ?? null,
   };
 }
 
@@ -43,6 +42,10 @@ function mapCompany(r: Record<string, unknown>): Company {
     score_tier: (r.score_tier as Company["score_tier"]) ?? null,
     score_reason: (r.score_reason as string) ?? null,
     has_new_signal: Boolean(r.has_new_signal),
+    already_on_netsuite: Boolean(r.already_on_netsuite),
+    starred: Boolean(r.starred),
+    rating: r.rating != null ? Number(r.rating) : null,
+    rating_comment: (r.rating_comment as string) ?? null,
     sources: Array.isArray(r.sources) ? (r.sources as string[]) : [],
     notes: (r.notes as string) ?? null,
     first_seen_at: String(r.first_seen_at ?? ""),
@@ -57,7 +60,7 @@ export async function getCompanies(): Promise<Company[]> {
   const db = serviceClient();
   const { data, error } = await db
     .from("companies")
-    .select(`${COMPANY_COLUMNS}, signals(*)`)
+    .select(`*, signals(*)`)
     .order("signal_score", { ascending: false });
   if (error) throw new Error(`getCompanies failed: ${error.message}`);
   return (data ?? []).map((r) => mapCompany(r as Record<string, unknown>));
@@ -93,6 +96,7 @@ export interface SignalUpsert {
   raw_excerpt: string | null;
   signal_summary: string;
   subindustry_relevant: boolean;
+  signal_date?: string | null;
 }
 
 /**
@@ -182,7 +186,7 @@ export async function upsertCompanyWithSignals(
   const seen = new Set((existingSignals ?? []).map((s) => s.source_url as string));
   const toInsert = signals
     .filter((s) => s.source_url && !seen.has(s.source_url))
-    .map((s) => ({ ...s, company_id: companyId, detected_at: now }));
+    .map((s) => ({ ...s, company_id: companyId, detected_at: now, signal_date: s.signal_date ?? null }));
 
   if (toInsert.length > 0) {
     const { error } = await db.from("signals").insert(toInsert);
@@ -194,6 +198,43 @@ export async function upsertCompanyWithSignals(
   }
 
   return { companyId, isNew, addedSignals: toInsert.length };
+}
+
+/** Star/unstar companies. Starred companies persist in the Starred tab regardless
+ * of status/export. Safe before migration 0004 (no-op). */
+export async function setStarred(ids: string[], value: boolean): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    const db = serviceClient();
+    await db.from("companies").update({ starred: value }).in("id", ids);
+  } catch {
+    /* column missing → no-op */
+  }
+}
+
+/** Flag a company as already on NetSuite/ERP. Safe before migration 0003 (no-op). */
+export async function setAlreadyOnNetsuite(id: string, value: boolean): Promise<void> {
+  try {
+    const db = serviceClient();
+    await db.from("companies").update({ already_on_netsuite: value }).eq("id", id);
+  } catch {
+    // column missing → no-op
+  }
+}
+
+/** Set the AE's 1–5 quality rating (+ optional comment) on a lead. Safe before
+ * migration 0009 (no-op). Feeds the learning loop (lib/learn/feedback.ts). */
+export async function setRating(id: string, rating: number | null, comment?: string | null): Promise<void> {
+  const r = rating == null ? null : Math.max(1, Math.min(5, Math.round(rating)));
+  try {
+    const db = serviceClient();
+    await db
+      .from("companies")
+      .update({ rating: r, rating_comment: comment ?? null, rated_at: r == null ? null : new Date().toISOString() })
+      .eq("id", id);
+  } catch {
+    // columns missing → no-op
+  }
 }
 
 /** Set status on companies. Stamps exported_at when moving to an exported status. */
@@ -296,23 +337,105 @@ export async function getCompaniesByBatch(batchId: string): Promise<Company[]> {
   const db = serviceClient();
   const { data, error } = await db
     .from("companies")
-    .select(`${COMPANY_COLUMNS}, signals(*)`)
+    .select(`*, signals(*)`)
     .eq("import_batch_id", batchId)
     .order("signal_score", { ascending: false });
   if (error) throw new Error(`getCompaniesByBatch failed: ${error.message}`);
   return (data ?? []).map((r) => mapCompany(r as Record<string, unknown>));
 }
 
-/** Record an export and mark the companies exported (so they never resurface as new). */
+export type ExportOrigin = "discovered" | "net_new";
+
+/**
+ * Record an export. For 'discovered' (companies) we mark the companies exported
+ * so they never resurface as new. For 'net_new' (Maps pool leads) we mark the
+ * pooled leads exported so they leave the Net-New tab — the `ids` are pool keys
+ * (normalized domains), NOT company ids.
+ */
 export async function recordExport(
   type: "sql" | "csv",
   ids: string[],
   payload: string,
+  origin: ExportOrigin = "discovered",
 ): Promise<void> {
   const db = serviceClient();
-  const { error: exErr } = await db
-    .from("exports")
-    .insert({ export_type: type, company_ids: ids, payload });
+  let exErr = (await db.from("exports").insert({ export_type: type, company_ids: ids, payload, origin })).error;
+  if (exErr) {
+    // origin column missing (pre-0008) → insert without it.
+    exErr = (await db.from("exports").insert({ export_type: type, company_ids: ids, payload })).error;
+  }
   if (exErr) throw new Error(`recordExport failed: ${exErr.message}`);
-  await setCompaniesStatus(ids, type === "sql" ? "exported_sql" : "exported_csv");
+  if (origin === "net_new") {
+    await markPoolExported(ids);
+  } else {
+    await setCompaniesStatus(ids, type === "sql" ? "exported_sql" : "exported_csv");
+  }
+}
+
+export interface ExportRecord {
+  id: string;
+  export_type: "sql" | "csv";
+  origin: ExportOrigin;
+  company_ids: string[];
+  company_names: string[];
+  /** name + website for every lead in the export, so the UI can regenerate
+   * EITHER SQL or CSV on demand (not just the format originally chosen). */
+  export_companies: { name: string; website: string | null }[];
+  payload: string;
+  created_at: string;
+}
+
+export async function getExportHistory(): Promise<ExportRecord[]> {
+  const db = serviceClient();
+  const withOrigin = await db
+    .from("exports")
+    .select("id, export_type, origin, company_ids, payload, created_at")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  // origin column missing (pre-0008) → read without it; treat all as discovered.
+  const fallback = withOrigin.error
+    ? await db
+        .from("exports")
+        .select("id, export_type, company_ids, payload, created_at")
+        .order("created_at", { ascending: false })
+        .limit(200)
+    : null;
+  const error = fallback ? fallback.error : withOrigin.error;
+  const data = (fallback ? fallback.data : withOrigin.data) as Record<string, unknown>[] | null;
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) return [];
+
+  const allIds = [...new Set(data.flatMap((r) => (r.company_ids as string[])))];
+  // id → {name, website}. Discovered ids are company ids (website from
+  // website_raw/domain); net_new ids are lead_pool keys (the key IS the domain).
+  const infoMap = new Map<string, { name: string; website: string | null }>();
+  if (allIds.length > 0) {
+    const [cos, pool] = await Promise.all([
+      db.from("companies").select("id, name, website_raw, domain").in("id", allIds),
+      db.from("lead_pool").select("key, name, domain").in("key", allIds),
+    ]);
+    for (const c of cos.data ?? []) {
+      infoMap.set(c.id as string, { name: c.name as string, website: (c.website_raw as string) ?? (c.domain as string) ?? null });
+    }
+    for (const p of pool.data ?? []) {
+      if (!infoMap.has(p.key as string)) {
+        infoMap.set(p.key as string, { name: p.name as string, website: (p.domain as string) ?? (p.key as string) ?? null });
+      }
+    }
+  }
+
+  return data.map((r) => {
+    const ids = r.company_ids as string[];
+    const export_companies = ids.map((id) => infoMap.get(id) ?? { name: id, website: null });
+    return {
+      id: r.id as string,
+      export_type: r.export_type as "sql" | "csv",
+      origin: ((r.origin as string) ?? "discovered") as ExportOrigin,
+      company_ids: ids,
+      company_names: export_companies.map((c) => c.name),
+      export_companies,
+      payload: (r.payload as string) ?? "",
+      created_at: r.created_at as string,
+    };
+  });
 }

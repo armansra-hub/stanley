@@ -55,6 +55,50 @@ export function SignalChips({ signals }: { signals: Signal[] }) {
   );
 }
 
+/** Friendly labels for the adapter/source ids stored on company.sources. */
+export const SOURCE_LABELS: Record<string, string> = {
+  google_maps: "Google Maps",
+  indeed: "Indeed",
+  google_jobs: "Google Jobs",
+  linkedin_jobs: "LinkedIn Jobs",
+  career_sites: "Career Sites",
+  linkedin_posts: "LinkedIn Posts",
+  leads_finder: "Leads Finder",
+  sales_nav: "Sales Navigator",
+  sales_nav_growth: "Sales Nav (Growth)",
+  builtin_jobs: "BuiltIn",
+  google_news: "Google News",
+  press_release: "Press Release",
+  edgar_form_d: "SEC Form D",
+  fmcsa: "FMCSA",
+  usaspending: "USASpending",
+  imported: "Imported",
+  inc5000: "Inc. 5000",
+};
+
+export function sourceLabel(id: string): string {
+  return SOURCE_LABELS[id] ?? id.replace(/_/g, " ");
+}
+
+/** Which actor(s) found this lead — for performance tracking. */
+export function SourceBadge({ sources }: { sources: string[] }) {
+  if (!sources || sources.length === 0) return <span className="text-[var(--text-muted)]">—</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {sources.map((s) => (
+        <span
+          key={s}
+          className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+          style={{ background: "color-mix(in srgb, var(--gold) 16%, transparent)", color: "var(--gold)" }}
+          title={`Found by ${sourceLabel(s)}`}
+        >
+          {sourceLabel(s)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** Strongest signal = highest weight, tie broken toward subindustry-relevant. */
 export function strongestSignal(c: Company): Signal | null {
   if (!c.signals.length) return null;

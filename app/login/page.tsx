@@ -32,8 +32,8 @@ export default function LoginPage() {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <form onSubmit={submit} className="w-80 rounded-lg border p-6" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-        <h1 className="mb-1 text-lg font-semibold">Jarvis</h1>
-        <p className="mb-4 text-sm text-[var(--text-muted)]">Enter your password to continue.</p>
+        <h1 className="western mb-1 text-3xl" style={{ color: "var(--gold)" }}>Stanley</h1>
+        <p className="mb-4 text-sm text-[var(--text-muted)]">Enter your password to ride in.</p>
         <input
           type="password"
           autoFocus

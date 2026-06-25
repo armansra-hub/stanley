@@ -76,6 +76,28 @@ export async function setTerritoryConfig(t: {
   if (error) throw new Error(`setTerritoryConfig failed: ${error.message}`);
 }
 
+/** Learned per-signal-type quality multipliers (app_config.signal_quality jsonb),
+ * produced by the rating feedback loop. Graceful before migration 0009. */
+export async function getSignalQuality(): Promise<Record<string, number>> {
+  try {
+    const db = serviceClient();
+    const { data, error } = await db.from("app_config").select("signal_quality").eq("id", 1).single();
+    if (error) return {};
+    return (data?.signal_quality as Record<string, number>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export async function setSignalQuality(map: Record<string, number>): Promise<void> {
+  try {
+    const db = serviceClient();
+    await db.from("app_config").update({ signal_quality: map, updated_at: new Date().toISOString() }).eq("id", 1);
+  } catch {
+    /* column missing → no-op */
+  }
+}
+
 /** Per-actor enabled overrides stored in app_config.actors; undefined = use code default. */
 export async function getActorOverrides(): Promise<Record<string, { enabled?: boolean }>> {
   return (await getAppConfig()).actors;

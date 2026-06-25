@@ -35,7 +35,7 @@ export const FREE_SOURCES: FreeSource[] = [
     geo_verifiable: false,
     enabled: true,
     mode: "lookback by days; filter by state/SIC/keyword",
-    notes: "US-only. User-Agent MUST carry a real email (armansra@gmail.com). Verify exact endpoint at build time.",
+    notes: "US-only. User-Agent MUST carry a real email (you@example.com). Verify exact endpoint at build time.",
   },
   {
     id: "google_news",

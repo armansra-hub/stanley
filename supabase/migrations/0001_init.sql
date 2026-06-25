@@ -34,7 +34,7 @@ create table if not exists app_config (
   ns_sales_rep            text    not null default 'Nurturing Marketing',
   refresh_interval_minutes int    not null default 720,
   max_cost_per_run_usd    numeric not null default 5.0,                  -- per-actor Apify cap
-  edgar_user_agent_email  text    not null default 'armansra@gmail.com', -- SEC fair-access (required)
+  edgar_user_agent_email  text    not null default 'you@example.com', -- SEC fair-access (required)
   actors                  jsonb   not null default '{}'::jsonb,          -- { google_maps, crunchbase, ... : {actor_id,input_template,enabled} }
   news_rss_feeds          text[]  not null default '{}',
   job_queries             text[]  not null default '{}',

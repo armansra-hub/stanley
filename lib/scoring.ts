@@ -51,18 +51,26 @@ export interface ScoreResult {
   breakdown: number[];
 }
 
+/** A scorable signal: classification + an optional 0–1 recency factor (newer =
+ * 1). When omitted (undated), it defaults to 1 so nothing is penalized blindly. */
+export type ScorableSignal = Pick<Signal, "type" | "strength" | "subindustry_relevant"> & {
+  recency?: number;
+};
+
 /**
  * Sum a company's signal weights, capped at 100. Subindustry-relevant signals
  * get a +25% nudge (mentor's rule: vertical-specific signals outrank generic
- * growth) before the cap.
+ * growth); each weight is then scaled by the signal's recency factor so the
+ * freshest buying intent scores highest. Both applied before the cap.
  */
 export function computeSignalScore(
-  signals: Pick<Signal, "type" | "strength" | "subindustry_relevant">[],
+  signals: ScorableSignal[],
   weights: ScoringWeights = DEFAULT_WEIGHTS,
 ): ScoreResult {
   const breakdown = signals.map((s) => {
     const base = weightForSignal(s.type, s.strength, weights);
-    return s.subindustry_relevant ? Math.round(base * 1.25) : base;
+    const vertical = s.subindustry_relevant ? base * 1.25 : base;
+    return Math.round(vertical * (s.recency ?? 1));
   });
   const score = Math.min(100, breakdown.reduce((a, b) => a + b, 0));
   return { score, breakdown };
