@@ -44,10 +44,17 @@ const IMPORT_BLOCK_RULES: { reason: string; needles: string[] }[] = [
   { reason: "law/legal firm", needles: ["law firm", "law office", "law group", "law pllc", "law llp", "law apc", "law p.c", " law pc", "law, p", "law, a professional", "legal service", "legal counsel", "attorney", "lawyer", "litigation", "paralegal"] },
   { reason: "3PL", needles: ["3pl", "third-party logistics", "third party logistics", "fulfillment center", "fulfillment services", "order fulfillment"] },
   { reason: "call center", needles: ["call center", "call centre", "contact center", "answering service", "telemarketing"] },
+  // Government / public-sector entities aren't ERP prospects for this AE (added
+  // 2026-07-01 after "Loveland Fire Rescue Authority" surfaced via UCC). Name-shape
+  // needles chosen to avoid catching private firms ("City Wide Cleaning" stays).
+  { reason: "government entity", needles: ["fire rescue", "fire protection district", "fire district", "school district", "public schools", "county of ", "city of ", "town of ", "village of ", "state of ", "police department", "sheriff's office", "housing authority", "water district", "sanitation district", "metropolitan district", "library district", "transit authority", "port authority", "public utility district", "department of "] },
 ];
 
 export function importBlockReason(industry: string | null | undefined, name: string | null | undefined): string | null {
   const hay = `${industry ?? ""} ${name ?? ""}`.toLowerCase();
+  // Known brand-name false friend: "City of Angels …" (LA nickname) is a private
+  // business pattern, not a municipality (found via "City of Angels Driving School").
+  if (hay.includes("city of angels")) return null;
   for (const rule of IMPORT_BLOCK_RULES) {
     if (rule.needles.some((n) => hay.includes(n))) return rule.reason;
   }
