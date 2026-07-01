@@ -99,6 +99,16 @@ export interface Company {
   has_parent?: boolean; // subsidiary of a larger parent — migration 0029
   parent_name?: string | null;
   parent_confidence?: string | null; // 'high' | 'low'
+  // Old Gold: qual-note + NetSuite-record intelligence — migration 0030
+  last_sql_date?: string | null; // last time their team met with NetSuite (BDR SQL)
+  qual_note?: string | null; // raw qualification note from the TAM CSV
+  oldgold_score?: number | null; // 0-100 revival score (separate from trigger priority)
+  oldgold_class?: string | null; // timing_arrived | contract_clock | stalled_warm | lost_to_competitor | dead | insufficient
+  oldgold_reasons?: string[] | null; // explicit quoted reasons; "⚠" prefix = undated evidence
+  record_digest?: string | null; // tight summary of the full NetSuite lead record (PDF)
+  record_dead?: boolean; // record says dead (explicit rejection / hard disqualify) — shown EVERYWHERE
+  record_dead_reason?: string | null;
+  revisit_on?: string | null; // computed "their stated timing arrives" date
   signals: Signal[];
 }
 

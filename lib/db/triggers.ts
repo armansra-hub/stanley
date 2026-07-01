@@ -70,7 +70,10 @@ export async function recomputePriority(companyId: string): Promise<number> {
     ? 0 // already on an ERP → not a prospect
     : incumbent === "quickbooks" ? 1.25 : 1;
   const peFactor = (c as any)?.pe_owned ? 1.2 : 1;
-  const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * 100) / 100;
+  // Record says DEAD (explicit rejection / hard disqualify in the NetSuite record) →
+  // crush priority so they sink to the bottom EVERYWHERE, but stay visible (⛔ badge).
+  const deadFactor = (c as any)?.record_dead ? 0.1 : 1;
+  const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * 100) / 100;
   await db.from("companies").update({ priority }).eq("id", companyId);
   return priority;
 }
@@ -315,8 +318,39 @@ function mapBasic(r: any): Company {
     erp_incumbent: r.erp_incumbent ?? null, pe_owned: Boolean(r.pe_owned),
     tal_claimed: Boolean(r.tal_claimed), tal_dq: Boolean(r.tal_dq), tal_alert: Boolean(r.tal_alert),
     headcount_growth_pct: r.headcount_growth_pct != null ? Number(r.headcount_growth_pct) : null,
-    has_parent: Boolean(r.has_parent), parent_name: r.parent_name ?? null, parent_confidence: r.parent_confidence ?? null, signals: [],
+    has_parent: Boolean(r.has_parent), parent_name: r.parent_name ?? null, parent_confidence: r.parent_confidence ?? null,
+    // Old Gold intelligence — migration 0030 (graceful pre-migration)
+    last_sql_date: r.last_sql_date ?? null, qual_note: r.qual_note ?? null,
+    oldgold_score: r.oldgold_score != null ? Number(r.oldgold_score) : null,
+    oldgold_class: r.oldgold_class ?? null,
+    oldgold_reasons: Array.isArray(r.oldgold_reasons) ? r.oldgold_reasons : null,
+    record_digest: r.record_digest ?? null,
+    record_dead: Boolean(r.record_dead), record_dead_reason: r.record_dead_reason ?? null,
+    revisit_on: r.revisit_on ?? null,
+    signals: [],
   };
+}
+
+/** Old Gold worklist: every lead with a qual note, ranked by revival score. Dead
+ * leads (record_dead) sink to the bottom with their reason — visible, never hidden.
+ * Shows leads regardless of exported/reviewed status (it's a mining tab, not a
+ * fresh-leads queue); only dismissed leads are excluded. */
+export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string } = {}): Promise<{ companies: Company[]; total: number }> {
+  const db = serviceClient();
+  const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
+  let q = db.from("companies").select("*", { count: "exact" })
+    .eq("is_base", true).not("qual_note", "is", null)
+    .neq("status", "dismissed");
+  if (opts.state) q = q.eq("state", opts.state);
+  if (opts.subindustry) q = q.eq("subindustry", opts.subindustry);
+  if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
+  const { data, count, error } = await q
+    .order("record_dead", { ascending: true }) // dead last
+    .order("oldgold_score", { ascending: false, nullsFirst: false })
+    .order("last_sql_date", { ascending: false, nullsFirst: false })
+    .range(offset, offset + limit - 1);
+  if (error) throw new Error(`listOldGold failed: ${error.message}`);
+  return { companies: (data ?? []).map((r: any) => mapBasic(r)), total: count ?? 0 };
 }
 
 /** A trigger as the drawer renders it (decayed score precomputed, strongest first). */

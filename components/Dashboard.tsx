@@ -14,7 +14,7 @@ import { ACTORS } from "@/config/actors";
 import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongestSignal } from "./badges";
 import ChatPanel from "./ChatPanel";
 
-type Tab = "triggered" | "imported" | "starred" | "history";
+type Tab = "triggered" | "oldgold" | "imported" | "starred" | "history";
 
 function download(filename: string, text: string, mime: string) {
   const blob = new Blob([text], { type: mime });
@@ -317,7 +317,7 @@ export default function Dashboard({
   }
   // Load the tag list once the TAM Base tab is first opened.
   useEffect(() => {
-    if ((isBase || tab === "triggered") && baseTags.length === 0) fetch("/api/headhunter/base").then((x) => (x.ok ? x.json() : null)).then((d) => { if (d?.tags) setBaseTags(d.tags); if (d?.subindustries) setBaseSubs(d.subindustries); });
+    if ((isBase || tab === "triggered" || tab === "oldgold") && baseTags.length === 0) fetch("/api/headhunter/base").then((x) => (x.ok ? x.json() : null)).then((d) => { if (d?.tags) setBaseTags(d.tags); if (d?.subindustries) setBaseSubs(d.subindustries); });
   }, [isBase, tab]); // eslint-disable-line react-hooks/exhaustive-deps
   // Refetch page 0 whenever a base filter changes (debounced for typing).
   useEffect(() => {
@@ -327,6 +327,27 @@ export default function Dashboard({
   }, [isBase, selectedTags, tagMatchAll, claimableOnly, erpOnly, stateFilter, search, showClosed]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggleTag = (t: string) => setSelectedTags((prev) => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
 
+  // ── Old Gold: qual-note leads ranked by revival score (dead at the bottom) ──
+  const isOldGold = tab === "oldgold";
+  const [oldGoldRows, setOldGoldRows] = useState<Company[]>([]);
+  const [oldGoldTotal, setOldGoldTotal] = useState(0);
+  const [oldGoldOffset, setOldGoldOffset] = useState(0);
+  const [oldGoldLoading, setOldGoldLoading] = useState(false);
+  async function fetchOldGold(offset = 0) {
+    setOldGoldLoading(true);
+    const res = await fetch("/api/headhunter/oldgold", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 250, offset, q: search, state: stateFilter, subindustry }) });
+    const r: { companies?: Company[]; total?: number } | null = res.ok ? await res.json() : null;
+    setOldGoldLoading(false);
+    if (!r) return;
+    setOldGoldTotal(r.total ?? 0);
+    setOldGoldOffset(offset);
+    setOldGoldRows(offset === 0 ? (r.companies ?? []) : (prev) => [...prev, ...(r.companies ?? [])]);
+  }
+  useEffect(() => {
+    if (!isOldGold) return;
+    const t = setTimeout(() => fetchOldGold(0), 250);
+    return () => clearTimeout(t);
+  }, [isOldGold, search, stateFilter, subindustry]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Triggered worklist: base companies with an active (decaying) trigger, ranked ──
   type TriggeredRow = Company & { top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null; trigger_count?: number; trigger_types?: string[] };
   const isTriggered = tab === "triggered";
@@ -390,13 +411,14 @@ export default function Dashboard({
     }).sort((a, b) => b.signal_score - a.signal_score);
   }, [starredRows, subindustry, stateFilter, band, search]);
 
-  const selectionSource = isStarred ? starredRows : isTriggered ? triggeredRows : isBase ? baseRows : companies; // rows the current tab's checkboxes act on
+  const selectionSource = isOldGold ? oldGoldRows : isStarred ? starredRows : isTriggered ? triggeredRows : isBase ? baseRows : companies; // rows the current tab's checkboxes act on
   // "Mark reviewed" hides a lead (reviewed/dismissed/exported) until "Show hidden" is on.
   const isHiddenStatus = (s: string) => s === "reviewed" || s === "dismissed" || s.startsWith("exported");
-  const tableRows = isStarred ? starredVisible
+  const tableRows = isOldGold ? oldGoldRows // mining tab — shows exported/reviewed too (dead sorted last)
+    : isStarred ? starredVisible
     : isTriggered ? triggeredRows.filter((c) => showClosed || !isHiddenStatus(c.status))
     : isBase ? baseRows.filter((c) => showClosed || !isHiddenStatus(c.status)) : [];
-  const idsInView = isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : [];
+  const idsInView = isOldGold ? oldGoldRows.map((c) => c.id) : isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : [];
   const selectedInViewCount = idsInView.filter((id) => selected.has(id)).length;
   const allSelected = idsInView.length > 0 && selectedInViewCount === idsInView.length;
 
@@ -633,7 +655,7 @@ export default function Dashboard({
 
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b border-[var(--border)]">
-        {(["triggered", "imported", "starred", "history"] as Tab[]).map((t) => (
+        {(["triggered", "oldgold", "imported", "starred", "history"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => { setTab(t); setSelected(new Set()); }}
@@ -645,11 +667,13 @@ export default function Dashboard({
           >
             {t === "triggered"
               ? `🔥 Triggered${triggeredTotal ? ` (${triggeredTotal.toLocaleString()})` : ""}`
-              : t === "imported"
-                ? "TAM Base"
-                : t === "starred"
-                  ? `★ Starred${starredCount ? ` (${starredCount})` : ""}`
-                  : `Export History${exportHistory.length ? ` (${exportHistory.length})` : ""}`}
+              : t === "oldgold"
+                ? `🪙 Old Gold${oldGoldTotal ? ` (${oldGoldTotal.toLocaleString()})` : ""}`
+                : t === "imported"
+                  ? "TAM Base"
+                  : t === "starred"
+                    ? `★ Starred${starredCount ? ` (${starredCount})` : ""}`
+                    : `Export History${exportHistory.length ? ` (${exportHistory.length})` : ""}`}
             {t === "imported" && importedHasNew && (
               <span className="absolute -right-1 top-1 h-2 w-2 rounded-full bg-[var(--tier-a)]" />
             )}
@@ -668,7 +692,7 @@ export default function Dashboard({
               className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm"
               style={{ borderColor: "var(--border)" }}
             />
-            {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
+            {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered || isOldGold) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
             <Select value={stateFilter} onChange={setStateFilter} placeholder="All states" options={states} />
             {!isBase && <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />}
             {(isBase || isTriggered) ? (
@@ -798,6 +822,9 @@ export default function Dashboard({
                       {(c.headcount_growth_pct ?? 0) >= 25 && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(90,154,62,0.18)", color: "var(--tier-a)", border: "1px solid rgba(90,154,62,0.5)" }} title="DOL Form 5500: within-year active-participant (headcount) growth">📈 +{Math.round(c.headcount_growth_pct as number)}% headcount</span>}
                       {(c as TriggeredRow).trigger_types?.includes("finance_hire") && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(74,128,201,0.18)", color: "#6ea8e6", border: "1px solid rgba(74,128,201,0.5)" }} title="Hiring for a finance role (own careers page or announced) — scaling finance in-house">🧮 hiring for finance</span>}
                       {c.has_parent && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(180,140,40,0.16)", color: "#b48c28", border: "1px solid rgba(180,140,40,0.45)" }} title={`Detected as a subsidiary${c.parent_name ? ` of ${c.parent_name}` : ""} (${c.parent_confidence ?? "?"} confidence) — the parent usually owns the ERP decision`}>🏢 {c.parent_confidence === "high" ? "subsidiary" : "likely sub"}{c.parent_name ? ` of ${c.parent_name}` : ""}</span>}
+                      {c.record_dead && <span className="rounded px-1.5 text-[9px] font-bold uppercase tracking-wide" style={{ background: "rgba(220,38,38,0.14)", color: "#ef4444", border: "1px solid rgba(220,38,38,0.5)" }} title={c.record_dead_reason ?? "NetSuite record marks this lead dead"}>⛔ dead — {c.record_dead_reason?.slice(0, 60) ?? "per record"}</span>}
+                      {!c.record_dead && c.oldgold_score != null && c.oldgold_score >= 40 && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(201,162,74,0.16)", color: "var(--gold)", border: "1px solid rgba(201,162,74,0.5)" }} title={`Old Gold revival score${c.oldgold_class ? ` — ${OLDGOLD_CLASS[c.oldgold_class]?.label ?? c.oldgold_class}` : ""}`}>🪙 {Math.round(c.oldgold_score)}</span>}
+                      {!c.record_dead && (c.oldgold_score ?? 0) >= 60 && ((c as TriggeredRow).trigger_count ?? 0) > 0 && <span className="rounded px-1.5 text-[9px] font-bold" style={{ background: "rgba(239,68,68,0.14)", color: "var(--tier-a)", border: "1px solid rgba(90,154,62,0.55)" }} title="REHEATED: told us their pain/timeline before AND has a live trigger now — hottest combo in the tool">♨️ reheated</span>}
                     </div>
                     <div className="group flex items-center gap-1 text-xs text-[var(--text-muted)]">
                       {c.domain}
@@ -823,7 +850,14 @@ export default function Dashboard({
                   </Td>
                   <Td className="max-w-[220px] text-[var(--text-muted)]">{c.description}</Td>
                   <Td className="max-w-[260px]">
-                    {trig ? (
+                    {isOldGold && (c.oldgold_class || c.qual_note) ? (
+                      <>
+                        {c.oldgold_class && <div className="text-xs font-semibold" style={{ color: OLDGOLD_CLASS[c.oldgold_class]?.color ?? "var(--gold)" }}>{OLDGOLD_CLASS[c.oldgold_class]?.label ?? c.oldgold_class}{c.last_sql_date ? ` · last SQL ${c.last_sql_date}` : ""}</div>}
+                        {(c.oldgold_reasons ?? []).slice(0, 2).map((r, i) => <div key={i} className="text-xs text-[var(--text-muted)]">• {r}</div>)}
+                        {!c.oldgold_class && <div className="truncate text-xs italic text-[var(--text-muted)]" title={c.qual_note ?? ""}>Note pending analysis: &quot;{(c.qual_note ?? "").slice(0, 90)}…&quot;</div>}
+                        {c.revisit_on && <div className="text-[10px]" style={{ color: "var(--tier-a)" }}>⏰ revisit {c.revisit_on}</div>}
+                      </>
+                    ) : trig ? (
                       <>
                         <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{TRIGGER_LABELS[trig.type] ?? trig.type} · {sinceLabel(trig.signal_date ?? trig.detected_at)}</div>
                         <div className="text-xs text-[var(--text-muted)]">{trig.summary}</div>
@@ -849,7 +883,11 @@ export default function Dashboard({
                       <div className="text-xs text-[var(--text-muted)]">In your claimable NetSuite TAM</div>
                     )}
                   </Td>
-                  <Td className="text-center"><ScoreBadge score={c.signal_score} /></Td>
+                  <Td className="text-center">{isOldGold ? (
+                    c.oldgold_score != null
+                      ? <span className="text-sm font-bold" style={{ color: c.record_dead ? "#ef4444" : "var(--gold)" }}>{Math.round(c.oldgold_score)}</span>
+                      : <span className="text-[10px] text-[var(--text-muted)]">—</span>
+                  ) : <ScoreBadge score={c.signal_score} />}</Td>
                   <Td className="text-center"><TierBadge tier={c.score_tier} /></Td>
                   <Td><SignalChips signals={c.signals} /></Td>
                   <Td><SourceBadge sources={c.sources} /></Td>
@@ -867,7 +905,7 @@ export default function Dashboard({
               );
             })}
             {tableRows.length === 0 && (
-              <tr><Td colSpan={12} className="py-10 text-center text-[var(--text-muted)]">{(isBase && baseLoading) || (isTriggered && triggeredLoading) ? "Loading…" : isTriggered ? "Nothing has triggered yet — the engine sweeps the base for news/funding/hiring on the daily cron." : "No companies match these filters."}</Td></tr>
+              <tr><Td colSpan={12} className="py-10 text-center text-[var(--text-muted)]">{(isBase && baseLoading) || (isTriggered && triggeredLoading) || (isOldGold && oldGoldLoading) ? "Loading…" : isOldGold ? "No qual-note leads yet — upload the TAM CSV with qualification notes, then run the analysis." : isTriggered ? "Nothing has triggered yet — the engine sweeps the base for news/funding/hiring on the daily cron." : "No companies match these filters."}</Td></tr>
             )}
           </tbody>
         </table>
@@ -887,6 +925,16 @@ export default function Dashboard({
             {triggeredRows.length < triggeredTotal && (
               <button onClick={() => fetchTriggered(triggeredOffset + 100)} disabled={triggeredLoading} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
                 {triggeredLoading ? "Loading…" : "Load more"}
+              </button>
+            )}
+          </div>
+        )}
+        {isOldGold && (
+          <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
+            <span>Showing {oldGoldRows.length.toLocaleString()} of {oldGoldTotal.toLocaleString()} qual-note leads, ranked by revival score (dead last)</span>
+            {oldGoldRows.length < oldGoldTotal && (
+              <button onClick={() => fetchOldGold(oldGoldOffset + 250)} disabled={oldGoldLoading} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
+                {oldGoldLoading ? "Loading…" : "Load more"}
               </button>
             )}
           </div>
@@ -1112,6 +1160,16 @@ function ExportHistoryPanel({
   );
 }
 
+/** Old Gold revival classes — shared by the table rows and the drawer. */
+const OLDGOLD_CLASS: Record<string, { label: string; color: string }> = {
+  timing_arrived: { label: "🔥 Timing arrived", color: "var(--tier-a)" },
+  contract_clock: { label: "⏳ Contract clock", color: "var(--gold)" },
+  stalled_warm: { label: "💤 Stalled warm", color: "#6ea8e6" },
+  lost_to_competitor: { label: "🧊 Lost to competitor", color: "#94a3b8" },
+  dead: { label: "⛔ Dead", color: "#ef4444" },
+  insufficient: { label: "❔ Thin note", color: "var(--text-muted)" },
+};
+
 /** A trigger event as the detail API returns it (decayed `live` score precomputed). */
 type DrawerTrigger = {
   id: string; type: string; strength: number; half_life_days: number; summary: string;
@@ -1203,7 +1261,41 @@ function DetailDrawer({
           {triggers.some((t) => t.type === "finance_hire") && <Pill title="Hiring for a finance role (own careers page or announced) — scaling finance in-house" color="#6ea8e6">🧮 hiring for finance</Pill>}
           {c.has_parent && <Pill title={`Detected subsidiary${c.parent_name ? ` of ${c.parent_name}` : ""} (${c.parent_confidence ?? "?"} confidence)`} color="#b48c28">🏢 {c.parent_confidence === "high" ? "subsidiary" : "likely sub"}{c.parent_name ? ` of ${c.parent_name}` : ""}</Pill>}
           {c.netsuite_internal_id && <Pill title="NetSuite internal ID">NS #{c.netsuite_internal_id}</Pill>}
+          {c.record_dead && <Pill title={c.record_dead_reason ?? "NetSuite record marks this lead dead"} color="#ef4444">⛔ DEAD{c.record_dead_reason ? ` — ${c.record_dead_reason.slice(0, 50)}` : ""}</Pill>}
+          {!c.record_dead && c.oldgold_score != null && <Pill title="Old Gold revival score (from your qual notes + NetSuite record)" color="var(--gold)">🪙 Old Gold {Math.round(c.oldgold_score)}</Pill>}
         </div>
+
+        {/* OLD GOLD / RECORD HISTORY — ubiquitous: the qual-note + NetSuite-record
+            intelligence shows on every lead, whatever tab opened it. */}
+        {(c.qual_note || c.oldgold_class || c.record_digest || c.last_sql_date) && (
+          <div className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "rgba(201,162,74,0.45)", background: "rgba(201,162,74,0.06)" }}>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--gold)" }}>🪙 Old Gold — NetSuite history</span>
+              {c.last_sql_date && <span className="text-[10px] text-[var(--text-muted)]" title="Last time their team met with NetSuite (BDR SQL date)">last SQL: {c.last_sql_date}</span>}
+            </div>
+            {c.oldgold_class && (
+              <div className="mb-1 text-xs font-semibold" style={{ color: OLDGOLD_CLASS[c.oldgold_class]?.color ?? "var(--gold)" }}>
+                {OLDGOLD_CLASS[c.oldgold_class]?.label ?? c.oldgold_class}{c.oldgold_score != null ? ` · ${Math.round(c.oldgold_score)}/100` : ""}
+              </div>
+            )}
+            {(c.oldgold_reasons ?? []).map((r, i) => (
+              <div key={i} className="text-xs text-[var(--text-muted)]">• {r}{r.startsWith("⚠") ? "" : ""}</div>
+            ))}
+            {c.revisit_on && <div className="mt-1 text-xs font-medium" style={{ color: "var(--tier-a)" }}>⏰ Their stated timing arrives: {c.revisit_on}</div>}
+            {c.record_digest && (
+              <p className="mt-2 border-t pt-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{c.record_digest}</p>
+            )}
+            {c.qual_note && (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Raw qualification note</summary>
+                <p className="mt-1 whitespace-pre-wrap text-xs text-[var(--text-muted)]">{c.qual_note}</p>
+              </details>
+            )}
+            {(c.oldgold_reasons ?? []).some((r) => r.startsWith("⚠")) && (
+              <p className="mt-1 text-[10px] text-[var(--text-muted)]">⚠ = evidence without a verifiable timestamp — treat the timing as unconfirmed.</p>
+            )}
+          </div>
+        )}
 
         {/* Lead quality rating — feeds the learning loop. */}
         <div className="mb-4 rounded-md border p-3" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>

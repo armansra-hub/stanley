@@ -72,6 +72,16 @@ function mapCompany(r: Record<string, unknown>): Company {
     thumbs_down: Boolean(r.thumbs_down),
     headcount_growth_pct: r.headcount_growth_pct != null ? Number(r.headcount_growth_pct) : null,
     has_parent: Boolean(r.has_parent), parent_name: (r.parent_name as string) ?? null, parent_confidence: (r.parent_confidence as string) ?? null,
+    // Old Gold intelligence — migration 0030 (all graceful pre-migration)
+    last_sql_date: (r.last_sql_date as string) ?? null,
+    qual_note: (r.qual_note as string) ?? null,
+    oldgold_score: r.oldgold_score != null ? Number(r.oldgold_score) : null,
+    oldgold_class: (r.oldgold_class as string) ?? null,
+    oldgold_reasons: Array.isArray(r.oldgold_reasons) ? (r.oldgold_reasons as string[]) : null,
+    record_digest: (r.record_digest as string) ?? null,
+    record_dead: Boolean(r.record_dead),
+    record_dead_reason: (r.record_dead_reason as string) ?? null,
+    revisit_on: (r.revisit_on as string) ?? null,
     signals,
   };
 }
@@ -93,6 +103,17 @@ export async function getCompanies(): Promise<Company[]> {
 }
 
 export interface BaseFilter { tags?: string[]; matchAll?: boolean; claimable?: boolean; erp?: boolean; state?: string; q?: string; limit?: number; offset?: number; includeHidden?: boolean }
+
+/** "6/15/2024" / "06-15-2024" / "2024-06-15" → "2024-06-15" (Postgres date), else null. */
+function usDateToIso(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (!m) return null;
+  const yr = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return `${yr}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+}
 
 /** Statuses that hide a lead from the active worklist (reviewed/dismissed/exported). */
 const HIDDEN_STATUSES = "(reviewed,dismissed,exported_csv,exported_sql)";
@@ -477,6 +498,10 @@ export async function bulkImportBase(rows: BaseRow[], vendor: LeadVendor, listKe
         if (row.city) patch.city = row.city;
         if (row.revenue) patch.revenue_band = row.revenue;
         if (row.internal_id) patch.netsuite_internal_id = row.internal_id;
+        // Old Gold columns (migration 0030) — raw storage; the analysis pass hashes the
+        // note and only re-analyzes leads whose note text actually changed.
+        if (row.qual_note) patch.qual_note = row.qual_note;
+        if (row.last_sql_date) { const d = usDateToIso(row.last_sql_date); if (d) patch.last_sql_date = d; }
       } else if (!ex.lead_vendor) {
         patch.lead_vendor = vendor;
       }
@@ -489,6 +514,8 @@ export async function bulkImportBase(rows: BaseRow[], vendor: LeadVendor, listKe
         employee_count: emp, employee_band: employeeBand(emp), revenue_band: row.revenue || null,
         technologies: techs.length ? techs : null, erp_ready: erp,
         netsuite_internal_id: vendor === "netsuite" ? (row.internal_id || null) : null,
+        qual_note: vendor === "netsuite" ? (row.qual_note || null) : null,
+        last_sql_date: vendor === "netsuite" ? usDateToIso(row.last_sql_date) : null,
         is_base: true, lead_vendor: vendor, fit_weight: VENDOR_WEIGHT[vendor], sources: [vendor],
         lists: [listKey], claimable: listKey === CLAIMABLE_LIST,
         source: "imported", in_territory: true, status: "new", import_batch_id: batchId,

@@ -58,6 +58,9 @@ export interface BaseRow {
   revenue: string;
   technologies: string;  // raw "QuickBooks; Salesforce; …" string (split downstream)
   internal_id: string;   // NetSuite INTERNAL ID (NetSuite exports only)
+  // Old Gold columns (NetSuite TAM exports only — migration 0030)
+  last_sql_date: string; // "Last BDR SQL Date" — last time their team met with NetSuite
+  qual_note: string;     // "Qualification Note" — BANT/context from that meeting
 }
 
 const US_STATES: Record<string, string> = { alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD", massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS", missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT", virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY" };
@@ -91,6 +94,8 @@ export function rowsToBaseRows(rows: string[][]): BaseRow[] {
   const ri = findCol(header, "annual revenue", "revenue", "est. revenue");
   const ti = findCol(header, "technologies", "tech stack", "technology");
   const ii2 = findCol(header, "internal id", "internalid", "netsuite id", "entity id");
+  const qi = findCol(header, "qualification note", "qual note", "qualification");
+  const di = findCol(header, "last bdr sql date", "bdr sql date", "sql date", "last sql");
   const at = (cells: string[], idx: number) => (idx >= 0 ? (cells[idx] ?? "").trim() : "");
 
   const out: BaseRow[] = [];
@@ -111,6 +116,8 @@ export function rowsToBaseRows(rows: string[][]): BaseRow[] {
       revenue: at(c, ri),
       technologies: at(c, ti),
       internal_id: at(c, ii2),
+      qual_note: at(c, qi),
+      last_sql_date: at(c, di),
     });
   }
   return out;
