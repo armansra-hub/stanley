@@ -12,13 +12,12 @@ import type { Candidate } from "@/lib/ingest/types";
  */
 const parser = new Parser({ timeout: 12000 });
 
-/** Free signal check for one named company (used by CSV import). Top N recent items. */
-export async function fetchNewsForCompany(
-  name: string,
-  n = 2,
-): Promise<{ source_name: string; source_url: string; raw_excerpt: string; signal_date: string | null }[]> {
+export interface NewsItem { source_name: string; source_url: string; raw_excerpt: string; signal_date: string | null }
+
+/** Free Google News RSS fetch for an arbitrary query. Top N recent items. */
+export async function fetchNewsItems(query: string, n = 6): Promise<NewsItem[]> {
   try {
-    const feed = await parser.parseURL(googleNewsRss(`"${name}"`));
+    const feed = await parser.parseURL(googleNewsRss(query));
     return (feed.items ?? [])
       .slice(0, n)
       .map((item) => ({
@@ -31,6 +30,24 @@ export async function fetchNewsForCompany(
   } catch {
     return [];
   }
+}
+
+/** Free signal check for one named company (used by CSV import). Top N recent items. */
+export async function fetchNewsForCompany(name: string, n = 2): Promise<NewsItem[]> {
+  return fetchNewsItems(`"${name}"`, n);
+}
+
+/** Parse an arbitrary RSS/Atom feed URL (a company's own newsroom/blog). */
+export async function fetchFeed(url: string, n = 8): Promise<NewsItem[]> {
+  try {
+    const feed = await parser.parseURL(url);
+    return (feed.items ?? []).slice(0, n).map((item) => ({
+      source_name: "Company newsroom",
+      source_url: (item.link ?? url).trim(),
+      raw_excerpt: (item.title ?? "").trim(),
+      signal_date: parseDateLoose(item.isoDate ?? item.pubDate),
+    })).filter((s) => s.raw_excerpt);
+  } catch { return []; }
 }
 
 export async function fetchGoogleNewsCandidates(

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runFreeDiscovery } from "@/lib/ingest/discover";
+import { logEvent } from "@/lib/db/events";
 
 // Scheduled discovery (FREE sources). Protected by CRON_SECRET via the
 // x-cron-secret header or ?secret= query param. Use ?source=news|usaspending|
@@ -18,6 +19,8 @@ async function run(req: NextRequest) {
   }
   const source = url.searchParams.get("source") ?? "all";
   const result = await runFreeDiscovery([source]);
+  const r = result as { new_companies?: number; upserted?: number; fetched?: number };
+  await logEvent("headhunter", "cron.discover", { summary: `Free discovery: ${r.new_companies ?? 0} new, ${r.upserted ?? 0} updated (${r.fetched ?? 0} fetched)`, entity_type: "cron", meta: result as unknown as Record<string, unknown> });
   return NextResponse.json(result);
 }
 

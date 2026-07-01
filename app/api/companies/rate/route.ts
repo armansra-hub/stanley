@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { setRating } from "@/lib/db/companies";
 import { learnFromRatings } from "@/lib/learn/feedback";
+import { logEvent } from "@/lib/db/events";
 
 /**
  * Save a lead's 1–5 quality rating (+ optional comment), then immediately re-run
@@ -22,6 +23,7 @@ export async function POST(req: NextRequest) {
   }
 
   await setRating(id, rating, body.comment ?? null);
+  await logEvent("headhunter", "lead.rated", { summary: rating == null ? "Cleared a lead rating" : `Rated a lead ${rating}★${body.comment ? ` — “${body.comment}”` : ""}`, entity_type: "companies", entity_id: id, meta: { rating, comment: body.comment ?? null } });
 
   let learned: Awaited<ReturnType<typeof learnFromRatings>> | null = null;
   try {

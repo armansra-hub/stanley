@@ -20,7 +20,10 @@
     "next": "^15.1.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "resend": "^6.14.0",
+    "rrule": "^2.8.1",
     "rss-parser": "^3.13.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -74,6 +74,10 @@ export const SOURCE_LABELS: Record<string, string> = {
   usaspending: "USASpending",
   imported: "Imported",
   inc5000: "Inc. 5000",
+  zoominfo: "ZoomInfo",
+  linkedin: "LinkedIn",
+  apollo: "Apollo",
+  netsuite: "NetSuite",
 };
 
 export function sourceLabel(id: string): string {

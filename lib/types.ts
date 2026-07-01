@@ -70,6 +70,7 @@ export interface Company {
   has_new_signal: boolean;
   already_on_netsuite: boolean;
   starred: boolean;
+  thumbs_down?: boolean; // per-lead downvote (no tab) — migration 0024
   rating: number | null; // 1..5 quality rating from the AE
   rating_comment: string | null;
   sources: string[];
@@ -77,6 +78,27 @@ export interface Company {
   first_seen_at: string;
   last_updated_at: string;
   exported_at: string | null;
+  // TAM Base (vendor-imported) fields — migration 0015
+  is_base?: boolean;
+  lead_vendor?: string | null;
+  fit_weight?: number;
+  technologies?: string[];
+  erp_ready?: boolean;
+  employee_count?: number | null;
+  // Silo/list membership — migration 0016
+  lists?: string[];
+  claimable?: boolean;
+  netsuite_internal_id?: string | null; // migration 0018
+  // ERP-readiness signals — migration 0020
+  erp_incumbent?: string | null; // 'quickbooks' (ready) | 'erp' (already on ERP) | null
+  pe_owned?: boolean;
+  tal_claimed?: boolean; // on the AE's Target Account List — migration 0022
+  tal_dq?: boolean; // was on a prior TAL, dropped from the latest → previously DQ'd — migration 0023
+  tal_alert?: boolean; // claimed account has a new unseen signal (in-app notification) — migration 0025
+  headcount_growth_pct?: number | null; // DOL 5500 within-year participant growth % — migration 0028
+  has_parent?: boolean; // subsidiary of a larger parent — migration 0029
+  parent_name?: string | null;
+  parent_confidence?: string | null; // 'high' | 'low'
   signals: Signal[];
 }
 

@@ -5,7 +5,7 @@ import { getScoringWeightsMap, getAppConfig, getSignalQuality } from "@/lib/db/s
 import { normalizeDomain } from "@/lib/domain";
 import { bucketForSubindustry } from "@/config/territory";
 import { isOnOrAfterMinDate, recencyMultiplier, nowMs } from "@/lib/time";
-import { upsertCompanyWithSignals, setAlreadyOnNetsuite } from "@/lib/db/companies";
+import { upsertCompanyWithSignals, setAlreadyOnNetsuite, loadBaseNameIndex, crossTagByName } from "@/lib/db/companies";
 import type { Candidate } from "./types";
 
 export interface IngestResult {
@@ -22,6 +22,7 @@ export interface IngestResult {
   upserted: number;
   new_companies: number;
   added_signals: number;
+  cross_tagged: number; // discovered leads matched to the TAM base by name
   errors: string[];
 }
 
@@ -49,12 +50,16 @@ export async function ingestCandidates(
     upserted: 0,
     new_companies: 0,
     added_signals: 0,
+    cross_tagged: 0,
     errors: [],
   };
 
   // Load tunable config once per run (editable in Settings).
   const baseWeights = await getScoringWeightsMap();
-  const { model_bulk } = await getAppConfig();
+  const { model_bulk, cross_tag_base } = await getAppConfig();
+  // Domain-less discovered leads (e.g. Sales Nav Growth) to cross-tag against the
+  // TAM base by name after the upsert pass.
+  const crossTagTargets: { id: string; name: string }[] = [];
   // Learned quality multipliers (from lead ratings) fold into the weights per
   // signal type, so the score continuously tunes toward what the AE rates highly.
   const quality = await getSignalQuality();
@@ -235,8 +240,24 @@ export async function ingestCandidates(
       if (res.isNew) result.new_companies++;
       result.added_signals += res.addedSignals;
       if (enrichment.already_on_netsuite) await setAlreadyOnNetsuite(res.companyId, true);
+      // Domain-less discovered leads can't be domain-deduped against the TAM, so
+      // queue them for name-based cross-tagging (inherits lists/claimable/NS id).
+      if (cross_tag_base && !domain && !isImported) crossTagTargets.push({ id: res.companyId, name: resolvedName });
     } catch (e) {
       result.errors.push(`${candidate.name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // ── Phase 3: cross-tag domain-less discovered leads against the TAM base by
+  // company name (always-on setting). A match inherits the base's lists +
+  // claimable + NetSuite Internal ID so a Growth lead already in the TAM is
+  // flagged on sight. ──
+  if (cross_tag_base && crossTagTargets.length > 0) {
+    try {
+      const index = await loadBaseNameIndex();
+      result.cross_tagged = await crossTagByName(crossTagTargets, index);
+    } catch (e) {
+      result.errors.push(`cross-tag failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

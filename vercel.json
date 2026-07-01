@@ -1,16 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/discover",
-      "schedule": "30 12 * * *"
-    },
-    {
-      "path": "/api/cron/apify-schedule",
-      "schedule": "45 12 * * *"
-    },
-    {
-      "path": "/api/cron/sales-nav",
-      "schedule": "0 13 * * *"
+      "path": "/api/cron/daily",
+      "schedule": "0 16 * * *"
     }
   ]
 }

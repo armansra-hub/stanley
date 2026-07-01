@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordExport } from "@/lib/db/companies";
+import { logEvent } from "@/lib/db/events";
 
 // Persists an export: records the payload in `exports` and marks the companies
 // exported (status exported_sql/exported_csv + exported_at) so they never
@@ -19,5 +20,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ids[] and type sql|csv required" }, { status: 400 });
   }
   await recordExport(type, ids, body.payload ?? "", origin);
+  await logEvent("headhunter", "export.created", { summary: `Exported ${ids.length} ${origin === "net_new" ? "net-new" : "discovered"} lead${ids.length === 1 ? "" : "s"} as ${type.toUpperCase()}`, entity_type: "export", meta: { count: ids.length, type, origin } });
   return NextResponse.json({ ok: true, count: ids.length });
 }

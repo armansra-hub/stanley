@@ -1,9 +1,13 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { markPoolExported } from "@/lib/db/leadPool";
+import { normalizeDomain } from "@/lib/domain";
+import { importBlockReason } from "@/config/territory";
+import { VENDOR_WEIGHT, fitWeightFor, parseTechnologies, isErpReady, parseEmployees, employeeBand, type LeadVendor } from "@/lib/baseImport";
+import type { BaseRow } from "@/lib/csv";
 import type { Company, Signal, CompanySource, ScoreTier, SignalType, SignalStrength } from "@/lib/types";
 
-function mapSignal(r: Record<string, unknown>): Signal {
+export function mapSignal(r: Record<string, unknown>): Signal {
   return {
     id: String(r.id),
     company_id: String(r.company_id),
@@ -51,19 +55,100 @@ function mapCompany(r: Record<string, unknown>): Company {
     first_seen_at: String(r.first_seen_at ?? ""),
     last_updated_at: String(r.last_updated_at ?? ""),
     exported_at: (r.exported_at as string) ?? null,
+    is_base: Boolean(r.is_base),
+    lead_vendor: (r.lead_vendor as string) ?? null,
+    fit_weight: r.fit_weight != null ? Number(r.fit_weight) : 1,
+    technologies: Array.isArray(r.technologies) ? (r.technologies as string[]) : [],
+    erp_ready: Boolean(r.erp_ready),
+    employee_count: r.employee_count != null ? Number(r.employee_count) : null,
+    lists: Array.isArray(r.lists) ? (r.lists as string[]) : [],
+    claimable: Boolean(r.claimable),
+    netsuite_internal_id: (r.netsuite_internal_id as string) ?? null,
+    erp_incumbent: (r.erp_incumbent as string) ?? null,
+    pe_owned: Boolean(r.pe_owned),
+    tal_claimed: Boolean(r.tal_claimed),
+    tal_dq: Boolean(r.tal_dq),
+    tal_alert: Boolean(r.tal_alert),
+    thumbs_down: Boolean(r.thumbs_down),
+    headcount_growth_pct: r.headcount_growth_pct != null ? Number(r.headcount_growth_pct) : null,
+    has_parent: Boolean(r.has_parent), parent_name: (r.parent_name as string) ?? null, parent_confidence: (r.parent_confidence as string) ?? null,
     signals,
   };
 }
 
 /** Read all companies (with nested signals) for the dashboard, highest score first. */
+/** The DISCOVERED set only (signal-found leads + old imports) — small, loads client-side
+ * for the Discovered/Starred/History tabs. The huge TAM Base (is_base) is server-paged
+ * separately via listBaseCompanies so 14k+ rows never hit the browser at once. */
 export async function getCompanies(): Promise<Company[]> {
   const db = serviceClient();
   const { data, error } = await db
     .from("companies")
     .select(`*, signals(*)`)
-    .order("signal_score", { ascending: false });
+    .or("is_base.is.null,is_base.eq.false")
+    .order("signal_score", { ascending: false })
+    .limit(2000);
   if (error) throw new Error(`getCompanies failed: ${error.message}`);
   return (data ?? []).map((r) => mapCompany(r as Record<string, unknown>));
+}
+
+export interface BaseFilter { tags?: string[]; matchAll?: boolean; claimable?: boolean; erp?: boolean; state?: string; q?: string; limit?: number; offset?: number; includeHidden?: boolean }
+
+/** Statuses that hide a lead from the active worklist (reviewed/dismissed/exported). */
+const HIDDEN_STATUSES = "(reviewed,dismissed,exported_csv,exported_sql)";
+
+/** Server-side, paginated, filtered query over the TAM Base (is_base=true). Ordered
+ * claimable-first then by fit_weight (multi-list overlaps float up). Hidden leads
+ * (reviewed/dismissed/exported) are excluded unless includeHidden — so exporting a
+ * batch makes it drop out and the next leads surface on refetch. */
+export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Company[]; total: number }> {
+  const db = serviceClient();
+  let q = db.from("companies").select(`*, signals(*)`, { count: "exact" }).eq("is_base", true);
+  if (f.claimable) q = q.eq("claimable", true);
+  if (f.erp) q = q.eq("erp_ready", true);
+  if (f.state) q = q.eq("state", f.state);
+  if (!f.includeHidden) q = q.not("status", "in", HIDDEN_STATUSES);
+  if (f.tags?.length) q = f.matchAll ? q.contains("lists", f.tags) : q.overlaps("lists", f.tags);
+  if (f.q) { const s = f.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
+  const limit = Math.min(f.limit ?? 100, 1000), offset = f.offset ?? 0;
+  q = q.order("claimable", { ascending: false }).order("fit_weight", { ascending: false }).order("name", { ascending: true });
+  const { data, count, error } = await q.range(offset, offset + limit - 1);
+  if (error) throw new Error(`listBaseCompanies failed: ${error.message}`);
+  return { companies: (data ?? []).map((r) => mapCompany(r as Record<string, unknown>)), total: count ?? 0 };
+}
+
+/** Every starred lead, regardless of tab/source/status (Starred shows everything you
+ * flagged — discovered, TAM-base, triggered, even already-exported). */
+export async function listStarred(): Promise<Company[]> {
+  const db = serviceClient();
+  const { data, error } = await db.from("companies").select(`*, signals(*)`).eq("starred", true).order("name", { ascending: true });
+  if (error) throw new Error(`listStarred failed: ${error.message}`);
+  return (data ?? []).map((r) => mapCompany(r as Record<string, unknown>));
+}
+
+/** Distinct list-tags AND subindustries across the base (for the filter UI). One scan.
+ * Subindustries come back as the labels the data ACTUALLY uses (the TAM upload uses a
+ * few coarse buckets like "Advertising, Media & Publishing"), so the dropdown matches
+ * reality instead of the granular config list. */
+export async function listBaseTags(): Promise<{ tags: { tag: string; count: number }[]; subindustries: string[] }> {
+  const db = serviceClient();
+  const tagCounts = new Map<string, number>();
+  const subs = new Map<string, number>();
+  for (let from = 0; ; from += 1000) {
+    const { data } = await db.from("companies").select("lists, subindustry, claimable").eq("is_base", true).range(from, from + 999);
+    const batch = (data ?? []) as { lists?: string[]; subindustry?: string | null; claimable?: boolean }[];
+    for (const c of batch) {
+      for (const l of c.lists ?? []) tagCounts.set(l, (tagCounts.get(l) ?? 0) + 1);
+      // Subindustry facet is for the claimable worklists (Triggered/Starred), so only
+      // count claimable rows → a short, relevant list (no off-territory base noise).
+      if (c.claimable && c.subindustry) subs.set(c.subindustry, (subs.get(c.subindustry) ?? 0) + 1);
+    }
+    if (batch.length < 1000) break;
+  }
+  return {
+    tags: [...tagCounts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count),
+    subindustries: [...subs.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s),
+  };
 }
 
 export interface CompanyUpsert {
@@ -212,6 +297,18 @@ export async function setStarred(ids: string[], value: boolean): Promise<void> {
   }
 }
 
+/** Per-lead thumbs-down toggle (negative counterpart to starred; no tab). Safe
+ * before migration 0024 (no-op). */
+export async function setThumbsDown(ids: string[], value: boolean): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    const db = serviceClient();
+    await db.from("companies").update({ thumbs_down: value }).in("id", ids);
+  } catch {
+    /* column missing → no-op */
+  }
+}
+
 /** Flag a company as already on NetSuite/ERP. Safe before migration 0003 (no-op). */
 export async function setAlreadyOnNetsuite(id: string, value: boolean): Promise<void> {
   try {
@@ -245,8 +342,12 @@ export async function setCompaniesStatus(ids: string[], status: Company["status"
   const patch: Record<string, unknown> = { status, last_updated_at: now };
   if (status === "exported_sql" || status === "exported_csv") patch.exported_at = now;
   else if (status === "new") patch.exported_at = null; // restore/un-export clears the stamp
-  const { error } = await db.from("companies").update(patch).in("id", ids);
-  if (error) throw new Error(`setCompaniesStatus failed: ${error.message}`);
+  // Chunk the id set — a single .in() with thousands of UUIDs overflows the request
+  // URL (bulk TAM exports can mark 7k+ rows at once).
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await db.from("companies").update(patch).in("id", ids.slice(i, i + 200));
+    if (error) throw new Error(`setCompaniesStatus failed: ${error.message}`);
+  }
 }
 
 export async function setCompanyNote(id: string, notes: string): Promise<void> {
@@ -313,6 +414,238 @@ export async function patchTerritoryConfig(patch: {
     .eq("id", 1);
   if (error) throw new Error(`patchTerritoryConfig failed: ${error.message}`);
   return { states, subindustries };
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export interface BaseImportReport { total: number; imported: number; updated: number; blocked: number; no_domain: number; dropped: number }
+
+/** The list whose membership = "available to claim". */
+export const CLAIMABLE_LIST = "netsuite_tam";
+
+/**
+ * Load a SILO (one named CSV list, e.g. "netsuite_tam" / "zoominfo_growth") into the
+ * base. Each company is ONE row tagged with every list it appears on (`lists[]`);
+ * `claimable` = membership in netsuite_tam. Lists are NEVER cross-deduped — importing
+ * a list only ADDS its tag to matching companies + inserts new ones. Re-uploading a
+ * list refreshes ONLY that list: companies dropped from it lose the tag (kept for
+ * monitoring), nothing else is touched. NetSuite is SOURCE OF TRUTH (wins field
+ * conflicts). Fast + deterministic, no per-row LLM.
+ */
+export async function bulkImportBase(rows: BaseRow[], vendor: LeadVendor, listKey: string, batchId: string | null): Promise<BaseImportReport> {
+  const db = serviceClient();
+  const now = new Date().toISOString();
+  const isTruth = vendor === "netsuite"; // NetSuite overrides core firmographics
+  const report: BaseImportReport = { total: rows.length, imported: 0, updated: 0, blocked: 0, no_domain: 0, dropped: 0 };
+
+  // 1. hard-block (every source) + dedupe within the file
+  const byKey = new Map<string, { row: BaseRow; domain: string }>();
+  for (const r of rows) {
+    if (importBlockReason(r.industry, r.name)) { report.blocked++; continue; }
+    const domain = normalizeDomain(r.website);
+    if (!domain) report.no_domain++;
+    const key = domain || `name:${r.name.trim().toLowerCase()}`;
+    if (!byKey.has(key)) byKey.set(key, { row: r, domain });
+  }
+  const items = [...byKey.values()];
+
+  // 2. which domains already exist (chunked lookups)
+  const existing = new Map<string, { id: string; sources: string[]; lists: string[]; lead_vendor: string | null }>();
+  const domains = items.map((i) => i.domain).filter(Boolean);
+  for (let i = 0; i < domains.length; i += 200) {
+    const { data } = await db.from("companies").select("id, domain, sources, lists, lead_vendor").in("domain", domains.slice(i, i + 200));
+    for (const c of (data ?? []) as any[]) existing.set(c.domain, { id: c.id, sources: c.sources ?? [], lists: c.lists ?? [], lead_vendor: c.lead_vendor ?? null });
+  }
+
+  // 3. partition into inserts + cross-source merges (tagging this list)
+  const inserts: any[] = [];
+  for (const { row, domain } of items) {
+    const techs = parseTechnologies(row.technologies);
+    const erp = isErpReady(techs);
+    const emp = parseEmployees(row.employees);
+    const ex = domain ? existing.get(domain) : undefined;
+    if (ex) {
+      const sources = Array.from(new Set([...(ex.sources ?? []), vendor]));
+      const lists = Array.from(new Set([...(ex.lists ?? []), listKey])); // ADD this list, keep the others
+      const patch: any = { is_base: true, sources, lists, claimable: lists.includes(CLAIMABLE_LIST), fit_weight: fitWeightFor(sources), last_updated_at: now };
+      if (techs.length) { patch.technologies = techs; patch.erp_ready = erp; }
+      if (emp != null) { patch.employee_count = emp; patch.employee_band = employeeBand(emp); }
+      if (isTruth) {
+        patch.lead_vendor = "netsuite";
+        patch.name = row.name.trim();
+        if (row.industry) patch.subindustry = row.industry;
+        if (row.state) patch.state = row.state;
+        if (row.city) patch.city = row.city;
+        if (row.revenue) patch.revenue_band = row.revenue;
+        if (row.internal_id) patch.netsuite_internal_id = row.internal_id;
+      } else if (!ex.lead_vendor) {
+        patch.lead_vendor = vendor;
+      }
+      await db.from("companies").update(patch).eq("id", ex.id);
+      report.updated++;
+    } else {
+      inserts.push({
+        name: row.name.trim(), domain: domain || null, website_raw: row.website || null,
+        subindustry: row.industry || null, state: row.state || null, city: row.city || null,
+        employee_count: emp, employee_band: employeeBand(emp), revenue_band: row.revenue || null,
+        technologies: techs.length ? techs : null, erp_ready: erp,
+        netsuite_internal_id: vendor === "netsuite" ? (row.internal_id || null) : null,
+        is_base: true, lead_vendor: vendor, fit_weight: VENDOR_WEIGHT[vendor], sources: [vendor],
+        lists: [listKey], claimable: listKey === CLAIMABLE_LIST,
+        source: "imported", in_territory: true, status: "new", import_batch_id: batchId,
+        first_seen_at: now, last_updated_at: now,
+      });
+    }
+  }
+
+  // 4. bulk insert the new ones (chunked). Import is purely ADDITIVE — it only adds
+  //    this list's tag; companies that LEFT the list are pruned separately (a
+  //    deliberate monthly-refresh step) so chunked uploads can't accidentally drop.
+  for (let i = 0; i < inserts.length; i += 500) {
+    const chunk = inserts.slice(i, i + 500);
+    const { error } = await db.from("companies").insert(chunk);
+    if (error) throw new Error(`base import insert failed: ${error.message}`);
+    report.imported += chunk.length;
+  }
+  return report;
+}
+
+/**
+ * Monthly-refresh prune: after re-uploading the FULL list, drop the list tag from any
+ * company that was in it before but isn't in the new file (it LEFT the list — e.g. a
+ * NetSuite-TAM lead someone claimed). The company row is KEPT (still monitored); it
+ * just loses this membership (and `claimable` if it was netsuite_tam's last tag).
+ * `keepDomains` = every normalized domain in the freshly-uploaded list.
+ */
+export async function pruneListMembership(listKey: string, keepDomains: Set<string>): Promise<number> {
+  const db = serviceClient();
+  // Everyone currently tagged with this list.
+  const tagged: { id: string; domain: string | null; lists: string[] }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data } = await db.from("companies").select("id, domain, lists").contains("lists", [listKey]).range(from, from + 999);
+    const batch = (data ?? []) as any[];
+    tagged.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  let dropped = 0;
+  for (const c of tagged) {
+    if (c.domain && keepDomains.has(c.domain)) continue; // still in the list
+    const lists = (c.lists ?? []).filter((l: string) => l !== listKey);
+    await db.from("companies").update({ lists, claimable: lists.includes(CLAIMABLE_LIST), last_updated_at: new Date().toISOString() }).eq("id", c.id);
+    dropped++;
+  }
+  return dropped;
+}
+
+/** Normalize a company name to a comparison key: lowercase, strip accents +
+ * punctuation, drop common legal/entity suffixes, collapse whitespace. Used to
+ * cross-tag domain-less leads (Sales Nav Growth) against the named-keyed TAM. */
+const NAME_NOISE = /\b(llc|l\.l\.c|inc|incorporated|corp|corporation|co|company|ltd|limited|lp|llp|plc|pllc|group|holdings|holding|enterprises|the|and)\b/g;
+export function normalizeCompanyName(name: string): string {
+  return (name || "")
+    .toLowerCase()
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(NAME_NOISE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export interface BaseMembership { lists: string[]; claimable: boolean; netsuite_internal_id: string | null }
+
+/** Build a normalizedName → TAM-membership index over the whole base (is_base=true),
+ * merging rows that collapse to the same key. For cross-tagging by name. */
+export async function loadBaseNameIndex(): Promise<Map<string, BaseMembership>> {
+  const db = serviceClient();
+  const map = new Map<string, BaseMembership>();
+  for (let from = 0; ; from += 1000) {
+    const { data } = await db.from("companies").select("name, lists, claimable, netsuite_internal_id").eq("is_base", true).range(from, from + 999);
+    const batch = (data ?? []) as any[];
+    for (const c of batch) {
+      const key = normalizeCompanyName(c.name);
+      if (!key) continue;
+      const lists: string[] = Array.isArray(c.lists) ? c.lists : [];
+      const ex = map.get(key);
+      if (!ex) map.set(key, { lists: [...lists], claimable: !!c.claimable, netsuite_internal_id: c.netsuite_internal_id ?? null });
+      else {
+        ex.lists = Array.from(new Set([...ex.lists, ...lists]));
+        ex.claimable = ex.claimable || !!c.claimable;
+        if (!ex.netsuite_internal_id && c.netsuite_internal_id) ex.netsuite_internal_id = c.netsuite_internal_id;
+      }
+    }
+    if (batch.length < 1000) break;
+  }
+  return map;
+}
+
+/** Cross-tag DISCOVERED leads against the base by normalized name: a match inherits
+ * the base company's lists + claimable + NetSuite Internal ID (additive — keeps any
+ * tags the lead already had). Targets are typically domain-less Growth leads that the
+ * domain dedup can't reach. Returns the number tagged. */
+export async function crossTagByName(
+  targets: { id: string; name: string; lists?: string[] }[],
+  index: Map<string, BaseMembership>,
+): Promise<number> {
+  if (targets.length === 0) return 0;
+  const db = serviceClient();
+  const now = new Date().toISOString();
+  let tagged = 0;
+  for (const t of targets) {
+    const hit = index.get(normalizeCompanyName(t.name));
+    if (!hit || hit.lists.length === 0) continue;
+    const lists = Array.from(new Set([...(t.lists ?? []), ...hit.lists]));
+    const patch: Record<string, unknown> = { lists, claimable: hit.claimable || lists.includes(CLAIMABLE_LIST), last_updated_at: now };
+    if (hit.netsuite_internal_id) patch.netsuite_internal_id = hit.netsuite_internal_id;
+    const { error } = await db.from("companies").update(patch).eq("id", t.id);
+    if (!error) tagged++;
+  }
+  return tagged;
+}
+
+/**
+ * Sync the ARS Target Account List as a DIFF against the prior upload:
+ *   • a lead whose domain/name is on the NEW TAL  → tal_claimed=true,  tal_dq=false
+ *     (red "ARS TAL CLAIMED"; reclaiming clears any prior DQ);
+ *   • a lead that was tal_claimed but is MISSING from the new TAL → tal_claimed=false,
+ *     tal_dq=true ("PREVIOUSLY DQ'd" — the AE dropped it);
+ *   • everyone else is left untouched (prior DQ flags persist).
+ * Match is exact (normalized domain / name equality) → precise, no fuzzy positives.
+ */
+export async function syncTalClaimed(rows: { name: string; website?: string | null }[]): Promise<{ tal_count: number; matched: number; newly_dq: number }> {
+  const db = serviceClient();
+  const talNames = new Set<string>();
+  const talDomains = new Set<string>();
+  for (const r of rows) {
+    const nn = normalizeCompanyName(r.name);
+    if (nn) talNames.add(nn);
+    const d = normalizeDomain(r.website || "");
+    if (d) talDomains.add(d);
+  }
+  if (talNames.size === 0 && talDomains.size === 0) return { tal_count: rows.length, matched: 0, newly_dq: 0 };
+
+  // Scan every company; classify against the new TAL + its current claimed state.
+  const claimedIds: string[] = []; // on the new TAL → claimed
+  const dqIds: string[] = [];      // was claimed, now missing → previously DQ'd
+  for (let from = 0; ; from += 1000) {
+    const { data } = await db.from("companies").select("id, domain, name, tal_claimed").range(from, from + 999);
+    const batch = (data ?? []) as { id: string; domain: string | null; name: string; tal_claimed: boolean }[];
+    for (const c of batch) {
+      const d = c.domain ? normalizeDomain(c.domain) : "";
+      const nn = normalizeCompanyName(c.name);
+      const onTal = (d && talDomains.has(d)) || (nn && talNames.has(nn));
+      if (onTal) claimedIds.push(c.id);
+      else if (c.tal_claimed) dqIds.push(c.id); // fell off the list → DQ
+    }
+    if (batch.length < 1000) break;
+  }
+  // Apply (chunked — a single .in() with thousands of ids overflows the URL).
+  for (let i = 0; i < claimedIds.length; i += 200) {
+    await db.from("companies").update({ tal_claimed: true, tal_dq: false }).in("id", claimedIds.slice(i, i + 200));
+  }
+  for (let i = 0; i < dqIds.length; i += 200) {
+    await db.from("companies").update({ tal_claimed: false, tal_dq: true }).in("id", dqIds.slice(i, i + 200));
+  }
+  return { tal_count: rows.length, matched: claimedIds.length, newly_dq: dqIds.length };
 }
 
 /** Create an import batch row; returns its id. */

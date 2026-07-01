@@ -30,6 +30,30 @@ export const BLOCKED_SUBINDUSTRIES = new Set<string>([
   "Law Firms & Legal Services",
 ]);
 
+/**
+ * Hard-block enforcement for BULK BASE IMPORT (ZoomInfo/Apollo industry strings +
+ * company name). Deterministic keyword match — no LLM. Mirrors the AE's hard
+ * blocks: accounting/CPA/bookkeeping/tax, law/legal, 3PL (NOT freight/logistics
+ * broadly), call centers. Returns the block reason, or null to keep the row.
+ */
+const IMPORT_BLOCK_RULES: { reason: string; needles: string[] }[] = [
+  // Needles expanded 2026-06-29 — the original set missed "Law Group/PLLC/LLP" and
+  // "income tax", which let ~40 law/accounting firms into the NetSuite TAM (their coarse
+  // subindustry label hid them). These are name-shape patterns specific to these firms.
+  { reason: "accounting/tax firm", needles: ["accounting", "accountant", "cpa", "bookkeep", "tax prep", "tax consult", "tax advisor", "tax service", "income tax", "tax & accounting", "tax associates"] },
+  { reason: "law/legal firm", needles: ["law firm", "law office", "law group", "law pllc", "law llp", "law apc", "law p.c", " law pc", "law, p", "law, a professional", "legal service", "legal counsel", "attorney", "lawyer", "litigation", "paralegal"] },
+  { reason: "3PL", needles: ["3pl", "third-party logistics", "third party logistics", "fulfillment center", "fulfillment services", "order fulfillment"] },
+  { reason: "call center", needles: ["call center", "call centre", "contact center", "answering service", "telemarketing"] },
+];
+
+export function importBlockReason(industry: string | null | undefined, name: string | null | undefined): string | null {
+  const hay = `${industry ?? ""} ${name ?? ""}`.toLowerCase();
+  for (const rule of IMPORT_BLOCK_RULES) {
+    if (rule.needles.some((n) => hay.includes(n))) return rule.reason;
+  }
+  return null;
+}
+
 export const SUBINDUSTRIES_BY_BUCKET = {
   "Media / Advertising / Publishing": [
     "Advertising & Marketing",

@@ -4,6 +4,7 @@ import { SCHEDULED } from "@/lib/apify/scheduled";
 import { ingestCandidates } from "@/lib/ingest/orchestrator";
 import { addToPool, markPoolPromoted } from "@/lib/db/leadPool";
 import { normalizeDomain } from "@/lib/domain";
+import { logEvent } from "@/lib/db/events";
 
 // Apify calls this when a scheduled actor run SUCCEEDS. We pull the finished
 // dataset and ingest it (fast) — the long actor run already happened on Apify,
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
   // Google Maps → park in the lead pool (no enrichment); the qualifier promotes.
   if (actor.toPool) {
     const pooled = await addToPool(candidates);
+    await logEvent("headhunter", "actor.ingest", { summary: `Apify ${actorKey}: ${pooled} added to net-new pool`, entity_type: "cron", meta: { actor: actorKey, pooled, toPool: true } });
     return NextResponse.json({ actor: actorKey, datasetId, pooled });
   }
 
@@ -46,5 +48,6 @@ export async function POST(req: NextRequest) {
     const domains = candidates.map((c) => normalizeDomain(c.website)).filter(Boolean);
     await markPoolPromoted(domains);
   }
+  await logEvent("headhunter", "actor.ingest", { summary: `Apify ${actorKey}: ${result.new_companies} new, ${result.upserted - result.new_companies} updated`, entity_type: "cron", meta: { actor: actorKey, candidates: candidates.length, ...result } });
   return NextResponse.json({ actor: actorKey, datasetId, candidates: candidates.length, ...result });
 }

@@ -34,6 +34,34 @@ function domainFromEmail(email?: string): string | undefined {
   return FREE_EMAIL.has(m[1]) ? undefined : m[1];
 }
 
+export interface CarrierRecord { dot: string; legal: string; dba: string; units: number; drivers: number; city: string; state: string; mcs150: string }
+
+/** Look up a specific carrier in the FMCSA census BY NAME (for monitoring a known
+ * TAM company, not discovery). Matches the company's core name against legal_name
+ * or dba_name; the caller verifies + picks the best match. */
+export async function fetchCarrierByName(name: string, max = 5): Promise<CarrierRecord[]> {
+  const core = name.toUpperCase().replace(/[^A-Z0-9 ]+/g, " ")
+    .replace(/\b(LLC|INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|LTD|LP|LLP|THE)\b/g, " ")
+    .replace(/\s+/g, " ").trim();
+  if (core.replace(/[^A-Z0-9]/g, "").length < 4) return [];
+  const esc = core.replace(/'/g, "''");
+  const where = `(upper(legal_name) like '%${esc}%' OR upper(dba_name) like '%${esc}%') AND nbr_power_unit IS NOT NULL`;
+  const params = new URLSearchParams({
+    $select: "dot_number,legal_name,dba_name,phy_city,phy_state,nbr_power_unit,driver_total,mcs150_date",
+    $where: where, $order: "nbr_power_unit::number DESC", $limit: String(max),
+  });
+  try {
+    const res = await fetch(`${DATASET}?${params}`, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {} });
+    if (!res.ok) return [];
+    const rows = await res.json();
+    return (Array.isArray(rows) ? rows : []).map((r: Record<string, unknown>) => ({
+      dot: String(r.dot_number ?? ""), legal: String(r.legal_name ?? ""), dba: String(r.dba_name ?? ""),
+      units: parseInt(String(r.nbr_power_unit ?? ""), 10) || 0, drivers: parseInt(String(r.driver_total ?? ""), 10) || 0,
+      city: String(r.phy_city ?? ""), state: String(r.phy_state ?? ""), mcs150: String(r.mcs150_date ?? ""),
+    }));
+  } catch { return []; }
+}
+
 export async function fetchFmcsaCandidates(
   opts: { minUnits?: number; maxUnits?: number; limit?: number } = {},
 ): Promise<Candidate[]> {

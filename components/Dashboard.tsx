@@ -7,27 +7,15 @@ import type { PoolLead } from "@/lib/db/leadPool";
 import type { ExportRecord } from "@/lib/db/companies";
 import { formatNow } from "@/lib/time";
 import { buildNetsuiteSqlExport, type SqlExportConfig } from "@/lib/export/sql";
-import { buildCsvExport } from "@/lib/export/csv";
+import { buildCsvExport, buildFullCsvExport } from "@/lib/export/csv";
 import { scoreBand } from "@/lib/scoring";
 import { SUBINDUSTRIES } from "@/config/territory";
-import { parseCsv, rowsToImportRows } from "@/lib/csv";
+import { parseCsv, rowsToBaseRows } from "@/lib/csv";
 import { ACTORS } from "@/config/actors";
 import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongestSignal } from "./badges";
 import ChatPanel from "./ChatPanel";
 
-type Tab = "discovered" | "imported" | "starred" | "net_new" | "history" | "actors";
-
-interface ImportReport {
-  batch_id: string;
-  filename: string;
-  row_count: number;
-  processed: number;
-  truncated: boolean;
-  upserted: number;
-  new_companies: number;
-  added_signals: number;
-  companies: Company[];
-}
+type Tab = "triggered" | "discovered" | "imported" | "starred" | "net_new" | "history" | "actors";
 
 function download(filename: string, text: string, mime: string) {
   const blob = new Blob([text], { type: mime });
@@ -69,6 +57,7 @@ export default function Dashboard({
   actorOverrides = {},
   poolLeads = [],
   exportHistory = [],
+  lastRefreshAt = null,
 }: {
   initial: Company[];
   usingSample?: boolean;
@@ -76,13 +65,31 @@ export default function Dashboard({
   actorOverrides?: Record<string, { enabled?: boolean }>;
   poolLeads?: PoolLead[];
   exportHistory?: ExportRecord[];
+  lastRefreshAt?: string | null;
 }) {
   const [companies, setCompanies] = useState<Company[]>(initial);
-  const [tab, setTab] = useState<Tab>("discovered");
+  const [tab, setTab] = useState<Tab>("triggered");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drawerId, setDrawerId] = useState<string | null>(null);
+  // In-app TAL alerts (claimed accounts with a new signal) — the only notification.
+  const [talAlerts, setTalAlerts] = useState<(Company & { top_trigger?: { type: string; summary: string } | null })[]>([]);
+  const [talAlertsOpen, setTalAlertsOpen] = useState(false);
+  useEffect(() => { fetch("/api/headhunter/tal-alerts").then((r) => (r.ok ? r.json() : null)).then((d) => d?.companies && setTalAlerts(d.companies)).catch(() => {}); }, []);
+  function clearTalAlerts(ids?: string[]) {
+    setTalAlerts((prev) => (ids ? prev.filter((c) => !ids.includes(c.id)) : []));
+    void fetch("/api/headhunter/tal-alerts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ids ? { ids } : {}) });
+  }
   const [sqlModal, setSqlModal] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState("2026-06-24 11:42");
+  // Real last-refresh = the most recent suite activity (cron / import / trigger sweep)
+  // from the app_events log; falls back to the newest company update. "Refresh now"
+  // overrides it for the session.
+  const dataLastRefresh = useMemo(() => {
+    const fromEvents = lastRefreshAt ? new Date(lastRefreshAt).getTime() : 0;
+    const fromRows = initial.reduce((m, c) => Math.max(m, new Date(c.last_updated_at ?? 0).getTime() || 0), 0);
+    const latest = Math.max(fromEvents, fromRows);
+    return latest ? new Date(latest).toLocaleString() : "—";
+  }, [initial, lastRefreshAt]);
+  const [lastRefresh, setLastRefresh] = useState(dataLastRefresh);
   const [refreshing, setRefreshing] = useState(false);
 
   // Live clock — the app always knows the current date/time (foundation for the
@@ -92,10 +99,86 @@ export default function Dashboard({
     const t = setInterval(() => setClock(formatNow()), 1000);
     return () => clearInterval(t);
   }, []);
-  const [importReport, setImportReport] = useState<ImportReport | null>(null);
+  // Next scheduled batch: the daily discovery cron fires 12:30 UTC; show the next one.
+  const nextUpdate = useMemo(() => {
+    const n = new Date();
+    const next = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate(), 12, 30, 0));
+    if (next.getTime() <= n.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+    const mins = Math.round((next.getTime() - n.getTime()) / 60000);
+    const rel = mins < 60 ? `in ${mins} min` : mins < 1440 ? `in ${Math.round(mins / 60)} h` : "tomorrow";
+    return { when: next.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }), rel };
+  }, [clock]);
   const [importing, setImporting] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const incRef = useRef<HTMLInputElement>(null);
+  const baseRef = useRef<HTMLInputElement>(null);
+  const [baseVendor, setBaseVendor] = useState<"zoominfo" | "linkedin" | "netsuite">("zoominfo");
+  const [baseList, setBaseList] = useState(""); // silo/list name; blank → "<vendor>_tam"
+  const talRef = useRef<HTMLInputElement>(null);
+  const [talImporting, setTalImporting] = useState(false);
+
+  // Parse a .csv OR .xlsx file → array-of-arrays (xlsx via SheetJS, lazy-loaded).
+  async function fileToGrid(file: File): Promise<string[][]> {
+    if (/\.xlsx?$/i.test(file.name)) {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      return XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, blankrows: false, raw: false, defval: "" });
+    }
+    return parseCsv(await file.text());
+  }
+
+  // TAM Base bulk import: parse the vendor CSV/XLSX client-side, chunk it, and load
+  // it fast (dedupe + hard-blocks + ERP-readiness happen server-side; no enrichment).
+  async function handleBaseFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    try {
+      const rows = rowsToBaseRows(await fileToGrid(file));
+      if (rows.length === 0) { alert("No company rows found (need a name column)."); return; }
+      const CHUNK = 3000;
+      let batchId: string | null = null;
+      const tot = { total: 0, imported: 0, updated: 0, blocked: 0, no_domain: 0 };
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const res: Response = await fetch("/api/import/base", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ vendor: baseVendor, list: baseList, filename: file.name, rows: rows.slice(i, i + CHUNK), batchId }),
+        });
+        const r: Record<string, number> & { error?: string; batchId?: string | null } = await res.json();
+        if (!res.ok) { alert(`Import failed: ${r.error ?? res.status}`); return; }
+        batchId = r.batchId ?? batchId;
+        for (const k of Object.keys(tot) as (keyof typeof tot)[]) tot[k] += (r[k] as number) ?? 0;
+      }
+      alert(`${baseVendor.toUpperCase()} base import:\n${tot.imported} new · ${tot.updated} merged · ${tot.blocked} blocked (off-ICP) · ${tot.no_domain} without a domain.`);
+      location.reload();
+    } catch {
+      alert("Base import failed.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  // ARS Target Account List: parse the CSV and re-sync the red "ARS TAL CLAIMED"
+  // flag across all leads (matches by domain / exact name). Re-upload = full re-sync.
+  async function handleTalFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setTalImporting(true);
+    try {
+      const rows = rowsToBaseRows(await fileToGrid(file)).map((r) => ({ name: r.name, website: r.website }));
+      if (rows.length === 0) { alert("No company rows found in the TAL (need a name column)."); return; }
+      const res = await fetch("/api/headhunter/tal/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rows }) });
+      const r: { matched?: number; tal_count?: number; newly_dq?: number; error?: string } = await res.json();
+      if (!res.ok) { alert(`TAL sync failed: ${r.error ?? res.status}`); return; }
+      alert(`TAL synced: ${r.matched ?? 0} leads flagged ARS TAL CLAIMED${r.newly_dq ? `, ${r.newly_dq} newly marked PREVIOUSLY DQ'd` : ""} (from ${r.tal_count ?? rows.length} target accounts).`);
+      location.reload();
+    } catch {
+      alert("TAL sync failed.");
+    } finally {
+      setTalImporting(false);
+    }
+  }
 
   const [paidOpen, setPaidOpen] = useState(false);
   const [paidRunning, setPaidRunning] = useState<string | null>(null);
@@ -139,56 +222,6 @@ export default function Dashboard({
     }
   }
 
-  async function handleIncFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setImporting(true);
-    try {
-      const rows = rowsToImportRows(parseCsv(await file.text()));
-      if (rows.length === 0) {
-        alert("No company rows found in that CSV (need a name column).");
-        return;
-      }
-      const res = await fetch("/api/import/list", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows, source_id: "inc5000", list_name: "Inc. 5000", list_url: "https://www.inc.com/inc5000" }),
-      });
-      const r = await res.json();
-      alert(`Inc. 5000: ${r.processed ?? 0} processed · ${r.upserted ?? 0} in-territory added · ${r.dropped_out_of_territory ?? 0} dropped.`);
-      location.reload();
-    } catch {
-      alert("Inc. 5000 import failed.");
-    } finally {
-      setImporting(false);
-    }
-  }
-
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setImporting(true);
-    try {
-      const rows = rowsToImportRows(parseCsv(await file.text()));
-      if (rows.length === 0) {
-        alert("No company rows found in that CSV (need a name column).");
-        return;
-      }
-      const res = await fetch("/api/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ filename: file.name, rows }),
-      });
-      setImportReport(await res.json());
-    } catch (err) {
-      console.error(err);
-      alert("Import failed — see console.");
-    } finally {
-      setImporting(false);
-    }
-  }
 
   // filters
   const [search, setSearch] = useState("");
@@ -196,6 +229,24 @@ export default function Dashboard({
   const [stateFilter, setStateFilter] = useState("");
   const [band, setBand] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+
+  // Sortable table columns (click a header to toggle asc/desc).
+  type SortKey = "company" | "score" | "tier" | "source" | "state" | "size" | "rating" | "status";
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "score", dir: "desc" });
+  const onSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "company" || key === "source" || key === "state" ? "asc" : "desc" }));
+  const TIER_RANK: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
+  const sortValue = (c: Company, key: SortKey): string | number => {
+    switch (key) {
+      case "company": return c.name.toLowerCase();
+      case "score": return c.signal_score;
+      case "tier": return TIER_RANK[c.score_tier ?? ""] ?? 9;
+      case "source": return sourceLabel(c.sources?.[0] ?? "").toLowerCase();
+      case "state": return (c.state ?? "").toLowerCase();
+      case "size": return (c.employee_band ?? "").toLowerCase();
+      case "rating": return c.rating ?? -1;
+      case "status": return c.status;
+    }
+  };
 
   const importedHasNew = companies.some((c) => c.source === "imported" && c.has_new_signal);
 
@@ -205,7 +256,7 @@ export default function Dashboard({
         if (!c.starred) return false; // Starred shows everything starred, even exported
       } else {
         if (c.source !== (tab === "discovered" ? "discovered" : "imported")) return false;
-        if (!showClosed && (c.status === "dismissed" || c.status.startsWith("exported"))) return false;
+        if (!showClosed && (c.status === "reviewed" || c.status === "dismissed" || c.status.startsWith("exported"))) return false;
       }
       if (subindustry && c.subindustry !== subindustry) return false;
       if (stateFilter && c.state !== stateFilter) return false;
@@ -215,8 +266,13 @@ export default function Dashboard({
         if (!c.name.toLowerCase().includes(q) && !(c.domain ?? "").includes(q)) return false;
       }
       return true;
-    }).sort((a, b) => b.signal_score - a.signal_score || latestSignalMs(b) - latestSignalMs(a));
-  }, [companies, tab, showClosed, subindustry, stateFilter, band, search]);
+    }).sort((a, b) => {
+      const av = sortValue(a, sort.key), bv = sortValue(b, sort.key);
+      const base = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
+      const dir = sort.dir === "asc" ? 1 : -1;
+      return base * dir || b.signal_score - a.signal_score || latestSignalMs(b) - latestSignalMs(a);
+    });
+  }, [companies, tab, showClosed, subindustry, stateFilter, band, search, sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const states = useMemo(
     () => Array.from(new Set(companies.map((c) => c.state).filter(Boolean))).sort() as string[],
@@ -226,6 +282,123 @@ export default function Dashboard({
   const isNetNew = tab === "net_new";
   const isHistory = tab === "history";
   const isActors = tab === "actors";
+  const isBase = tab === "imported"; // TAM Base — server-paged (14k+), not loaded into the browser
+  const isStarred = tab === "starred";
+
+  // ── Starred: server-backed so leads starred from ANY tab (TAM Base, Triggered) show
+  // up — not just ones in the in-browser `companies` set. ──
+  const [starredRows, setStarredRows] = useState<Company[]>([]);
+  async function fetchStarred() {
+    const res = await fetch("/api/headhunter/starred");
+    if (!res.ok) return;
+    const r: { companies?: Company[] } = await res.json();
+    setStarredRows(r.companies ?? []);
+  }
+  useEffect(() => { fetchStarred(); }, []); // on mount → badge count + instant tab
+
+  // ── TAM Base: server-backed, filtered, paginated (so 14k+ rows never hit the DOM) ──
+  const [baseRows, setBaseRows] = useState<Company[]>([]);
+  const [baseTotal, setBaseTotal] = useState(0);
+  const [baseOffset, setBaseOffset] = useState(0);
+  const [baseLoading, setBaseLoading] = useState(false);
+  const [baseTags, setBaseTags] = useState<{ tag: string; count: number }[]>([]);
+  // The subindustry labels the claimable TAM ACTUALLY uses (coarse buckets), so the
+  // filter dropdown matches the data instead of the granular config list.
+  const [baseSubs, setBaseSubs] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [tagMatchAll, setTagMatchAll] = useState(false);
+  const [claimableOnly, setClaimableOnly] = useState(false);
+  const [erpOnly, setErpOnly] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
+  const BASE_PAGE = 250;
+
+  /** The current TAM Base filter as the server expects it. */
+  const baseFilterBody = (extra: Record<string, unknown>) => ({
+    tags: [...selectedTags], matchAll: tagMatchAll, claimable: claimableOnly, erp: erpOnly,
+    state: stateFilter, q: search, includeHidden: showClosed, ...extra,
+  });
+
+  async function fetchBase(offset = 0) {
+    setBaseLoading(true);
+    const res = await fetch("/api/headhunter/base", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(baseFilterBody({ limit: BASE_PAGE, offset })) });
+    const r: { companies?: Company[]; total?: number } | null = res.ok ? await res.json() : null;
+    setBaseLoading(false);
+    if (!r) return;
+    setBaseTotal(r.total ?? 0);
+    setBaseOffset(offset);
+    setBaseRows(offset === 0 ? (r.companies ?? []) : (prev) => [...prev, ...(r.companies ?? [])]);
+  }
+  /** Pull EVERY row matching the current filter (paged server-side), for bulk export. */
+  async function fetchAllBase(): Promise<Company[]> {
+    const all: Company[] = [];
+    const LIM = 1000;
+    for (let off = 0; off < 50000; off += LIM) {
+      const res = await fetch("/api/headhunter/base", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(baseFilterBody({ limit: LIM, offset: off })) });
+      if (!res.ok) break;
+      const r: { companies?: Company[]; total?: number } = await res.json();
+      const batch = r.companies ?? [];
+      all.push(...batch);
+      if (batch.length < LIM || all.length >= (r.total ?? 0)) break;
+    }
+    return all;
+  }
+  // Load the tag list once the TAM Base tab is first opened.
+  useEffect(() => {
+    if ((isBase || tab === "triggered") && baseTags.length === 0) fetch("/api/headhunter/base").then((x) => (x.ok ? x.json() : null)).then((d) => { if (d?.tags) setBaseTags(d.tags); if (d?.subindustries) setBaseSubs(d.subindustries); });
+  }, [isBase, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Refetch page 0 whenever a base filter changes (debounced for typing).
+  useEffect(() => {
+    if (!isBase) return;
+    const t = setTimeout(() => fetchBase(0), 250);
+    return () => clearTimeout(t);
+  }, [isBase, selectedTags, tagMatchAll, claimableOnly, erpOnly, stateFilter, search, showClosed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggleTag = (t: string) => setSelectedTags((prev) => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
+
+  // ── Triggered worklist: base companies with an active (decaying) trigger, ranked ──
+  type TriggeredRow = Company & { top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null; trigger_count?: number; trigger_types?: string[] };
+  const isTriggered = tab === "triggered";
+  const [triggeredRows, setTriggeredRows] = useState<TriggeredRow[]>([]);
+  const [triggeredTotal, setTriggeredTotal] = useState(0);
+  const [triggeredOffset, setTriggeredOffset] = useState(0);
+  const [triggeredLoading, setTriggeredLoading] = useState(false);
+  const TRIGGER_PAGE = 250;
+  /** The current Triggered filter as the server expects it (mirrors Discovered/TAM Base). */
+  const triggeredFilterBody = (extra: Record<string, unknown>) => ({
+    includeHidden: showClosed, q: search, state: stateFilter, subindustry, band,
+    claimable: claimableOnly, erp: erpOnly, tags: [...selectedTags], matchAll: tagMatchAll, ...extra,
+  });
+  async function fetchTriggered(offset = 0) {
+    setTriggeredLoading(true);
+    const res = await fetch("/api/headhunter/triggered", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(triggeredFilterBody({ limit: TRIGGER_PAGE, offset })) });
+    const r: { companies?: TriggeredRow[]; total?: number } | null = res.ok ? await res.json() : null;
+    setTriggeredLoading(false);
+    if (!r) return;
+    setTriggeredTotal(r.total ?? 0);
+    setTriggeredOffset(offset);
+    setTriggeredRows(offset === 0 ? (r.companies ?? []) : (prev) => [...prev, ...(r.companies ?? [])]);
+  }
+  async function fetchAllTriggered(): Promise<TriggeredRow[]> {
+    const all: TriggeredRow[] = [];
+    const LIM = 1000;
+    for (let off = 0; off < 50000; off += LIM) {
+      const res = await fetch("/api/headhunter/triggered", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(triggeredFilterBody({ limit: LIM, offset: off })) });
+      if (!res.ok) break;
+      const r: { companies?: TriggeredRow[]; total?: number } = await res.json();
+      const batch = r.companies ?? [];
+      all.push(...batch);
+      if (batch.length < LIM || all.length >= (r.total ?? 0)) break;
+    }
+    return all;
+  }
+  // Refetch page 0 whenever a Triggered filter changes (debounced for typing).
+  useEffect(() => {
+    if (!isTriggered) return;
+    const t = setTimeout(() => fetchTriggered(0), 250);
+    return () => clearTimeout(t);
+  }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll]); // eslint-disable-line react-hooks/exhaustive-deps
+  const TRIGGER_LABELS: Record<string, string> = { erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A", finance_hire: "🧮 Finance hire", press: "📈 Expansion", news: "📰 News" };
+  const sinceLabel = (iso: string | null | undefined) => { if (!iso) return ""; const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return d <= 0 ? "today" : d === 1 ? "1d ago" : d < 30 ? `${d}d ago` : `${Math.floor(d / 30)}mo ago`; };
 
   // Net-new = raw Maps pool leads that aren't yet a signal company. Exclude
   // promoted ones (they're in Discovered), exported ones (moved to Export
@@ -251,7 +424,26 @@ export default function Dashboard({
     });
   }, [availablePool, stateFilter, search]);
 
-  const idsInView = isNetNew ? netNewVisible.map((p) => p.key) : visible.map((c) => c.id);
+  // Starred (server-backed) with the same client filters as Discovered; shows every
+  // starred lead even exported, so no hidden-status filter here.
+  const starredVisible = useMemo(() => {
+    return starredRows.filter((c) => {
+      if (!c.starred) return false;
+      if (subindustry && c.subindustry !== subindustry) return false;
+      if (stateFilter && c.state !== stateFilter) return false;
+      if (band && scoreBand(c.signal_score) !== band) return false;
+      if (search) { const q = search.toLowerCase(); if (!c.name.toLowerCase().includes(q) && !(c.domain ?? "").includes(q)) return false; }
+      return true;
+    }).sort((a, b) => b.signal_score - a.signal_score);
+  }, [starredRows, subindustry, stateFilter, band, search]);
+
+  const selectionSource = isStarred ? starredRows : isTriggered ? triggeredRows : isBase ? baseRows : companies; // rows the current tab's checkboxes act on
+  // "Mark reviewed" hides a lead (reviewed/dismissed/exported) until "Show hidden" is on.
+  const isHiddenStatus = (s: string) => s === "reviewed" || s === "dismissed" || s.startsWith("exported");
+  const tableRows = isStarred ? starredVisible
+    : isTriggered ? triggeredRows.filter((c) => showClosed || !isHiddenStatus(c.status))
+    : isBase ? baseRows.filter((c) => showClosed || !isHiddenStatus(c.status)) : visible;
+  const idsInView = isNetNew ? netNewVisible.map((p) => p.key) : isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : visible.map((c) => c.id);
   const selectedInViewCount = idsInView.filter((id) => selected.has(id)).length;
   const allSelected = idsInView.length > 0 && selectedInViewCount === idsInView.length;
 
@@ -271,14 +463,20 @@ export default function Dashboard({
     });
   }
 
+  // Patch matching rows in WHICHEVER list they live in (Discovered, TAM Base, or
+  // Triggered) so checkbox actions reflect on every tab, not just Discovered.
+  const idSet = (ids: string[]) => new Set(ids);
+  function patchRows(ids: string[], patch: Partial<Company>) {
+    const s = idSet(ids);
+    const upd = <T extends { id: string }>(arr: T[]) => arr.map((c) => (s.has(c.id) ? { ...c, ...patch } : c));
+    setCompanies(upd);
+    setBaseRows(upd);
+    setTriggeredRows(upd);
+    setStarredRows(upd);
+  }
+
   function applyStatusLocal(ids: string[], status: CompanyStatus) {
-    setCompanies((prev) =>
-      prev.map((c) =>
-        ids.includes(c.id)
-          ? { ...c, status, exported_at: status.startsWith("exported") ? new Date().toISOString() : c.exported_at }
-          : c,
-      ),
-    );
+    patchRows(ids, { status, ...(status.startsWith("exported") ? { exported_at: new Date().toISOString() } : {}) });
     setSelected(new Set());
   }
 
@@ -288,23 +486,36 @@ export default function Dashboard({
   }
 
   function toggleStar(id: string, value: boolean) {
-    setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, starred: value } : c)));
-    void postJSON("/api/companies/star", { ids: [id], value });
+    patchRows([id], { starred: value });
+    // resync the starred list so a newly-starred lead (not already in starredRows) is added
+    void postJSON("/api/companies/star", { ids: [id], value }).then(fetchStarred);
+  }
+  function toggleThumbsDown(id: string, value: boolean) {
+    patchRows([id], { thumbs_down: value });
+    void postJSON("/api/companies/thumbsdown", { ids: [id], value });
   }
   function bulkStar(value: boolean) {
     const ids = [...selected];
-    setCompanies((prev) => prev.map((c) => (ids.includes(c.id) ? { ...c, starred: value } : c)));
+    patchRows(ids, { starred: value });
     setSelected(new Set());
-    void postJSON("/api/companies/star", { ids, value });
+    void postJSON("/api/companies/star", { ids, value }).then(fetchStarred);
   }
 
-  const starredCount = companies.filter((c) => c.starred).length;
+  const starredCount = starredRows.filter((c) => c.starred).length;
 
   // Mark exported Net-New leads locally so they leave the tab and move to history.
   function markNetNewExportedLocal(keys: string[]) {
     const now = new Date().toISOString();
     setPool((prev) => prev.map((p) => (keys.includes(p.key) ? { ...p, exported_at: now } : p)));
     setSelected(new Set());
+  }
+
+  // Persist the export (which marks the leads exported server-side) THEN refetch the
+  // active server-backed tab so the exported batch drops out and the next leads load.
+  async function recordExportAndRefresh(ids: string[], type: "csv" | "sql", payload: string) {
+    await fetch("/api/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids, type, payload, origin: "discovered" }) });
+    if (isBase) await fetchBase(0);
+    else if (isTriggered) await fetchTriggered(0);
   }
 
   function exportSql() {
@@ -317,7 +528,7 @@ export default function Dashboard({
       void postJSON("/api/export", { ids: keys, type: "sql", payload: text, origin: "net_new" });
       return;
     }
-    const chosen = companies.filter((c) => selected.has(c.id));
+    const chosen = selectionSource.filter((c) => selected.has(c.id));
     const ids = chosen.map((c) => c.id);
     const { text } = buildNetsuiteSqlExport(
       chosen.map((c) => ({ name: c.name, website: c.website_raw ?? c.domain })),
@@ -325,7 +536,7 @@ export default function Dashboard({
     );
     setSqlModal(text);
     applyStatusLocal(ids, "exported_sql");
-    void postJSON("/api/export", { ids, type: "sql", payload: text, origin: "discovered" });
+    void recordExportAndRefresh(ids, "sql", text);
   }
   function exportCsv() {
     if (isNetNew) {
@@ -337,31 +548,54 @@ export default function Dashboard({
       void postJSON("/api/export", { ids: keys, type: "csv", payload: csv, origin: "net_new" });
       return;
     }
-    const chosen = companies.filter((c) => selected.has(c.id));
+    const chosen = selectionSource.filter((c) => selected.has(c.id));
     const ids = chosen.map((c) => c.id);
-    const csv = buildCsvExport(chosen.map((c) => ({ name: c.name, website_raw: c.website_raw })));
+    const csv = buildFullCsvExport(chosen); // every column we hold
     download("stanley-export.csv", csv, "text/csv");
     applyStatusLocal(ids, "exported_csv");
-    void postJSON("/api/export", { ids, type: "csv", payload: csv, origin: "discovered" });
+    void recordExportAndRefresh(ids, "csv", csv);
+  }
+
+  /** Export EVERY lead matching the current filter (all server pages), not just the
+   * loaded ones — then mark them exported and refresh so the next batch surfaces. */
+  async function exportAllFiltered(kind: "csv" | "sql") {
+    if (exportingAll) return;
+    setExportingAll(true);
+    try {
+      const rows = isTriggered ? await fetchAllTriggered() : await fetchAllBase();
+      if (rows.length === 0) { alert("Nothing matches the current filter."); return; }
+      if (rows.length > 500 && !confirm(`Export ${rows.length.toLocaleString()} leads and mark them all exported (they'll move to hidden)? Narrow the filter first if you only want a subset.`)) return;
+      const ids = rows.map((c) => c.id);
+      let payload: string;
+      if (kind === "csv") {
+        payload = buildFullCsvExport(rows);
+        download("stanley-tam-export.csv", payload, "text/csv");
+      } else {
+        payload = buildNetsuiteSqlExport(rows.map((c) => ({ name: c.name, website: c.website_raw ?? c.domain })), exportConfig).text;
+        setSqlModal(payload);
+      }
+      setSelected(new Set());
+      await recordExportAndRefresh(ids, kind, payload);
+    } finally {
+      setExportingAll(false);
+    }
   }
 
   function acknowledge(id: string) {
-    setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, has_new_signal: false } : c)));
+    patchRows([id], { has_new_signal: false });
     void postJSON("/api/companies/acknowledge", { id });
   }
 
   function saveNote(id: string, notes: string) {
-    setCompanies((prev) => prev.map((c) => (c.id === id ? { ...c, notes } : c)));
+    patchRows([id], { notes });
     void postJSON("/api/companies/note", { id, notes });
   }
   function rateCompany(id: string, rating: number | null, comment: string | null) {
-    setCompanies((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, rating, rating_comment: comment } : c)),
-    );
+    patchRows([id], { rating, rating_comment: comment });
     void postJSON("/api/companies/rate", { id, rating, comment });
   }
 
-  const drawer = companies.find((c) => c.id === drawerId) ?? null;
+  const drawer = [...companies, ...baseRows, ...triggeredRows, ...talAlerts].find((c) => c.id === drawerId) ?? null;
 
   return (
     <div className="mx-auto max-w-[1400px] px-6 py-6">
@@ -387,30 +621,53 @@ export default function Dashboard({
           </p>
         </div>
         <div className="flex items-center gap-3 text-sm">
+          <div className="relative">
+            <button onClick={() => setTalAlertsOpen((o) => !o)} className="rounded-md border px-3 py-1.5 font-medium" style={{ borderColor: talAlerts.length ? "rgba(220,38,38,0.55)" : "var(--border)", color: talAlerts.length ? "#ef4444" : "var(--text-muted)" }} title="New signals on your claimed (TAL) accounts">
+              🔔{talAlerts.length > 0 ? ` ${talAlerts.length}` : ""}
+            </button>
+            {talAlertsOpen && (
+              <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border p-2 shadow-xl" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <span className="text-xs font-semibold">Claimed-account alerts</span>
+                  {talAlerts.length > 0 && <button onClick={() => clearTalAlerts()} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text)]">Clear all</button>}
+                </div>
+                {talAlerts.length === 0 ? (
+                  <div className="px-1 py-2 text-xs text-[var(--text-muted)]">No new signals on claimed accounts.</div>
+                ) : talAlerts.map((c) => (
+                  <button key={c.id} onClick={() => { setTalAlertsOpen(false); setDrawerId(c.id); clearTalAlerts([c.id]); }} className="block w-full rounded px-2 py-1.5 text-left hover:bg-[var(--surface-2)]">
+                    <div className="text-sm font-medium" style={{ color: "#ef4444" }}>{c.name}</div>
+                    {c.top_trigger && <div className="truncate text-[11px] text-[var(--text-muted)]">{c.top_trigger.summary}</div>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <Link href="/settings" className="rounded-md border px-3 py-1.5 font-medium" style={{ borderColor: "var(--border)" }} title="Settings">
             ⚙ Settings
           </Link>
           <span className="tabular-nums text-[var(--gold)]" title="Current date & time">🕑 {clock}</span>
           <span className="text-[var(--text-muted)]">Last refresh {lastRefresh}</span>
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={importing}
-            className="rounded-md border px-3 py-1.5 font-medium"
-            style={{ borderColor: "var(--border)" }}
-          >
-            {importing ? "Importing…" : "Upload CSV"}
+          <span className="text-[var(--text-muted)]" title={`Next scheduled lead batch — daily discovery cron at 12:30 UTC. Next: ${nextUpdate.when}`}>· Next update <span className="text-[var(--gold)]">{nextUpdate.rel}</span></span>
+          {/* TAM Base bulk import: pick the vendor, drop the CSV. The vendor dropdown
+              scopes ONLY to this group — the TAL button below is a separate flow. */}
+          <span className="inline-flex items-center overflow-hidden rounded-md border" style={{ borderColor: "var(--border)" }}>
+            <span className="border-r px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }} title="This dropdown + list name apply ONLY to a TAM Base import (which vendor exported the CSV).">TAM Base ▸</span>
+            <select value={baseVendor} onChange={(e) => setBaseVendor(e.target.value as any)} className="bg-transparent px-2 py-1.5 text-xs outline-none" style={{ color: "var(--text)" }} title="Which vendor exported this CSV (sets the fit weight)">
+              <option value="zoominfo" style={{ background: "var(--surface)" }}>ZoomInfo</option>
+              <option value="linkedin" style={{ background: "var(--surface)" }}>LinkedIn</option>
+              <option value="netsuite" style={{ background: "var(--surface)" }}>NetSuite (truth)</option>
+            </select>
+            <input value={baseList} onChange={(e) => setBaseList(e.target.value)} placeholder={`${baseVendor}_tam`} title="List/silo name — each named CSV is its own list, updated independently (e.g. netsuite_tam, zoominfo_growth)" className="w-32 border-l bg-transparent px-2 py-1.5 text-xs outline-none placeholder:text-[var(--text-muted)]" style={{ borderColor: "var(--border)", color: "var(--text)" }} />
+            <button onClick={() => baseRef.current?.click()} disabled={importing} className="border-l px-3 py-1.5 text-xs font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }} title="Bulk-load a vendor ICP list into the TAM Base">
+              {importing ? "Importing…" : "+ Base CSV"}
+            </button>
+          </span>
+          <input ref={baseRef} type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleBaseFile} className="hidden" />
+          {/* ARS Target Account List sync — flags matching leads red */}
+          <button onClick={() => talRef.current?.click()} disabled={talImporting} className="rounded-md border px-3 py-1.5 text-xs font-medium" style={{ borderColor: "rgba(220,38,38,0.55)", color: "#ef4444" }} title="Upload your Target Account List (CSV) — matching leads get a red ARS TAL CLAIMED badge. Re-upload to re-sync.">
+            {talImporting ? "Syncing…" : "+ TAL CSV"}
           </button>
-          <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} className="hidden" />
-          <button
-            onClick={() => incRef.current?.click()}
-            disabled={importing}
-            className="rounded-md border px-3 py-1.5 font-medium"
-            style={{ borderColor: "var(--border)" }}
-            title="Upload an Inc. 5000 list CSV (intersected with your territory)"
-          >
-            Import Inc. 5000
-          </button>
-          <input ref={incRef} type="file" accept=".csv,text/csv" onChange={handleIncFile} className="hidden" />
+          <input ref={talRef} type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleTalFile} className="hidden" />
           <div className="relative">
             <button
               onClick={() => setPaidOpen((o) => !o)}
@@ -448,7 +705,7 @@ export default function Dashboard({
 
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b border-[var(--border)]">
-        {(["discovered", "imported", "starred", "net_new", "history", "actors"] as Tab[]).map((t) => (
+        {(["triggered", "imported", "starred", "history"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => { setTab(t); setSelected(new Set()); }}
@@ -458,10 +715,12 @@ export default function Dashboard({
               borderBottom: tab === t ? "2px solid var(--accent)" : "2px solid transparent",
             }}
           >
-            {t === "discovered"
+            {t === "triggered"
+              ? `🔥 Triggered${triggeredTotal ? ` (${triggeredTotal.toLocaleString()})` : ""}`
+              : t === "discovered"
               ? "Discovered"
               : t === "imported"
-                ? "Previously Imported"
+                ? "TAM Base"
                 : t === "starred"
                   ? `★ Starred${starredCount ? ` (${starredCount})` : ""}`
                   : t === "net_new"
@@ -487,14 +746,52 @@ export default function Dashboard({
               className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm"
               style={{ borderColor: "var(--border)" }}
             />
-            <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={SUBINDUSTRIES} />
+            {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
             <Select value={stateFilter} onChange={setStateFilter} placeholder="All states" options={states} />
-            <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />
+            {!isBase && <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />}
+            {(isBase || isTriggered) ? (
+              <div className="relative">
+                <button onClick={() => setTagsOpen((o) => !o)} className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm" style={{ borderColor: selectedTags.size || claimableOnly || erpOnly ? "var(--gold)" : "var(--border)" }}>
+                  Tags{selectedTags.size ? ` (${selectedTags.size})` : ""} ▾
+                </button>
+                {tagsOpen && (
+                  <div className="absolute z-30 mt-1 max-h-80 w-60 overflow-y-auto rounded-md border bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--border)" }}>
+                    <label className="flex items-center gap-2 rounded px-2 py-1 hover:bg-[var(--surface-2)]"><input type="checkbox" checked={claimableOnly} onChange={(e) => setClaimableOnly(e.target.checked)} /><span style={{ color: "var(--tier-a)" }}>Claimable only</span></label>
+                    <label className="flex items-center gap-2 rounded px-2 py-1 hover:bg-[var(--surface-2)]"><input type="checkbox" checked={erpOnly} onChange={(e) => setErpOnly(e.target.checked)} /><span>⚡ ERP-ready only</span></label>
+                    <div className="my-1 border-t" style={{ borderColor: "var(--border)" }} />
+                    <div className="px-2 pb-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Lists</div>
+                    {baseTags.map((t) => (
+                      <label key={t.tag} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-[var(--surface-2)]">
+                        <input type="checkbox" checked={selectedTags.has(t.tag)} onChange={() => toggleTag(t.tag)} />
+                        <span className="flex-1">{t.tag}</span>
+                        <span className="text-[10px] text-[var(--text-muted)]">{t.count.toLocaleString()}</span>
+                      </label>
+                    ))}
+                    {selectedTags.size > 1 && (
+                      <label className="mt-1 flex items-center gap-2 border-t px-2 pt-1.5 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
+                        <input type="checkbox" checked={tagMatchAll} onChange={(e) => setTagMatchAll(e.target.checked)} />
+                        Match ALL (in every checked list)
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
             <label className="ml-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
               <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
-              Show dismissed / exported
+              Show hidden (reviewed / dismissed)
             </label>
           </div>
+
+          {(isBase || isTriggered) && (baseTotal > 0 || triggeredTotal > 0) && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-[var(--surface-2)] px-3 py-2 text-sm" style={{ borderColor: "var(--border)" }}>
+              <span className="font-medium">{(isTriggered ? triggeredTotal : baseTotal).toLocaleString()} match this filter</span>
+              <span className="text-xs text-[var(--text-muted)]">— export the whole set, not just the loaded page</span>
+              <div className="flex-1" />
+              <ActionButton onClick={() => exportAllFiltered("csv")}>{exportingAll ? "Exporting…" : `⬇ Export all ${(isTriggered ? triggeredTotal : baseTotal).toLocaleString()} (CSV)`}</ActionButton>
+              <ActionButton onClick={() => exportAllFiltered("sql")}>{exportingAll ? "…" : "Export all (SQL)"}</ActionButton>
+            </div>
+          )}
 
           {selectedInViewCount > 0 && (
             <div className="mb-3 flex items-center gap-2 rounded-md border bg-[var(--surface-2)] px-3 py-2 text-sm" style={{ borderColor: "var(--border)" }}>
@@ -531,22 +828,23 @@ export default function Dashboard({
           <thead>
             <tr className="bg-[var(--surface-2)] text-left text-xs uppercase tracking-wide text-[var(--text-muted)]">
               <Th className="w-8"><input type="checkbox" checked={allSelected} onChange={toggleAll} /></Th>
-              <Th>Company</Th>
+              <Th sortKey="company" sort={sort} onSort={onSort}>Company</Th>
               <Th>What they do</Th>
               <Th>Why it's here</Th>
-              <Th className="text-center">Score</Th>
-              <Th className="text-center">Tier</Th>
+              <Th className="text-center" sortKey="score" sort={sort} onSort={onSort}>Score</Th>
+              <Th className="text-center" sortKey="tier" sort={sort} onSort={onSort}>Tier</Th>
               <Th>Signals</Th>
-              <Th>Source</Th>
-              <Th>State</Th>
-              <Th>Size</Th>
-              <Th>Rating</Th>
-              <Th>Status</Th>
+              <Th sortKey="source" sort={sort} onSort={onSort}>Actor / Source</Th>
+              <Th sortKey="state" sort={sort} onSort={onSort}>State</Th>
+              <Th sortKey="size" sort={sort} onSort={onSort}>Size</Th>
+              <Th sortKey="rating" sort={sort} onSort={onSort}>Rating</Th>
+              <Th sortKey="status" sort={sort} onSort={onSort}>Status</Th>
             </tr>
           </thead>
           <tbody>
-            {visible.map((c) => {
+            {tableRows.map((c) => {
               const top = strongestSignal(c);
+              const trig = (c as TriggeredRow).top_trigger;
               return (
                 <tr
                   key={c.id}
@@ -558,7 +856,7 @@ export default function Dashboard({
                     <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} />
                   </Td>
                   <Td>
-                    <div className="flex items-center gap-1.5 font-medium">
+                    <div className="group flex items-center gap-1.5 font-medium">
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleStar(c.id, !c.starred); }}
                         title={c.starred ? "Unstar" : "Star"}
@@ -567,27 +865,75 @@ export default function Dashboard({
                       >
                         {c.starred ? "★" : "☆"}
                       </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleThumbsDown(c.id, !c.thumbs_down); }}
+                        title={c.thumbs_down ? "Remove thumbs-down" : "Thumbs down"}
+                        className="text-xs leading-none transition-opacity"
+                        style={{ color: c.thumbs_down ? "#ef4444" : "var(--text-muted)", opacity: c.thumbs_down ? 1 : 0.45 }}
+                      >
+                        👎
+                      </button>
                       {c.has_new_signal && <span className="h-2 w-2 rounded-full bg-[var(--tier-a)]" />}
                       <a href={c.website_raw ?? "#"} target="_blank" rel="noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>
                         {c.name}
                       </a>
+                      <CopyButton value={c.name} label="company name">⧉</CopyButton>
+                      {c.netsuite_internal_id && <CopyButton value={c.netsuite_internal_id} label="NetSuite internal ID">#</CopyButton>}
+                      {c.tal_claimed && <span className="rounded px-1.5 text-[9px] font-bold uppercase tracking-wide" style={{ background: "rgba(220,38,38,0.18)", color: "#ef4444", border: "1px solid rgba(220,38,38,0.55)" }} title="On your ARS Target Account List">ARS TAL Claimed</span>}
+                      {!c.tal_claimed && c.tal_dq && <span className="rounded px-1.5 text-[9px] font-semibold uppercase tracking-wide" style={{ background: "rgba(148,163,184,0.16)", color: "#94a3b8", border: "1px solid rgba(148,163,184,0.45)" }} title="Was on a previous TAL, dropped from the latest — you already passed on it">Previously DQ&apos;d</span>}
+                      {(c.headcount_growth_pct ?? 0) >= 25 && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(90,154,62,0.18)", color: "var(--tier-a)", border: "1px solid rgba(90,154,62,0.5)" }} title="DOL Form 5500: within-year active-participant (headcount) growth">📈 +{Math.round(c.headcount_growth_pct as number)}% headcount</span>}
+                      {(c as TriggeredRow).trigger_types?.includes("finance_hire") && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(74,128,201,0.18)", color: "#6ea8e6", border: "1px solid rgba(74,128,201,0.5)" }} title="Hiring for a finance role (own careers page or announced) — scaling finance in-house">🧮 hiring for finance</span>}
+                      {c.has_parent && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(180,140,40,0.16)", color: "#b48c28", border: "1px solid rgba(180,140,40,0.45)" }} title={`Detected as a subsidiary${c.parent_name ? ` of ${c.parent_name}` : ""} (${c.parent_confidence ?? "?"} confidence) — the parent usually owns the ERP decision`}>🏢 {c.parent_confidence === "high" ? "subsidiary" : "likely sub"}{c.parent_name ? ` of ${c.parent_name}` : ""}</span>}
                     </div>
-                    <div className="text-xs text-[var(--text-muted)]">{c.domain}</div>
+                    <div className="group flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                      {c.domain}
+                      {(c.domain || c.website_raw) && <CopyButton value={bareDomain(c.domain || c.website_raw || "")} label="website">⧉</CopyButton>}
+                    </div>
                     <div className="text-[10px] text-[var(--text-muted)]">{c.subindustry}</div>
+                    {c.netsuite_internal_id && <div className="text-[10px] text-[var(--text-muted)]" title="NetSuite internal ID">NS&nbsp;#{c.netsuite_internal_id}</div>}
+                    {(c.lists?.length ?? 0) > 0 && (
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                        {c.claimable
+                          ? <span className="rounded px-1 text-[9px] font-semibold" style={{ background: "rgba(90,154,62,0.18)", color: "var(--tier-a)" }} title="In the NetSuite TAM — available to claim">CLAIMABLE</span>
+                          : <span className="rounded px-1 text-[9px]" style={{ color: "var(--text-muted)" }} title="Not in the NetSuite TAM — monitor only (someone owns it)">monitor</span>}
+                        {(c.lists ?? []).map((l) => <span key={l} className="rounded px-1 text-[9px]" style={{ background: "rgba(201,162,74,0.12)", color: "var(--gold)" }}>{l}</span>)}
+                        {(c.lists?.length ?? 0) > 1 && <span className="text-[9px] text-[var(--text-muted)]" title="Validated across multiple lists">×{c.lists!.length}</span>}
+                      </div>
+                    )}
+                    {c.erp_ready && (
+                      <div className="text-[10px] font-medium" style={{ color: "var(--tier-a)" }} title={`Runs a QuickBooks-tier stack, no ERP yet${c.technologies?.length ? ` — ${c.technologies.slice(0, 4).join(", ")}` : ""}`}>⚡ ERP-ready</div>
+                    )}
                     {c.already_on_netsuite && (
                       <div className="text-[10px] font-medium text-[var(--tier-b)]">⚠ already on NetSuite</div>
                     )}
                   </Td>
                   <Td className="max-w-[220px] text-[var(--text-muted)]">{c.description}</Td>
                   <Td className="max-w-[260px]">
-                    {top ? (
+                    {trig ? (
+                      <>
+                        <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{TRIGGER_LABELS[trig.type] ?? trig.type} · {sinceLabel(trig.signal_date ?? trig.detected_at)}</div>
+                        <div className="text-xs text-[var(--text-muted)]">{trig.summary}</div>
+                        {(c as TriggeredRow).trigger_count! > 1 && <div className="text-[10px] text-[var(--text-muted)]">+{(c as TriggeredRow).trigger_count! - 1} more signal{(c as TriggeredRow).trigger_count! - 1 === 1 ? "" : "s"}</div>}
+                      </>
+                    ) : top ? (
                       <>
                         <div>{top.signal_summary}</div>
                         <a href={top.source_url} target="_blank" rel="noreferrer" className="text-xs text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>
                           {top.source_name} ↗
                         </a>
                       </>
-                    ) : <span className="text-[var(--text-muted)]">—</span>}
+                    ) : (c.headcount_growth_pct ?? 0) >= 25 ? (
+                      <>
+                        <div className="text-xs font-semibold" style={{ color: "var(--tier-a)" }}>📈 Headcount growth · +{Math.round(c.headcount_growth_pct as number)}%</div>
+                        <div className="text-xs text-[var(--text-muted)]">DOL Form 5500 — within-year active-participant growth</div>
+                      </>
+                    ) : (c as TriggeredRow).trigger_types?.includes("finance_hire") ? (
+                      <div className="text-xs text-[var(--text-muted)]">🧮 Hiring for a finance role (scaling finance in-house)</div>
+                    ) : c.score_reason ? (
+                      <div className="truncate text-xs text-[var(--text-muted)]" title={c.score_reason}>{c.score_reason}</div>
+                    ) : (
+                      <div className="text-xs text-[var(--text-muted)]">In your claimable NetSuite TAM</div>
+                    )}
                   </Td>
                   <Td className="text-center"><ScoreBadge score={c.signal_score} /></Td>
                   <Td className="text-center"><TierBadge tier={c.score_tier} /></Td>
@@ -606,19 +952,36 @@ export default function Dashboard({
                 </tr>
               );
             })}
-            {visible.length === 0 && (
-              <tr><Td colSpan={12} className="py-10 text-center text-[var(--text-muted)]">No companies match these filters.</Td></tr>
+            {tableRows.length === 0 && (
+              <tr><Td colSpan={12} className="py-10 text-center text-[var(--text-muted)]">{(isBase && baseLoading) || (isTriggered && triggeredLoading) ? "Loading…" : isTriggered ? "Nothing has triggered yet — the engine sweeps the base for news/funding/hiring on the daily cron." : "No companies match these filters."}</Td></tr>
             )}
           </tbody>
         </table>
+        {isBase && (
+          <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
+            <span>Showing {baseRows.length.toLocaleString()} of {baseTotal.toLocaleString()} in the TAM base</span>
+            {baseRows.length < baseTotal && (
+              <button onClick={() => fetchBase(baseOffset + BASE_PAGE)} disabled={baseLoading} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
+                {baseLoading ? "Loading…" : "Load more"}
+              </button>
+            )}
+          </div>
+        )}
+        {isTriggered && (
+          <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
+            <span>Showing {triggeredRows.length.toLocaleString()} of {triggeredTotal.toLocaleString()} triggered, ranked by priority</span>
+            {triggeredRows.length < triggeredTotal && (
+              <button onClick={() => fetchTriggered(triggeredOffset + 100)} disabled={triggeredLoading} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
+                {triggeredLoading ? "Loading…" : "Load more"}
+              </button>
+            )}
+          </div>
+        )}
       </div>
       )}
 
       {drawer && <DetailDrawer company={drawer} onClose={() => setDrawerId(null)} onSaveNote={saveNote} onRate={rateCompany} />}
       {sqlModal && <SqlModal text={sqlModal} onClose={() => setSqlModal(null)} />}
-      {importReport && (
-        <ImportReportModal report={importReport} onClose={() => { setImportReport(null); location.reload(); }} />
-      )}
       <ChatPanel />
     </div>
   );
@@ -626,11 +989,65 @@ export default function Dashboard({
 
 /* ── small presentational helpers ─────────────────────────────────────────── */
 
-function Th({ children, className = "" }: { children?: React.ReactNode; className?: string }) {
-  return <th className={`px-3 py-2 font-medium ${className}`}>{children}</th>;
+function Th({ children, className = "", sortKey, sort, onSort }: { children?: React.ReactNode; className?: string; sortKey?: string; sort?: { key: string; dir: "asc" | "desc" }; onSort?: (k: any) => void }) {
+  const active = sortKey && sort?.key === sortKey;
+  const clickable = sortKey && onSort;
+  return (
+    <th
+      className={`px-3 py-2 font-medium ${clickable ? "cursor-pointer select-none hover:text-[var(--text)]" : ""} ${className}`}
+      onClick={clickable ? () => onSort!(sortKey) : undefined}
+    >
+      {children}
+      {active && <span className="ml-1" style={{ color: "var(--accent)" }}>{sort!.dir === "asc" ? "▲" : "▼"}</span>}
+    </th>
+  );
 }
 function Td({ children, className = "", colSpan, onClick }: { children?: React.ReactNode; className?: string; colSpan?: number; onClick?: (e: React.MouseEvent) => void }) {
   return <td className={`px-3 py-2 align-top ${className}`} colSpan={colSpan} onClick={onClick}>{children}</td>;
+}
+/** Reduce any website/URL to its bare registrable domain: strip protocol, "www.",
+ * any path/query/hash, and trailing slash (e.g. "https://www.website.com/about" → "website.com"). */
+function bareDomain(value: string): string {
+  return value.trim()
+    .replace(/^[a-z]+:\/\//i, "")  // protocol
+    .replace(/^www\./i, "")          // leading www.
+    .replace(/[/?#].*$/, "")         // path / query / hash
+    .replace(/\.+$/, "")              // trailing dots
+    .toLowerCase();
+}
+
+/** Copy-to-clipboard chip that appears on row hover (e.g. company name, internal ID). */
+function legacyCopy(value: string) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+  } catch { /* clipboard unavailable */ }
+}
+function copyText(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      // writeText returns a promise that REJECTS when blocked (e.g. document not
+      // focused) — catch it so it never bubbles as an unhandled rejection, and fall
+      // back to the legacy path.
+      navigator.clipboard.writeText(value).catch(() => legacyCopy(value));
+      return;
+    }
+  } catch { /* fall through to legacy path */ }
+  legacyCopy(value);
+}
+function CopyButton({ value, label, children }: { value: string; label: string; children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); copyText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+      title={`Copy ${label}`}
+      className="rounded px-1 text-[10px] leading-none text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--text)] group-hover:opacity-100"
+      style={copied ? { color: "var(--tier-a)", opacity: 1 } : undefined}
+    >
+      {copied ? "✓" : children}
+    </button>
+  );
 }
 function ActionButton({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
   return (
@@ -893,6 +1310,25 @@ function ExportHistoryPanel({
   );
 }
 
+/** A trigger event as the detail API returns it (decayed `live` score precomputed). */
+type DrawerTrigger = {
+  id: string; type: string; strength: number; half_life_days: number; summary: string;
+  source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; live: number;
+};
+
+/** Small labeled chip used in the drawer for flags, tags, and sources. */
+function Pill({ children, title, color }: { children: React.ReactNode; title?: string; color?: string }) {
+  return (
+    <span
+      title={title}
+      className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
+      style={{ background: "var(--surface-2)", color: color ?? "var(--text)", border: "1px solid var(--border)" }}
+    >
+      {children}
+    </span>
+  );
+}
+
 function DetailDrawer({
   company,
   onClose,
@@ -906,36 +1342,66 @@ function DetailDrawer({
 }) {
   const [note, setNote] = useState(company.notes ?? "");
   const [ratingComment, setRatingComment] = useState(company.rating_comment ?? "");
+  // Pull the FULL record (every signal + every trigger across the DB) on open — the row
+  // object from Triggered/TAM-Base tabs is a light projection with no signals/triggers.
+  const [detail, setDetail] = useState<{ company: Company; triggers: DrawerTrigger[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let live = true;
+    setLoading(true); setDetail(null);
+    fetch("/api/headhunter/lead", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: company.id }) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live && d?.company) { setDetail(d); setNote(d.company.notes ?? ""); setRatingComment(d.company.rating_comment ?? ""); } })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [company.id]);
+
+  const c = detail?.company ?? company; // merged: full record once loaded, row projection meanwhile
+  const triggers = detail?.triggers ?? [];
+  const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
+
   return (
     <div className="fixed inset-0 z-20 flex justify-end bg-black/40" onClick={onClose}>
       <div className="h-full w-[460px] overflow-y-auto border-l bg-[var(--surface)] p-5" style={{ borderColor: "var(--border)" }} onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between">
           <div>
-            <h2 className="text-lg font-semibold">{company.name}</h2>
-            <a href={company.website_raw ?? "#"} target="_blank" rel="noreferrer" className="text-sm text-[var(--accent)] hover:underline">{company.domain}</a>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold">{c.name}</h2>
+              {c.tal_claimed && <span className="rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide" style={{ background: "rgba(220,38,38,0.18)", color: "#ef4444", border: "1px solid rgba(220,38,38,0.55)" }} title="On your ARS Target Account List">ARS TAL Claimed</span>}
+              {!c.tal_claimed && c.tal_dq && <span className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide" style={{ background: "rgba(148,163,184,0.16)", color: "#94a3b8", border: "1px solid rgba(148,163,184,0.45)" }} title="Was on a previous TAL, dropped from the latest — previously disqualified">Previously DQ&apos;d</span>}
+            </div>
+            {(c.domain || c.website_raw) && <a href={c.website_raw ?? `https://${c.domain}`} target="_blank" rel="noreferrer" className="text-sm text-[var(--accent)] hover:underline">{bareDomain(c.domain || c.website_raw || "")}</a>}
           </div>
           <button onClick={onClose} className="text-[var(--text-muted)]">✕</button>
         </div>
-        <div className="mb-4 flex items-center gap-2">
-          <ScoreBadge score={company.signal_score} />
-          <TierBadge tier={company.score_tier} />
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <ScoreBadge score={c.signal_score} />
+          <TierBadge tier={c.score_tier} />
+          {c.claimable && <Pill title="Claimable in NetSuite (in your TAM)" color="var(--tier-a)">Claimable</Pill>}
+          {c.erp_ready && <Pill title="ERP-readiness signal present">⚡ ERP-ready</Pill>}
+          {c.erp_incumbent && <Pill title="Detected accounting/ERP incumbent">{c.erp_incumbent === "quickbooks" ? "QuickBooks" : c.erp_incumbent === "erp" ? "On an ERP" : c.erp_incumbent}</Pill>}
+          {c.pe_owned && <Pill title="Private-equity owned">PE-owned</Pill>}
+          {(c.headcount_growth_pct ?? 0) >= 25 && <Pill title="DOL Form 5500 within-year participant (headcount) growth" color="var(--tier-a)">📈 +{Math.round(c.headcount_growth_pct as number)}% headcount</Pill>}
+          {triggers.some((t) => t.type === "finance_hire") && <Pill title="Hiring for a finance role (own careers page or announced) — scaling finance in-house" color="#6ea8e6">🧮 hiring for finance</Pill>}
+          {c.has_parent && <Pill title={`Detected subsidiary${c.parent_name ? ` of ${c.parent_name}` : ""} (${c.parent_confidence ?? "?"} confidence)`} color="#b48c28">🏢 {c.parent_confidence === "high" ? "subsidiary" : "likely sub"}{c.parent_name ? ` of ${c.parent_name}` : ""}</Pill>}
+          {c.netsuite_internal_id && <Pill title="NetSuite internal ID">NS #{c.netsuite_internal_id}</Pill>}
         </div>
 
         {/* Lead quality rating — feeds the learning loop. */}
         <div className="mb-4 rounded-md border p-3" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Rate lead quality</span>
-            {company.rating != null && (
-              <button onClick={() => onRate(company.id, null, ratingComment || null)} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text)]">clear</button>
+            {c.rating != null && (
+              <button onClick={() => onRate(c.id, null, ratingComment || null)} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text)]">clear</button>
             )}
           </div>
           <div className="flex items-center gap-1 text-2xl leading-none">
             {[1, 2, 3, 4, 5].map((n) => (
               <button
                 key={n}
-                onClick={() => onRate(company.id, n, ratingComment || null)}
+                onClick={() => onRate(c.id, n, ratingComment || null)}
                 className="transition-transform hover:scale-110"
-                style={{ color: company.rating != null && n <= company.rating ? "var(--gold)" : "var(--border)" }}
+                style={{ color: c.rating != null && n <= c.rating ? "var(--gold)" : "var(--border)" }}
                 title={`${n} star${n > 1 ? "s" : ""}`}
               >
                 ★
@@ -945,86 +1411,72 @@ function DetailDrawer({
           <textarea
             value={ratingComment}
             onChange={(e) => setRatingComment(e.target.value)}
-            onBlur={() => { if (company.rating != null) onRate(company.id, company.rating, ratingComment || null); }}
+            onBlur={() => { if (c.rating != null) onRate(c.id, c.rating, ratingComment || null); }}
             placeholder="Why? (optional — helps the bot learn what's working)"
             className="mt-2 h-14 w-full rounded-md border bg-[var(--surface)] p-2 text-xs outline-none"
             style={{ borderColor: "var(--border)" }}
           />
         </div>
-        <p className="mb-1 text-sm text-[var(--text-muted)]">{company.description}</p>
-        <p className="mb-4 text-xs text-[var(--text-muted)]">{company.subindustry} · {company.state} · {company.employee_band} · {company.revenue_band}</p>
-        {company.score_reason && <p className="mb-4 rounded-md bg-[var(--surface-2)] p-3 text-xs">{company.score_reason}</p>}
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Signals ({company.signals.length})</h3>
+        {c.description && <p className="mb-1 text-sm text-[var(--text-muted)]">{c.description}</p>}
+        <p className="mb-4 text-xs text-[var(--text-muted)]">{[c.subindustry, [c.city, c.state].filter(Boolean).join(", "), c.employee_band || (c.employee_count ? `${c.employee_count} emp` : null), c.revenue_band].filter(Boolean).join(" · ")}</p>
+        {c.score_reason && <p className="mb-4 rounded-md bg-[var(--surface-2)] p-3 text-xs">{c.score_reason}</p>}
+
+        {/* WHY IT'S HERE — every trigger event we've recorded, strongest first. */}
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Why it&apos;s here — triggers ({triggers.length})</h3>
+        {triggers.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No trigger events recorded for this lead."}</p>}
         <div className="space-y-2">
-          {[...company.signals].sort((a, b) => b.weight - a.weight).map((s) => (
+          {triggers.map((t) => (
+            <div key={t.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="font-medium capitalize">{t.type.replace(/_/g, " ")}</span>
+                <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(t.signal_date || t.detected_at)}{t.live < t.strength * 0.5 ? " · fading" : ""}</span>
+              </div>
+              <p className="text-[var(--text-muted)]">{t.summary}</p>
+              {t.source_url && <a href={t.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{t.source_name || "source"} ↗</a>}
+            </div>
+          ))}
+        </div>
+
+        <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Signals ({c.signals.length})</h3>
+        {c.signals.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No discovery signals on this lead."}</p>}
+        <div className="space-y-2">
+          {[...c.signals].sort((a, b) => b.weight - a.weight).map((s) => (
             <div key={s.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
               <div className="mb-1 flex items-center justify-between">
                 <span className="font-medium capitalize">{s.type.replace(/_/g, " ")}</span>
                 <span className="text-xs text-[var(--text-muted)]">{s.strength} · +{s.weight}{s.subindustry_relevant ? " · vertical" : ""}</span>
               </div>
               {s.signal_date && (
-                <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                  {new Date(s.signal_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                </p>
+                <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(s.signal_date)}</p>
               )}
-              <p className="text-[var(--text-muted)]">{s.signal_summary}</p>
-              {s.raw_excerpt && <p className="mt-1 border-l-2 pl-2 text-xs italic text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>"{s.raw_excerpt}"</p>}
-              <a href={s.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{s.source_name} ↗</a>
+              {s.signal_summary && <p className="text-[var(--text-muted)]">{s.signal_summary}</p>}
+              {s.raw_excerpt && <p className="mt-1 border-l-2 pl-2 text-xs italic text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>&quot;{s.raw_excerpt}&quot;</p>}
+              {s.source_url && <a href={s.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{s.source_name || "source"} ↗</a>}
             </div>
           ))}
         </div>
+
+        {/* Tags / lists this lead belongs to + the actors/sources that found it. */}
+        {((c.lists?.length ?? 0) > 0 || (c.technologies?.length ?? 0) > 0 || (c.sources?.length ?? 0) > 0) && (
+          <>
+            <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Tags &amp; lists</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {(c.lists ?? []).map((t) => <Pill key={`l-${t}`} title="TAM list / silo membership" color="var(--tier-a)">{t}</Pill>)}
+              {(c.technologies ?? []).map((t) => <Pill key={`t-${t}`} title="Detected technology">{t}</Pill>)}
+              {(c.sources ?? []).map((t) => <Pill key={`s-${t}`} title="Source / actor that surfaced this lead" color="var(--text-muted)">{t}</Pill>)}
+            </div>
+          </>
+        )}
+
         <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Notes</h3>
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          onBlur={() => onSaveNote(company.id, note)}
+          onBlur={() => onSaveNote(c.id, note)}
           placeholder="Add a note (saved on blur)…"
           className="h-20 w-full rounded-md border bg-[var(--surface-2)] p-2 text-sm outline-none"
           style={{ borderColor: "var(--border)" }}
         />
-      </div>
-    </div>
-  );
-}
-
-function ImportReportModal({ report, onClose }: { report: ImportReport; onClose: () => void }) {
-  const withSignals = report.companies.filter((c) => c.signals.length > 0).length;
-  return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-6" onClick={onClose}>
-      <div className="flex max-h-[80vh] w-[780px] flex-col rounded-lg border bg-[var(--surface)] p-4" style={{ borderColor: "var(--border)" }} onClick={(e) => e.stopPropagation()}>
-        <div className="mb-2 flex items-start justify-between">
-          <div>
-            <h2 className="font-semibold">Import report — {report.filename}</h2>
-            <p className="text-xs text-[var(--text-muted)]">
-              {report.processed} of {report.row_count} processed · {report.companies.length} on watchlist · {withSignals} with a signal now
-              {report.truncated ? ` · capped at ${report.processed} this run` : ""}
-            </p>
-          </div>
-          <button onClick={onClose} className="text-[var(--text-muted)]">✕</button>
-        </div>
-        <div className="flex-1 overflow-auto">
-          <table className="w-full text-sm">
-            <tbody>
-              {report.companies.map((c) => {
-                const top = strongestSignal(c);
-                return (
-                  <tr key={c.id} className="border-t" style={{ borderColor: "var(--border)" }}>
-                    <td className="py-2 pr-2 align-top">
-                      <div className="font-medium">{c.name}</div>
-                      <div className="text-[10px] text-[var(--text-muted)]">{c.in_territory ? c.subindustry : "out of territory"}</div>
-                    </td>
-                    <td className="py-2 pr-2 align-top"><ScoreBadge score={c.signal_score} /></td>
-                    <td className="py-2 pr-2 align-top"><TierBadge tier={c.score_tier} /></td>
-                    <td className="py-2 align-top text-[var(--text-muted)]">
-                      {top ? top.signal_summary : "no signal yet — monitoring on each refresh"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">Closing reloads to show these under “Previously Imported.”</p>
       </div>
     </div>
   );

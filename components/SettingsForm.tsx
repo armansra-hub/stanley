@@ -21,6 +21,8 @@ interface AppCfg {
   sql_url_field: string;
   ns_stage: string;
   ns_sales_rep: string;
+  cross_tag_base?: boolean;
+  parent_autodismiss?: boolean;
 }
 interface ActorRow {
   key: string;
@@ -184,6 +186,14 @@ export default function SettingsForm({
             <label className="flex flex-col gap-1">Model (bulk)<input className={inputCls} value={cfg.model_bulk} onChange={(e) => setCfg({ ...cfg, model_bulk: e.target.value })} /></label>
             <label className="flex flex-col gap-1">Model (chat)<input className={inputCls} value={cfg.model_chat} onChange={(e) => setCfg({ ...cfg, model_chat: e.target.value })} /></label>
           </div>
+          <label className="mb-3 flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={cfg.cross_tag_base ?? true} onChange={(e) => setCfg({ ...cfg, cross_tag_base: e.target.checked })} />
+            Cross-tag new leads against the TAM base by name (inherit lists, claimable &amp; NetSuite ID)
+          </label>
+          <label className="mb-3 flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={cfg.parent_autodismiss ?? true} onChange={(e) => setCfg({ ...cfg, parent_autodismiss: e.target.checked })} />
+            Auto-dismiss high-confidence subsidiaries (&quot;subsidiary of / acquired by X&quot; on their own site). Off = just flag them.
+          </label>
           <SaveBtn onSave={() => save("app", cfg)} />
         </Section>
 

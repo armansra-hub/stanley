@@ -17,6 +17,8 @@ const dateOf = (...vs: unknown[]): string | null => {
 
 // Minimum employee floor (ICP requires ~20+). Applied where the actor supports it.
 const MIN_EMPLOYEES = 20;
+// Sales Nav Growth budget starts this UTC date (next Monday) — it skips until then.
+const GROWTH_START = "2026-06-29";
 const pick1 = async (src: string, universe: string[]) => (await nextSlices(src, universe, 1))[0] ?? universe[0];
 
 export interface ScheduledActor {
@@ -216,15 +218,24 @@ export const SCHEDULED: Record<string, ScheduledActor> = {
   },
 
   // GROWTH — Sales Nav COMPANY search ($1-10M rev, 25%+ headcount growth, his
-  // states + industries). Single-phase, cookieless ($0.018/result, 25/page). We
-  // page through across runs (coverage rotation). territory-trusted (his search
-  // already industry/revenue-filtered). The headcount-growth itself IS the signal.
+  // states + industries, ≥2 finance-dept). Single-phase, cookieless ($0.018/result,
+  // 25/page ≈ $0.45/page). territory-trusted (his search already filtered). The
+  // headcount-growth itself IS the signal.
+  // BUDGET ~$10/week, THIS actor only: 3 pages/day × 7 = 21 pages/wk ≈ $9.45/wk;
+  // maxCharge hard-caps each run at ~one page. Coverage rotation pages 1→12 so the
+  // extra budget finds NEW companies (not re-pulls). HOLDS until GROWTH_START.
   sales_nav_growth: {
     key: "sales_nav_growth",
     actorId: "pratikdani/sales-navigator-company-search-scraper-no-cookies",
     maxItems: 25, // one page/run
+    maxCharge: 0.5, // per-run cap (~one page); 3/day × 7 ≈ $10/wk ceiling
+    burst: 3, // 3 pages/day
     buildInput: async () => {
-      const page = await pick1("sales_nav_growth", ["1", "2", "3", "4"]);
+      // Don't run before the budget start date (next Monday).
+      if (new Date().toISOString().slice(0, 10) < GROWTH_START) {
+        return { input: {}, sliceKey: `hold:until-${GROWTH_START}`, skip: true };
+      }
+      const page = await pick1("sales_nav_growth", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]);
       return { input: { url: GROWTH_SEARCH_URL, page: Number(page) }, sliceKey: `page:${page}` };
     },
     map: (items) => {
@@ -259,16 +270,21 @@ export const SCHEDULED: Record<string, ScheduledActor> = {
   },
 };
 
-// Day-of-week rotation (0=Sun … 6=Sat). Everything on: every day pools Maps +
-// qualifies pooled domains + runs the core job signals; heavier discovery
-// (leads_finder) and announcements rotate in on alternating days.
-const DAILY_CORE = ["google_maps", "career_sites_qualify", "indeed", "linkedin_jobs"];
+// REPURPOSED 2026-06-27: the base is now free CSV (NetSuite/ZoomInfo TAM), so the
+// paid DISCOVERY actors (Google Maps breadth, leads_finder, Indeed/LinkedIn job
+// scrapers, Sales Nav growth, qualifier) are retired from the schedule — they were
+// finding leads we now get for free, and the Maps burst was the biggest spend.
+// The paid budget moved to the TRIGGER engine (finance-hiring check on the base,
+// lib/triggers/sweep.ts). Actor defs above are KEPT for manual ?actors= runs.
+// Sales Nav NEW HIRES (a finance leader just hired = a trigger) still runs via the
+// separate /api/cron/sales-nav (Mondays).
+// 2026-06-27: ALL Sales Nav / paid scheduled actors OFF (AE's call). $0 Apify spend.
+// Discovered is fed by the FREE sources only (/api/cron/discover: Google News, SEC
+// EDGAR, USAspending, FMCSA, press) and the base by free CSV imports; the free
+// trigger sweep (lib/triggers/sweep.ts) monitors the base. Sales Nav GROWTH def is
+// KEPT above for manual ?actors=sales_nav_growth runs, but nothing is scheduled.
+const DAILY_CORE: string[] = [];
 export const WEEKLY_SCHEDULE: Record<number, string[]> = {
-  0: [...DAILY_CORE, "career_sites"],                                          // Sun
-  1: [...DAILY_CORE, "leads_finder", "linkedin_posts"],                        // Mon
-  2: [...DAILY_CORE, "career_sites", "sales_nav_growth"],                      // Tue
-  3: [...DAILY_CORE, "leads_finder", "linkedin_posts"],                        // Wed
-  4: [...DAILY_CORE, "career_sites"],                                          // Thu
-  5: [...DAILY_CORE, "leads_finder", "linkedin_posts", "sales_nav_growth"],    // Fri
-  6: [...DAILY_CORE, "career_sites"],                                          // Sat
+  0: [...DAILY_CORE], 1: [...DAILY_CORE], 2: [...DAILY_CORE], 3: [...DAILY_CORE],
+  4: [...DAILY_CORE], 5: [...DAILY_CORE], 6: [...DAILY_CORE],
 };

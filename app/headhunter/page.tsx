@@ -3,6 +3,7 @@ import { SAMPLE_COMPANIES } from "@/lib/sampleData";
 import { getCompanies, getExportHistory, type ExportRecord } from "@/lib/db/companies";
 import { getPoolLeads, type PoolLead } from "@/lib/db/leadPool";
 import { getAppConfig, getActorOverrides } from "@/lib/db/settings";
+import { listEvents } from "@/lib/db/events";
 import { hasSupabaseEnv } from "@/lib/supabase/server";
 import type { SqlExportConfig } from "@/lib/export/sql";
 
@@ -15,8 +16,14 @@ export default async function HeadhunterPage() {
   let actorOverrides: Record<string, { enabled?: boolean }> = {};
   let poolLeads: PoolLead[] = [];
   let exportHistory: ExportRecord[] = [];
+  let lastRefreshAt: string | null = null;
 
   if (hasSupabaseEnv()) {
+    try {
+      // Last refresh = the most recent suite activity (cron / import / trigger sweep).
+      const ev = await listEvents({ module: "headhunter", limit: 1 });
+      lastRefreshAt = ev[0]?.ts ?? null;
+    } catch { /* events table may be absent */ }
     try {
       const fromDb = await getCompanies();
       if (fromDb.length > 0) {
@@ -58,6 +65,7 @@ export default async function HeadhunterPage() {
       actorOverrides={actorOverrides}
       poolLeads={poolLeads}
       exportHistory={exportHistory}
+      lastRefreshAt={lastRefreshAt}
     />
   );
 }

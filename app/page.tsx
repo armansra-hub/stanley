@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 const MENU = [
   { title: "Headhunter", href: "/headhunter", active: true },
-  { title: "Missions", href: null, active: false },
-  { title: "Kill List", href: null, active: false },
+  { title: "Missions", href: "/missions", active: true },
+  { title: "Kill List", href: "/kill-list", active: true },
 ];
 
 export default function MainMenu() {
