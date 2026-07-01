@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """
-DOL Form 5500 (FULL / large-plan) headcount-growth ingest — companion to
-ingest_dol5500.py (which covers the SF / small-plan file, <100 participants).
+DOL Form 5500 (FULL / large-plan, 100+ participants) headcount ingest — companion
+to ingest_dol5500.py (SF / small plans). Same signals, same merge-max semantics:
+  1) headcount_growth_pct (active participants, TOT_ACT_PARTCP_BOY_CNT ->
+     TOT_ACTIVE_PARTCP_CNT) — only ever RAISES an existing value.
+  2) `headcount_50` trigger when a plan crossed 50 active participants within the
+     year (ACA Applicable Large Employer threshold — public proxy for the
+     non-public IRS 1094-C/1095-C obligation).
+Matches the WHOLE monitored base (is_base=true). Safe to re-run; run after the SF
+script (order doesn't actually matter). Recomputes touched priorities at the end.
 
-The full Form 5500 is filed by employers whose plan has 100+ participants — i.e.
-your LARGER, later-stage targets that the SF file misses. Same signal, same column
-(headcount_growth_pct), same >=25% surfacing in Triggered.
-
-Matches claimable (NetSuite-TAM) leads by normalized sponsor name and computes
-within-year ACTIVE-participant growth: TOT_ACT_PARTCP_BOY_CNT (active, beginning of
-year) -> TOT_ACTIVE_PARTCP_CNT (active, end of year) — the same active-participant
-basis as the SF file. MERGE-MAX: only raises a company's headcount_growth_pct (never
-lowers an existing SF value), so it's safe to run after the SF ingest and re-runnable.
-
-Prereqs: download + unzip the full 5500 file, e.g.
-  curl -sL "https://askebsa.dol.gov/FOIA Files/2023/Latest/F_5500_2023_Latest.zip" -o f.zip
-  unzip f.zip -d f5500
-Then: F5500_CSV=f5500/f_5500_2023_latest.csv python3 scripts/ingest_dol5500_full.py
-Reads SBURL/SBKEY from jarvis/.env.local (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).
+Usage: F5500_CSV=/path/f_5500_2024_latest.csv YEAR=2024 python3 scripts/ingest_dol5500_full.py
+Reads Supabase creds + CRON_SECRET from jarvis/.env.local.
 """
 import os, re, csv, ssl, json, urllib.request
 from collections import defaultdict
@@ -33,30 +27,32 @@ def env(k):
 URL = env("NEXT_PUBLIC_SUPABASE_URL"); KEY = env("SUPABASE_SERVICE_ROLE_KEY")
 H = {"apikey": KEY, "Authorization": "Bearer " + KEY}
 F5 = os.environ.get("F5500_CSV", "/tmp/f5500/f_5500_2023_latest.csv")
-MIN_BOY = 10        # ignore tiny denominators (noise)
-CAP_PCT = 400       # cap absurd deltas
+YEAR = os.environ.get("YEAR", "2023")
+MIN_BOY = 10
+CAP_PCT = 400
+DATASET_PAGE = "https://www.dol.gov/agencies/ebsa/about-ebsa/our-activities/public-disclosure/foia/form-5500-datasets"
 
 NOISE = re.compile(r"\b(llc|inc|incorporated|corp|corporation|co|company|ltd|limited|lp|llp|plc|pllc|group|holdings|holding|the|and)\b")
 def norm(s):
     s = (s or "").lower(); s = re.sub(r"&", " and ", s); s = re.sub(r"[^a-z0-9]+", " ", s); s = NOISE.sub(" ", s)
     return re.sub(r"\s+", " ", s).strip()
 
-# 1) claimable name -> id, plus id -> existing headcount_growth_pct (for merge-max)
+# 1) whole monitored base: name -> id (+ existing pct for merge-max)
 norm2id = {}; id2existing = {}; frm = 0
 while True:
     b = json.load(urllib.request.urlopen(urllib.request.Request(
-        f"{URL}/rest/v1/companies?is_base=eq.true&claimable=eq.true&select=id,name,headcount_growth_pct&limit=1000&offset={frm}", headers=H), context=CTX))
+        f"{URL}/rest/v1/companies?is_base=eq.true&select=id,name,headcount_growth_pct&limit=1000&offset={frm}", headers=H), context=CTX))
     for r in b:
         n = norm(r["name"])
-        if n and len(n) >= 4 and n not in norm2id:  # first wins (dedupe)
+        if n and len(n) >= 4 and n not in norm2id:
             norm2id[n] = r["id"]
         id2existing[r["id"]] = r.get("headcount_growth_pct")
     if len(b) < 1000: break
     frm += 1000
-print("claimable names:", len(norm2id))
+print("base names:", len(norm2id))
 
-# 2) stream the full 5500, best ACTIVE-participant growth per matched company
-best = {}  # company_id -> pct
+# 2) stream the full 5500: best growth + ACA-threshold crossings
+best = {}; crossed = {}
 f = open(F5, encoding="latin-1"); rd = csv.reader(f); hdr = next(rd)
 iS = hdr.index("SPONSOR_DFE_NAME"); iD = hdr.index("SPONS_DFE_DBA_NAME") if "SPONS_DFE_DBA_NAME" in hdr else -1
 iB = hdr.index("TOT_ACT_PARTCP_BOY_CNT"); iE = hdr.index("TOT_ACTIVE_PARTCP_CNT")
@@ -68,17 +64,20 @@ for row in rd:
         boy = int(float(row[iB] or 0)); eoy = int(float(row[iE] or 0))
     except ValueError:
         continue
-    if boy < MIN_BOY or eoy <= 0: continue
-    pct = round(min(CAP_PCT, (eoy - boy) / boy * 100), 1)
+    if boy <= 0 or eoy <= 0: continue
     for idx in (iS, iD):
         if idx < 0 or idx >= len(row): continue
         cid = norm2id.get(norm(row[idx]))
-        if cid and pct > best.get(cid, -1):
-            best[cid] = pct
+        if not cid: continue
+        if boy >= MIN_BOY:
+            pct = round(min(CAP_PCT, (eoy - boy) / boy * 100), 1)
+            if pct > best.get(cid, -1): best[cid] = pct
+        if boy < 50 <= eoy:
+            crossed[cid] = (boy, eoy)
 f.close()
-print(f"scanned {rows} filings; matched {len(best)} claimable companies; >=25% growth: {sum(1 for v in best.values() if v >= 25)}")
+print(f"scanned {rows} filings; matched {len(best)} base companies; >=25%: {sum(1 for v in best.values() if v >= 25)}; ACA-50 crossings: {len(crossed)}")
 
-# 3) MERGE-MAX write: only raise headcount_growth_pct above the current value
+# 3) MERGE-MAX write
 def patch(ids, pct):
     for i in range(0, len(ids), 100):
         idlist = ",".join(ids[i:i+100])
@@ -90,10 +89,37 @@ def patch(ids, pct):
 bypct = defaultdict(list); skipped = 0
 for cid, pct in best.items():
     cur = id2existing.get(cid)
-    if cur is not None and float(cur) >= pct:
-        skipped += 1; continue   # SF (or a prior run) already has an equal/higher value
+    if cur is not None and float(cur) >= pct: skipped += 1; continue
     bypct[pct].append(cid)
 done = 0
-for pct, ids in bypct.items():
-    patch(ids, pct); done += len(ids)
-print(f"updated headcount_growth_pct on {done} companies (skipped {skipped} already >= via SF/prior run)")
+for pct, ids in bypct.items(): patch(ids, pct); done += len(ids)
+print(f"updated headcount_growth_pct on {done} (skipped {skipped} already >=)")
+
+# 4) crossed-50 (ACA ALE) triggers
+trig_rows = [{
+    "company_id": cid, "type": "headcount_50", "strength": 72, "half_life_days": 365,
+    "summary": f"Crossed the 50-employee ACA threshold in plan-year {YEAR} (active plan participants {boy}→{eoy}) — now an Applicable Large Employer: employer-mandate coverage + 1094-C/1095-C reporting kick in (DOL Form 5500)",
+    "source_name": "DOL Form 5500", "source_url": f"{DATASET_PAGE}#aca50-{YEAR}-{cid[:8]}",
+    "signal_date": f"{YEAR}-12-31T00:00:00",
+} for cid, (boy, eoy) in crossed.items()]
+ins = 0
+for i in range(0, len(trig_rows), 200):
+    chunk = trig_rows[i:i+200]
+    req = urllib.request.Request(f"{URL}/rest/v1/triggers?on_conflict=company_id,source_url",
+        data=json.dumps(chunk).encode(),
+        headers={**H, "content-type": "application/json", "Prefer": "resolution=ignore-duplicates,return=minimal"}, method="POST")
+    urllib.request.urlopen(req, context=CTX).read(); ins += len(chunk)
+print(f"inserted (deduped) {ins} headcount_50 triggers")
+
+# 5) recompute touched priorities
+try:
+    SECRET = env("CRON_SECRET")
+    APP = os.environ.get("APP_BASE_URL", "https://jarvis-sable-eta.vercel.app")
+    touched = sorted(set(list(best.keys()) + list(crossed.keys())))
+    for i in range(0, len(touched), 300):
+        req = urllib.request.Request(f"{APP}/api/cron/recompute",
+            data=json.dumps({"ids": touched[i:i+300]}).encode(),
+            headers={"content-type": "application/json", "x-cron-secret": SECRET}, method="POST")
+        print("recompute:", json.load(urllib.request.urlopen(req, context=CTX, timeout=75)))
+except Exception as e:
+    print("recompute deferred to daily cron:", e)

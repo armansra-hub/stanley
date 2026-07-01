@@ -34,3 +34,4 @@ yarn-error.log*
 # Personal background art — not shared (app falls back to gradient; add your own)
 public/art/*
 !public/art/README.md
+tsconfig.tsbuildinfo

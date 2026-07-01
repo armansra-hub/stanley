@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { Company, CompanyStatus } from "@/lib/types";
-import type { PoolLead } from "@/lib/db/leadPool";
 import type { ExportRecord } from "@/lib/db/companies";
 import { formatNow } from "@/lib/time";
 import { buildNetsuiteSqlExport, type SqlExportConfig } from "@/lib/export/sql";
@@ -15,7 +14,7 @@ import { ACTORS } from "@/config/actors";
 import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongestSignal } from "./badges";
 import ChatPanel from "./ChatPanel";
 
-type Tab = "triggered" | "discovered" | "imported" | "starred" | "net_new" | "history" | "actors";
+type Tab = "triggered" | "imported" | "starred" | "history";
 
 function download(filename: string, text: string, mime: string) {
   const blob = new Blob([text], { type: mime });
@@ -55,7 +54,6 @@ export default function Dashboard({
   usingSample = false,
   exportConfig,
   actorOverrides = {},
-  poolLeads = [],
   exportHistory = [],
   lastRefreshAt = null,
 }: {
@@ -63,7 +61,6 @@ export default function Dashboard({
   usingSample?: boolean;
   exportConfig?: SqlExportConfig;
   actorOverrides?: Record<string, { enabled?: boolean }>;
-  poolLeads?: PoolLead[];
   exportHistory?: ExportRecord[];
   lastRefreshAt?: string | null;
 }) {
@@ -250,38 +247,13 @@ export default function Dashboard({
 
   const importedHasNew = companies.some((c) => c.source === "imported" && c.has_new_signal);
 
-  const visible = useMemo(() => {
-    return companies.filter((c) => {
-      if (tab === "starred") {
-        if (!c.starred) return false; // Starred shows everything starred, even exported
-      } else {
-        if (c.source !== (tab === "discovered" ? "discovered" : "imported")) return false;
-        if (!showClosed && (c.status === "reviewed" || c.status === "dismissed" || c.status.startsWith("exported"))) return false;
-      }
-      if (subindustry && c.subindustry !== subindustry) return false;
-      if (stateFilter && c.state !== stateFilter) return false;
-      if (band && scoreBand(c.signal_score) !== band) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        if (!c.name.toLowerCase().includes(q) && !(c.domain ?? "").includes(q)) return false;
-      }
-      return true;
-    }).sort((a, b) => {
-      const av = sortValue(a, sort.key), bv = sortValue(b, sort.key);
-      const base = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
-      const dir = sort.dir === "asc" ? 1 : -1;
-      return base * dir || b.signal_score - a.signal_score || latestSignalMs(b) - latestSignalMs(a);
-    });
-  }, [companies, tab, showClosed, subindustry, stateFilter, band, search, sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const states = useMemo(
     () => Array.from(new Set(companies.map((c) => c.state).filter(Boolean))).sort() as string[],
     [companies],
   );
 
-  const isNetNew = tab === "net_new";
   const isHistory = tab === "history";
-  const isActors = tab === "actors";
   const isBase = tab === "imported"; // TAM Base — server-paged (14k+), not loaded into the browser
   const isStarred = tab === "starred";
 
@@ -397,32 +369,13 @@ export default function Dashboard({
     const t = setTimeout(() => fetchTriggered(0), 250);
     return () => clearTimeout(t);
   }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll]); // eslint-disable-line react-hooks/exhaustive-deps
-  const TRIGGER_LABELS: Record<string, string> = { erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A", finance_hire: "🧮 Finance hire", press: "📈 Expansion", news: "📰 News" };
+  const TRIGGER_LABELS: Record<string, string> = {
+    erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A (acquirer)", finance_hire: "🧮 Finance hire",
+    new_entity: "🏛 New entity", gov_contract: "📜 Gov contract", fleet_expansion: "🚚 Fleet growth",
+    hiring_velocity: "🚛 Driver surge", headcount_50: "🏥 Crossed 50 emp (ACA)", ucc_financing: "🏦 Growth loan (UCC-1)",
+    press: "📈 Expansion", news: "📰 News",
+  };
   const sinceLabel = (iso: string | null | undefined) => { if (!iso) return ""; const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return d <= 0 ? "today" : d === 1 ? "1d ago" : d < 30 ? `${d}d ago` : `${Math.floor(d / 30)}mo ago`; };
-
-  // Net-new = raw Maps pool leads that aren't yet a signal company. Exclude
-  // promoted ones (they're in Discovered), exported ones (moved to Export
-  // History), and any domain already in companies. Local state so an export
-  // removes them from the tab immediately.
-  const [pool, setPool] = useState<PoolLead[]>(poolLeads);
-  const companyDomains = useMemo(
-    () => new Set(companies.map((c) => c.domain).filter(Boolean) as string[]),
-    [companies],
-  );
-  const availablePool = useMemo(
-    () => pool.filter((p) => !p.promoted_at && !p.exported_at && !(p.domain && companyDomains.has(p.domain))),
-    [pool, companyDomains],
-  );
-  const netNewVisible = useMemo(() => {
-    return availablePool.filter((p) => {
-      if (stateFilter && p.state !== stateFilter) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        if (!p.name.toLowerCase().includes(q) && !(p.domain ?? "").includes(q)) return false;
-      }
-      return true;
-    });
-  }, [availablePool, stateFilter, search]);
 
   // Starred (server-backed) with the same client filters as Discovered; shows every
   // starred lead even exported, so no hidden-status filter here.
@@ -442,8 +395,8 @@ export default function Dashboard({
   const isHiddenStatus = (s: string) => s === "reviewed" || s === "dismissed" || s.startsWith("exported");
   const tableRows = isStarred ? starredVisible
     : isTriggered ? triggeredRows.filter((c) => showClosed || !isHiddenStatus(c.status))
-    : isBase ? baseRows.filter((c) => showClosed || !isHiddenStatus(c.status)) : visible;
-  const idsInView = isNetNew ? netNewVisible.map((p) => p.key) : isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : visible.map((c) => c.id);
+    : isBase ? baseRows.filter((c) => showClosed || !isHiddenStatus(c.status)) : [];
+  const idsInView = isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : [];
   const selectedInViewCount = idsInView.filter((id) => selected.has(id)).length;
   const allSelected = idsInView.length > 0 && selectedInViewCount === idsInView.length;
 
@@ -503,13 +456,6 @@ export default function Dashboard({
 
   const starredCount = starredRows.filter((c) => c.starred).length;
 
-  // Mark exported Net-New leads locally so they leave the tab and move to history.
-  function markNetNewExportedLocal(keys: string[]) {
-    const now = new Date().toISOString();
-    setPool((prev) => prev.map((p) => (keys.includes(p.key) ? { ...p, exported_at: now } : p)));
-    setSelected(new Set());
-  }
-
   // Persist the export (which marks the leads exported server-side) THEN refetch the
   // active server-backed tab so the exported batch drops out and the next leads load.
   async function recordExportAndRefresh(ids: string[], type: "csv" | "sql", payload: string) {
@@ -519,15 +465,6 @@ export default function Dashboard({
   }
 
   function exportSql() {
-    if (isNetNew) {
-      const chosen = netNewVisible.filter((p) => selected.has(p.key));
-      const keys = chosen.map((p) => p.key);
-      const { text } = buildNetsuiteSqlExport(chosen.map((p) => ({ name: p.name, website: p.domain })), exportConfig);
-      setSqlModal(text);
-      markNetNewExportedLocal(keys);
-      void postJSON("/api/export", { ids: keys, type: "sql", payload: text, origin: "net_new" });
-      return;
-    }
     const chosen = selectionSource.filter((c) => selected.has(c.id));
     const ids = chosen.map((c) => c.id);
     const { text } = buildNetsuiteSqlExport(
@@ -539,15 +476,6 @@ export default function Dashboard({
     void recordExportAndRefresh(ids, "sql", text);
   }
   function exportCsv() {
-    if (isNetNew) {
-      const chosen = netNewVisible.filter((p) => selected.has(p.key));
-      const keys = chosen.map((p) => p.key);
-      const csv = buildCsvExport(chosen.map((p) => ({ name: p.name, website_raw: p.domain })));
-      download("stanley-netnew.csv", csv, "text/csv");
-      markNetNewExportedLocal(keys);
-      void postJSON("/api/export", { ids: keys, type: "csv", payload: csv, origin: "net_new" });
-      return;
-    }
     const chosen = selectionSource.filter((c) => selected.has(c.id));
     const ids = chosen.map((c) => c.id);
     const csv = buildFullCsvExport(chosen); // every column we hold
@@ -717,17 +645,11 @@ export default function Dashboard({
           >
             {t === "triggered"
               ? `🔥 Triggered${triggeredTotal ? ` (${triggeredTotal.toLocaleString()})` : ""}`
-              : t === "discovered"
-              ? "Discovered"
               : t === "imported"
                 ? "TAM Base"
                 : t === "starred"
                   ? `★ Starred${starredCount ? ` (${starredCount})` : ""}`
-                  : t === "net_new"
-                    ? `Net-New Leads${availablePool.length ? ` (${availablePool.length})` : ""}`
-                    : t === "history"
-                      ? `Export History${exportHistory.length ? ` (${exportHistory.length})` : ""}`
-                      : "Actor Scoreboard"}
+                  : `Export History${exportHistory.length ? ` (${exportHistory.length})` : ""}`}
             {t === "imported" && importedHasNew && (
               <span className="absolute -right-1 top-1 h-2 w-2 rounded-full bg-[var(--tier-a)]" />
             )}
@@ -735,8 +657,8 @@ export default function Dashboard({
         ))}
       </div>
 
-      {/* Filters + bulk bar (hidden on history/actors tabs) */}
-      {!isHistory && !isActors && (
+      {/* Filters + bulk bar (hidden on the history tab) */}
+      {!isHistory && (
         <>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <input
@@ -799,29 +721,21 @@ export default function Dashboard({
               <div className="flex-1" />
               <ActionButton onClick={exportSql}>Export SQL</ActionButton>
               <ActionButton onClick={exportCsv}>Export CSV</ActionButton>
-              {!isNetNew && (
-                <>
-                  <ActionButton onClick={() => bulkStar(true)}>★ Star</ActionButton>
-                  <ActionButton onClick={() => bulkStar(false)}>☆ Unstar</ActionButton>
-                  <ActionButton onClick={() => changeStatus([...selected], "reviewed")}>Mark reviewed</ActionButton>
-                  {showClosed && (
-                    <ActionButton onClick={() => changeStatus([...selected], "new")}>Restore</ActionButton>
-                  )}
-                  <ActionButton onClick={() => changeStatus([...selected], "dismissed")} danger>Dismiss</ActionButton>
-                </>
+              <ActionButton onClick={() => bulkStar(true)}>★ Star</ActionButton>
+              <ActionButton onClick={() => bulkStar(false)}>☆ Unstar</ActionButton>
+              <ActionButton onClick={() => changeStatus([...selected], "reviewed")}>Mark reviewed</ActionButton>
+              {showClosed && (
+                <ActionButton onClick={() => changeStatus([...selected], "new")}>Restore</ActionButton>
               )}
+              <ActionButton onClick={() => changeStatus([...selected], "dismissed")} danger>Dismiss</ActionButton>
             </div>
           )}
         </>
       )}
 
-      {/* Table / History / Actors */}
-      {isActors ? (
-        <ActorScoreboard companies={companies} />
-      ) : isHistory ? (
+      {/* Table / History */}
+      {isHistory ? (
         <ExportHistoryPanel records={exportHistory} onReopen={(text) => setSqlModal(text)} exportConfig={exportConfig} />
-      ) : isNetNew ? (
-        <NetNewTable rows={netNewVisible} selected={selected} allSelected={allSelected} onToggle={toggle} onToggleAll={toggleAll} />
       ) : (
       <div className="overflow-x-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
         <table className="w-full border-collapse text-sm">
@@ -980,7 +894,9 @@ export default function Dashboard({
       </div>
       )}
 
-      {drawer && <DetailDrawer company={drawer} onClose={() => setDrawerId(null)} onSaveNote={saveNote} onRate={rateCompany} />}
+      {drawer && <DetailDrawer company={drawer} onClose={() => setDrawerId(null)} onSaveNote={saveNote} onRate={rateCompany}
+        onStar={(id, v) => toggleStar(id, v)}
+        onStatus={(id, status) => { changeStatus([id], status); setDrawerId(null); }} />}
       {sqlModal && <SqlModal text={sqlModal} onClose={() => setSqlModal(null)} />}
       <ChatPanel />
     </div>
@@ -1067,120 +983,6 @@ function Select({ value, onChange, options, placeholder }: { value: string; onCh
 function StatusPill({ status }: { status: CompanyStatus }) {
   const label = status.replace("_", " ");
   return <span className="rounded-full border px-2 py-0.5 text-[10px] capitalize text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{label}</span>;
-}
-
-function NetNewTable({
-  rows, selected, allSelected, onToggle, onToggleAll,
-}: {
-  rows: PoolLead[];
-  selected: Set<string>;
-  allSelected: boolean;
-  onToggle: (id: string) => void;
-  onToggleAll: () => void;
-}) {
-  return (
-    <div className="overflow-x-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
-      <p className="border-b px-3 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
-        Net-new in-territory companies from the Google Maps sweep — no signal yet. Select to export by name + website; any that start hiring for finance/ERP get auto-promoted into Discovered.
-      </p>
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="bg-[var(--surface-2)] text-left text-xs uppercase tracking-wide text-[var(--text-muted)]">
-            <Th className="w-8"><input type="checkbox" checked={allSelected} onChange={onToggleAll} /></Th>
-            <Th>Company</Th>
-            <Th>Website</Th>
-            <Th>State</Th>
-            <Th>City</Th>
-            <Th>Found</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((p) => (
-            <tr key={p.key} className="border-t hover:bg-[var(--surface-2)]/50" style={{ borderColor: "var(--border)" }}>
-              <Td><input type="checkbox" checked={selected.has(p.key)} onChange={() => onToggle(p.key)} /></Td>
-              <Td className="font-medium">{p.name}</Td>
-              <Td>{p.domain ? <a href={`https://${p.domain}`} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">{p.domain}</a> : <span className="text-[var(--text-muted)]">—</span>}</Td>
-              <Td>{p.state ?? "—"}</Td>
-              <Td className="text-[var(--text-muted)]">{p.city ?? "—"}</Td>
-              <Td className="whitespace-nowrap text-xs text-[var(--text-muted)]">{p.first_seen_at?.slice(0, 10)}</Td>
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr><Td colSpan={6} className="py-10 text-center text-[var(--text-muted)]">No net-new leads yet — the Google Maps sweep fills this daily.</Td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ActorScoreboard({ companies }: { companies: Company[] }) {
-  // Tally per source actor: how many leads it found, how many are Strong (score
-  // ≥60), how many starred, how many exported. A lead found by N actors counts
-  // toward each (credit shared). Drives "which actors perform best".
-  const rows = useMemo(() => {
-    const m = new Map<string, { leads: number; strong: number; starred: number; exported: number; scoreSum: number; ratingSum: number; ratingN: number }>();
-    for (const c of companies) {
-      const srcs = c.sources && c.sources.length ? c.sources : ["(unknown)"];
-      for (const s of srcs) {
-        const r = m.get(s) ?? { leads: 0, strong: 0, starred: 0, exported: 0, scoreSum: 0, ratingSum: 0, ratingN: 0 };
-        r.leads += 1;
-        if (c.signal_score >= 60) r.strong += 1;
-        if (c.starred) r.starred += 1;
-        if (c.status.startsWith("exported")) r.exported += 1;
-        r.scoreSum += c.signal_score;
-        if (c.rating != null) { r.ratingSum += c.rating; r.ratingN += 1; }
-        m.set(s, r);
-      }
-    }
-    return [...m.entries()]
-      .map(([id, r]) => ({ id, ...r, avg: r.leads ? Math.round(r.scoreSum / r.leads) : 0, avgRating: r.ratingN ? r.ratingSum / r.ratingN : null }))
-      .sort((a, b) => (b.avgRating ?? -1) - (a.avgRating ?? -1) || b.strong - a.strong || b.leads - a.leads);
-  }, [companies]);
-
-  if (companies.length === 0) {
-    return <div className="py-16 text-center text-sm text-[var(--text-muted)]">No leads yet — the scoreboard fills as actors find companies.</div>;
-  }
-
-  const max = Math.max(...rows.map((r) => r.leads), 1);
-  return (
-    <div className="overflow-x-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
-      <p className="border-b px-3 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
-        Which actors are finding your leads — and which find the <em>good</em> ones. Strong = score ≥ 60. (A lead found by multiple actors credits each.)
-      </p>
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="bg-[var(--surface-2)] text-left text-xs uppercase tracking-wide text-[var(--text-muted)]">
-            <Th>Actor</Th>
-            <Th>Leads found</Th>
-            <Th className="text-center">Strong (≥60)</Th>
-            <Th className="text-center">Avg score</Th>
-            <Th className="text-center">★ Your rating</Th>
-            <Th className="text-center">★ Starred</Th>
-            <Th className="text-center">Exported</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id} className="border-t" style={{ borderColor: "var(--border)" }}>
-              <Td className="font-medium">{sourceLabel(r.id)}</Td>
-              <Td>
-                <div className="flex items-center gap-2">
-                  <span className="inline-block h-2 rounded" style={{ width: `${Math.max(6, (r.leads / max) * 120)}px`, background: "var(--gold)" }} />
-                  <span>{r.leads}</span>
-                </div>
-              </Td>
-              <Td className="text-center"><span style={{ color: r.strong ? "var(--tier-a)" : "var(--text-muted)" }}>{r.strong}</span></Td>
-              <Td className="text-center text-[var(--text-muted)]">{r.avg}</Td>
-              <Td className="text-center">{r.avgRating != null ? <span style={{ color: "var(--gold)" }}>{r.avgRating.toFixed(1)}★ <span className="text-[10px] text-[var(--text-muted)]">({r.ratingN})</span></span> : <span className="text-[var(--text-muted)]">—</span>}</Td>
-              <Td className="text-center">{r.starred || "—"}</Td>
-              <Td className="text-center">{r.exported || "—"}</Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
 }
 
 function ExportHistoryPanel({
@@ -1334,11 +1136,15 @@ function DetailDrawer({
   onClose,
   onSaveNote,
   onRate,
+  onStar,
+  onStatus,
 }: {
   company: Company;
   onClose: () => void;
   onSaveNote: (id: string, notes: string) => void;
   onRate: (id: string, rating: number | null, comment: string | null) => void;
+  onStar: (id: string, value: boolean) => void;
+  onStatus: (id: string, status: "new" | "reviewed" | "dismissed") => void;
 }) {
   const [note, setNote] = useState(company.notes ?? "");
   const [ratingComment, setRatingComment] = useState(company.rating_comment ?? "");
@@ -1373,6 +1179,18 @@ function DetailDrawer({
             {(c.domain || c.website_raw) && <a href={c.website_raw ?? `https://${c.domain}`} target="_blank" rel="noreferrer" className="text-sm text-[var(--accent)] hover:underline">{bareDomain(c.domain || c.website_raw || "")}</a>}
           </div>
           <button onClick={onClose} className="text-[var(--text-muted)]">✕</button>
+        </div>
+        {/* Quick actions — act on the lead without closing the drawer + hunting the row. */}
+        <div className="mb-3 flex items-center gap-2">
+          <button onClick={() => onStar(c.id, !c.starred)} className="rounded-md border px-2.5 py-1 text-xs" style={{ borderColor: "var(--border)", color: c.starred ? "var(--tier-b)" : "var(--text-muted)" }}>
+            {c.starred ? "★ Starred" : "☆ Star"}
+          </button>
+          <button onClick={() => onStatus(c.id, "reviewed")} className="rounded-md border px-2.5 py-1 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" style={{ borderColor: "var(--border)" }} title="Hide from the worklist (bring back with Show hidden)">
+            ✓ Mark reviewed
+          </button>
+          <button onClick={() => onStatus(c.id, "dismissed")} className="rounded-md border px-2.5 py-1 text-xs" style={{ borderColor: "rgba(220,38,38,0.45)", color: "#ef4444" }} title="Dismiss — not a fit; hides it everywhere">
+            ✕ Dismiss
+          </button>
         </div>
         <div className="mb-3 flex flex-wrap items-center gap-1.5">
           <ScoreBadge score={c.signal_score} />

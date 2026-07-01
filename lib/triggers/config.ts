@@ -13,6 +13,9 @@ export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
   gov_contract: { strength: 82, half_life_days: 120 }, // new federal award → revenue step-change + audit/DCAA → ERP
   finance_hire: { strength: 80, half_life_days: 30 }, // hiring AP/controller → in-house finance scaling NOW
   fleet_expansion: { strength: 74, half_life_days: 150 }, // FMCSA fleet growth → multi-asset/maintenance accounting outgrows QB
+  hiring_velocity: { strength: 70, half_life_days: 120 }, // FMCSA driver-count surge → payroll/ops complexity
+  headcount_50: { strength: 72, half_life_days: 365 }, // crossed ~50 employees (ACA ALE threshold) per DOL 5500 — new compliance burden; annual data → slow decay
+  ucc_financing: { strength: 65, half_life_days: 180 }, // new UCC-1 financing statement → took secured debt (equipment/LOC) = growth investment
   press: { strength: 50, half_life_days: 30 },      // expansion / new office
   news: { strength: 40, half_life_days: 21 },       // generic mention
 };
@@ -25,6 +28,9 @@ export const TRIGGER_LABEL: Record<string, string> = {
   gov_contract: "Gov contract award",
   finance_hire: "Finance hire",
   fleet_expansion: "Fleet growth (FMCSA)",
+  hiring_velocity: "Driver-count surge (FMCSA)",
+  headcount_50: "Crossed 50 employees (ACA threshold)",
+  ucc_financing: "New secured financing (UCC-1)",
   press: "Expansion",
   news: "In the news",
 };

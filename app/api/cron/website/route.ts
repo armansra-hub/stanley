@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sweepWebsites } from "@/lib/triggers/websiteSweep";
 import { logEvent } from "@/lib/db/events";
 
-/** Website-change watch over claimable leads (FREE). Secret-guarded. ?n= / ?offset=. */
+/** Website watch over the base (FREE). Secret-guarded. ?n= / ?offset= / ?scope=claimable|tail. */
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
@@ -16,8 +16,9 @@ async function run(req: NextRequest) {
   }
   const n = Math.min(Number(url.searchParams.get("n") ?? 150) || 150, 250);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
-  const result = await sweepWebsites(n, { offset });
-  await logEvent("headhunter", "website.sweep", { summary: `Website watch: ${result.triggered} new growth signals (${result.changed} sites changed / ${result.checked} checked)`, entity_type: "cron", meta: result });
+  const scope = url.searchParams.get("scope") === "tail" ? ("tail" as const) : ("claimable" as const);
+  const result = await sweepWebsites(n, { offset, scope });
+  await logEvent("headhunter", "website.sweep", { summary: `Website watch (${scope}): ${result.triggered} new growth signals (${result.changed} sites changed / ${result.checked} checked)`, entity_type: "cron", meta: { ...result, scope } });
   return NextResponse.json(result);
 }
 

@@ -203,9 +203,17 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   //   2) it must be a real EVENT (funding / M&A / finance hire / expansion) — the
   //      generic "news" catch-all is dropped (a headline with no trigger keyword
   //      is not a reason to call). Plus freshness.
+  // TIME-BOXED + INCREMENTALLY STAMPED: each processed batch stamps its rotation
+  // cursor immediately, and the loop stops cleanly before Vercel's 60s kill — so a
+  // slow wave (many Opus-verified headlines) commits partial progress instead of
+  // losing everything to FUNCTION_INVOCATION_TIMEOUT (the pre-fix failure mode).
+  const deadline = Date.now() + 48_000;
   const BATCH = 20;
+  let processed = 0;
   for (let i = 0; i < companies.length; i += BATCH) {
-    await Promise.all(companies.slice(i, i + BATCH).map(async (c) => {
+    if (Date.now() > deadline) break;
+    const slice = companies.slice(i, i + BATCH);
+    await Promise.all(slice.map(async (c) => {
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
         let n = await checkCompanyNews(c, { llm: claimable });
@@ -214,9 +222,10 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
         if (n > 0) { news += n; touched.add(c.id); }
       } catch { /* source-isolated */ }
     }));
+    await markChecked(slice.map((c) => c.id)); // commit progress batch-by-batch
+    processed += slice.length;
   }
 
   for (const cid of touched) await recomputePriority(cid);
-  await markChecked(companies.map((c) => c.id));
-  return { checked: companies.length, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp };
+  return { checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp };
 }

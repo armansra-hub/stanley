@@ -9,7 +9,12 @@ import type { Company } from "@/lib/types";
 export interface TriggerInput { type: string; summary: string; source_name?: string; source_url?: string | null; signal_date?: string | null }
 export interface TriggerRow { id: string; company_id: string; type: string; strength: number; half_life_days: number; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string }
 
-/** Insert a trigger (deduped by company + source_url). Returns true if a NEW one landed. */
+/** Insert a trigger (deduped by company + source_url). Returns true if a NEW one landed.
+ * RESURFACING: an exported/reviewed lead (NOT dismissed — that's an explicit rejection)
+ * whose export is >14 days old gets flipped back to `new` when a genuinely NEW trigger
+ * lands — "watch the TAM like a hawk" must include leads already pulled once, or a
+ * post-export funding round would stay silently hidden forever. The 14-day grace stops
+ * next-day churn on leads the AE just exported and is actively working. */
 export async function recordTrigger(companyId: string, t: TriggerInput): Promise<boolean> {
   const spec = TRIGGER_SPEC[t.type] ?? TRIGGER_SPEC.news;
   const db = serviceClient();
@@ -17,7 +22,18 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
     company_id: companyId, type: t.type, strength: spec.strength, half_life_days: spec.half_life_days,
     summary: t.summary.slice(0, 280), source_name: t.source_name ?? null, source_url: t.source_url ?? null, signal_date: t.signal_date ?? null,
   });
-  return !error; // unique-index violation on a dupe → error set → false
+  if (error) return false; // unique-index violation on a dupe
+  try {
+    const { data: c } = await db.from("companies").select("status, exported_at").eq("id", companyId).maybeSingle();
+    const s = (c as any)?.status as string | undefined;
+    if (s === "exported_csv" || s === "exported_sql" || s === "reviewed") {
+      const exp = (c as any)?.exported_at ? new Date((c as any).exported_at).getTime() : 0;
+      if (Date.now() - exp > 14 * 86_400_000) {
+        await db.from("companies").update({ status: "new", has_new_signal: true }).eq("id", companyId);
+      }
+    }
+  } catch { /* resurfacing is best-effort */ }
+  return true;
 }
 
 /**
@@ -183,11 +199,16 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
 }
 
 /** Claimable leads with a domain, for the website-change watch. Ordered by
- * site_checked_at (never/longest first). Its own cursor. */
-export async function pickSitesForRotation(limit: number, offset = 0): Promise<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null }[]> {
+ * site_checked_at (never/longest first). Its own cursor.
+ * scope: "claimable" = NetSuite TAM (the priority set, refreshed fastest);
+ *        "tail" = the monitored non-claimable base (ZoomInfo-only leads) — the AE
+ *        mainly works claimable but still wants the ZoomInfo TAM watched. */
+export async function pickSitesForRotation(limit: number, offset = 0, scope: "claimable" | "tail" = "claimable"): Promise<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null }[]> {
   const db = serviceClient();
-  const { data } = await db.from("companies").select("id, name, domain, site_hash, site_checked_at")
-    .eq("is_base", true).eq("claimable", true).not("domain", "is", null)
+  const base: any = db.from("companies").select("id, name, domain, site_hash, site_checked_at")
+    .eq("is_base", true).not("domain", "is", null);
+  const scoped = scope === "claimable" ? base.eq("claimable", true) : base.not("claimable", "is", true);
+  const { data } = await scoped
     .order("site_checked_at", { ascending: true, nullsFirst: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
@@ -223,11 +244,13 @@ export async function pickCarriersForRotation(limit: number, offset = 0): Promis
   return (data ?? []) as any[];
 }
 
-/** Claimable companies in a given state (for the Secretary-of-State new-entity watch). */
+/** Base companies in a given state (for the state-registry watch: new entities + UCC).
+ * Whole monitored base, claimable first — the AE watches the ZoomInfo tail too. */
 export async function pickSosCompaniesForRotation(state: string, limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name")
-    .eq("claimable", true).eq("state", state)
+    .eq("is_base", true).eq("state", state)
+    .order("claimable", { ascending: false })
     .order("name", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];

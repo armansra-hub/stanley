@@ -1,28 +1,39 @@
 import "server-only";
 import { pickSosCompaniesForRotation, recordTrigger, recomputePriority } from "@/lib/db/triggers";
-import { fetchNewCoEntities, brandKey, lightNorm } from "@/lib/sources/coSos";
+import { fetchNewCoEntities, fetchRecentUccFilings, brandKey, lightNorm } from "@/lib/sources/coSos";
 
 /**
- * Secretary-of-State NEW-ENTITY watch (FREE) — pilot state Colorado. For each CO
- * claimable company, look up recently-formed registry entities whose name carries
- * the company's brand but ISN'T its existing entity → that's a NEW subsidiary /
- * holdco / LLC = multi-entity consolidation, a strong NetSuite trigger. Boost-only;
- * never creates a company. Deduped by the entity's registry id (source_url).
+ * Colorado state-registry watch (FREE) over the whole CO base (claimable first), two
+ * signals per company in one pass:
+ *  1) NEW ENTITY — a recently-formed SoS entity that LEADS with the company's brand
+ *     and adds a qualifier → new subsidiary/holdco = multi-entity consolidation.
+ *  2) UCC FINANCING — a new UCC-1 financing statement with the company as debtor →
+ *     took secured debt (equipment/LOC) = growth investment + asset accounting.
+ * Boost-only; never creates a company. Deduped by registry id / filing date.
  */
 const LOOKBACK_DAYS = 150;
+const UCC_LOOKBACK_DAYS = 365;
 
-export async function sweepCoSos(limit = 200, opts: { offset?: number } = {}): Promise<{ checked: number; matched: number; triggered: number }> {
+export async function sweepCoSos(limit = 200, opts: { offset?: number } = {}): Promise<{ checked: number; matched: number; triggered: number; ucc: number }> {
   const companies = await pickSosCompaniesForRotation("CO", limit, opts.offset ?? 0);
-  const stats = { checked: companies.length, matched: 0, triggered: 0 };
+  const stats = { checked: 0, matched: 0, triggered: 0, ucc: 0 };
   const sinceISO = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 19);
+  const uccSinceISO = new Date(Date.now() - UCC_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 19);
   const touched = new Set<string>();
 
-  const BATCH = 6; // unauthenticated Socrata — keep concurrency modest
+  // Time-boxed; unauthenticated Socrata → modest concurrency.
+  const deadline = Date.now() + 48_000;
+  const BATCH = 6;
   for (let i = 0; i < companies.length; i += BATCH) {
-    await Promise.all(companies.slice(i, i + BATCH).map(async (c) => {
+    if (Date.now() > deadline) break;
+    const slice = companies.slice(i, i + BATCH);
+    stats.checked += slice.length;
+    await Promise.all(slice.map(async (c) => {
       try {
         const brand = brandKey(c.name); // distinctive ≥2-token brand, or null
         if (!brand) return;
+
+        // 1) new-entity (subsidiary/holdco) watch
         const ents = await fetchNewCoEntities(brand.upper, sinceISO);
         for (const e of ents) {
           const enToks = lightNorm(e.name).split(" ").filter(Boolean);
@@ -38,6 +49,18 @@ export async function sweepCoSos(limit = 200, opts: { offset?: number } = {}): P
             summary: `New CO entity "${e.name}" (${e.type}) formed ${e.formed.slice(0, 10)}${e.city ? `, ${e.city}` : ""} — likely a new subsidiary/holdco (multi-entity consolidation)`,
             source_name: "CO Secretary of State", source_url: url, signal_date: e.formed.slice(0, 19) || new Date().toISOString(),
           })) { stats.triggered++; touched.add(c.id); }
+        }
+
+        // 2) UCC financing-statement watch (debtor = this company, exact-normalized)
+        for (const f of await fetchRecentUccFilings(c.name, uccSinceISO)) {
+          const day = f.filed.slice(0, 10);
+          if (await recordTrigger(c.id, {
+            type: "ucc_financing",
+            summary: `New UCC financing statement filed ${day} (CO) — took secured financing (equipment/line of credit) = growth investment`,
+            source_name: "CO Secretary of State (UCC)",
+            source_url: `https://data.colorado.gov/resource/wffy-3uut.json#${encodeURIComponent(lightNorm(c.name))}-${day}`,
+            signal_date: f.filed.slice(0, 19) || new Date().toISOString(),
+          })) { stats.ucc++; touched.add(c.id); }
         }
       } catch { /* per-company isolated */ }
     }));

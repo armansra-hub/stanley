@@ -15,12 +15,16 @@ import { getFmcsaSnapshot, upsertFmcsaSnapshot } from "@/lib/db/fmcsa";
  */
 export async function sweepFmcsaTam(limit = 150, opts: { offset?: number } = {}): Promise<{ checked: number; matched: number; fleet_growth: number }> {
   const companies = await pickCarriersForRotation(limit, opts.offset ?? 0);
-  const stats = { checked: companies.length, matched: 0, fleet_growth: 0 };
+  const stats = { checked: 0, matched: 0, fleet_growth: 0 };
   const touched = new Set<string>();
 
+  // Time-boxed + batch-stamped (see sweepBase) — a slow wave commits partial progress.
+  const deadline = Date.now() + 48_000;
   const BATCH = 8;
   for (let i = 0; i < companies.length; i += BATCH) {
-    await Promise.all(companies.slice(i, i + BATCH).map(async (c) => {
+    if (Date.now() > deadline) break;
+    const slice = companies.slice(i, i + BATCH);
+    await Promise.all(slice.map(async (c) => {
       try {
         const cn = normalizeCompanyName(c.name);
         if (!cn || cn.length < 4 || isGenericName(cn)) return;
@@ -55,9 +59,10 @@ export async function sweepFmcsaTam(limit = 150, opts: { offset?: number } = {})
         await upsertFmcsaSnapshot(m.dot, c.name, m.units, m.drivers).catch(() => {});
       } catch { /* per-company isolated */ }
     }));
+    await markSignalsChecked(slice.map((c) => c.id)); // commit progress batch-by-batch
+    stats.checked += slice.length;
   }
 
   for (const id of touched) await recomputePriority(id);
-  await markSignalsChecked(companies.map((c) => c.id));
   return stats;
 }

@@ -8,7 +8,7 @@
 # Override the data dir with HEADCOUNT_DIR=/path (default: a temp dir).
 set -euo pipefail
 
-YEAR="${1:-2023}"                 # DOL posts each plan year; bump as new files publish
+YEAR="${1:-2024}"                 # DOL posts each plan year; bump as new files publish
 DIR="${HEADCOUNT_DIR:-/tmp/dol5500_${YEAR}}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE="https://askebsa.dol.gov/FOIA%20Files/${YEAR}/Latest"
@@ -22,7 +22,7 @@ FULL_CSV="$DIR/f_5500_${YEAR}_latest.csv"
 [ -f "$FULL_CSV" ] || { echo "↓ full (large plans 100+) …"; curl -sL "${BASE}/F_5500_${YEAR}_Latest.zip"    -o "$DIR/full.zip" --max-time 600 && unzip -o "$DIR/full.zip" -d "$DIR" >/dev/null && rm -f "$DIR/full.zip"; }
 
 echo "── SF ingest (small plans) ──"
-SF_CSV="$SF_CSV" python3 "$HERE/ingest_dol5500.py"
+SF_CSV="$SF_CSV" YEAR="$YEAR" python3 "$HERE/ingest_dol5500.py"
 echo "── full ingest (large plans, merge-max) ──"
-F5500_CSV="$FULL_CSV" python3 "$HERE/ingest_dol5500_full.py"
-echo "✓ headcount refresh complete (both plan sizes). Leads ≥25% now surface in Triggered."
+F5500_CSV="$FULL_CSV" YEAR="$YEAR" python3 "$HERE/ingest_dol5500_full.py"
+echo "✓ headcount refresh complete (both plan sizes + ACA-50 crossings). Leads surface in Triggered."

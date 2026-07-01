@@ -18,14 +18,19 @@ const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now(
  *     event classifier as Google News (it's their feed, so no name-match needed).
  * First sight of the growth set = baseline (store, no fire).
  */
-export async function sweepWebsites(limit = 120, opts: { offset?: number } = {}): Promise<{ checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
-  const companies = await pickSitesForRotation(limit, opts.offset ?? 0);
-  const stats = { checked: companies.length, changed: 0, triggered: 0, parents: 0, dismissed: 0 };
+export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail" } = {}): Promise<{ checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
+  const companies = await pickSitesForRotation(limit, opts.offset ?? 0, opts.scope ?? "claimable");
+  const stats = { checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0 };
   let autodismiss = true;
   try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch { /* default true */ }
 
+  // Time-boxed: setSiteChecked already stamps per-company, so stopping early just
+  // leaves the rest for the next wave — never a lost wave.
+  const deadline = Date.now() + 48_000;
   const BATCH = 8;
   for (let i = 0; i < companies.length; i += BATCH) {
+    if (Date.now() > deadline) break;
+    stats.checked += Math.min(BATCH, companies.length - i);
     await Promise.all(companies.slice(i, i + BATCH).map(async (c) => {
       try {
         const scan = await fetchSiteSignals(c.domain);

@@ -17,7 +17,7 @@ async function run(req: NextRequest) {
   const n = Math.min(Number(url.searchParams.get("n") ?? 200) || 200, 400);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
   const result = await sweepCoSos(n, { offset });
-  await logEvent("headhunter", "cosos.sweep", { summary: `CO SoS new-entity watch: ${result.triggered} new subsidiaries (${result.matched} matched / ${result.checked} checked)`, entity_type: "cron", meta: result });
+  await logEvent("headhunter", "cosos.sweep", { summary: `CO registry watch: ${result.triggered} new subsidiaries + ${result.ucc} UCC financings (${result.checked} checked)`, entity_type: "cron", meta: result });
   return NextResponse.json(result);
 }
 

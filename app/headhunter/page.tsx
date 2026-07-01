@@ -1,7 +1,6 @@
 import Dashboard from "@/components/Dashboard";
 import { SAMPLE_COMPANIES } from "@/lib/sampleData";
 import { getCompanies, getExportHistory, type ExportRecord } from "@/lib/db/companies";
-import { getPoolLeads, type PoolLead } from "@/lib/db/leadPool";
 import { getAppConfig, getActorOverrides } from "@/lib/db/settings";
 import { listEvents } from "@/lib/db/events";
 import { hasSupabaseEnv } from "@/lib/supabase/server";
@@ -14,7 +13,6 @@ export default async function HeadhunterPage() {
   let usingSample = true;
   let exportConfig: SqlExportConfig | undefined;
   let actorOverrides: Record<string, { enabled?: boolean }> = {};
-  let poolLeads: PoolLead[] = [];
   let exportHistory: ExportRecord[] = [];
   let lastRefreshAt: string | null = null;
 
@@ -32,11 +30,6 @@ export default async function HeadhunterPage() {
       }
     } catch (e) {
       console.error("Falling back to sample data:", e);
-    }
-    try {
-      poolLeads = await getPoolLeads();
-    } catch (e) {
-      console.error("pool load failed:", e);
     }
     try {
       exportHistory = await getExportHistory();
@@ -63,7 +56,6 @@ export default async function HeadhunterPage() {
       usingSample={usingSample}
       exportConfig={exportConfig}
       actorOverrides={actorOverrides}
-      poolLeads={poolLeads}
       exportHistory={exportHistory}
       lastRefreshAt={lastRefreshAt}
     />

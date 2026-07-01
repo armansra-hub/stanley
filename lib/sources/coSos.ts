@@ -52,3 +52,46 @@ export async function fetchNewCoEntities(coreUpper: string, sinceISO: string, ma
     }));
   } catch { return []; }
 }
+
+// ── CO UCC financing statements (same open-data portal) ─────────────────────────
+// A new UCC-1 = the company just took SECURED financing (equipment loan / line of
+// credit) = investing in growth + more debt/asset accounting complexity. Dry-matched
+// 2026-06-29: 7.8% of CO base names appear as debtors; ~17% of those had a filing in
+// the last 24mo — low volume, high value, free.
+const UCC_DEBTORS = "https://data.colorado.gov/resource/8upq-58vz.json";
+const UCC_FILINGS = "https://data.colorado.gov/resource/wffy-3uut.json";
+
+export interface UccFiling { filed: string; docType: string }
+
+async function socrata(url: string): Promise<Record<string, unknown>[]> {
+  try {
+    const res = await fetch(url, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {} });
+    if (!res.ok) return [];
+    const rows = await res.json();
+    return Array.isArray(rows) ? rows : [];
+  } catch { return []; }
+}
+
+/** Recent original UCC financing statements where this company is the DEBTOR.
+ * Debtor lookup is prefix-searched then verified with lightNorm EQUALITY (legal
+ * names carry suffixes the TAM name may lack; equality avoids substring FPs). */
+export async function fetchRecentUccFilings(name: string, sinceISO: string): Promise<UccFiling[]> {
+  const brand = brandKey(name);
+  if (!brand) return []; // single-token/generic names: too collision-prone for a registry join
+  const esc = brand.upper.replace(/'/g, "''");
+  const dq = new URLSearchParams({ $select: "organizationname,fileid", $where: `upper(organizationname) like '${esc}%'`, $limit: "25" });
+  const debtors = await socrata(`${UCC_DEBTORS}?${dq}`);
+  const self = lightNorm(name);
+  const fileIds = [...new Set(debtors
+    .filter((d) => lightNorm(String(d.organizationname ?? "")) === self)
+    .map((d) => String(d.fileid ?? "")).filter(Boolean))].slice(0, 10);
+  if (fileIds.length === 0) return [];
+  const fl = fileIds.map((f) => `'${f.replace(/'/g, "''")}'`).join(",");
+  const fq = new URLSearchParams({
+    $select: "filingdate,documenttype",
+    $where: `fileid in(${fl}) AND filingdate > '${sinceISO}' AND documenttype = 'UCC financing statement'`,
+    $order: "filingdate DESC", $limit: "5",
+  });
+  const filings = await socrata(`${UCC_FILINGS}?${fq}`);
+  return filings.map((r) => ({ filed: String(r.filingdate ?? ""), docType: String(r.documenttype ?? "") }));
+}

@@ -68,18 +68,20 @@ async function run(req: NextRequest) {
     hit(`/api/cron/fmcsa?n=${FMCSA_N}&offset=${k * FMCSA_N}`),
   );
   // Website watch (growth phrases + parent-company + newsroom RSS + careers/finance-
-  // hire) over claimable leads (FREE). Each company now does up to ~6 fetches
-  // (home/about/news/careers/jobs/RSS), so n=30 keeps every wave comfortably under the
-  // 60s cap (verified) — no silent partial-timeouts. 30 × 30 = 900/day → whole ~7.2k
-  // TAM every ~8 days via the site_checked_at cursor (oldest-first, so misses self-heal).
-  const SITE_WAVES = 30, SITE_N = 30;
-  const siteWaves = Array.from({ length: SITE_WAVES }, (_, k) =>
-    hit(`/api/cron/website?n=${SITE_N}&offset=${k * SITE_N}`),
-  );
+  // hire) over the base (FREE). Each company does up to ~6 fetches, so n=30 keeps every
+  // wave under the 60s cap (verified; sweeps are also time-boxed + per-company stamped,
+  // so nothing is ever lost to a timeout). Split per the AE's priorities:
+  //   • 24 claimable waves (720/day) → NetSuite TAM (~7.2k) refreshes every ~10 days
+  //   • 12 tail waves (360/day) → ZoomInfo-only monitored leads (~7.6k) every ~3 weeks
+  const SITE_N = 30;
+  const siteWaves = [
+    ...Array.from({ length: 24 }, (_, k) => hit(`/api/cron/website?n=${SITE_N}&offset=${k * SITE_N}`)),
+    ...Array.from({ length: 12 }, (_, k) => hit(`/api/cron/website?n=${SITE_N}&offset=${k * SITE_N}&scope=tail`)),
+  ];
 
-  // Secretary-of-State new-entity (subsidiary) watch — CO pilot. Small claimable set
-  // (~364), covered in 2 waves; a new entity carrying the brand = multi-entity signal.
-  const sosWaves = [hit(`/api/cron/cosos?n=200&offset=0`), hit(`/api/cron/cosos?n=200&offset=200`)];
+  // Colorado registry watch (SoS new-entity + UCC financing) — whole CO base (~720,
+  // claimable first), 4 waves. New entity = multi-entity signal; UCC-1 = growth loan.
+  const sosWaves = Array.from({ length: 4 }, (_, k) => hit(`/api/cron/cosos?n=200&offset=${k * 200}`));
 
   // Daily priority recompute over all priority>0 leads — drops "ghost" leads whose
   // trigger has fully decayed/been removed (and no headcount), so the Triggered tab
