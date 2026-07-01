@@ -15,6 +15,7 @@ export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
   fleet_expansion: { strength: 74, half_life_days: 150 }, // FMCSA fleet growth → multi-asset/maintenance accounting outgrows QB
   hiring_velocity: { strength: 70, half_life_days: 120 }, // FMCSA driver-count surge → payroll/ops complexity
   headcount_50: { strength: 72, half_life_days: 365 }, // crossed ~50 employees (ACA ALE threshold) per DOL 5500 — new compliance burden; annual data → slow decay
+  sba_loan: { strength: 75, half_life_days: 180 }, // SBA 7(a)/504 approval → verified growth capital (equipment/RE/expansion), all states
   ucc_financing: { strength: 65, half_life_days: 180 }, // new UCC-1 financing statement → took secured debt (equipment/LOC) = growth investment
   press: { strength: 50, half_life_days: 30 },      // expansion / new office
   news: { strength: 40, half_life_days: 21 },       // generic mention
@@ -30,6 +31,7 @@ export const TRIGGER_LABEL: Record<string, string> = {
   fleet_expansion: "Fleet growth (FMCSA)",
   hiring_velocity: "Driver-count surge (FMCSA)",
   headcount_50: "Crossed 50 employees (ACA threshold)",
+  sba_loan: "SBA growth loan (7(a)/504)",
   ucc_financing: "New secured financing (UCC-1)",
   press: "Expansion",
   news: "In the news",

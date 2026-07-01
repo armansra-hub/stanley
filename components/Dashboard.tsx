@@ -373,7 +373,7 @@ export default function Dashboard({
     erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A (acquirer)", finance_hire: "🧮 Finance hire",
     new_entity: "🏛 New entity", gov_contract: "📜 Gov contract", fleet_expansion: "🚚 Fleet growth",
     hiring_velocity: "🚛 Driver surge", headcount_50: "🏥 Crossed 50 emp (ACA)", ucc_financing: "🏦 Growth loan (UCC-1)",
-    press: "📈 Expansion", news: "📰 News",
+    sba_loan: "💵 SBA growth loan", press: "📈 Expansion", news: "📰 News",
   };
   const sinceLabel = (iso: string | null | undefined) => { if (!iso) return ""; const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return d <= 0 ? "today" : d === 1 ? "1d ago" : d < 30 ? `${d}d ago` : `${Math.floor(d / 30)}mo ago`; };
 

@@ -102,14 +102,19 @@ trig_rows = [{
     "source_name": "DOL Form 5500", "source_url": f"{DATASET_PAGE}#aca50-{YEAR}-{cid[:8]}",
     "signal_date": f"{YEAR}-12-31T00:00:00",
 } for cid, (boy, eoy) in crossed.items()]
-ins = 0
-for i in range(0, len(trig_rows), 200):
-    chunk = trig_rows[i:i+200]
-    req = urllib.request.Request(f"{URL}/rest/v1/triggers?on_conflict=company_id,source_url",
-        data=json.dumps(chunk).encode(),
-        headers={**H, "content-type": "application/json", "Prefer": "resolution=ignore-duplicates,return=minimal"}, method="POST")
-    urllib.request.urlopen(req, context=CTX).read(); ins += len(chunk)
-print(f"inserted (deduped) {ins} headcount_50 triggers")
+# Plain per-row inserts (the dedupe index is partial — ON CONFLICT can't target it);
+# a 409 unique-violation just means the trigger already exists.
+ins = dup = 0
+for t in trig_rows:
+    req = urllib.request.Request(f"{URL}/rest/v1/triggers",
+        data=json.dumps(t).encode(),
+        headers={**H, "content-type": "application/json", "Prefer": "return=minimal"}, method="POST")
+    try:
+        urllib.request.urlopen(req, context=CTX).read(); ins += 1
+    except urllib.error.HTTPError as e:
+        if e.code == 409: dup += 1
+        else: raise
+print(f"headcount_50 triggers: {ins} new, {dup} already existed")
 
 # 5) recompute touched priorities
 try:
