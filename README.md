@@ -1,101 +1,111 @@
-# Jarvis — Prospecting module (v1)
+# Stanley (codebase: `jarvis`)
 
-All-in-one assistant for a NetSuite account executive. Three planned modules —
-**(1) Prospecting**, (2) Reminders, (3) Pipeline tracker. This repo builds the
-**Prospecting** module first, architected so the other two slot in later as
-sibling modules sharing the same Supabase DB + auth.
+All-in-one assistant for a solo NetSuite account executive. Three **live** modules
+sharing one Next.js app + Supabase DB:
 
-Prospecting finds **in-territory companies showing growth signals**, scores
-them, shows them on a dashboard, and lets you select + export them to NetSuite
-(copy-paste only — Jarvis never calls a NetSuite API).
+| Module | Route | What it does |
+|---|---|---|
+| **Headhunter** | `/headhunter` | Watches the AE's TAM like a hawk for ERP-readiness trigger events and ranks the "call these now" worklist |
+| **Missions** | `/missions` | Voice/chat tasks + calendar agent (confirm-before-apply) |
+| **Kill List** | `/kill-list` | Manual pipeline Kanban with a task↔Missions bridge |
 
-> Externally branded **Stanley**; the codebase/dirs stay `jarvis`.
+> Externally branded **Stanley**; the codebase/dirs stay `jarvis`. Single-user
+> password gate (middleware) when `APP_PASSWORD` is set; open in local dev.
+
+## Headhunter — the model
+
+**Pure TAM monitoring, no discovery.** The AE uploads his TAM as CSVs — the
+NetSuite export (the *claimable* universe + source of truth) plus ZoomInfo lists —
+into a silo/**list** model (`lists[]` on each company; additive re-uploads +
+deliberate prune; hard industry blocks enforced at import). The engine then
+monitors the whole base for trigger events and ranks them.
+
+**Tabs:** 🔥 **Triggered** (live events, ranked by decayed trigger strength ×
+fit × multi-signal/QuickBooks/PE bonuses) · 🪙 **Old Gold** (mines the NetSuite
+qualification notes + lead records for revival timing — "has their stated future
+arrived?") · **TAM Base** (the full server-paged base with tag/claimable/ERP
+filters) · ★ **Starred** · **Export History**. Exports: full CSV or the NetSuite
+saved-search SQL formula (copy-paste only — Stanley never calls a NetSuite API).
+
+### Signal roster (all verified against this base; failures were killed)
+
+| Signal | Source | Cadence |
+|---|---|---|
+| News events (funding / acquirer-M&A / new entity / expansion) | Google News per company; regex prefilter + **Opus 4.8 verifier** on claimable (budget-gated, ≤$10/wk) | daily |
+| Finance-leader hire announced | targeted Google News (CFO/Controller/VP Finance) | daily |
+| Finance role posted (own careers page; staffing client-boards filtered out) | website watch | daily rotation |
+| Website growth phrases + newsroom/blog RSS | company site diffing | daily rotation |
+| Parent-company detection (auto-dismiss high-confidence subsidiaries; toggle) | company site | daily rotation |
+| Fleet + driver growth (transportation) | FMCSA census snapshots | daily |
+| New subsidiary/entity + UCC-1 financing (CO pilot) | CO Secretary of State open data | daily |
+| SBA 7(a)/504 growth loans (all states) | SBA FOIA files → `scripts/ingest_sba.py` | quarterly |
+| Headcount growth % + crossed-50-employees (ACA ALE threshold) | DOL Form 5500 (SF + full) → `scripts/refresh_headcount.sh` | monthly |
+| TAL (claimed-accounts) news → 🔔 in-app alerts | Google News, highest priority | daily |
+
+Reliability: one consolidated Vercel cron (16:00 UTC) fans out ~75 isolated
+waves; every sweep is time-boxed and stamps progress incrementally (a timeout
+never loses work); a daily recompute drops decayed "ghost" leads and rescues
+"zombie" ones; exported leads **resurface automatically** when a genuinely new
+trigger lands >14 days after export (dismissed never does).
+
+### Hard rules
+- **Never fabricate a signal** — every trigger/signal row carries a real `source_url`.
+- **NetSuite export = source of truth**; it overrides firmographics on merge.
+- **Blocked**: accounting/tax, law/legal, pure 3PLs, call centers, government entities.
+- **Growth-positive only**: layoffs and office *moves* are excluded; getting
+  *acquired* is not a signal (only *acquiring* is).
+- No auto-actions on signals (no Missions creation, no email — in-app only).
+- Company-level only; no contact reveal. Budget ≤$10/week.
 
 ## Quick start (fork & run)
 
-Prereqs: **Node ≥ 20**, a free **Supabase** project, an **Anthropic** API key,
-and an **Apify** token (for the paid scrapers; the free sources work without it).
+Prereqs: **Node ≥ 20**, a free **Supabase** project, an **Anthropic** API key.
 
 ```bash
 npm install
-cp .env.example .env.local      # then fill in the values (see comments in the file)
+cp .env.example .env.local      # fill in values (comments in the file)
 ```
 
 Run the SQL migrations in the **Supabase SQL editor**, in order:
-`supabase/migrations/0001_init.sql` … `0009_ratings_learning.sql`.
+`supabase/migrations/0001_init.sql` … `0030_old_gold.sql`.
 
 ```bash
 npm run dev                     # http://localhost:3000
+npm test                        # vitest — 66 passing, no secrets needed
 ```
 
-Leave `APP_PASSWORD` blank locally (no login). On a deploy (Vercel), set
-`APP_PASSWORD` + `APP_SESSION_TOKEN` to enable the single-user password gate and
-add all env vars from `.env.example`. Scheduled discovery runs via the crons in
-`vercel.json` (free sources + paid Apify actors + Sales Navigator).
+Deploying (Vercel): add the env vars from `.env.example`, set `APP_PASSWORD` +
+`APP_SESSION_TOKEN` for the login gate, and the daily cron in `vercel.json`
+drives all monitoring. Note `.vercelignore` intentionally ships `public/art/`
+(background images) even though git ignores it — drop your own wide images
+there (a gradient shows until you do; see `public/art/README.md`).
 
-Background art isn't included — drop any wide images into `public/art/` and they
-cycle as the backdrop (until then a gradient shows). See `public/art/README.md`.
+Data lands via the UI: **+ Base CSV** (vendor picker + list name) for TAM
+uploads, **+ TAL CSV** for the claimed-accounts sync. The NetSuite export's
+`Qualification Note` + `Last BDR SQL Date` columns feed Old Gold.
 
-## Hard rules
-- **Never fabricate a signal.** Every `signals` row carries a real `source_url`.
-- **Subindustry is the hard territory gate.** Out-of-territory companies never
-  reach the dashboard.
-- **States hard-filter only Google Maps results** (location verifiable there);
-  other sources aren't geo-gated. Revenue/employee bands are display-only.
-- **Dedupe on normalized domain.** Once exported, a company never resurfaces as new.
-- **No outreach drafting in v1.** Discovery → scoring → export only.
+### Offline data scripts (`scripts/`)
 
-## Stack
-Next.js (App Router) + TypeScript + Tailwind · Supabase (Postgres + Auth) ·
-Apify (config-driven actor IDs, pay-per-result) · Anthropic SDK
-(`claude-haiku-4-5` bulk classify/score, `claude-opus-4-8` chatbot) ·
-Web Speech API for voice. Deploy on Vercel; discovery runs on a cron/webhook,
-never in the request path.
+| Script | What | Re-run |
+|---|---|---|
+| `refresh_headcount.sh [years…]` | DOL 5500 download + both ingests (headcount % merge-max + ACA-50 triggers) | monthly |
+| `ingest_sba.py` | SBA 7(a)/504 loan triggers (name+state matched) | quarterly |
+| `ingest_dol5500.py` / `_full.py` | the two 5500 ingests (called by the refresh script) | — |
+| `backfillInternalId.ts` | re-run a NetSuite CSV to backfill internal IDs | as needed |
 
-## The thesis (drives signal selection)
-NetSuite wins when operational/financial complexity outgrows QuickBooks. Every
-signal is a proxy for a spike in one of six complexity drivers: **multi-entity,
-multi-location, multi-currency, project/job costing, revenue recognition,
-audit/compliance**. Detect the event (new subsidiary, M&A, funding, gov
-contract, new warehouse, fleet growth, finance-leader hire, "transitioning off
-QuickBooks" job post) → infer the driver → score it. Subindustry-specific events
-outrank generic growth. Full map in `config/signals.ts`.
+All are deduped and safe to re-run; they read creds from `.env.local` and call
+the deployed `/api/cron/recompute` so new triggers rank immediately.
 
-## Scoring (both shown, per build decision)
-- **Deterministic `signal_score` 0–100** — capped sum of tunable signal weights
-  (`scoring_weights` table). AI is *not* involved.
-- **LLM `score_tier` A/B/C** — independent model judgment per the rubric.
-Both render side by side; the detail drawer lists every signal, leading with the
-strongest.
+## Stack & thesis
 
-## Territory
-24 ZoomInfo subindustries across 4 buckets; 32 regions (25 US states, 5 Canadian,
-2 US territories). Canonical copy: [`config/territory.ts`](config/territory.ts);
-DB seed: [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql).
+Next.js (App Router) + TypeScript + Tailwind · Supabase Postgres (service-role,
+server-only) · Anthropic SDK (**Opus 4.8**: news verifier, Old Gold analysis,
+chat) · Web Speech API voice · Vercel (single daily cron; every sweep its own
+60s function).
 
-## What's built so far
-- `lib/domain.ts` — domain normalizer (shared dedupe key + SQL export input).
-- `lib/export/sql.ts` — NetSuite `Formula (Numeric)` chunker (≤40 domains/chunk).
-- `lib/export/csv.ts` — two-column CSV exporter.
-- `supabase/migrations/0001_init.sql` — full schema + seed.
-- `config/signals.ts` — the thesis + signal catalog (every buying-trigger event → signal → how to catch it), complexity drivers, per-vertical job-post + news trigger dictionaries.
-- `config/sources.ts` — FREE source catalog: SEC EDGAR Form D, Google News + Business Wire / GlobeNewswire / PR Newswire RSS, **FMCSA Motor Carrier Census** (new authority + fleet growth), **USASpending.gov** (gov-contract wins), **Inc. 5000** (fast-growth list), OpenCorporates (new entities).
-- `config/territory.ts`, `config/actors.ts`, `config/news.ts` — territory, the 9 paid Apify actor slots, free news/PR feeds.
-
-Run the deterministic-core tests (no install, no secrets needed — Node ≥ 22):
-
-```bash
-npm test        # node --test  → 11 passing
-```
-
-## Still to build
-Next.js app shell + dashboard (on seed data) → free sources (EDGAR Form D,
-Google News RSS) → Apify actors → AI classify/score/summary → CSV-upload mode →
-voice + chatbot (confirm-before-apply) → Vercel cron/webhook scheduling.
-
-## To go live you'll provide
-- Supabase project URL + anon key + service-role key.
-- `ANTHROPIC_API_KEY`.
-- `APIFY_TOKEN` + the 7 Apify actor IDs (google_maps, crunchbase,
-  linkedin_company, hiring_monitor, ats_aggregator, linkedin_jobs, indeed).
-See [`.env.example`](.env.example) and [`config/actors.ts`](config/actors.ts).
+**The thesis:** NetSuite wins when operational/financial complexity outgrows
+QuickBooks — multi-entity, multi-location, project costing, rev-rec,
+audit/compliance. Every signal is a proxy for a complexity spike; every kill
+(ATS 0/60, federal contracts 0/150, Form D 0/150, H-1B 0.6%, USPTO, FCC ~3%)
+was an empirical dry-match against this specific small-private-company base.
+Show-me-the-match-rate before building is the house rule.
