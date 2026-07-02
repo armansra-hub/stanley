@@ -1,16 +1,23 @@
 # Stanley (codebase: `jarvis`)
 
 All-in-one assistant for a solo NetSuite account executive. Three **live** modules
-sharing one Next.js app + Supabase DB:
+sharing one Next.js app + Supabase DB, reached from a main menu at `/`:
 
 | Module | Route | What it does |
 |---|---|---|
 | **Headhunter** | `/headhunter` | Watches the AE's TAM like a hawk for ERP-readiness trigger events and ranks the "call these now" worklist |
-| **Missions** | `/missions` | Voice/chat tasks + calendar agent (confirm-before-apply) |
-| **Kill List** | `/kill-list` | Manual pipeline Kanban with a task↔Missions bridge |
+| **Missions** | `/missions` | Tasks/reminders + Outlook-calendar agent — talk to Stanley, it schedules |
+| **Kill List** | `/kill-list` | Manual pipeline Kanban (Stanley never invents data here) with a task↔Missions bridge |
 
-> Externally branded **Stanley**; the codebase/dirs stay `jarvis`. Single-user
-> password gate (middleware) when `APP_PASSWORD` is set; open in local dev.
+Shared across the app: an **"Ask Stanley" chat panel** (Opus 4.8 agent — reads run
+free, writes are guarded), **voice input** (Web Speech API, best in Chrome,
+continuous with a ~4s silence grace), a **Settings** page (models, scoring
+weights, cross-tag + parent-auto-dismiss toggles, paid-actor switches), a 🔔
+in-app alert bell (new signals on claimed accounts), and a rotating background
+from `public/art`. Single-user password gate (middleware) when `APP_PASSWORD`
+is set; open in local dev.
+
+> Externally branded **Stanley**; the codebase/dirs stay `jarvis`.
 
 ## Headhunter — the model
 
@@ -56,6 +63,41 @@ trigger lands >14 days after export (dismissed never does).
   *acquired* is not a signal (only *acquiring* is).
 - No auto-actions on signals (no Missions creation, no email — in-app only).
 - Company-level only; no contact reveal. Budget ≤$10/week.
+
+## Missions — tasks + calendar agent
+
+Day / Week / Month views over the AE's tasks, reminders, and his **Outlook
+calendar** (read-only via a published ICS feed, synced every 15 min by pg_cron).
+The **Stanley agent** (Opus 4.8, `lib/missions/agent.ts`) does the work
+conversationally — by text or voice:
+
+- **Read tools** (list missions, find free slots) run freely; **write tools**
+  (create / complete / reschedule / snooze / edit / plan-day / cadences) apply
+  immediately; only *delete* asks for confirmation.
+- Created tasks **auto-place into the earliest free slot** clear of Outlook busy
+  time and other tasks; reminders keep their exact time. "Organize my day"
+  re-flows the whole day non-overlapping around meetings. All scheduling is
+  timezone-correct (`APP_TIMEZONE`).
+- Missions is deliberately **siloed from Headhunter** — a task is a task; the
+  agent only links to a company when explicitly asked. Nothing in Headhunter
+  ever auto-creates a Mission.
+- Every agent turn is logged to `stanley_logs` for debugging (not shown in UI).
+
+## Kill List — manual pipeline Kanban
+
+The opposite philosophy of Headhunter: **the AE (or the chatbot, on his words)
+types everything — Stanley never discovers, enriches, or invents data here.**
+
+- Drag cards across user-editable stage columns (seeded: Hot Leads → Post Intro
+  → Opportunities → Nurture; no Won/Lost).
+- Card drawer: what-they-do description, **append-only activity log** (auto
+  system notes on stage moves + task completions), tasks, NetSuite-record URL.
+- **Task ↔ Missions bridge:** a dated task on a lead becomes a real Mission
+  (deterministic, no LLM) — either a pinned reminder or a time block that
+  auto-fits around meetings; reschedule/dismiss/delete syncs both ways.
+- **Log-a-call voice macro:** dictate a call debrief; Opus turns it into one
+  clean note plus any dated follow-up tasks.
+- Card search + overdue filter.
 
 ## Quick start (fork & run)
 
