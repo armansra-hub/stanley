@@ -356,10 +356,15 @@ export default function Dashboard({
   const [triggeredOffset, setTriggeredOffset] = useState(0);
   const [triggeredLoading, setTriggeredLoading] = useState(false);
   const TRIGGER_PAGE = 250;
+  // Signal-type multi-select (mirrors the Tags dropdown): empty = all signals.
+  const [selectedSignals, setSelectedSignals] = useState<Set<string>>(new Set());
+  const [signalsOpen, setSignalsOpen] = useState(false);
+  const toggleSignal = (t: string) => setSelectedSignals((prev) => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
   /** The current Triggered filter as the server expects it (mirrors Discovered/TAM Base). */
   const triggeredFilterBody = (extra: Record<string, unknown>) => ({
     includeHidden: showClosed, q: search, state: stateFilter, subindustry, band,
-    claimable: claimableOnly, erp: erpOnly, tags: [...selectedTags], matchAll: tagMatchAll, ...extra,
+    claimable: claimableOnly, erp: erpOnly, tags: [...selectedTags], matchAll: tagMatchAll,
+    types: [...selectedSignals], ...extra,
   });
   async function fetchTriggered(offset = 0) {
     setTriggeredLoading(true);
@@ -389,13 +394,19 @@ export default function Dashboard({
     if (!isTriggered) return;
     const t = setTimeout(() => fetchTriggered(0), 250);
     return () => clearTimeout(t);
-  }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll, selectedSignals]); // eslint-disable-line react-hooks/exhaustive-deps
   const TRIGGER_LABELS: Record<string, string> = {
     erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A (acquirer)", finance_hire: "🧮 Finance hire",
     new_entity: "🏛 New entity", gov_contract: "📜 Gov contract", fleet_expansion: "🚚 Fleet growth",
     hiring_velocity: "🚛 Driver surge", headcount_50: "🏥 Crossed 50 emp (ACA)", ucc_financing: "🏦 Growth loan (UCC-1)",
     sba_loan: "💵 SBA growth loan", press: "📈 Expansion", news: "📰 News",
   };
+  // Options for the Signals ▾ filter — every trigger type plus the synthetic
+  // DOL-5500 headcount signal (those leads surface without a trigger row).
+  const SIGNAL_OPTIONS: [string, string][] = [
+    ...Object.entries(TRIGGER_LABELS),
+    ["headcount_growth", "📈 Headcount ≥25% (DOL 5500)"],
+  ];
   const sinceLabel = (iso: string | null | undefined) => { if (!iso) return ""; const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return d <= 0 ? "today" : d === 1 ? "1d ago" : d < 30 ? `${d}d ago` : `${Math.floor(d / 30)}mo ago`; };
 
   // Starred (server-backed) with the same client filters as Discovered; shows every
@@ -723,6 +734,29 @@ export default function Dashboard({
                 )}
               </div>
             ) : null}
+            {isTriggered && (
+              <div className="relative">
+                <button onClick={() => setSignalsOpen((o) => !o)} className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm" style={{ borderColor: selectedSignals.size ? "var(--gold)" : "var(--border)" }}>
+                  Signals{selectedSignals.size ? ` (${selectedSignals.size})` : ""} ▾
+                </button>
+                {signalsOpen && (
+                  <div className="absolute z-30 mt-1 max-h-80 w-64 overflow-y-auto rounded-md border bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--border)" }}>
+                    <div className="px-2 pb-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">Show only these signal types</div>
+                    {SIGNAL_OPTIONS.map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-[var(--surface-2)]">
+                        <input type="checkbox" checked={selectedSignals.has(key)} onChange={() => toggleSignal(key)} />
+                        <span className="flex-1">{label}</span>
+                      </label>
+                    ))}
+                    {selectedSignals.size > 0 && (
+                      <button onClick={() => setSelectedSignals(new Set())} className="mt-1 w-full rounded border px-2 py-1 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" style={{ borderColor: "var(--border)" }}>
+                        Clear — show all signals
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             <label className="ml-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
               <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
               Show hidden (reviewed / dismissed)

@@ -262,10 +262,19 @@ export async function pickSosCompaniesForRotation(state: string, limit: number, 
 /** Map a mapCompany-shaped row + attach the top trigger (for the Triggered worklist). */
 export interface TriggeredCompany extends Company { priority?: number; top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null; trigger_count?: number; trigger_types?: string[] }
 
+/** The synthetic "signal" for DOL-5500 headcount leads in the signal-type filter
+ * (they surface via headcount_growth_pct, not a trigger row). */
+export const HEADCOUNT_PSEUDO_TYPE = "headcount_growth";
+
 /** Base companies with an active trigger (priority>0), ranked by cached priority, paginated.
- * Hidden leads (reviewed/dismissed/exported) are excluded unless includeHidden. */
-export async function listTriggered(opts: { limit?: number; offset?: number; includeHidden?: boolean; q?: string; state?: string; subindustry?: string; band?: string; claimable?: boolean; erp?: boolean; tags?: string[]; matchAll?: boolean } = {}): Promise<{ companies: TriggeredCompany[]; total: number }> {
+ * Hidden leads (reviewed/dismissed/exported) are excluded unless includeHidden.
+ * opts.types = signal-type filter (multi-select in the UI): keep only leads with at
+ * least one trigger of a selected type (or ≥25% headcount when the pseudo-type is
+ * selected). Filtering happens after the fetch — the active triggered set is a few
+ * hundred rows, so we pull it whole and paginate in memory for correct totals. */
+export async function listTriggered(opts: { limit?: number; offset?: number; includeHidden?: boolean; q?: string; state?: string; subindustry?: string; band?: string; claimable?: boolean; erp?: boolean; tags?: string[]; matchAll?: boolean; types?: string[] } = {}): Promise<{ companies: TriggeredCompany[]; total: number }> {
   const db = serviceClient();
+  const typeFilter = (opts.types ?? []).filter(Boolean);
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
   let q = db.from("companies").select("*, triggers(*)", { count: "exact" })
     .or('is_base.eq.true,sources.cs.["sales_nav_growth"]')
@@ -281,19 +290,31 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   else if (opts.band === "Medium") q = q.gte("signal_score", 30).lt("signal_score", 60);
   else if (opts.band === "Weak") q = q.lt("signal_score", 30);
   if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
+  // With a signal-type filter we fetch the whole matching set (bounded) and paginate
+  // in memory, so totals stay correct after filtering. Without one: normal DB paging.
   const { data, count, error } = await q
     .order("priority", { ascending: false }).order("name", { ascending: true })
-    .range(offset, offset + limit - 1);
+    .range(typeFilter.length ? 0 : offset, typeFilter.length ? 1999 : offset + limit - 1);
   if (error) throw new Error(`listTriggered failed: ${error.message}`);
-  const companies = (data ?? []).map((r: any) => {
+  let companies = (data ?? []).map((r: any) => {
     const trigs = (r.triggers ?? []) as TriggerRow[];
-    // strongest current trigger for the "reason to call"
-    const top = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) }))
+    // "Reason to call" = strongest current trigger — restricted to the selected
+    // signal types when a filter is active, so the Why column shows the signal
+    // you're filtering for, not an unrelated stronger one.
+    const pool = typeFilter.length ? trigs.filter((t) => typeFilter.includes(t.type)) : trigs;
+    const top = pool.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) }))
       .sort((a, b) => b.v - a.v)[0]?.t;
     const { triggers, ...rest } = r; void triggers;
     const trigger_types = [...new Set(trigs.map((t) => t.type))];
     return { ...mapBasic(rest), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null, trigger_count: trigs.length, trigger_types } as TriggeredCompany;
   });
+  if (typeFilter.length) {
+    const wantHeadcount = typeFilter.includes(HEADCOUNT_PSEUDO_TYPE);
+    companies = companies.filter((c) =>
+      (c.trigger_types ?? []).some((t) => typeFilter.includes(t)) ||
+      (wantHeadcount && (c.headcount_growth_pct ?? 0) >= 25));
+    return { companies: companies.slice(offset, offset + limit), total: companies.length };
+  }
   return { companies, total: count ?? 0 };
 }
 
