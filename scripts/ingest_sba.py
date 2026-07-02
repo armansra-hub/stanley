@@ -35,6 +35,7 @@ F504 = os.environ.get("SBA_504") or next(iter(glob.glob("/tmp/sba/foia-504-*.csv
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "548"))  # ~18mo; hl=180d keeps older ones ranked low
 DATASET_PAGE = "https://data.sba.gov/dataset/7-a-504-foia"
 
+GENERIC_TOKENS = {"financial","assistance","services","service","solutions","consulting","group","partners","management","capital","logistics","transport","transportation","express","national","american","associates","enterprises","systems","global","supply","medical","health","data","tech","technology","freight"}
 NOISE = re.compile(r"\b(llc|inc|incorporated|corp|corporation|co|company|ltd|limited|lp|llp|plc|pllc|group|holdings|holding|the|and)\b")
 def norm(s):
     s = (s or "").lower(); s = re.sub(r"&", " and ", s); s = re.sub(r"[^a-z0-9]+", " ", s); s = NOISE.sub(" ", s)
@@ -44,7 +45,7 @@ def norm(s):
 key2co = {}; frm = 0
 while True:
     b = json.load(urllib.request.urlopen(urllib.request.Request(
-        f"{URL}/rest/v1/companies?is_base=eq.true&select=id,name,state,status,exported_at&limit=1000&offset={frm}", headers=H), context=CTX))
+        f"{URL}/rest/v1/companies?is_base=eq.true&select=id,name,state,city,status,exported_at&limit=1000&offset={frm}", headers=H), context=CTX))
     for r in b:
         n = norm(r["name"]); st = (r.get("state") or "").strip().upper()
         if n and len(n) >= 5 and st:
@@ -59,11 +60,13 @@ trig_rows = []; touched = set()
 def scan(path, program):
     if not path or not os.path.exists(path):
         print(f"⚠ {program} file missing — skipped"); return
-    rows = 0
+    rows = 0; dropped_ambiguous = 0
     with open(path, encoding="latin-1") as f:
         rd = csv.reader(f); hdr = [h.strip().lower() for h in next(rd)]
         iN = hdr.index("borrname"); iS = hdr.index("borrstate"); iC = hdr.index("borrcity")
         iD = hdr.index("approvaldate"); iG = hdr.index("grossapproval")
+        iNa = hdr.index("naicsdescription") if "naicsdescription" in hdr else -1
+        iB = hdr.index("bankname") if "bankname" in hdr else -1
         for row in rd:
             rows += 1
             if len(row) <= max(iN, iS, iD, iG): continue
@@ -74,18 +77,40 @@ def scan(path, program):
             except ValueError:
                 continue
             if dt < cutoff: continue
+
+            # ── attribution confidence (audited 2026-07-02: name+state alone let a
+            # Berkeley restaurant match an agency named "Hatch") ────────────────────
+            # City corroboration: borrower city vs our record's city.
+            cn = lambda c: re.sub(r"[^a-z]", "", (c or "").lower())
+            co_city = co.get("city") or ""
+            loan_city = row[iC].strip()
+            city_match = bool(co_city and loan_city and cn(co_city) == cn(loan_city))
+            city_differs = bool(co_city and loan_city and not city_match)
+            # Generic-name test: all-common-word or a single short token = collision-prone.
+            toks = norm(co["name"]).split()
+            generic = (len(toks) == 1 and len(toks[0]) < 8) or all(t in GENERIC_TOKENS for t in toks)
+            # DROP compounded ambiguity: generic name with no city corroboration.
+            if generic and not city_match:
+                dropped_ambiguous += 1; continue
+
             amt = row[iG].strip()
             try: amt_s = f"${int(float(amt)):,}"
             except ValueError: amt_s = f"${amt}"
             day = dt.strftime("%Y-%m-%d")
+            # Verification evidence lives IN the summary: as-filed borrower name, the
+            # city check result, lender, and NAICS industry — judge the match in-app.
+            check = "✓ city verified" if city_match else (f"⚠ verify: loan filed in {loan_city.title()}, your record says {co_city}" if city_differs else "city unrecorded — check name/industry")
+            naics = (row[iNa].strip() if iNa >= 0 else "")[:48]
+            bank = (row[iB].strip() if iB >= 0 else "")[:40]
+            detail = "; ".join(x for x in [f"filed as \"{row[iN].strip()}\" ({loan_city.title()}, {row[iS].upper()})", f"industry: {naics}" if naics else "", f"lender: {bank}" if bank else ""] if x)
             trig_rows.append({
                 "company_id": co["id"], "type": "sba_loan", "strength": 75, "half_life_days": 180,
-                "summary": f"SBA {program} loan approved {dt.strftime('%-m/%-d/%Y')} — {amt_s} ({row[iC].title()}, {row[iS].upper()}) — verified growth capital (equipment/real estate/expansion)",
+                "summary": f"SBA {program} loan approved {dt.strftime('%-m/%-d/%Y')} — {amt_s}. {check}. {detail}",
                 "source_name": f"SBA {program} FOIA", "source_url": f"{DATASET_PAGE}#{program.lower().replace('(','').replace(')','')}-{co['id'][:8]}-{day}",
                 "signal_date": f"{day}T00:00:00",
             })
             touched.add(co["id"])
-    print(f"{program}: scanned {rows} loans")
+    print(f"{program}: scanned {rows} loans, dropped {dropped_ambiguous} ambiguous (generic name, no city corroboration)")
 
 scan(F7A, "7(a)"); scan(F504, "504")
 # De-dupe WITHIN the batch (same company + same approval day = same dedupe URL —
