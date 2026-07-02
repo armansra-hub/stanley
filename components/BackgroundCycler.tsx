@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import manifest from "@/config/art-manifest.json";
 
 /**
- * App-wide background. Rotates through every image in public/art once per hour
- * (the same image shows on all pages within the hour, so it feels intentional).
+ * App-wide background. Rotates through every image in public/art every 30 minutes
+ * (the same image shows on all pages within the window, so it feels intentional).
  * A dark scrim keeps content readable. Renders nothing until images are added.
  */
 export default function BackgroundCycler() {
@@ -14,9 +14,9 @@ export default function BackgroundCycler() {
 
   useEffect(() => {
     if (list.length === 0) return;
-    const pick = () => setI(Math.floor(Date.now() / 3_600_000) % list.length);
+    const pick = () => setI(Math.floor(Date.now() / 1_800_000) % list.length);
     pick();
-    const t = setInterval(pick, 60_000); // re-check each minute; advances on the hour
+    const t = setInterval(pick, 60_000); // re-check each minute; advances every 30 min
     return () => clearInterval(t);
   }, [list.length]);
 
