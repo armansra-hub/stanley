@@ -30,5 +30,8 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Skip Next internals AND any path with a file extension (public/ static assets —
+  // background art, images, fonts). Gating those behind auth broke <img> loads and
+  // ran the middleware on every asset request for nothing; static files carry no data.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)"],
 };
