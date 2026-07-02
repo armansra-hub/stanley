@@ -8,9 +8,10 @@ describe("importBlockReason (hard blocks)", () => {
     expect(importBlockReason("", "Bay Area CPAs LLP")).toBe("accounting/tax firm");
     expect(importBlockReason("Tax Preparation Services", "X")).toBe("accounting/tax firm");
   });
-  it("blocks law firms", () => {
-    expect(importBlockReason("Legal Services", "X")).toBe("law/legal firm");
-    expect(importBlockReason("", "Jones Law Firm")).toBe("law/legal firm");
+  it("does NOT block law firms (un-blocked 2026-07-02, AE decision)", () => {
+    expect(importBlockReason("Legal Services", "X")).toBeNull();
+    expect(importBlockReason("", "Jones Law Firm")).toBeNull();
+    expect(importBlockReason("", "Cantor Law Group")).toBeNull();
   });
   it("blocks 3PLs and call centers", () => {
     expect(importBlockReason("Third-Party Logistics", "X")).toBe("3PL");

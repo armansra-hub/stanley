@@ -19,15 +19,16 @@
  * them (config/coverage.ts + config/news.ts).
  *   • Accounting Services (incl. tax/CPA/bookkeeping — see enrich prompt)
  *   • Call Centers & Business Centers
- *   • Law Firms & Legal Services
  * NOTE: "Freight & Logistics Services" stays IN territory. We block only true
  * 3PLs (third-party logistics providers) via the LLM `is_3pl` gate in enrich.ts
  * — NOT freight/logistics broadly.
+ * UN-BLOCKED 2026-07-02 (AE decision): law/legal firms are prospectable again —
+ * removed from this set, from IMPORT_BLOCK_RULES, and from the enrich prompt;
+ * the 39 retroactively-dismissed law firms were restored in the DB.
  */
 export const BLOCKED_SUBINDUSTRIES = new Set<string>([
   "Accounting Services",
   "Call Centers & Business Centers",
-  "Law Firms & Legal Services",
 ]);
 
 /**
@@ -37,11 +38,10 @@ export const BLOCKED_SUBINDUSTRIES = new Set<string>([
  * broadly), call centers. Returns the block reason, or null to keep the row.
  */
 const IMPORT_BLOCK_RULES: { reason: string; needles: string[] }[] = [
-  // Needles expanded 2026-06-29 — the original set missed "Law Group/PLLC/LLP" and
-  // "income tax", which let ~40 law/accounting firms into the NetSuite TAM (their coarse
-  // subindustry label hid them). These are name-shape patterns specific to these firms.
+  // Needles expanded 2026-06-29 — the original set missed name shapes like "income
+  // tax", which let accounting firms into the NetSuite TAM (their coarse subindustry
+  // label hid them). Law/legal firms were UN-blocked 2026-07-02 (AE decision).
   { reason: "accounting/tax firm", needles: ["accounting", "accountant", "cpa", "bookkeep", "tax prep", "tax consult", "tax advisor", "tax service", "income tax", "tax & accounting", "tax associates"] },
-  { reason: "law/legal firm", needles: ["law firm", "law office", "law group", "law pllc", "law llp", "law apc", "law p.c", " law pc", "law, p", "law, a professional", "legal service", "legal counsel", "attorney", "lawyer", "litigation", "paralegal"] },
   { reason: "3PL", needles: ["3pl", "third-party logistics", "third party logistics", "fulfillment center", "fulfillment services", "order fulfillment"] },
   { reason: "call center", needles: ["call center", "call centre", "contact center", "answering service", "telemarketing"] },
   // Government / public-sector entities aren't ERP prospects for this AE (added
@@ -78,6 +78,7 @@ export const SUBINDUSTRIES_BY_BUCKET = {
     "HR & Staffing",
     "Information & Document Management",
     "Translation & Linguistic Services",
+    "Law Firms & Legal Services", // un-blocked 2026-07-02 — prospectable again
   ],
   Consulting: ["Management Consulting"],
   "Transportation / Logistics": [
