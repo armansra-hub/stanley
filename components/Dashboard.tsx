@@ -349,7 +349,8 @@ export default function Dashboard({
     return () => clearTimeout(t);
   }, [isOldGold, search, stateFilter, subindustry]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Triggered worklist: base companies with an active (decaying) trigger, ranked ──
-  type TriggeredRow = Company & { top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null; trigger_count?: number; trigger_types?: string[] };
+  type TriggerPreview = { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string };
+  type TriggeredRow = Company & { top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[] };
   const isTriggered = tab === "triggered";
   const [triggeredRows, setTriggeredRows] = useState<TriggeredRow[]>([]);
   const [triggeredTotal, setTriggeredTotal] = useState(0);
@@ -892,11 +893,16 @@ export default function Dashboard({
                         {c.revisit_on && <div className="text-[10px]" style={{ color: "var(--tier-a)" }}>⏰ revisit {c.revisit_on}</div>}
                       </>
                     ) : trig ? (
-                      <>
-                        <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{TRIGGER_LABELS[trig.type] ?? trig.type} · {sinceLabel(trig.signal_date ?? trig.detected_at)}</div>
-                        <div className="text-xs text-[var(--text-muted)]">{trig.summary}</div>
-                        {(c as TriggeredRow).trigger_count! > 1 && <div className="text-[10px] text-[var(--text-muted)]">+{(c as TriggeredRow).trigger_count! - 1} more signal{(c as TriggeredRow).trigger_count! - 1 === 1 ? "" : "s"}</div>}
-                      </>
+                      // EVERY trigger on the lead, strongest first (not just the top one
+                      // + a "+N more" count) — each with its label, age, and summary.
+                      <div className="space-y-1">
+                        {((c as TriggeredRow).all_triggers ?? [trig]).map((t, ti) => (
+                          <div key={ti}>
+                            <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{TRIGGER_LABELS[t.type] ?? t.type} · {sinceLabel(t.signal_date ?? t.detected_at)}</div>
+                            <div className="text-xs text-[var(--text-muted)]">{t.summary}</div>
+                          </div>
+                        ))}
+                      </div>
                     ) : top ? (
                       <>
                         <div>{top.signal_summary}</div>

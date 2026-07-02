@@ -260,7 +260,8 @@ export async function pickSosCompaniesForRotation(state: string, limit: number, 
 }
 
 /** Map a mapCompany-shaped row + attach the top trigger (for the Triggered worklist). */
-export interface TriggeredCompany extends Company { priority?: number; top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null; trigger_count?: number; trigger_types?: string[] }
+export interface TriggerPreview { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string }
+export interface TriggeredCompany extends Company { priority?: number; top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[] }
 
 /** The synthetic "signal" for DOL-5500 headcount leads in the signal-type filter
  * (they surface via headcount_growth_pct, not a trigger row). */
@@ -298,15 +299,21 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   if (error) throw new Error(`listTriggered failed: ${error.message}`);
   let companies = (data ?? []).map((r: any) => {
     const trigs = (r.triggers ?? []) as TriggerRow[];
-    // "Reason to call" = strongest current trigger — restricted to the selected
-    // signal types when a filter is active, so the Why column shows the signal
-    // you're filtering for, not an unrelated stronger one.
-    const pool = typeFilter.length ? trigs.filter((t) => typeFilter.includes(t.type)) : trigs;
-    const top = pool.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) }))
-      .sort((a, b) => b.v - a.v)[0]?.t;
+    // ALL triggers, strongest (decayed) first — the row shows every one. When a
+    // signal-type filter is active, matching types sort ahead of the rest so the
+    // Why column leads with what you filtered for.
+    const live = (t: TriggerRow) => t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days);
+    const sorted = [...trigs].sort((a, b) => {
+      if (typeFilter.length) {
+        const am = typeFilter.includes(a.type) ? 0 : 1, bm = typeFilter.includes(b.type) ? 0 : 1;
+        if (am !== bm) return am - bm;
+      }
+      return live(b) - live(a);
+    });
+    const all_triggers: TriggerPreview[] = sorted.map((t) => ({ type: t.type, summary: t.summary, source_url: t.source_url, signal_date: t.signal_date, detected_at: t.detected_at }));
     const { triggers, ...rest } = r; void triggers;
     const trigger_types = [...new Set(trigs.map((t) => t.type))];
-    return { ...mapBasic(rest), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null, trigger_count: trigs.length, trigger_types } as TriggeredCompany;
+    return { ...mapBasic(rest), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: all_triggers[0] ?? null, all_triggers, trigger_count: trigs.length, trigger_types } as TriggeredCompany;
   });
   if (typeFilter.length) {
     const wantHeadcount = typeFilter.includes(HEADCOUNT_PSEUDO_TYPE);
