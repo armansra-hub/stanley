@@ -4,7 +4,7 @@ import { TOOLS, isWriteTool, needsConfirm, executeReadTool, describeAction } fro
 import { applyKillActions, boardContext, type Action } from "./applyActions";
 import { nowLocal } from "@/lib/missions/timeutil";
 
-const MODEL = process.env.MODEL_CHAT || "claude-sonnet-4-6";
+const MODEL = process.env.MODEL_CHAT || "claude-sonnet-5";
 
 export interface PlanItem { action: Action; describe: string }
 export interface AgentResult {

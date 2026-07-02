@@ -11,7 +11,7 @@ import { wallClockToUtc, nowLocal } from "./timeutil";
  * them to UTC + build the RRULE ourselves (no LLM timezone/RRULE math).
  */
 
-const MODEL = process.env.MODEL_CHAT || "claude-sonnet-4-6";
+const MODEL = process.env.MODEL_CHAT || "claude-sonnet-5";
 
 export interface MissionDraft {
   title: string;
