@@ -249,9 +249,9 @@ export async function pickCarriersForRotation(limit: number, offset = 0): Promis
 
 /** Base companies in a given state (for the state-registry watch: new entities + UCC).
  * Whole monitored base, claimable first — the AE watches the ZoomInfo tail too. */
-export async function pickSosCompaniesForRotation(state: string, limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
+export async function pickSosCompaniesForRotation(state: string, limit: number, offset = 0): Promise<{ id: string; name: string; city: string | null }[]> {
   const db = serviceClient();
-  const { data } = await db.from("companies").select("id, name")
+  const { data } = await db.from("companies").select("id, name, city")
     .eq("is_base", true).eq("state", state)
     .order("claimable", { ascending: false })
     .order("name", { ascending: true })

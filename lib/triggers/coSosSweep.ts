@@ -51,12 +51,19 @@ export async function sweepCoSos(limit = 200, opts: { offset?: number } = {}): P
           })) { stats.triggered++; touched.add(c.id); }
         }
 
-        // 2) UCC financing-statement watch (debtor = this company, exact-normalized)
+        // 2) UCC financing-statement watch (debtor = this company, exact-normalized).
+        // Attribution evidence ships IN the summary (same standard as SBA): as-filed
+        // debtor name, city-check verdict vs our record, and the secured party (lender).
         for (const f of await fetchRecentUccFilings(c.name, uccSinceISO)) {
           const day = f.filed.slice(0, 10);
+          const cn = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z]/g, "");
+          const check = c.city && f.debtorCity
+            ? (cn(c.city) === cn(f.debtorCity) ? "✓ city verified" : `⚠ verify: debtor in ${f.debtorCity}, your record says ${c.city}`)
+            : "city unrecorded — check the as-filed name";
+          const detail = [`filed as "${f.debtorAsFiled}"${f.debtorCity ? ` (${f.debtorCity}, CO)` : ""}`, f.securedParty ? `lender: ${f.securedParty}` : ""].filter(Boolean).join("; ");
           if (await recordTrigger(c.id, {
             type: "ucc_financing",
-            summary: `New UCC financing statement filed ${day} (CO) — took secured financing (equipment/line of credit) = growth investment`,
+            summary: `New UCC-1 financing statement filed ${day} — took secured financing (equipment/line of credit). ${check}. ${detail}`,
             source_name: "CO Secretary of State (UCC)",
             source_url: `https://data.colorado.gov/resource/wffy-3uut.json#${encodeURIComponent(lightNorm(c.name))}-${day}`,
             signal_date: f.filed.slice(0, 19) || new Date().toISOString(),

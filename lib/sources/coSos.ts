@@ -61,7 +61,13 @@ export async function fetchNewCoEntities(coreUpper: string, sinceISO: string, ma
 const UCC_DEBTORS = "https://data.colorado.gov/resource/8upq-58vz.json";
 const UCC_FILINGS = "https://data.colorado.gov/resource/wffy-3uut.json";
 
-export interface UccFiling { filed: string; docType: string }
+export interface UccFiling {
+  filed: string; docType: string;
+  // Attribution evidence — shipped in the trigger summary so the AE can verify
+  // the match in-app (same standard as the SBA signal, 2026-07-02).
+  debtorAsFiled: string; debtorCity: string; securedParty: string;
+}
+const UCC_PARTIES = "https://data.colorado.gov/resource/ap62-sav4.json";
 
 async function socrata(url: string): Promise<Record<string, unknown>[]> {
   try {
@@ -74,24 +80,40 @@ async function socrata(url: string): Promise<Record<string, unknown>[]> {
 
 /** Recent original UCC financing statements where this company is the DEBTOR.
  * Debtor lookup is prefix-searched then verified with lightNorm EQUALITY (legal
- * names carry suffixes the TAM name may lack; equality avoids substring FPs). */
+ * names carry suffixes the TAM name may lack; equality avoids substring FPs).
+ * Each filing carries evidence: as-filed debtor name + city, and the secured
+ * party (the lender) from the parties table. */
 export async function fetchRecentUccFilings(name: string, sinceISO: string): Promise<UccFiling[]> {
   const brand = brandKey(name);
   if (!brand) return []; // single-token/generic names: too collision-prone for a registry join
   const esc = brand.upper.replace(/'/g, "''");
-  const dq = new URLSearchParams({ $select: "organizationname,fileid", $where: `upper(organizationname) like '${esc}%'`, $limit: "25" });
+  const dq = new URLSearchParams({ $select: "organizationname,city,fileid", $where: `upper(organizationname) like '${esc}%'`, $limit: "25" });
   const debtors = await socrata(`${UCC_DEBTORS}?${dq}`);
   const self = lightNorm(name);
-  const fileIds = [...new Set(debtors
-    .filter((d) => lightNorm(String(d.organizationname ?? "")) === self)
-    .map((d) => String(d.fileid ?? "")).filter(Boolean))].slice(0, 10);
+  const mine = debtors.filter((d) => lightNorm(String(d.organizationname ?? "")) === self);
+  const byFile = new Map(mine.map((d) => [String(d.fileid ?? ""), d]));
+  const fileIds = [...byFile.keys()].filter(Boolean).slice(0, 10);
   if (fileIds.length === 0) return [];
   const fl = fileIds.map((f) => `'${f.replace(/'/g, "''")}'`).join(",");
   const fq = new URLSearchParams({
-    $select: "filingdate,documenttype",
+    $select: "fileid,filingdate,documenttype",
     $where: `fileid in(${fl}) AND filingdate > '${sinceISO}' AND documenttype = 'UCC financing statement'`,
     $order: "filingdate DESC", $limit: "5",
   });
   const filings = await socrata(`${UCC_FILINGS}?${fq}`);
-  return filings.map((r) => ({ filed: String(r.filingdate ?? ""), docType: String(r.documenttype ?? "") }));
+  if (filings.length === 0) return [];
+  // Secured party (the lender) for the matched filings — active records only.
+  const pq = new URLSearchParams({ $select: "fileid,organizationname", $where: `fileid in(${fl}) AND recordstatus = 'active'`, $limit: "20" });
+  const parties = await socrata(`${UCC_PARTIES}?${pq}`);
+  const lenderByFile = new Map<string, string>();
+  for (const p of parties) { const f = String(p.fileid ?? ""); if (!lenderByFile.has(f)) lenderByFile.set(f, String(p.organizationname ?? "")); }
+  return filings.map((r) => {
+    const f = String(r.fileid ?? "");
+    const d = byFile.get(f);
+    return {
+      filed: String(r.filingdate ?? ""), docType: String(r.documenttype ?? ""),
+      debtorAsFiled: String(d?.organizationname ?? ""), debtorCity: String(d?.city ?? ""),
+      securedParty: lenderByFile.get(f) ?? "",
+    };
+  });
 }
