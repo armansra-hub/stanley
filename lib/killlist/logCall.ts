@@ -8,7 +8,7 @@ import { nowLocal } from "@/lib/missions/timeutil";
  * invents facts — only structures what's in the transcript.
  */
 
-const MODEL = process.env.MODEL_CHAT || "claude-opus-4-8";
+const MODEL = process.env.MODEL_CHAT || "claude-sonnet-4-6";
 
 export interface CallTask { title: string; local_due: string | null; block_time: boolean }
 export interface CallLog { summary: string; tasks: CallTask[] }

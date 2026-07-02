@@ -31,7 +31,6 @@ yarn-error.log*
 /supabase/.temp
 .env*
 
-# Personal background art — not shared (app falls back to gradient; add your own)
-public/art/*
-!public/art/README.md
+# Background art ships IN the repo — Vercel's GitHub integration auto-deploys from
+# the git tree, so anything outside git silently vanishes from production builds.
 tsconfig.tsbuildinfo
