@@ -132,7 +132,14 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
   if (f.tags?.length) q = f.matchAll ? q.contains("lists", f.tags) : q.overlaps("lists", f.tags);
   if (f.q) { const s = f.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
   const limit = Math.min(f.limit ?? 100, 1000), offset = f.offset ?? 0;
-  q = q.order("claimable", { ascending: false }).order("fit_weight", { ascending: false }).order("name", { ascending: true });
+  // TAM Base ordering = "most likely to pop off NOW" (AE decision 2026-07-02):
+  // record-dead leads sink to the bottom, then the 0-100 lead-record grade
+  // (oldgold_score) descending, then claimable/fit as tiebreaks.
+  q = q.order("record_dead", { ascending: true })
+    .order("oldgold_score", { ascending: false, nullsFirst: false })
+    .order("claimable", { ascending: false })
+    .order("fit_weight", { ascending: false })
+    .order("name", { ascending: true });
   const { data, count, error } = await q.range(offset, offset + limit - 1);
   if (error) throw new Error(`listBaseCompanies failed: ${error.message}`);
   return { companies: (data ?? []).map((r) => mapCompany(r as Record<string, unknown>)), total: count ?? 0 };
