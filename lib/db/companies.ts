@@ -76,6 +76,8 @@ function mapCompany(r: Record<string, unknown>): Company {
     last_sql_date: (r.last_sql_date as string) ?? null,
     qual_note: (r.qual_note as string) ?? null,
     oldgold_score: r.oldgold_score != null ? Number(r.oldgold_score) : null,
+    tam_score: r.tam_score != null ? Number(r.tam_score) : null,
+    tam_provisional: Boolean(r.tam_provisional),
     oldgold_class: (r.oldgold_class as string) ?? null,
     oldgold_reasons: Array.isArray(r.oldgold_reasons) ? (r.oldgold_reasons as string[]) : null,
     record_digest: (r.record_digest as string) ?? null,
@@ -124,23 +126,30 @@ const HIDDEN_STATUSES = "(reviewed,dismissed,exported_csv,exported_sql)";
  * batch makes it drop out and the next leads surface on refetch. */
 export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
-  let q = db.from("companies").select(`*, signals(*)`, { count: "exact" }).eq("is_base", true);
-  if (f.claimable) q = q.eq("claimable", true);
-  if (f.erp) q = q.eq("erp_ready", true);
-  if (f.state) q = q.eq("state", f.state);
-  if (!f.includeHidden) q = q.not("status", "in", HIDDEN_STATUSES);
-  if (f.tags?.length) q = f.matchAll ? q.contains("lists", f.tags) : q.overlaps("lists", f.tags);
-  if (f.q) { const s = f.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
   const limit = Math.min(f.limit ?? 100, 1000), offset = f.offset ?? 0;
-  // TAM Base ordering = "most likely to pop off NOW" (AE decision 2026-07-02):
-  // record-dead leads sink to the bottom, then the 0-100 lead-record grade
-  // (oldgold_score) descending, then claimable/fit as tiebreaks.
-  q = q.order("record_dead", { ascending: true })
-    .order("oldgold_score", { ascending: false, nullsFirst: false })
-    .order("claimable", { ascending: false })
-    .order("fit_weight", { ascending: false })
-    .order("name", { ascending: true });
-  const { data, count, error } = await q.range(offset, offset + limit - 1);
+  // TAM Base ordering = "most likely to pop off NOW" (AE decision 2026-07-03):
+  // record-dead leads sink to the bottom, then the holistic 0-100 lead-record grade
+  // (tam_score — migration 0031) descending, then the Old Gold revival score and
+  // claimable/fit as tiebreaks. Builders mutate, so each attempt is built fresh;
+  // falls back to oldgold_score ordering pre-migration.
+  const build = (withTam: boolean) => {
+    let q = db.from("companies").select(`*, signals(*)`, { count: "exact" }).eq("is_base", true);
+    if (f.claimable) q = q.eq("claimable", true);
+    if (f.erp) q = q.eq("erp_ready", true);
+    if (f.state) q = q.eq("state", f.state);
+    if (!f.includeHidden) q = q.not("status", "in", HIDDEN_STATUSES);
+    if (f.tags?.length) q = f.matchAll ? q.contains("lists", f.tags) : q.overlaps("lists", f.tags);
+    if (f.q) { const s = f.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
+    q = q.order("record_dead", { ascending: true });
+    if (withTam) q = q.order("tam_score", { ascending: false, nullsFirst: false });
+    return q.order("oldgold_score", { ascending: false, nullsFirst: false })
+      .order("claimable", { ascending: false })
+      .order("fit_weight", { ascending: false })
+      .order("name", { ascending: true })
+      .range(offset, offset + limit - 1);
+  };
+  let { data, count, error } = await build(true);
+  if (error && /tam_score/.test(error.message)) ({ data, count, error } = await build(false)); // pre-migration fallback
   if (error) throw new Error(`listBaseCompanies failed: ${error.message}`);
   return { companies: (data ?? []).map((r) => mapCompany(r as Record<string, unknown>)), total: count ?? 0 };
 }

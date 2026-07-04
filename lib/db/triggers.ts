@@ -350,6 +350,8 @@ function mapBasic(r: any): Company {
     // Old Gold intelligence — migration 0030 (graceful pre-migration)
     last_sql_date: r.last_sql_date ?? null, qual_note: r.qual_note ?? null,
     oldgold_score: r.oldgold_score != null ? Number(r.oldgold_score) : null,
+    tam_score: r.tam_score != null ? Number(r.tam_score) : null,
+    tam_provisional: Boolean(r.tam_provisional),
     oldgold_class: r.oldgold_class ?? null,
     oldgold_reasons: Array.isArray(r.oldgold_reasons) ? r.oldgold_reasons : null,
     record_digest: r.record_digest ?? null,
@@ -359,15 +361,16 @@ function mapBasic(r: any): Company {
   };
 }
 
-/** Old Gold worklist: every lead with a qual note, ranked by revival score. Dead
- * leads (record_dead) sink to the bottom with their reason — visible, never hidden.
+/** Old Gold worklist: TRUE old-gold leads only — a qual note AND an SQL date (a past
+ * sales-qualified moment worth reviving), ranked by revival score. Dead leads
+ * (record_dead) sink to the bottom with their reason — visible, never hidden.
  * Shows leads regardless of exported/reviewed status (it's a mining tab, not a
  * fresh-leads queue); only dismissed leads are excluded. */
 export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string } = {}): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
   let q = db.from("companies").select("*", { count: "exact" })
-    .eq("is_base", true).not("qual_note", "is", null)
+    .eq("is_base", true).not("qual_note", "is", null).not("last_sql_date", "is", null)
     .neq("status", "dismissed");
   if (opts.state) q = q.eq("state", opts.state);
   if (opts.subindustry) q = q.eq("subindustry", opts.subindustry);

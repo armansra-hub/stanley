@@ -102,7 +102,9 @@ export interface Company {
   // Old Gold: qual-note + NetSuite-record intelligence — migration 0030
   last_sql_date?: string | null; // last time their team met with NetSuite (BDR SQL)
   qual_note?: string | null; // raw qualification note from the TAM CSV
-  oldgold_score?: number | null; // 0-100 revival score (separate from trigger priority)
+  oldgold_score?: number | null; // 0-100 revival score — ONLY for true Old Gold leads (qual note + SQL date)
+  tam_score?: number | null; // 0-100 holistic lead-record grade for EVERY lead — TAM Base ranks on this (migration 0031)
+  tam_provisional?: boolean; // true = free formula floor (capped 39), deep read pending
   oldgold_class?: string | null; // timing_arrived | contract_clock | stalled_warm | lost_to_competitor | dead | insufficient
   oldgold_reasons?: string[] | null; // explicit quoted reasons; "⚠" prefix = undated evidence
   record_digest?: string | null; // tight summary of the full NetSuite lead record (PDF)

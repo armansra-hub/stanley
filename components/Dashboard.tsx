@@ -804,7 +804,7 @@ export default function Dashboard({
               <Th sortKey="company" sort={sort} onSort={onSort}>Company</Th>
               <Th>What they do</Th>
               <Th>Why it's here</Th>
-              <Th className="text-center" sortKey="score" sort={sort} onSort={onSort}>Score</Th>
+              <Th className="text-center" sortKey="score" sort={sort} onSort={onSort}>{isBase ? "TAM" : isOldGold ? "Old Gold" : "Score"}</Th>
               <Th className="text-center" sortKey="tier" sort={sort} onSort={onSort}>Tier</Th>
               <Th>Signals</Th>
               <Th sortKey="source" sort={sort} onSort={onSort}>Actor / Source</Th>
@@ -926,6 +926,12 @@ export default function Dashboard({
                   <Td className="text-center">{isOldGold ? (
                     c.oldgold_score != null
                       ? <span className="text-sm font-bold" style={{ color: c.record_dead ? "#ef4444" : "var(--gold)" }}>{Math.round(c.oldgold_score)}</span>
+                      : <span className="text-[10px] text-[var(--text-muted)]">—</span>
+                  ) : isBase ? (
+                    // TAM Base ranks on the holistic record grade (tam_score); provisional
+                    // formula floors render muted (±) until the deep read lands.
+                    c.tam_score != null
+                      ? <span className="text-sm font-bold" style={{ color: c.record_dead ? "#ef4444" : c.tam_provisional ? "var(--text-muted)" : "var(--gold)" }} title={c.tam_provisional ? "Provisional formula score — deep read pending" : "TAM grade — full lead-record deep read"}>{Math.round(c.tam_score)}{c.tam_provisional ? "±" : ""}</span>
                       : <span className="text-[10px] text-[var(--text-muted)]">—</span>
                   ) : <ScoreBadge score={c.signal_score} />}</Td>
                   <Td className="text-center"><TierBadge tier={c.score_tier} /></Td>
@@ -1302,7 +1308,8 @@ function DetailDrawer({
           {c.has_parent && <Pill title={`Detected subsidiary${c.parent_name ? ` of ${c.parent_name}` : ""} (${c.parent_confidence ?? "?"} confidence)`} color="#b48c28">🏢 {c.parent_confidence === "high" ? "subsidiary" : "likely sub"}{c.parent_name ? ` of ${c.parent_name}` : ""}</Pill>}
           {c.netsuite_internal_id && <Pill title="NetSuite internal ID">NS #{c.netsuite_internal_id}</Pill>}
           {c.record_dead && <Pill title={c.record_dead_reason ?? "NetSuite record marks this lead dead"} color="#ef4444">⛔ DEAD{c.record_dead_reason ? ` — ${c.record_dead_reason.slice(0, 50)}` : ""}</Pill>}
-          {!c.record_dead && c.oldgold_score != null && <Pill title="Old Gold revival score (from your qual notes + NetSuite record)" color="var(--gold)">🪙 Old Gold {Math.round(c.oldgold_score)}</Pill>}
+          {!c.record_dead && c.tam_score != null && <Pill title={c.tam_provisional ? "Provisional TAM grade (formula floor — deep read pending)" : "TAM grade — holistic 0-100 from the full lead record (activities + notes + qual note)"} color={c.tam_provisional ? "var(--text-muted)" : "#6ea8e6"}>📊 TAM {Math.round(c.tam_score)}{c.tam_provisional ? "±" : ""}</Pill>}
+          {!c.record_dead && c.oldgold_score != null && <Pill title="Old Gold revival score — this lead has a qual note + SQL date (a past sales-qualified moment worth reviving)" color="var(--gold)">🪙 Old Gold {Math.round(c.oldgold_score)}</Pill>}
         </div>
 
         {/* OLD GOLD / RECORD HISTORY — ubiquitous: the qual-note + NetSuite-record
