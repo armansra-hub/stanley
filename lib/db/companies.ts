@@ -104,7 +104,12 @@ export async function getCompanies(): Promise<Company[]> {
   return (data ?? []).map((r) => mapCompany(r as Record<string, unknown>));
 }
 
-export interface BaseFilter { tags?: string[]; matchAll?: boolean; claimable?: boolean; erp?: boolean; state?: string; q?: string; limit?: number; offset?: number; includeHidden?: boolean }
+export interface BaseFilter {
+  tags?: string[]; matchAll?: boolean; claimable?: boolean; erp?: boolean; state?: string; q?: string;
+  limit?: number; offset?: number; includeHidden?: boolean;
+  /** Inclusive tam_score range (0-100). When either bound is set, ungraded (null-score) rows are excluded. */
+  scoreMin?: number; scoreMax?: number;
+}
 
 /** "6/15/2024" / "06-15-2024" / "2024-06-15" → "2024-06-15" (Postgres date), else null. */
 function usDateToIso(raw: string | null | undefined): string | null {
@@ -142,6 +147,8 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
     if (!f.includeHidden) q = q.not("status", "in", HIDDEN_STATUSES);
     if (f.tags?.length) q = f.matchAll ? q.contains("lists", f.tags) : q.overlaps("lists", f.tags);
     if (f.q) { const s = f.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
+    if (withTam && f.scoreMin != null) q = q.gte("tam_score", f.scoreMin);
+    if (withTam && f.scoreMax != null) q = q.lte("tam_score", f.scoreMax);
     q = q.order("record_dead", { ascending: true });
     if (withTam) q = q.order("tam_score", { ascending: false, nullsFirst: false });
     return q.order("oldgold_score", { ascending: false, nullsFirst: false })

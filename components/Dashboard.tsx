@@ -287,9 +287,14 @@ export default function Dashboard({
   const BASE_PAGE = 250;
 
   /** The current TAM Base filter as the server expects it. */
+  // Score-range filter (TAM Base filters tam_score; Old Gold filters oldgold_score).
+  // null = unbounded. Server-side, so paging/totals/exports all respect it.
+  const [scoreMin, setScoreMin] = useState<number | null>(null);
+  const [scoreMax, setScoreMax] = useState<number | null>(null);
   const baseFilterBody = (extra: Record<string, unknown>) => ({
     tags: [...selectedTags], matchAll: tagMatchAll, claimable: claimableOnly, erp: erpOnly,
-    state: stateFilter, q: search, includeHidden: showClosed, ...extra,
+    state: stateFilter, q: search, includeHidden: showClosed,
+    scoreMin: scoreMin ?? undefined, scoreMax: scoreMax ?? undefined, ...extra,
   });
 
   async function fetchBase(offset = 0) {
@@ -325,7 +330,7 @@ export default function Dashboard({
     if (!isBase) return;
     const t = setTimeout(() => fetchBase(0), 250);
     return () => clearTimeout(t);
-  }, [isBase, selectedTags, tagMatchAll, claimableOnly, erpOnly, stateFilter, search, showClosed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isBase, selectedTags, tagMatchAll, claimableOnly, erpOnly, stateFilter, search, showClosed, scoreMin, scoreMax]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggleTag = (t: string) => setSelectedTags((prev) => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
 
   // ── Old Gold: qual-note leads ranked by revival score (dead at the bottom) ──
@@ -336,7 +341,7 @@ export default function Dashboard({
   const [oldGoldLoading, setOldGoldLoading] = useState(false);
   async function fetchOldGold(offset = 0) {
     setOldGoldLoading(true);
-    const res = await fetch("/api/headhunter/oldgold", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 250, offset, q: search, state: stateFilter, subindustry }) });
+    const res = await fetch("/api/headhunter/oldgold", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 250, offset, q: search, state: stateFilter, subindustry, scoreMin: scoreMin ?? undefined, scoreMax: scoreMax ?? undefined }) });
     const r: { companies?: Company[]; total?: number } | null = res.ok ? await res.json() : null;
     setOldGoldLoading(false);
     if (!r) return;
@@ -348,7 +353,7 @@ export default function Dashboard({
     if (!isOldGold) return;
     const t = setTimeout(() => fetchOldGold(0), 250);
     return () => clearTimeout(t);
-  }, [isOldGold, search, stateFilter, subindustry]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOldGold, search, stateFilter, subindustry, scoreMin, scoreMax]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Triggered worklist: base companies with an active (decaying) trigger, ranked ──
   type TriggerPreview = { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string };
   type TriggeredRow = Company & { top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[] };
@@ -720,7 +725,14 @@ export default function Dashboard({
             />
             {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered || isOldGold) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
             <Select value={stateFilter} onChange={setStateFilter} placeholder="All states" options={states} />
-            {!isBase && <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />}
+            {(isTriggered || isStarred) && <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />}
+            {(isBase || isOldGold) && (
+              <ScoreRange
+                label={isBase ? "TAM score" : "Old Gold score"}
+                min={scoreMin} max={scoreMax}
+                onChange={(lo, hi) => { setScoreMin(lo); setScoreMax(hi); }}
+              />
+            )}
             {(isBase || isTriggered) ? (
               <div className="relative">
                 <button onClick={() => setTagsOpen((o) => !o)} className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm" style={{ borderColor: selectedTags.size || claimableOnly || erpOnly ? "var(--gold)" : "var(--border)" }}>
@@ -1088,6 +1100,47 @@ function Select({ value, onChange, options, placeholder }: { value: string; onCh
     </select>
   );
 }
+/** Min/max score-range filter (0-100) for the TAM Base and Old Gold tabs.
+ * Dual sliders + numeric inputs + one-click presets; every change flows into the
+ * tab's debounced server refetch, so the list refreshes to ONLY matching leads. */
+function ScoreRange({ label, min, max, onChange }: { label: string; min: number | null; max: number | null; onChange: (lo: number | null, hi: number | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const lo = min ?? 0, hi = max ?? 100;
+  const active = min != null || max != null;
+  // 0 / 100 are "unbounded" (identical filter result), so they normalize back to null.
+  const setLo = (v: number) => onChange(v <= 0 ? null : Math.min(v, hi), max);
+  const setHi = (v: number) => onChange(min, v >= 100 ? null : Math.max(v, lo));
+  const summary = active ? `${lo}–${hi}` : "any";
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm" style={{ borderColor: active ? "var(--gold)" : "var(--border)" }}>
+        {label}: {summary} ▾
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-64 rounded-md border bg-[var(--surface)] p-3 text-sm shadow-lg" style={{ borderColor: "var(--border)" }}>
+          <div className="mb-1 flex items-center justify-between text-xs text-[var(--text-muted)]">
+            <span>Min</span>
+            <input type="number" min={0} max={100} value={lo} onChange={(e) => setLo(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} className="w-16 rounded border bg-transparent px-1 py-0.5 text-right" style={{ borderColor: "var(--border)" }} />
+          </div>
+          <input type="range" min={0} max={100} step={1} value={lo} onChange={(e) => setLo(Number(e.target.value))} className="w-full accent-[var(--gold)]" />
+          <div className="mb-1 mt-2 flex items-center justify-between text-xs text-[var(--text-muted)]">
+            <span>Max</span>
+            <input type="number" min={0} max={100} value={hi} onChange={(e) => setHi(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} className="w-16 rounded border bg-transparent px-1 py-0.5 text-right" style={{ borderColor: "var(--border)" }} />
+          </div>
+          <input type="range" min={0} max={100} step={1} value={hi} onChange={(e) => setHi(Number(e.target.value))} className="w-full accent-[var(--gold)]" />
+          <div className="mt-2 flex flex-wrap gap-1">
+            {[82, 70, 58, 45].map((p) => (
+              <button key={p} onClick={() => onChange(p, null)} className="rounded border px-2 py-0.5 text-xs" style={{ borderColor: min === p && max == null ? "var(--gold)" : "var(--border)", color: "var(--gold)" }}>{p}+</button>
+            ))}
+            <button onClick={() => { onChange(null, null); setOpen(false); }} className="rounded border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>Any</button>
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-[var(--text-muted)]">Only leads with a score in this range are shown (ungraded leads drop out while a range is set).</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatusPill({ status }: { status: CompanyStatus }) {
   const label = status.replaceAll("_", " ");
   return <span className="rounded-full border px-2 py-0.5 text-[10px] capitalize text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{label}</span>;

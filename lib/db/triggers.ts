@@ -367,7 +367,7 @@ function mapBasic(r: any): Company {
  * (record_dead) sink to the bottom with their reason — visible, never hidden.
  * Shows leads regardless of exported/reviewed status (it's a mining tab, not a
  * fresh-leads queue); only dismissed leads are excluded. */
-export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string } = {}): Promise<{ companies: Company[]; total: number }> {
+export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number } = {}): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
   let q = db.from("companies").select("*", { count: "exact" })
@@ -375,6 +375,9 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
     .not("status", "in", "(dismissed,removed_from_tam)"); // removed_from_tam: weekly-update pull-outs keep their grade but leave the mining list
   if (opts.state) q = q.eq("state", opts.state);
   if (opts.subindustry) q = q.eq("subindustry", opts.subindustry);
+  // Inclusive oldgold_score range — when set, ungraded (null-score) rows drop out.
+  if (opts.scoreMin != null) q = q.gte("oldgold_score", opts.scoreMin);
+  if (opts.scoreMax != null) q = q.lte("oldgold_score", opts.scoreMax);
   if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
   const { data, count, error } = await q
     .order("record_dead", { ascending: true }) // dead last
