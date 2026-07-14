@@ -230,12 +230,13 @@ export default function Dashboard({
   // Sortable table columns (click a header to toggle asc/desc).
   type SortKey = "company" | "score" | "tier" | "source" | "state" | "size" | "rating" | "status";
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "score", dir: "desc" });
-  const onSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "company" || key === "source" || key === "state" ? "asc" : "desc" }));
+  const [userSorted, setUserSorted] = useState(false); // until a header is clicked, keep the server's ranking
+  const onSort = (key: SortKey) => { setUserSorted(true); setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "company" || key === "source" || key === "state" ? "asc" : "desc" })); };
   const TIER_RANK: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
   const sortValue = (c: Company, key: SortKey): string | number => {
     switch (key) {
       case "company": return c.name.toLowerCase();
-      case "score": return c.signal_score;
+      case "score": return isBase ? (c.tam_score ?? -1) : isOldGold ? (c.oldgold_score ?? -1) : c.signal_score; // header shows TAM / Old Gold / Score per tab
       case "tier": return TIER_RANK[c.score_tier ?? ""] ?? 9;
       case "source": return sourceLabel(c.sources?.[0] ?? "").toLowerCase();
       case "state": return (c.state ?? "").toLowerCase();
@@ -420,16 +421,28 @@ export default function Dashboard({
       if (band && scoreBand(c.signal_score) !== band) return false;
       if (search) { const q = search.toLowerCase(); if (!c.name.toLowerCase().includes(q) && !(c.domain ?? "").includes(q)) return false; }
       return true;
-    }).sort((a, b) => b.signal_score - a.signal_score);
+    }).sort((a, b) => Number(a.record_dead ?? false) - Number(b.record_dead ?? false) // dead sinks, like every other tab
+      || (b.tam_score ?? -1) - (a.tam_score ?? -1)
+      || b.signal_score - a.signal_score);
   }, [starredRows, subindustry, stateFilter, band, search]);
 
   const selectionSource = isOldGold ? oldGoldRows : isStarred ? starredRows : isTriggered ? triggeredRows : isBase ? baseRows : companies; // rows the current tab's checkboxes act on
   // "Mark reviewed" hides a lead (reviewed/dismissed/exported) until "Show hidden" is on.
-  const isHiddenStatus = (s: string) => s === "reviewed" || s === "dismissed" || s.startsWith("exported");
-  const tableRows = isOldGold ? oldGoldRows // mining tab — shows exported/reviewed too (dead sorted last)
+  const isHiddenStatus = (s: string) => s === "reviewed" || s === "dismissed" || s === "removed_from_tam" || s.startsWith("exported");
+  const serverOrderedRows = isOldGold ? oldGoldRows // mining tab — shows exported/reviewed too (dead sorted last)
     : isStarred ? starredVisible
     : isTriggered ? triggeredRows.filter((c) => showClosed || !isHiddenStatus(c.status))
     : isBase ? baseRows.filter((c) => showClosed || !isHiddenStatus(c.status)) : [];
+  // Header clicks re-rank client-side (dead always sinks); otherwise the server's ranking stands.
+  const tableRows = userSorted
+    ? [...serverOrderedRows].sort((a, b) => {
+        const dead = Number(a.record_dead ?? false) - Number(b.record_dead ?? false);
+        if (dead) return dead;
+        const av = sortValue(a, sort.key), bv = sortValue(b, sort.key);
+        const cmp = typeof av === "string" ? av.localeCompare(String(bv)) : (av as number) - (bv as number);
+        return sort.dir === "asc" ? cmp : -cmp;
+      })
+    : serverOrderedRows;
   const idsInView = isOldGold ? oldGoldRows.map((c) => c.id) : isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : [];
   const selectedInViewCount = idsInView.filter((id) => selected.has(id)).length;
   const allSelected = idsInView.length > 0 && selectedInViewCount === idsInView.length;
@@ -460,6 +473,7 @@ export default function Dashboard({
     setBaseRows(upd);
     setTriggeredRows(upd);
     setStarredRows(upd);
+    setOldGoldRows(upd);
   }
 
   function applyStatusLocal(ids: string[], status: CompanyStatus) {
@@ -557,7 +571,7 @@ export default function Dashboard({
     void postJSON("/api/companies/rate", { id, rating, comment });
   }
 
-  const drawer = [...companies, ...baseRows, ...triggeredRows, ...talAlerts].find((c) => c.id === drawerId) ?? null;
+  const drawer = [...companies, ...baseRows, ...triggeredRows, ...oldGoldRows, ...starredRows, ...talAlerts].find((c) => c.id === drawerId) ?? null;
 
   return (
     <div className="mx-auto max-w-[1400px] px-6 py-6">
@@ -1075,7 +1089,7 @@ function Select({ value, onChange, options, placeholder }: { value: string; onCh
   );
 }
 function StatusPill({ status }: { status: CompanyStatus }) {
-  const label = status.replace("_", " ");
+  const label = status.replaceAll("_", " ");
   return <span className="rounded-full border px-2 py-0.5 text-[10px] capitalize text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{label}</span>;
 }
 

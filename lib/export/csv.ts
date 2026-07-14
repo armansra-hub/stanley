@@ -1,4 +1,5 @@
 import { normalizeDomain } from "../domain";
+import { buildClaimingComments } from "./claiming";
 
 /**
  * CSV export — exactly two columns.
@@ -49,7 +50,18 @@ export function buildFullCsvExport(companies: any[]): string {
     ["ERP Ready", (c) => (c.erp_ready ? "Yes" : "No")],
     ["Status", (c) => c.status ?? ""],
     ["Rating", (c) => (c.rating != null ? String(c.rating) : "")],
+    ["TAM Score", (c) => (c.tam_score != null ? String(c.tam_score) : "")],
+    ["TAM Provisional", (c) => (c.tam_provisional ? "Yes" : "")],
+    ["Old Gold Score", (c) => (c.oldgold_score != null ? String(c.oldgold_score) : "")],
+    ["Grade Class", (c) => c.oldgold_class ?? ""],
+    ["Record Digest", (c) => c.record_digest ?? ""],
+    ["Dead", (c) => (c.record_dead ? "Yes" : "")],
+    ["Dead Reason", (c) => c.record_dead_reason ?? ""],
+    ["Last SQL Date", (c) => c.last_sql_date ?? ""],
     ["First Seen", (c) => (c.first_seen_at ?? "").slice(0, 10)],
+    // LAST column by contract: the codex claiming agent pastes this cell verbatim
+    // into NetSuite's claiming comments. 1-4 terse bullets, one per reason.
+    ["Claiming Comments", (c) => buildClaimingComments(c)],
   ];
   const rows: string[] = [cols.map((x) => csvCell(x[0])).join(",")];
   for (const c of companies) rows.push(cols.map((x) => csvCell(x[1](c))).join(","));

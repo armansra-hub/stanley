@@ -294,6 +294,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   // With a signal-type filter we fetch the whole matching set (bounded) and paginate
   // in memory, so totals stay correct after filtering. Without one: normal DB paging.
   const { data, count, error } = await q
+    .order("record_dead", { ascending: true }) // dead sinks even when its cached priority is stale
     .order("priority", { ascending: false }).order("name", { ascending: true })
     .range(typeFilter.length ? 0 : offset, typeFilter.length ? 1999 : offset + limit - 1);
   if (error) throw new Error(`listTriggered failed: ${error.message}`);
@@ -371,7 +372,7 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
   let q = db.from("companies").select("*", { count: "exact" })
     .eq("is_base", true).not("qual_note", "is", null).not("last_sql_date", "is", null)
-    .neq("status", "dismissed");
+    .not("status", "in", "(dismissed,removed_from_tam)"); // removed_from_tam: weekly-update pull-outs keep their grade but leave the mining list
   if (opts.state) q = q.eq("state", opts.state);
   if (opts.subindustry) q = q.eq("subindustry", opts.subindustry);
   if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }

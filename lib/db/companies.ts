@@ -117,8 +117,10 @@ function usDateToIso(raw: string | null | undefined): string | null {
   return `${yr}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
 }
 
-/** Statuses that hide a lead from the active worklist (reviewed/dismissed/exported). */
-const HIDDEN_STATUSES = "(reviewed,dismissed,exported_csv,exported_sql)";
+/** Statuses that hide a lead from the active worklist (reviewed/dismissed/exported).
+ * removed_from_tam = pulled out of the territory by the weekly TAM update; the record,
+ * grade, and digest are KEPT and the lead is restored automatically if it returns. */
+const HIDDEN_STATUSES = "(reviewed,dismissed,exported_csv,exported_sql,removed_from_tam)";
 
 /** Server-side, paginated, filtered query over the TAM Base (is_base=true). Ordered
  * claimable-first then by fit_weight (multi-list overlaps float up). Hidden leads
