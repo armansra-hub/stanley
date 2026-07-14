@@ -39,6 +39,11 @@ export function claimingBullets(c: any, max = 4): string[] {
   if (c.record_dead) {
     return [`DO NOT CLAIM — dead lead${c.record_dead_reason ? `: ${String(c.record_dead_reason).slice(0, 70)}` : ""}`];
   }
+  // Curated bullets (migration 0033, written by the TAL deep-pass) win VERBATIM —
+  // hand-tightened specifics beat anything pattern-derived below.
+  if (Array.isArray(c.claim_bullets) && c.claim_bullets.length) {
+    return c.claim_bullets.slice(0, max).map((b: unknown) => String(b));
+  }
   // Live but bottom-graded blocked archetypes (explicit 3PL, CPA-adjacent, etc.)
   if (/blocked lane|blocked-lane|explicit 3pl|hard-block/.test(t)) add("CAUTION — blocked-lane archetype (see digest)");
 

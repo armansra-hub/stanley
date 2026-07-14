@@ -14,7 +14,7 @@ import { ACTORS } from "@/config/actors";
 import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongestSignal } from "./badges";
 import ChatPanel from "./ChatPanel";
 
-type Tab = "triggered" | "oldgold" | "imported" | "starred" | "history";
+type Tab = "triggered" | "oldgold" | "tal" | "imported" | "starred" | "history";
 
 function download(filename: string, text: string, mime: string) {
   const blob = new Blob([text], { type: mime });
@@ -163,7 +163,7 @@ export default function Dashboard({
     if (!file) return;
     setTalImporting(true);
     try {
-      const rows = rowsToBaseRows(await fileToGrid(file)).map((r) => ({ name: r.name, website: r.website }));
+      const rows = rowsToBaseRows(await fileToGrid(file)).map((r) => ({ name: r.name, website: r.website, internal_id: r.internal_id ?? null }));
       if (rows.length === 0) { alert("No company rows found in the TAL (need a name column)."); return; }
       const res = await fetch("/api/headhunter/tal/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rows }) });
       const r: { matched?: number; tal_count?: number; newly_dq?: number; error?: string } = await res.json();
@@ -236,7 +236,7 @@ export default function Dashboard({
   const sortValue = (c: Company, key: SortKey): string | number => {
     switch (key) {
       case "company": return c.name.toLowerCase();
-      case "score": return isBase ? (c.tam_score ?? -1) : isOldGold ? (c.oldgold_score ?? -1) : c.signal_score; // header shows TAM / Old Gold / Score per tab
+      case "score": return (isBase || isTal) ? (c.tam_score ?? -1) : isOldGold ? (c.oldgold_score ?? -1) : c.signal_score; // header shows TAM / Old Gold / Score per tab
       case "tier": return TIER_RANK[c.score_tier ?? ""] ?? 9;
       case "source": return sourceLabel(c.sources?.[0] ?? "").toLowerCase();
       case "state": return (c.state ?? "").toLowerCase();
@@ -354,6 +354,25 @@ export default function Dashboard({
     const t = setTimeout(() => fetchOldGold(0), 250);
     return () => clearTimeout(t);
   }, [isOldGold, search, stateFilter, subindustry, scoreMin, scoreMax]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Target Account List: the AE's claimed accounts. STAGNANT by design — exports
+  // never remove a row; membership changes only via a fresh TAL CSV upload. ──
+  const isTal = tab === "tal";
+  const [talRows, setTalRows] = useState<TriggeredRow[]>([]);
+  const [talTotal, setTalTotal] = useState(0);
+  const [talLoading, setTalLoading] = useState(false);
+  async function fetchTal() {
+    setTalLoading(true);
+    const res = await fetch("/api/headhunter/tal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: search, state: stateFilter, subindustry }) });
+    const r: { companies?: TriggeredRow[]; total?: number } | null = res.ok ? await res.json() : null;
+    setTalLoading(false);
+    if (!r) return;
+    setTalTotal(r.total ?? 0);
+    setTalRows(r.companies ?? []);
+  }
+  useEffect(() => {
+    const t = setTimeout(() => fetchTal(), 250); // always loaded: tab count + alert dot live even off-tab
+    return () => clearTimeout(t);
+  }, [isTal, search, stateFilter, subindustry]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Triggered worklist: base companies with an active (decaying) trigger, ranked ──
   type TriggerPreview = { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string };
   type TriggeredRow = Company & { top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[] };
@@ -431,10 +450,11 @@ export default function Dashboard({
       || b.signal_score - a.signal_score);
   }, [starredRows, subindustry, stateFilter, band, search]);
 
-  const selectionSource = isOldGold ? oldGoldRows : isStarred ? starredRows : isTriggered ? triggeredRows : isBase ? baseRows : companies; // rows the current tab's checkboxes act on
+  const selectionSource = isTal ? talRows : isOldGold ? oldGoldRows : isStarred ? starredRows : isTriggered ? triggeredRows : isBase ? baseRows : companies; // rows the current tab's checkboxes act on
   // "Mark reviewed" hides a lead (reviewed/dismissed/exported) until "Show hidden" is on.
   const isHiddenStatus = (s: string) => s === "reviewed" || s === "dismissed" || s === "removed_from_tam" || s.startsWith("exported");
-  const serverOrderedRows = isOldGold ? oldGoldRows // mining tab — shows exported/reviewed too (dead sorted last)
+  const serverOrderedRows = isTal ? talRows // stagnant claimed list — alerts first, NEVER hidden by status
+    : isOldGold ? oldGoldRows // mining tab — shows exported/reviewed too (dead sorted last)
     : isStarred ? starredVisible
     : isTriggered ? triggeredRows.filter((c) => showClosed || !isHiddenStatus(c.status))
     : isBase ? baseRows.filter((c) => showClosed || !isHiddenStatus(c.status)) : [];
@@ -448,7 +468,7 @@ export default function Dashboard({
         return sort.dir === "asc" ? cmp : -cmp;
       })
     : serverOrderedRows;
-  const idsInView = isOldGold ? oldGoldRows.map((c) => c.id) : isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : [];
+  const idsInView = isTal ? talRows.map((c) => c.id) : isOldGold ? oldGoldRows.map((c) => c.id) : isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : [];
   const selectedInViewCount = idsInView.filter((id) => selected.has(id)).length;
   const allSelected = idsInView.length > 0 && selectedInViewCount === idsInView.length;
 
@@ -479,6 +499,7 @@ export default function Dashboard({
     setTriggeredRows(upd);
     setStarredRows(upd);
     setOldGoldRows(upd);
+    setTalRows(upd);
   }
 
   function applyStatusLocal(ids: string[], status: CompanyStatus) {
@@ -525,7 +546,7 @@ export default function Dashboard({
       exportConfig,
     );
     setSqlModal(text);
-    applyStatusLocal(ids, "exported_sql");
+    applyStatusLocal(ids.filter((id) => !chosen.find((c) => c.id === id)?.tal_claimed), "exported_sql");
     void recordExportAndRefresh(ids, "sql", text);
   }
   function exportCsv() {
@@ -533,7 +554,9 @@ export default function Dashboard({
     const ids = chosen.map((c) => c.id);
     const csv = buildFullCsvExport(chosen); // every column we hold
     download("stanley-export.csv", csv, "text/csv");
-    applyStatusLocal(ids, "exported_csv");
+    // TAL rows are stagnant: exporting must never hide them (server skips their
+    // status flip too) — only non-claimed rows get marked exported.
+    applyStatusLocal(ids.filter((id) => !chosen.find((c) => c.id === id)?.tal_claimed), "exported_csv");
     void recordExportAndRefresh(ids, "csv", csv);
   }
 
@@ -576,7 +599,7 @@ export default function Dashboard({
     void postJSON("/api/companies/rate", { id, rating, comment });
   }
 
-  const drawer = [...companies, ...baseRows, ...triggeredRows, ...oldGoldRows, ...starredRows, ...talAlerts].find((c) => c.id === drawerId) ?? null;
+  const drawer = [...companies, ...baseRows, ...triggeredRows, ...oldGoldRows, ...starredRows, ...talRows, ...talAlerts].find((c) => c.id === drawerId) ?? null;
 
   return (
     <div className="mx-auto max-w-[1400px] px-6 py-6">
@@ -686,7 +709,7 @@ export default function Dashboard({
 
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b border-[var(--border)]">
-        {(["triggered", "oldgold", "imported", "starred", "history"] as Tab[]).map((t) => (
+        {(["triggered", "oldgold", "tal", "imported", "starred", "history"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => { setTab(t); setSelected(new Set()); }}
@@ -700,13 +723,18 @@ export default function Dashboard({
               ? `🔥 Triggered${triggeredTotal ? ` (${triggeredTotal.toLocaleString()})` : ""}`
               : t === "oldgold"
                 ? `🪙 Old Gold${oldGoldTotal ? ` (${oldGoldTotal.toLocaleString()})` : ""}`
-                : t === "imported"
-                  ? "TAM Base"
-                  : t === "starred"
-                    ? `★ Starred${starredCount ? ` (${starredCount})` : ""}`
-                    : `Export History${exportHistory.length ? ` (${exportHistory.length})` : ""}`}
+                : t === "tal"
+                  ? `🎯 Target Accounts${talTotal ? ` (${talTotal.toLocaleString()})` : ""}`
+                  : t === "imported"
+                    ? "TAM Base"
+                    : t === "starred"
+                      ? `★ Starred${starredCount ? ` (${starredCount})` : ""}`
+                      : `Export History${exportHistory.length ? ` (${exportHistory.length})` : ""}`}
             {t === "imported" && importedHasNew && (
               <span className="absolute -right-1 top-1 h-2 w-2 rounded-full bg-[var(--tier-a)]" />
+            )}
+            {t === "tal" && talRows.some((c) => c.tal_alert) && (
+              <span className="absolute -right-1 top-1 h-2 w-2 rounded-full bg-[#ef4444]" title="Unseen signals on claimed accounts" />
             )}
           </button>
         ))}
@@ -723,7 +751,7 @@ export default function Dashboard({
               className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm"
               style={{ borderColor: "var(--border)" }}
             />
-            {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered || isOldGold) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
+            {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered || isOldGold || isTal) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
             <Select value={stateFilter} onChange={setStateFilter} placeholder="All states" options={states} />
             {(isTriggered || isStarred) && <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />}
             {(isBase || isOldGold) && (
@@ -830,7 +858,7 @@ export default function Dashboard({
               <Th sortKey="company" sort={sort} onSort={onSort}>Company</Th>
               <Th>What they do</Th>
               <Th>Why it's here</Th>
-              <Th className="text-center" sortKey="score" sort={sort} onSort={onSort}>{isBase ? "TAM" : isOldGold ? "Old Gold" : "Score"}</Th>
+              <Th className="text-center" sortKey="score" sort={sort} onSort={onSort}>{(isBase || isTal) ? "TAM" : isOldGold ? "Old Gold" : "Score"}</Th>
               <Th className="text-center" sortKey="tier" sort={sort} onSort={onSort}>Tier</Th>
               <Th>Signals</Th>
               <Th sortKey="source" sort={sort} onSort={onSort}>Actor / Source</Th>
@@ -849,7 +877,7 @@ export default function Dashboard({
                   key={c.id}
                   className="cursor-pointer border-t hover:bg-[var(--surface-2)]/50"
                   style={{ borderColor: "var(--border)" }}
-                  onClick={() => { setDrawerId(c.id); if (c.has_new_signal) acknowledge(c.id); }}
+                  onClick={() => { setDrawerId(c.id); if (c.has_new_signal) acknowledge(c.id); if (isTal && c.tal_alert) { patchRows([c.id], { tal_alert: false }); clearTalAlerts([c.id]); } }}
                 >
                   <Td onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} />
@@ -911,6 +939,7 @@ export default function Dashboard({
                   </Td>
                   <Td className="max-w-[220px] text-[var(--text-muted)]">{c.description}</Td>
                   <Td className="max-w-[260px]">
+                    {isTal && c.tal_alert ? <div className="mb-0.5 text-[11px] font-bold" style={{ color: "#ef4444" }}>🔔 NEW SIGNAL</div> : null}
                     {isOldGold && (c.oldgold_class || c.qual_note) ? (
                       <>
                         {c.oldgold_class && <div className="text-xs font-semibold" style={{ color: OLDGOLD_CLASS[c.oldgold_class]?.color ?? "var(--gold)" }}>{OLDGOLD_CLASS[c.oldgold_class]?.label ?? c.oldgold_class}{c.last_sql_date ? ` · last SQL ${c.last_sql_date}` : ""}</div>}
@@ -946,14 +975,14 @@ export default function Dashboard({
                     ) : c.score_reason ? (
                       <div className="truncate text-xs text-[var(--text-muted)]" title={c.score_reason}>{c.score_reason}</div>
                     ) : (
-                      <div className="text-xs text-[var(--text-muted)]">In your claimable NetSuite TAM</div>
+                      <div className="text-xs text-[var(--text-muted)]">{isTal ? "🎯 On your Target Account List" : "In your claimable NetSuite TAM"}</div>
                     )}
                   </Td>
                   <Td className="text-center">{isOldGold ? (
                     c.oldgold_score != null
                       ? <span className="text-sm font-bold" style={{ color: c.record_dead ? "#ef4444" : "var(--gold)" }}>{Math.round(c.oldgold_score)}</span>
                       : <span className="text-[10px] text-[var(--text-muted)]">—</span>
-                  ) : isBase ? (
+                  ) : (isBase || isTal) ? (
                     // TAM Base ranks on the holistic record grade (tam_score); provisional
                     // formula floors render muted (±) until the deep read lands.
                     c.tam_score != null
@@ -997,6 +1026,16 @@ export default function Dashboard({
             {triggeredRows.length < triggeredTotal && (
               <button onClick={() => fetchTriggered(triggeredOffset + 100)} disabled={triggeredLoading} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
                 {triggeredLoading ? "Loading…" : "Load more"}
+              </button>
+            )}
+          </div>
+        )}
+        {isTal && (
+          <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
+            <span>{talTotal ? `Your Target Account List — ${talTotal.toLocaleString()} claimed accounts (alerts first, then TAM score; never removed by exports)` : "No TAL uploaded yet — use the red “+ TAL CSV” button (internal-ID matching supported)."}</span>
+            {talRows.some((c) => c.tal_alert) && (
+              <button onClick={() => { patchRows(talRows.filter((c) => c.tal_alert).map((c) => c.id), { tal_alert: false }); clearTalAlerts(); }} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
+                Mark all alerts seen
               </button>
             )}
           </div>

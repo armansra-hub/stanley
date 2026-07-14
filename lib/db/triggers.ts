@@ -346,6 +346,7 @@ function mapBasic(r: any): Company {
     netsuite_internal_id: r.netsuite_internal_id ?? null,
     erp_incumbent: r.erp_incumbent ?? null, pe_owned: Boolean(r.pe_owned),
     tal_claimed: Boolean(r.tal_claimed), tal_dq: Boolean(r.tal_dq), tal_alert: Boolean(r.tal_alert),
+    claim_bullets: Array.isArray(r.claim_bullets) ? (r.claim_bullets as string[]) : null,
     headcount_growth_pct: r.headcount_growth_pct != null ? Number(r.headcount_growth_pct) : null,
     has_parent: Boolean(r.has_parent), parent_name: r.parent_name ?? null, parent_confidence: r.parent_confidence ?? null,
     // Old Gold intelligence — migration 0030 (graceful pre-migration)
@@ -386,6 +387,33 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
     .range(offset, offset + limit - 1);
   if (error) throw new Error(`listOldGold failed: ${error.message}`);
   return { companies: (data ?? []).map((r: any) => mapBasic(r)), total: count ?? 0 };
+}
+
+/** The Target Account List tab: EVERY tal_claimed lead, regardless of status —
+ * this list is stagnant by design (exports never hide it; only a fresh TAL upload
+ * changes membership). Ordering = "what needs me today": unseen alerts first,
+ * dead sinks last, then the holistic TAM grade. Includes the top trigger so the
+ * tab can say WHAT the alert is. */
+export async function listTal(opts: { q?: string; state?: string; subindustry?: string } = {}): Promise<{ companies: (Company & { top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null })[]; total: number }> {
+  const db = serviceClient();
+  let q = db.from("companies").select("*, triggers(*)", { count: "exact" }).eq("tal_claimed", true);
+  if (opts.state) q = q.eq("state", opts.state);
+  if (opts.subindustry) q = q.eq("subindustry", opts.subindustry);
+  if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
+  const { data, count, error } = await q
+    .order("tal_alert", { ascending: false })   // fresh unseen signals float
+    .order("record_dead", { ascending: true })  // dead sinks (still visible — ⛔)
+    .order("tam_score", { ascending: false, nullsFirst: false })
+    .order("name", { ascending: true })
+    .limit(1000); // the TAL is ~250-300 by design; no paging needed
+  if (error) throw new Error(`listTal failed: ${error.message}`);
+  const companies = (data ?? []).map((r: any) => {
+    const trigs = (r.triggers ?? []) as TriggerRow[];
+    const top = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v)[0]?.t;
+    const { triggers, ...rest } = r; void triggers;
+    return { ...mapBasic(rest), top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null };
+  });
+  return { companies, total: count ?? 0 };
 }
 
 /** A trigger as the drawer renders it (decayed score precomputed, strongest first). */

@@ -69,6 +69,7 @@ function mapCompany(r: Record<string, unknown>): Company {
     tal_claimed: Boolean(r.tal_claimed),
     tal_dq: Boolean(r.tal_dq),
     tal_alert: Boolean(r.tal_alert),
+    claim_bullets: Array.isArray(r.claim_bullets) ? (r.claim_bullets as string[]) : null,
     thumbs_down: Boolean(r.thumbs_down),
     headcount_growth_pct: r.headcount_growth_pct != null ? Number(r.headcount_growth_pct) : null,
     has_parent: Boolean(r.has_parent), parent_name: (r.parent_name as string) ?? null, parent_confidence: (r.parent_confidence as string) ?? null,
@@ -663,28 +664,31 @@ export async function crossTagByName(
  *   • everyone else is left untouched (prior DQ flags persist).
  * Match is exact (normalized domain / name equality) → precise, no fuzzy positives.
  */
-export async function syncTalClaimed(rows: { name: string; website?: string | null }[]): Promise<{ tal_count: number; matched: number; newly_dq: number }> {
+export async function syncTalClaimed(rows: { name: string; website?: string | null; internal_id?: string | null }[]): Promise<{ tal_count: number; matched: number; newly_dq: number }> {
   const db = serviceClient();
   const talNames = new Set<string>();
   const talDomains = new Set<string>();
+  const talIds = new Set<string>(); // NetSuite internal ids — the exact match, tried first
   for (const r of rows) {
     const nn = normalizeCompanyName(r.name);
     if (nn) talNames.add(nn);
     const d = normalizeDomain(r.website || "");
     if (d) talDomains.add(d);
+    const iid = (r.internal_id || "").trim();
+    if (iid) talIds.add(iid);
   }
-  if (talNames.size === 0 && talDomains.size === 0) return { tal_count: rows.length, matched: 0, newly_dq: 0 };
+  if (talNames.size === 0 && talDomains.size === 0 && talIds.size === 0) return { tal_count: rows.length, matched: 0, newly_dq: 0 };
 
   // Scan every company; classify against the new TAL + its current claimed state.
   const claimedIds: string[] = []; // on the new TAL → claimed
   const dqIds: string[] = [];      // was claimed, now missing → previously DQ'd
   for (let from = 0; ; from += 1000) {
-    const { data } = await db.from("companies").select("id, domain, name, tal_claimed").range(from, from + 999);
-    const batch = (data ?? []) as { id: string; domain: string | null; name: string; tal_claimed: boolean }[];
+    const { data } = await db.from("companies").select("id, domain, name, tal_claimed, netsuite_internal_id").range(from, from + 999);
+    const batch = (data ?? []) as { id: string; domain: string | null; name: string; tal_claimed: boolean; netsuite_internal_id: string | null }[];
     for (const c of batch) {
       const d = c.domain ? normalizeDomain(c.domain) : "";
       const nn = normalizeCompanyName(c.name);
-      const onTal = (d && talDomains.has(d)) || (nn && talNames.has(nn));
+      const onTal = (c.netsuite_internal_id && talIds.has(c.netsuite_internal_id)) || (d && talDomains.has(d)) || (nn && talNames.has(nn));
       if (onTal) claimedIds.push(c.id);
       else if (c.tal_claimed) dqIds.push(c.id); // fell off the list → DQ
     }
@@ -753,7 +757,13 @@ export async function recordExport(
   if (origin === "net_new") {
     await markPoolExported(ids);
   } else {
-    await setCompaniesStatus(ids, type === "sql" ? "exported_sql" : "exported_csv");
+    // TAL rule: the AE's claimed Target Account List NEVER leaves its tab (or gets
+    // hidden anywhere) because of an export — only a fresh TAL upload changes it.
+    // The export itself is still recorded above; we just skip the status flip.
+    const { data } = await db.from("companies").select("id").in("id", ids).eq("tal_claimed", true);
+    const talIds = new Set(((data ?? []) as { id: string }[]).map((r) => r.id));
+    const flippable = ids.filter((id) => !talIds.has(id));
+    if (flippable.length) await setCompaniesStatus(flippable, type === "sql" ? "exported_sql" : "exported_csv");
   }
 }
 
