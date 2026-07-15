@@ -1168,7 +1168,7 @@ function ScoreRange({ label, min, max, onChange }: { label: string; min: number 
           </div>
           <input type="range" min={0} max={100} step={1} value={hi} onChange={(e) => setHi(Number(e.target.value))} className="w-full accent-[var(--gold)]" />
           <div className="mt-2 flex flex-wrap gap-1">
-            {[82, 70, 58, 45].map((p) => (
+            {[40, 20, 10, 5].map((p) => (
               <button key={p} onClick={() => onChange(p, null)} className="rounded border px-2 py-0.5 text-xs" style={{ borderColor: min === p && max == null ? "var(--gold)" : "var(--border)", color: "var(--gold)" }}>{p}+</button>
             ))}
             <button onClick={() => { onChange(null, null); setOpen(false); }} className="rounded border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}>Any</button>
