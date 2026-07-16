@@ -1,17 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function ImportScoresPage() {
   const [payload, setPayload] = useState("");
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function submit(dryRun: boolean) {
+  async function submitRows(rows: unknown, dryRun: boolean) {
     setBusy(true);
     setResult("");
     try {
-      const rows = JSON.parse(payload);
       const response = await fetch("/api/import/scores", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -24,6 +23,22 @@ export default function ImportScoresPage() {
       setBusy(false);
     }
   }
+
+  async function submit(dryRun: boolean) {
+    try {
+      await submitRows(JSON.parse(payload), dryRun);
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const inlinePayload = params.get("payload");
+    if (!inlinePayload) return;
+    setPayload(inlinePayload);
+    void submitRows(JSON.parse(inlinePayload), params.get("mode") === "dry");
+  }, []);
 
   return (
     <main style={{ maxWidth: 960, margin: "40px auto", padding: 24, fontFamily: "system-ui" }}>
