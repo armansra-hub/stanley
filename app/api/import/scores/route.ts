@@ -34,7 +34,8 @@ function validRow(value: unknown): value is ScoreRow {
     typeof row.recordDigest === "string" &&
     typeof row.recordDead === "boolean" &&
     (row.recordDeadReason === null || typeof row.recordDeadReason === "string") &&
-    (row.revisitOn === null || /^\d{4}-\d{2}-\d{2}$/.test(row.revisitOn))
+    (row.revisitOn === null ||
+      (typeof row.revisitOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(row.revisitOn)))
   );
 }
 
