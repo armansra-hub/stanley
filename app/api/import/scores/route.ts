@@ -50,8 +50,25 @@ export async function POST(req: Request) {
   if (!Array.isArray(body.rows) || body.rows.length === 0 || body.rows.length > 250) {
     return NextResponse.json({ error: "rows must contain 1-250 score records" }, { status: 400 });
   }
-  if (!body.rows.every(validRow)) {
-    return NextResponse.json({ error: "One or more score records are invalid" }, { status: 400 });
+  const invalidIndex = body.rows.findIndex((row) => !validRow(row));
+  if (invalidIndex >= 0) {
+    const invalid = body.rows[invalidIndex] as Partial<ScoreRow> | null;
+    return NextResponse.json({
+      error: "One or more score records are invalid",
+      invalidIndex,
+      checks: {
+        object: Boolean(invalid && typeof invalid === "object"),
+        internalId: typeof invalid?.internalId,
+        tamScore: typeof invalid?.tamScore,
+        oldGoldScore: invalid?.oldGoldScore === null ? "null" : typeof invalid?.oldGoldScore,
+        oldGoldClass: invalid?.oldGoldClass === null ? "null" : typeof invalid?.oldGoldClass,
+        oldGoldReasons: Array.isArray(invalid?.oldGoldReasons),
+        recordDigest: typeof invalid?.recordDigest,
+        recordDead: typeof invalid?.recordDead,
+        recordDeadReason: invalid?.recordDeadReason === null ? "null" : typeof invalid?.recordDeadReason,
+        revisitOn: invalid?.revisitOn === null ? "null" : typeof invalid?.revisitOn,
+      },
+    }, { status: 400 });
   }
 
   const rows = body.rows as ScoreRow[];
