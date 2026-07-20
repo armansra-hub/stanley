@@ -1,4 +1,5 @@
 import "server-only";
+import { extractAcquisitions } from "@/lib/sources/acquisition";
 
 /**
  * Company-website growth-signal reader (FREE). Fetches a claimable company's own
@@ -29,7 +30,9 @@ const PATTERNS: { type: "press" | "new_entity" | "ma"; re: RegExp; label: string
   { type: "press", re: /\bgrand opening\b|\bnow open\b|\bopened (a|our) (new )?(office|location|branch|facility)\b/, label: "new site opening" },
   { type: "press", re: /\bexpand(ing|ed)? (to|into|our (footprint|presence|team|operations))\b/, label: "expansion announced" },
   { type: "new_entity", re: /\bnew (division|subsidiary|business unit|practice|brand)\b|\blaunch(ed|ing) (a |our )?new (division|brand|service line|practice)\b/, label: "new division/subsidiary" },
-  { type: "ma", re: /\bwe('ve| have)? acquired\b|\bacquisition of\b|\bjoined forces with\b|\bhas acquired\b/, label: "acquisition (they made)" },
+  // NOTE: acquisitions are NOT pattern-diffed — extractAcquisitions() (named-target,
+  // acquirer-position, context-guarded) replaced the old bare "acquisition of" match
+  // that false-fired on advisory copy and news portals (removed 2026-07-20).
 ];
 
 // Raw HTML (case preserved) — for parent-name capture + RSS-link discovery.
@@ -94,14 +97,14 @@ function looksLikeClientBoard(text: string): boolean {
 }
 
 export interface SiteScan {
-  growth: { type: "press" | "new_entity" | "ma"; label: string }[];
+  growth: { type: "press" | "new_entity" | "ma"; label: string; snippet?: string }[];
   parent: { name: string; confidence: "high" | "low" } | null;
   feedUrl: string | null;
   financeRoles: string[];
 }
 
 /** One pass over a company's site: growth phrases + parent-company + RSS feed URL. */
-export async function fetchSiteSignals(domain: string): Promise<SiteScan> {
+export async function fetchSiteSignals(domain: string, companyName?: string): Promise<SiteScan> {
   const base = `https://${domain.replace(/\/+$/, "")}`;
   const home = await fetchRaw(base);
   // Secondary pages fetched in PARALLEL with a shorter timeout, so one slow page can't
@@ -111,8 +114,22 @@ export async function fetchSiteSignals(domain: string): Promise<SiteScan> {
     fetchText(`${base}/careers`, 5000), fetchText(`${base}/jobs`, 5000),
   ]);
   const raw = `${home} ${about} ${news}`;
-  const text = `${cleanHtml(home)} ${cleanHtml(about)} ${cleanHtml(news)}`.toLowerCase();
-  const growth = !text.trim() ? [] : PATTERNS.filter((p) => p.re.test(text)).map((p) => ({ type: p.type, label: p.label }));
+  const rawText = `${cleanHtml(home)} ${cleanHtml(about)} ${cleanHtml(news)}`; // case preserved
+  const text = rawText.toLowerCase();
+  const growth: { type: "press" | "new_entity" | "ma"; label: string; snippet?: string }[] = [];
+  if (text.trim()) {
+    for (const p of PATTERNS) {
+      const m = p.re.exec(text);
+      if (!m) continue;
+      const at = m.index ?? 0;
+      const snippet = text.slice(Math.max(0, at - 70), at + (m[0]?.length ?? 0) + 90).replace(/\s+/g, " ").trim();
+      growth.push({ type: p.type, label: p.label, snippet });
+    }
+    // Acquisitions THEY made — only with a named target, acquirer-position, guarded.
+    for (const a of extractAcquisitions(rawText, companyName)) {
+      growth.push({ type: "ma", label: `acquired ${a.target}`, snippet: a.snippet });
+    }
+  }
 
   // Careers scanned PER-PAGE (kept out of the growth text). A page that reads as a
   // recruiting CLIENT BOARD (staffing firm posting roles for clients) is skipped — those

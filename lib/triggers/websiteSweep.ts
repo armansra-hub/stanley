@@ -33,7 +33,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
     stats.checked += Math.min(BATCH, companies.length - i);
     await Promise.all(companies.slice(i, i + BATCH).map(async (c) => {
       try {
-        const scan = await fetchSiteSignals(c.domain);
+        const scan = await fetchSiteSignals(c.domain, c.name);
         let touched = false;
 
         // 1) growth-phrase diff
@@ -46,7 +46,10 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           for (const h of scan.growth.filter((x) => !priorSet.has(x.label))) {
             stats.changed++;
             const url = `https://${c.domain.replace(/\/+$/, "")}/#${encodeURIComponent(h.label)}`;
-            if (await recordTrigger(c.id, { type: h.type, summary: `Website update — ${h.label}`, source_name: "Company website", source_url: url, signal_date: new Date().toISOString() })) { stats.triggered++; touched = true; }
+            // Specific summaries: the label carries WHAT (incl. the acquired target),
+            // the snippet carries the site's own words — never a bare category again.
+            const summary = `Website: ${h.label}${h.snippet ? ` — “${h.snippet.slice(0, 140)}”` : ""}`;
+            if (await recordTrigger(c.id, { type: h.type, summary, source_name: "Company website", source_url: url, signal_date: new Date().toISOString() })) { stats.triggered++; touched = true; }
           }
         }
 
