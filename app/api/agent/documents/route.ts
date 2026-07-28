@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
 import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
+import { consumeTicket, verifyTicket } from "@/lib/agent/tickets";
 import { coerceDate, coerceText, pick } from "@/lib/agent/coerce";
 
 /**
@@ -24,8 +25,30 @@ export const maxDuration = 60;
 const MAX_DOCS = 200;
 const MAX_CHARS = 400_000; // ~100k tokens — larger than any real NetSuite record
 
+/**
+ * Three ways in, because Codex's cloud session cannot hold AGENT_TOKEN:
+ *   1. the agent token (Claude, scripts)
+ *   2. a scoped, expiring upload ticket minted by /api/agent/upload-ticket
+ *   3. a logged-in Stanley browser session (the jarvis_auth cookie)
+ * A ticket is the narrowest: it can only upload text for the exact Internal IDs it
+ * was minted for, until it expires.
+ */
+function sessionOk(req: Request): boolean {
+  const expected = process.env.APP_SESSION_TOKEN;
+  if (!expected) return false;
+  const cookie = req.headers.get("cookie") ?? "";
+  const m = cookie.match(/(?:^|;\s*)jarvis_auth=([^;]+)/);
+  return Boolean(m && m[1] === expected);
+}
+
 export async function POST(req: Request) {
-  if (!agentAuthOk(req)) return unauthorized();
+  const ticketRaw = new URL(req.url).searchParams.get("ticket");
+  const ticket = ticketRaw ? await verifyTicket(ticketRaw) : null;
+  if (ticket && !ticket.ok) {
+    return NextResponse.json({ error: `ticket rejected: ${ticket.reason}` }, { status: 401 });
+  }
+  if (!ticket?.ok && !agentAuthOk(req) && !sessionOk(req)) return unauthorized();
+
   let body: { docs?: unknown; agent?: unknown };
   try {
     body = await req.json();
@@ -75,6 +98,17 @@ export async function POST(req: Request) {
 
   if (!rows.length) return NextResponse.json({ error: "no usable docs", errors }, { status: 422 });
 
+  // A ticket may only upload the exact IDs it was minted for.
+  if (ticket?.ok && ticket.scopeIds) {
+    const outside = [...new Set(rows.map((r) => String(r.netsuite_internal_id)).filter((id) => !ticket.scopeIds!.has(id)))];
+    if (outside.length) {
+      return NextResponse.json({
+        error: "internal IDs outside this ticket's scope", outside: outside.slice(0, 20), outsideCount: outside.length,
+        hint: "mint a ticket covering the released package, or split the upload",
+      }, { status: 403 });
+    }
+  }
+
   const db = serviceClient();
   // Resolve company_id where the internal ID is known, so the UI can join later.
   const ids = [...new Set(rows.map((r) => String(r.netsuite_internal_id)))];
@@ -89,14 +123,20 @@ export async function POST(req: Request) {
     .upsert(rows, { onConflict: "netsuite_internal_id,doc_type,sha256", ignoreDuplicates: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  if (ticket?.ok && ticket.id) await consumeTicket(ticket.id);
+
   const chars = rows.reduce((n, r) => n + String(r.body).length, 0);
   await logEvent("headhunter", "agent.documents_pushed", {
     summary: `${agent} pushed ${rows.length} lead documents (${Math.round(chars / 1000)}k chars, ${ids.length} leads)`,
     entity_type: "agent_bridge",
-    meta: { agent, docs: rows.length, leads: ids.length, chars, errors: errors.length },
+    meta: { agent, docs: rows.length, leads: ids.length, chars, errors: errors.length, via: ticket?.ok ? `ticket:${ticket.id}` : "token" },
   });
 
-  return NextResponse.json({ stored: rows.length, leads: ids.length, chars, unmatchedToCompany: rows.filter((r) => !r.company_id).length, errors });
+  return NextResponse.json({
+    stored: rows.length, leads: ids.length, chars,
+    unmatchedToCompany: rows.filter((r) => !r.company_id).length, errors,
+    ...(ticket?.ok ? { ticketUsesRemaining: (ticket.remaining ?? 1) - 1 } : {}),
+  });
 }
 
 export async function GET(req: Request) {
