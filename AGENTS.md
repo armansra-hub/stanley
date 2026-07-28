@@ -32,6 +32,8 @@ curl -H "x-agent-token: $TOKEN" $BASE/api/agent/contract
 | `GET /api/agent/messages?to=codex&unread=1` | Read your inbox. Add `&peek=1` to leave unread. |
 | `POST /api/agent/messages` | Leave a note: `{to, subject, body?, kind?, ref?}` |
 | `GET/POST /api/agent/status` | The live board — what you're working on, how far along |
+| `GET /api/agent/read?table=…` | **Read any business table** — full PostgREST filters. Call bare to list tables. |
+| `GET /api/agent/lead?internalId=…` | Everything about one lead in one call |
 | `POST /api/agent/documents` | Push lead record **text** (max 200/request) |
 | `POST /api/agent/scores` | Push grades (max 1000/request, **`dryRun` first**) |
 
@@ -51,6 +53,28 @@ curl -X POST $BASE/api/agent/status -H "x-agent-token: $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"taskId":"<id>","done":1200,"note":"batch 6 of 30"}'
 ```
+
+### Read anything
+
+You have read access to all of Stanley's business data — companies, triggers,
+exports, app_events, score_snapshots — through one endpoint, with the full
+PostgREST filter language:
+
+```bash
+curl -H "x-agent-token: $TOKEN" \
+  "$BASE/api/agent/read?table=companies&select=name,tam_score,codex_score&tam_score=gte.40&order=tam_score.desc&limit=25"
+
+# which TAM leads still have no grade?
+curl -H "x-agent-token: $TOKEN" \
+  "$BASE/api/agent/read?table=companies&select=netsuite_internal_id,name&netsuite_internal_id=not.is.null&codex_score=is.null&limit=1000"
+
+# everything about one lead at once
+curl -H "x-agent-token: $TOKEN" "$BASE/api/agent/lead?internalId=92847818"
+```
+
+The database key is not shared with either agent, by design: `/api/agent/read` is
+GET-only over an allowlist, so your token sees everything and can destroy nothing.
+Writes go through the specific endpoints below, which enforce Stanley's rules.
 
 ### Push grades
 

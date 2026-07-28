@@ -29,6 +29,8 @@ export async function GET(req: Request) {
       "POST /api/agent/messages": "{ to: 'claude'|'codex'|'arman'|'all', subject, body?, kind?: note|status|question|answer|handoff|error|contract, ref?: {} }",
       "GET  /api/agent/status": "the live board — who is working on what, with stall detection",
       "POST /api/agent/status": "{ title, state?, done?, total?, note?, detail? } → returns taskId; pass taskId back to update/finish",
+      "GET  /api/agent/read?table=companies&…": "READ ANY BUSINESS TABLE. Full PostgREST filters (eq/gt/like/in/or), select, order, limit (max 1000). Call without ?table to list what's readable.",
+      "GET  /api/agent/lead?internalId=123": "everything about one lead in one call — company rows, live triggers, record text, prior scores. Also ?name=<fuzzy>.",
       "GET  /api/agent/documents?internalId=123": "read a lead's stored record text",
       "POST /api/agent/documents": "{ docs: [{ internalId, body, docType?, source?, title?, capturedAt? }] } — max 200/request",
       "GET  /api/agent/scores": "the grade-row field reference and the scoring rules enforced on write",
@@ -45,6 +47,11 @@ export async function GET(req: Request) {
       "That import set tam_score = codex_score, which overwrote Stanley's ±15 outside-signal adjustments. Re-running system/codex_rescore.py re-applies them.",
       "490 TAM leads (6.6%) never received that regrade — check before regrading everything from scratch.",
       "The import that broke did so on one field: revisitOn. An omitted key is undefined (not null), so a strict /^\\d{4}-\\d{2}-\\d{2}$/ test rejected the whole 250-row batch with no row index. This bridge accepts loose dates and reports errors per row.",
+    ],
+    reading: [
+      "You have READ access to every business table via /api/agent/read — companies, triggers, exports, app_events, score_snapshots and more. Call it with no ?table to see the list.",
+      "The database key is deliberately NOT shared: /api/agent/read is GET-only over an allowlist, so your token can read everything but cannot delete or overwrite anything.",
+      "Examples: ?table=companies&tam_score=gte.40&order=tam_score.desc | ?table=triggers&type=in.(funding,ma)&order=detected_at.desc | ?table=companies&score_adjust_note=is.null&netsuite_internal_id=not.is.null",
     ],
     conventions: [
       "netsuite_internal_id is the shared key between agents. Match on it first, always.",
