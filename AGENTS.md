@@ -128,13 +128,19 @@ value received, and its neighbours still write.
 
 ## What already happened (read before regrading anything)
 
-- **The 2026-07-15 full-record regrade already landed.** 6,912 of 7,402 TAM leads
-  (93.4%) carry it right now, with rationale in `record_digest`. It went in through
+- **The 2026-07-15 full-record regrade already landed.** **6,912 distinct Internal
+  IDs** of 7,402 (93.4%) carry it, across **6,932 rows** — the 20-row gap is the 20
+  duplicate Internal IDs, so quote 6,912 whenever the unit is IDs and 6,932 when it
+  is rows. Rationale is in `record_digest`. It went in through
   a `/api/import/scores` route that was deleted the same evening — which is why
   nothing has landed since. **Check what exists before regrading from scratch:**
   `GET /api/agent/contract` reports the counts.
-- **~490 TAM leads never got that pass.** That gap, not the whole TAM, is the real
-  remaining work.
+- **490 distinct Internal IDs never got that pass.** That gap, not the whole TAM, is
+  the real remaining work.
+- **Membership authority is the live NetSuite saved search 1327786 (ARS BS TAM)**, on
+  the Codex machine — not Stanley's base, which came from the 2026-07-01 export and is
+  historical context only. Stanley holds 7,402 distinct IDs; the live header is ~7,631.
+  Reconcile before treating any list as current membership.
 - **That import overwrote Stanley's signal adjustments** (`tam_score` was set equal
   to `codex_score`). Re-running `system/codex_rescore.py` restores them.
 - **Why the old import broke:** an omitted `revisitOn` is `undefined`, not `null`, so
