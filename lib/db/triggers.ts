@@ -91,6 +91,10 @@ export async function recomputePriority(companyId: string): Promise<number> {
   if (graded !== null && graded !== undefined && Number(graded) <= 0) verdictFactor = 0.1;
   else if (digest.includes("points to disqualification")) verdictFactor = 0.35;
   else if (digest.includes("some historical fit or pain exists")) verdictFactor = 0.7;
+  // No verdict declared → fall back to the grade band, same as the score cap in
+  // lib/agent/adjust.ts. Without this the two paths disagree, and a lead graded 8
+  // with no digest still tops the worklist on signal strength alone.
+  else if (graded !== null && graded !== undefined && Number(graded) < 20) verdictFactor = 0.7;
   const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * 100) / 100;
   await db.from("companies").update({ priority }).eq("id", companyId);
   return priority;
