@@ -145,7 +145,7 @@ export async function POST(req: Request) {
 
   // Rationale quality on this batch — never blocks, always reported.
   const withDigest = rows.filter((r) => r.recordDigest);
-  const unauditable = withDigest.filter((r) => !assessDigest(r.recordDigest).auditable).map((r) => r.internalId);
+  const unauditable = withDigest.filter((r) => !assessDigest(r.recordDigest, [...r.oldGoldReasons, r.qualNote ?? ""]).auditable).map((r) => r.internalId);
   const noDigest = rows.filter((r) => !r.recordDigest).map((r) => r.internalId);
 
   const scores = rows.map((r) => r.tamScore).sort((a, b) => a - b);

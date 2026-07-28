@@ -153,9 +153,15 @@ const EVIDENCE_MARKERS: { name: string; re: RegExp }[] = [
   { name: "person", re: /\b(?:CFO|CEO|COO|controller|VP of Finance|finance director|bookkeeper)\b[^.]{0,40}\b[A-Z][a-z]+\b/ },
 ];
 
-export function assessDigest(digest: string | null): { auditable: boolean; markers: string[] } {
-  if (!digest || digest.trim().length < 40) return { auditable: false, markers: [] };
-  const markers = EVIDENCE_MARKERS.filter((m) => m.re.test(digest)).map((m) => m.name);
+export function assessDigest(digest: string | null, supporting: string[] = []): { auditable: boolean; markers: string[] } {
+  // Judge the WHOLE rationale, not one field. Stanley's own oldgold_reasons carry
+  // sourced, dated citations ("... [PDF p.7, 2025-03-12]"); reading only the digest
+  // reported well-evidenced leads as unsupported — a mistake made against real rows
+  // before this was fixed.
+  const text = [digest ?? "", ...supporting].join(" ").trim();
+  if (text.length < 40) return { auditable: false, markers: [] };
+  const markers = EVIDENCE_MARKERS.filter((m) => m.re.test(text)).map((m) => m.name);
+  if (/\[[^\]]*(?:PDF|saved-search|row \d)[^\]]*\]/i.test(text)) markers.push("citation");
   return { auditable: markers.length > 0, markers };
 }
 

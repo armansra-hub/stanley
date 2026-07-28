@@ -241,3 +241,21 @@ describe("assessDigest — is a grade's rationale checkable?", () => {
     expect(assessDigest("thin record").auditable).toBe(false);
   });
 });
+
+describe("assessDigest reads the whole rationale, not one field", () => {
+  const boiler = "Score 53/100: some historical fit or pain exists, but current budget, finance " +
+    "ownership, timing, or interest is weak. Finance: Confirmed in-house. Budget: Not confirmed.";
+
+  it("credits sourced oldGoldReasons that the digest itself lacks", () => {
+    // Real shape from Optimal Edge Consulting, which a digest-only check wrongly called unsupported.
+    const reasons = ["an acquisition, merger, or ownership event creates a change window [NEED_NOTE (saved-search row 1), 2026-04-20]"];
+    expect(assessDigest(boiler).auditable).toBe(false);
+    expect(assessDigest(boiler, reasons).auditable).toBe(true);
+    expect(assessDigest(boiler, reasons).markers).toContain("citation");
+  });
+
+  it("still reports a row with template digest and nothing else", () => {
+    expect(assessDigest(boiler, []).auditable).toBe(false);
+    expect(assessDigest(boiler, ["[COMMENTS] # 8 employees"]).markers).toContain("headcount");
+  });
+});
