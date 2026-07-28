@@ -81,20 +81,21 @@ export async function recomputePriority(companyId: string): Promise<number> {
   // Record says DEAD (explicit rejection / hard disqualify in the NetSuite record) →
   // crush priority so they sink to the bottom EVERYWHERE, but stay visible (⛔ badge).
   const deadFactor = (c as any)?.record_dead ? 0.1 : 1;
-  // Human judgment governs the worklist. A graded 0 is treated exactly like a dead
-  // record; a declared disqualification is heavily damped; a weak read is damped a
-  // little. Nothing is hidden — these stay visible, they just stop outranking
-  // leads that are actually workable.
+  // The Triggered tab is an EVENT list — its job is "something happened here today",
+  // so a low grade must NOT be damped: a lead graded 8 with fresh funding is exactly
+  // what belongs at the top. Only a closed-out lead is damped, because an event does
+  // not make a company worth calling after they have told us no.
+  //
+  // Deliberately NOT the same rule as the score cap in lib/agent/adjust.ts. That one
+  // governs tam_score (a quality measure, where the grade band matters); this governs
+  // an event worklist. Same principle — a human's no outranks a scraper's yes — but
+  // the grade band belongs only in the former.
   const graded = (c as any)?.tam_score;
   const digest = String((c as any)?.record_digest ?? "").toLowerCase();
   let verdictFactor = 1;
   if (graded !== null && graded !== undefined && Number(graded) <= 0) verdictFactor = 0.1;
   else if (digest.includes("points to disqualification")) verdictFactor = 0.35;
-  else if (digest.includes("some historical fit or pain exists")) verdictFactor = 0.7;
-  // No verdict declared → fall back to the grade band, same as the score cap in
-  // lib/agent/adjust.ts. Without this the two paths disagree, and a lead graded 8
-  // with no digest still tops the worklist on signal strength alone.
-  else if (graded !== null && graded !== undefined && Number(graded) < 20) verdictFactor = 0.7;
+  else if (digest.includes("some historical fit or pain exists")) verdictFactor = 0.85;
   const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * 100) / 100;
   await db.from("companies").update({ priority }).eq("id", companyId);
   return priority;
