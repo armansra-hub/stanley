@@ -129,6 +129,37 @@ export function normalizeScoreBatch(rawRows: Record<string, unknown>[]): Normali
 }
 
 /**
+ * Is a grade's rationale auditable — does it cite anything lead-specific?
+ *
+ * The 2026-07-15 regrade wrote a `record_digest` on all 6,932 rows, but for the
+ * median row it is entirely template: "Score 27/100: current evidence points to
+ * disqualification… Finance: Not confirmed. Budget: Capacity plausible… Best
+ * positive evidence: <phrases from a fixed vocabulary>". That tells you WHICH
+ * factors the grader believed fired, but nothing you can check the grade against —
+ * 25% of them contain no date, no figure, no quote and no named system at all.
+ *
+ * So a digest is treated as auditable only when it cites at least one concrete
+ * thing: a date, a money figure, a quoted human sentence, a named accounting
+ * system, or a headcount. This never blocks a write — a grade with a weak
+ * rationale is still a grade — but the count surfaces on every batch so an
+ * unauditable regrade is visible immediately instead of a year later.
+ */
+const EVIDENCE_MARKERS: { name: string; re: RegExp }[] = [
+  { name: "date", re: /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2},?\s*\d{4}\b|\b20\d{2}-\d{2}-\d{2}\b/i },
+  { name: "money", re: /\$\s?[\d,.]+\s*(?:k|m|mm|million|billion)?\b|\b[\d.]+\s*(?:million|mm)\b/i },
+  { name: "quote", re: /["“][^"”]{8,}["”]/ },
+  { name: "system", re: /\b(?:quickbooks|qb|sage|intacct|acumatica|dynamics|business central|netsuite|sap|xero|odoo|epicor|infor|workday|oracle|rillet|toast|as400)\b/i },
+  { name: "headcount", re: /\b\d{1,5}\s*(?:employees|ee|headcount|users|seats|locations|entities|subsidiaries)\b/i },
+  { name: "person", re: /\b(?:CFO|CEO|COO|controller|VP of Finance|finance director|bookkeeper)\b[^.]{0,40}\b[A-Z][a-z]+\b/ },
+];
+
+export function assessDigest(digest: string | null): { auditable: boolean; markers: string[] } {
+  if (!digest || digest.trim().length < 40) return { auditable: false, markers: [] };
+  const markers = EVIDENCE_MARKERS.filter((m) => m.re.test(digest)).map((m) => m.name);
+  return { auditable: markers.length > 0, markers };
+}
+
+/**
  * Old Gold is DERIVED, never copied. A row's oldgold_score equals its tam_score
  * only when the row is genuinely Old Gold — it has both a qual note and a prior
  * SQL date. For everyone else it must be null, not a copied number.

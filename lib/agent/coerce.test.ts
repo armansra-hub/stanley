@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { coerceBool, coerceDate, coerceList, coerceScore, pick } from "./coerce";
-import { deriveOldGold, normalizeScoreBatch, normalizeScoreRow } from "./scores";
+import { assessDigest, deriveOldGold, normalizeScoreBatch, normalizeScoreRow } from "./scores";
 import { adjustScore } from "./adjust";
 
 describe("coerceDate — the field that broke the 2026-07-15 import", () => {
@@ -219,5 +219,25 @@ describe("adjustScore — a graded zero is decisive", () => {
 
   it("still adjusts a lead graded even slightly above zero", () => {
     expect(adjustScore(1, { pe_owned: true }, [], today).score).toBe(4);
+  });
+});
+
+describe("assessDigest — is a grade's rationale checkable?", () => {
+  it("accepts a digest citing something concrete", () => {
+    expect(assessDigest('Spoke 4/28/26; CFO Ken says "we are staying on QuickBooks" until $5M.').auditable).toBe(true);
+    expect(assessDigest("Runs Sage Intacct across 3 entities; 40 employees.").markers).toContain("system");
+  });
+
+  it("rejects the categorical template that carries no checkable fact", () => {
+    const boiler = "Score 27/100: current evidence points to disqualification, poor timing, or a low " +
+      "probability of an ERP close. Finance: Not confirmed. Budget: Capacity plausible; budget not " +
+      "confirmed. No reliable current six-month buying window was found.";
+    expect(assessDigest(boiler).auditable).toBe(false);
+    expect(assessDigest(boiler).markers).toEqual([]);
+  });
+
+  it("treats a missing or trivial digest as unauditable", () => {
+    expect(assessDigest(null).auditable).toBe(false);
+    expect(assessDigest("thin record").auditable).toBe(false);
   });
 });

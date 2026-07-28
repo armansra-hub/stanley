@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
 import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
-import { deriveOldGold, normalizeScoreBatch } from "@/lib/agent/scores";
+import { assessDigest, deriveOldGold, normalizeScoreBatch } from "@/lib/agent/scores";
 import { adjustScore, type TriggerRow } from "@/lib/agent/adjust";
 
 /**
@@ -143,6 +143,11 @@ export async function POST(req: Request) {
     }
   }
 
+  // Rationale quality on this batch — never blocks, always reported.
+  const withDigest = rows.filter((r) => r.recordDigest);
+  const unauditable = withDigest.filter((r) => !assessDigest(r.recordDigest).auditable).map((r) => r.internalId);
+  const noDigest = rows.filter((r) => !r.recordDigest).map((r) => r.internalId);
+
   const scores = rows.map((r) => r.tamScore).sort((a, b) => a - b);
   const summary = {
     received: (body.rows as unknown[]).length,
@@ -157,6 +162,13 @@ export async function POST(req: Request) {
     hardZeroedCount: hardZeroed.length,
     signalAdjusted: adjusted.slice(0, 20),
     signalAdjustedCount: adjusted.length,
+    rationale: {
+      withDigest: withDigest.length,
+      missingDigest: noDigest.length,
+      unauditableDigest: unauditable.length,
+      sampleUnauditable: unauditable.slice(0, 10),
+      note: "unauditable = a digest citing no date, figure, quote, named system, headcount or person. Not blocked; a grade nobody can check is still recorded, just flagged.",
+    },
     scoreDistribution: {
       min: scores[0],
       median: scores[Math.floor(scores.length / 2)],
@@ -179,7 +191,7 @@ export async function POST(req: Request) {
   }
 
   await logEvent("headhunter", "agent.scores_imported", {
-    summary: `${agent} imported ${writes.length} grades (${rows.length} leads, ${errors.length} bad rows, ${missing.length} unmatched) — label ${label}`,
+    summary: `${agent} imported ${writes.length} grades (${rows.length} leads, ${errors.length} bad rows, ${missing.length} unmatched, ${unauditable.length + noDigest.length} without auditable rationale) — label ${label}`,
     entity_type: "agent_bridge",
     meta: { agent, label, ...summary },
   });
