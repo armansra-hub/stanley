@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { coerceBool, coerceDate, coerceList, coerceScore, pick } from "./coerce";
 import { assessDigest, deriveOldGold, normalizeScoreBatch, normalizeScoreRow } from "./scores";
-import { adjustScore } from "./adjust";
+import { adjustScore, readVerdict } from "./adjust";
 
 describe("coerceDate — the field that broke the 2026-07-15 import", () => {
   it("accepts the format the old validator wanted", () => {
@@ -166,8 +166,9 @@ describe("adjustScore — the signal layer a regrade must not erase", () => {
   });
 
   it("still stacks ACROSS different signal types", () => {
-    const mixed = adjustScore(15, {}, [fresh("ma"), fresh("finance_hire")], today);
-    const single = adjustScore(15, {}, [fresh("ma")], today);
+    // Graded 45 = a viable verdict, so the cap doesn't interfere with what's being tested.
+    const mixed = adjustScore(45, {}, [fresh("ma"), fresh("finance_hire")], today);
+    const single = adjustScore(45, {}, [fresh("ma")], today);
     expect(mixed.score).toBeGreaterThan(single.score);
     expect(mixed.reasons).toHaveLength(2);
   });
@@ -257,5 +258,62 @@ describe("assessDigest reads the whole rationale, not one field", () => {
   it("still reports a row with template digest and nothing else", () => {
     expect(assessDigest(boiler, []).auditable).toBe(false);
     expect(assessDigest(boiler, ["[COMMENTS] # 8 employees"]).markers).toContain("headcount");
+  });
+});
+
+describe("verdict caps the signal layer — testimony outranks scraped signal", () => {
+  const today = new Date("2026-07-27T00:00:00Z");
+  const loud = [
+    { type: "funding", signal_date: "2026-07-25", half_life_days: 30 },
+    { type: "ucc_financing", signal_date: "2026-07-25", half_life_days: 30 },
+  ];
+  const DQ = "Score 27/100: current evidence points to disqualification, poor timing, or a low probability of an ERP close.";
+
+  it("caps a disqualification verdict at +3 (the Ad Fontes case)", () => {
+    const r = adjustScore(27, { record_digest: DQ, headcount_growth_pct: 400 }, loud, today);
+    expect(r.verdict).toBe("disqualified");
+    expect(r.bump).toBe(3);
+    expect(r.score).toBe(30);          // was 35.8 when signals ran uncapped
+    expect(r.note).toContain("capped at +3");
+  });
+
+  it("lets a viable verdict run up to the full +15", () => {
+    const r = adjustScore(45, { headcount_growth_pct: 400 }, loud, today);
+    expect(r.verdict).toBe("viable");
+    expect(r.bump).toBeGreaterThan(14);   // 14.5 here: two decayed signals + headcount
+    expect(r.bump).toBeLessThanOrEqual(15);
+    expect(r.note).not.toContain("capped");
+  });
+
+  it("caps a weak grade at +8 even with everything firing", () => {
+    const r = adjustScore(12, { headcount_growth_pct: 400, pe_owned: true }, loud, today);
+    expect(r.verdict).toBe("weak");
+    expect(r.bump).toBe(8);
+  });
+
+  it("honours an explicit verdict from the grader over the score band", () => {
+    expect(adjustScore(50, { verdict: "disqualified" }, loud, today).bump).toBe(3);
+    expect(adjustScore(5, { verdict: "viable" }, loud, today).bump).toBeGreaterThan(3);
+  });
+
+  it("still lets a graded 0 take nothing at all", () => {
+    expect(adjustScore(0, { record_digest: DQ }, loud, today).bump).toBe(0);
+  });
+});
+
+describe("readVerdict maps the grader's own declared bands", () => {
+  it("reads all three canned verdicts", () => {
+    expect(readVerdict(27, "Score 27/100: current evidence points to disqualification, poor timing, or a low probability of an ERP close.")).toBe("disqualified");
+    expect(readVerdict(53, "Score 53/100: some historical fit or pain exists, but current budget, finance ownership, timing, or interest is weak.")).toBe("weak");
+    expect(readVerdict(60, "Score 60/100: credible ERP potential, but one or more closing requirements remain unconfirmed.")).toBe("viable");
+  });
+
+  it("falls back to the score band only when no verdict was declared", () => {
+    expect(readVerdict(45, "2-year Idaho flatbed carrier with a brand-new CFO, Peter Diehl")).toBe("viable");
+    expect(readVerdict(9, null)).toBe("weak");
+  });
+
+  it("an explicit verdict from the grader still wins", () => {
+    expect(readVerdict(9, "…points to disqualification…", "viable")).toBe("viable");
   });
 });

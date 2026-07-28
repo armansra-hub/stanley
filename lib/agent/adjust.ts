@@ -42,6 +42,9 @@ export interface AdjustInput {
   erp_incumbent?: string | null;
   pe_owned?: boolean | null;
   headcount_growth_pct?: number | string | null;
+  /** The grader's own rationale + verdict — how far signals may move this score. */
+  record_digest?: string | null;
+  verdict?: string | null;
 }
 
 export interface Adjustment {
@@ -51,6 +54,57 @@ export interface Adjustment {
   hardZeroReason: string | null;
   reasons: string[];
   note: string;
+  verdict?: Verdict;
+}
+
+/**
+ * EVIDENCE HIERARCHY (Arman, 2026-07-28).
+ *
+ * The best information about a lead is what the prospect said with their own
+ * mouth. A note recalling a conversation — quoting or paraphrasing them — outranks
+ * every external signal we can scrape. A UCC filing, a headcount jump, a press
+ * mention: all of it is inference about a company. "We're out of budget until we
+ * hit a million" is testimony.
+ *
+ * The grader already read those notes, so THE GRADE IS THE ENCODED TESTIMONY. It
+ * follows that outside signals must never overrule it — they can only move a score
+ * as far as the verdict allows. Ad Fontes Media was the case that proved it: graded
+ * 27 with a rationale reading "current evidence points to disqualification", then
+ * lifted to 35.8 and the single highest priority in the base by +9 of scraped
+ * signal. A human judged it dead; a filing put it top of the list.
+ *
+ * So the cap scales with the verdict rather than being flat.
+ */
+export type Verdict = "disqualified" | "weak" | "viable";
+
+/** How far outside signals may move a grade, by verdict. */
+const VERDICT_CAP: Record<Verdict, number> = { disqualified: 3, weak: 8, viable: 15 };
+
+/**
+ * The grader's own declared bands, verbatim from record_digest across the TAM
+ * (6,550 / 165 / 5 rows respectively). Reading these is not keyword inference —
+ * it is the grader stating its conclusion in a fixed vocabulary it controls.
+ * Note the lowest one is three-way: disqualification OR poor timing OR low
+ * probability. All three mean "do not let a scraped filing outrank this".
+ */
+const VERDICT_PHRASES: { phrase: string; verdict: Verdict }[] = [
+  { phrase: "points to disqualification", verdict: "disqualified" },
+  { phrase: "some historical fit or pain exists", verdict: "weak" },
+  { phrase: "credible erp potential", verdict: "viable" },
+];
+
+/**
+ * What did the grader actually conclude? An explicit verdict wins; otherwise the
+ * rationale is read for a stated disqualification; otherwise the score band stands
+ * in for it. Never guessed from keywords in the prospect's own words — only from
+ * what the grader itself declared.
+ */
+export function readVerdict(rawScore: number, digest?: string | null, explicit?: string | null): Verdict {
+  const stated = String(explicit ?? "").toLowerCase();
+  if (stated === "disqualified" || stated === "weak" || stated === "viable") return stated as Verdict;
+  const text = (digest ?? "").toLowerCase();
+  for (const { phrase, verdict } of VERDICT_PHRASES) if (text.includes(phrase)) return verdict;
+  return rawScore < 20 ? "weak" : "viable";
 }
 
 /** Freshness decay: half the weight every half_life_days (default 30). */
@@ -104,7 +158,14 @@ export function adjustScore(rawScore: number, company: AdjustInput, triggers: Tr
   const growth = Number(company.headcount_growth_pct ?? 0);
   if (growth >= 25) { bump += 5; reasons.push(`5500 headcount +${Math.round(growth)}%`); }
   if (company.pe_owned) { bump += 3; reasons.push("PE-owned"); }
-  bump = Math.min(bump, ADJUSTMENT_CAP);
+
+  // Cap by what the grader concluded from the prospect's own words. Scraped signals
+  // are inference; a recorded conversation is testimony, and testimony wins.
+  const verdict = readVerdict(rawScore, company.record_digest, company.verdict);
+  const cap = VERDICT_CAP[verdict];
+  const uncapped = bump;
+  bump = Math.min(bump, cap);
+  if (uncapped > bump) reasons.push(`capped at +${cap} (${verdict} verdict)`);
 
   let penalty = 0;
   const incumbent = company.erp_incumbent ?? "";
@@ -125,5 +186,6 @@ export function adjustScore(rawScore: number, company: AdjustInput, triggers: Tr
     hardZeroReason: null,
     reasons,
     note: parts.join("; "),
+    verdict,
   };
 }

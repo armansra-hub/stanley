@@ -63,7 +63,7 @@ export async function POST(req: Request) {
   for (let i = 0; i < ids.length; i += 300) {
     const { data, error } = await db
       .from("companies")
-      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent, record_dead, pe_owned, headcount_growth_pct")
+      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent, record_dead, pe_owned, headcount_growth_pct, record_digest")
       .in("netsuite_internal_id", ids.slice(i, i + 300));
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     found.push(...(data ?? []));
@@ -103,7 +103,8 @@ export async function POST(req: Request) {
     for (const company of byNsid.get(row.internalId) ?? []) {
       // A push that doesn't mention record_dead must not un-kill the lead.
       const isDead = row.recordDead ?? Boolean(company.record_dead);
-      const signals = adjustScore(row.tamScore, { ...company, record_dead: isDead } as never, triggersByCompany.get(String(company.id)) ?? []);
+      // The pushed digest is the grader's current verdict; the stored one is its last.
+      const signals = adjustScore(row.tamScore, { ...company, record_dead: isDead, record_digest: row.recordDigest ?? company.record_digest } as never, triggersByCompany.get(String(company.id)) ?? []);
       const law = {
         tamScore: signals.score,
         oldGoldScore: deriveOldGold(signals.score, company as never, row.lastSqlDate),
