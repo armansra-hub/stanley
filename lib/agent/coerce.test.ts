@@ -151,6 +151,27 @@ describe("adjustScore — the signal layer a regrade must not erase", () => {
     expect(r.note).toContain("funding");
   });
 
+  it("counts each signal TYPE once, at its strongest — one event reported four times is one event", () => {
+    const fourDeals = [
+      { type: "ma", signal_date: "2026-07-20", half_life_days: 30 },
+      { type: "ma", signal_date: "2026-07-21", half_life_days: 30 },
+      { type: "ma", signal_date: "2026-07-22", half_life_days: 30 },
+      { type: "ma", signal_date: "2026-07-24", half_life_days: 30 },
+    ];
+    const four = adjustScore(15, {}, fourDeals, today);
+    const one = adjustScore(15, {}, [fourDeals[3]], today); // the freshest alone
+    expect(four.score).toBe(one.score);
+    expect(four.reasons).toHaveLength(1);
+    expect(four.bump).toBeLessThan(7); // was hitting the +15 cap when these summed
+  });
+
+  it("still stacks ACROSS different signal types", () => {
+    const mixed = adjustScore(15, {}, [fresh("ma"), fresh("finance_hire")], today);
+    const single = adjustScore(15, {}, [fresh("ma")], today);
+    expect(mixed.score).toBeGreaterThan(single.score);
+    expect(mixed.reasons).toHaveLength(2);
+  });
+
   it("caps the total bump at +15 no matter how many signals fire", () => {
     const many = ["funding", "ma", "finance_hire", "erp_tech", "press", "news", "sba_loan"].map(fresh);
     const r = adjustScore(10, { headcount_growth_pct: 90, pe_owned: true }, many, today);

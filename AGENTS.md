@@ -90,6 +90,8 @@ value received, and its neighbours still write.
    stores your number in `codex_score` and re-derives `tam_score = your grade ±
    live signals (capped ±15)` at write time, so a regrade can no longer erase that
    layer (it did on 7/15). Don't fold Stanley's signals into your own number.
+   Each signal *type* counts once, at its strongest — repeated reports of one event
+   don't compound; stacking happens across different types.
 6. **Omit what you don't mean to change.** A field you leave out is left alone —
    notably `recordDead`. Sending nothing is how you say "unchanged"; sending `false`
    is how you say "bring this lead back".
@@ -118,8 +120,9 @@ value received, and its neighbours still write.
   "(see more…)", and those leads genuinely need the NetSuite UI to grade honestly —
   that is why Codex drives Chrome, and it should keep doing so for them. For the
   rest, the local PDFs are enough: the 7/14 run extracted 7,130 leads — 109,293
-  pages, 947M characters — in **33 minutes** on 8 workers. Splitting the two lists
-  is worth doing, so the slow path only carries the leads that need it.
+  pages, 947M characters — in **33 minutes** on 8 workers. **Split the list before
+  grading** (agreed 7/27): grade from local PDF text wherever the record is complete,
+  and reserve the browser for the truncated ones. Only you can tell which is which.
 
 ---
 

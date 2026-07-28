@@ -81,14 +81,24 @@ export function adjustScore(rawScore: number, company: AdjustInput, triggers: Tr
     return { score: 0, bump: 0, penalty: 0, hardZeroReason: null, reasons: [], note: "graded 0 — decisive, signals not applied" };
   }
 
-  const reasons: string[] = [];
-  let bump = 0;
+  // BEST SIGNAL PER TYPE, not a sum of every row. Four "ma" triggers on one company
+  // is usually one event reported four times, not four times the evidence — summing
+  // them let a single acquisition hit the +15 cap on its own. Each type contributes
+  // only its strongest live instance; stacking happens ACROSS types, which is what
+  // actually indicates a company moving on several fronts at once.
+  const bestByType = new Map<string, number>();
   for (const t of triggers) {
     const decay = decayFactor(t, today);
     if (decay <= LIVE_THRESHOLD) continue; // decayed to noise
     const weight = (TRIGGER_WEIGHT[t.type] ?? DEFAULT_WEIGHT) * decay;
+    if (weight > (bestByType.get(t.type) ?? 0)) bestByType.set(t.type, weight);
+  }
+
+  const reasons: string[] = [];
+  let bump = 0;
+  for (const [type, weight] of [...bestByType].sort((a, b) => b[1] - a[1])) {
     bump += weight;
-    reasons.push(`${t.type} ${Math.round(weight)}`);
+    reasons.push(`${type} ${Math.round(weight)}`);
   }
 
   const growth = Number(company.headcount_growth_pct ?? 0);
