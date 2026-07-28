@@ -185,3 +185,18 @@ describe("adjustScore — the signal layer a regrade must not erase", () => {
     expect(r.bump).toBe(0);
   });
 });
+
+describe("adjustScore — a graded zero is decisive", () => {
+  const today = new Date("2026-07-27T00:00:00Z");
+  it("never lets outside signals resurrect a lead graded 0", () => {
+    const r = adjustScore(0, { pe_owned: true, headcount_growth_pct: 400 },
+      [{ type: "funding", signal_date: "2026-07-25", half_life_days: 30 }], today);
+    expect(r.score).toBe(0);
+    expect(r.bump).toBe(0);
+    expect(r.note).toContain("decisive");
+  });
+
+  it("still adjusts a lead graded even slightly above zero", () => {
+    expect(adjustScore(1, { pe_owned: true }, [], today).score).toBe(4);
+  });
+});

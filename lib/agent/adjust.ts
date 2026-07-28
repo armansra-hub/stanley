@@ -74,6 +74,12 @@ export function adjustScore(rawScore: number, company: AdjustInput, triggers: Tr
   if (company.erp_incumbent === "netsuite") {
     return { score: 0, bump: 0, penalty: 0, hardZeroReason: "already on NetSuite", reasons: [], note: "hard 0 — already on NetSuite" };
   }
+  // A graded 0 is a judgment ("this is not a prospect"), not a missing value. Outside
+  // signals must not quietly resurrect it — a PE owner or a press mention doesn't make
+  // a disqualified company workable. Reopening one is a human call, not an automatic +3.
+  if (rawScore <= 0) {
+    return { score: 0, bump: 0, penalty: 0, hardZeroReason: null, reasons: [], note: "graded 0 — decisive, signals not applied" };
+  }
 
   const reasons: string[] = [];
   let bump = 0;
