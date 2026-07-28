@@ -122,6 +122,10 @@ export async function POST(req: Request) {
       });
       writes.push({
         id: company.id,
+        // PostgREST upsert is INSERT … ON CONFLICT, and NOT NULL is checked on the
+        // proposed row before the conflict resolves — so `name` must be carried
+        // through unchanged or the whole batch fails. It is the only such column.
+        name: company.name,
         tam_score: law.tamScore,
         codex_score: row.tamScore, // the grader's raw number, preserved for side-by-side reading
         oldgold_score: law.oldGoldScore,
