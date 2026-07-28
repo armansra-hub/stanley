@@ -50,6 +50,18 @@ export async function POST(req: Request) {
     if (!text) return void errors.push({ index: i, problem: "missing body text" });
     if (text.length > MAX_CHARS) return void errors.push({ index: i, problem: `body exceeds ${MAX_CHARS} chars (${text.length})` });
 
+    // Integrity check. A releasing agent hashes the text it audited; if what arrives
+    // doesn't hash the same, the transfer truncated or altered it and the document is
+    // NOT the audited package — reject rather than grade from a corrupted record.
+    const computed = createHash("sha256").update(text).digest("hex");
+    const claimed = coerceText(pick(raw, "sha256", "sha", "hash", "checksum"));
+    if (claimed && claimed.toLowerCase() !== computed) {
+      return void errors.push({
+        index: i,
+        problem: `sha256 mismatch for ${internalId} — released ${claimed.slice(0, 16)}…, received ${computed.slice(0, 16)}… (${text.length} chars). Document rejected; re-send.`,
+      });
+    }
+
     rows.push({
       netsuite_internal_id: internalId,
       doc_type: coerceText(pick(raw, "docType", "doc type", "type")) ?? "record_text",
