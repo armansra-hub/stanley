@@ -15,7 +15,8 @@ export function middleware(req: NextRequest) {
     pathname.startsWith("/login") ||
     pathname.startsWith("/api/login") ||
     pathname.startsWith("/api/cron") ||
-    pathname.startsWith("/api/webhooks")
+    pathname.startsWith("/api/webhooks") ||
+    pathname.startsWith("/api/agent") // agent bridge — carries AGENT_TOKEN/CRON_SECRET itself
   ) {
     return NextResponse.next();
   }
