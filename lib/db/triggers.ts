@@ -44,6 +44,14 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
  *   × multi-signal bonus  (more DISTINCT active trigger types = riper; +15%/extra type)
  *   × incumbent factor    (QuickBooks/no-ERP → ×1.25 ready; already on NetSuite/Intacct → 0)
  *   × PE factor           (PE/portfolio-owned → ×1.2, standardizes on ERP)
+ *   × VERDICT factor      (what a human heard from the prospect outranks any signal)
+ *
+ * On the verdict factor (Arman, 2026-07-28): the best information about a lead is
+ * what they told us with their own mouth, and the grader read those notes. Before
+ * this, priority was pure signal strength, so leads a human had graded 0 sat at the
+ * top of the worklist on the strength of a UCC filing — Kompass Kapital (graded 0)
+ * at priority 129, ps Hummingbird (graded 8) at 132. A scraped event should reorder
+ * leads worth working; it should never promote one a human already closed out.
  */
 export async function recomputePriority(companyId: string): Promise<number> {
   const db = serviceClient();
@@ -73,7 +81,17 @@ export async function recomputePriority(companyId: string): Promise<number> {
   // Record says DEAD (explicit rejection / hard disqualify in the NetSuite record) →
   // crush priority so they sink to the bottom EVERYWHERE, but stay visible (⛔ badge).
   const deadFactor = (c as any)?.record_dead ? 0.1 : 1;
-  const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * 100) / 100;
+  // Human judgment governs the worklist. A graded 0 is treated exactly like a dead
+  // record; a declared disqualification is heavily damped; a weak read is damped a
+  // little. Nothing is hidden — these stay visible, they just stop outranking
+  // leads that are actually workable.
+  const graded = (c as any)?.tam_score;
+  const digest = String((c as any)?.record_digest ?? "").toLowerCase();
+  let verdictFactor = 1;
+  if (graded !== null && graded !== undefined && Number(graded) <= 0) verdictFactor = 0.1;
+  else if (digest.includes("points to disqualification")) verdictFactor = 0.35;
+  else if (digest.includes("some historical fit or pain exists")) verdictFactor = 0.7;
+  const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * 100) / 100;
   await db.from("companies").update({ priority }).eq("id", companyId);
   return priority;
 }
