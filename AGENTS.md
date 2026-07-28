@@ -83,13 +83,19 @@ value received, and its neighbours still write.
    matter what a grade says. The bridge enforces this too.
 4. **Duplicate NetSuite internal IDs exist** (~20). Anything whose value depends on
    the row must be written per company row, not per internal ID.
-5. **The ±15 outside-signal adjustment is a separate pass** (`system/codex_rescore.py`
-   on the Mac). Push the raw grade; don't try to fold Stanley's own trigger signals
-   into it, and don't overwrite `tam_score` with an unadjusted value expecting it to
-   stick — that silently discards the adjustment layer (this happened on 7/15).
-6. **Never delete leads.** Removed-from-TAM leads are hidden, never dropped; their
+5. **Push the RAW grade. Stanley's signal layer is applied for you, on every write.**
+   Division of labour: **Codex owns the grade** (TAM + Old Gold, read from the
+   record). **Stanley owns the signals** — triggers from the daily sweeps, DOL-5500
+   headcount growth, PE ownership, competitor-ERP detection. `/api/agent/scores`
+   stores your number in `codex_score` and re-derives `tam_score = your grade ±
+   live signals (capped ±15)` at write time, so a regrade can no longer erase that
+   layer (it did on 7/15). Don't fold Stanley's signals into your own number.
+6. **Omit what you don't mean to change.** A field you leave out is left alone —
+   notably `recordDead`. Sending nothing is how you say "unchanged"; sending `false`
+   is how you say "bring this lead back".
+7. **Never delete leads.** Removed-from-TAM leads are hidden, never dropped; their
    grades, digests and history are kept. Target Account List rows never disappear.
-7. **Push text, not PDFs.** Free-tier Supabase is 500MB; the PDF corpus is ~15GB.
+8. **Push text, not PDFs.** Free-tier Supabase is 500MB; the PDF corpus is ~15GB.
    Extracted text for the whole TAM is ~100MB and is what a grader actually reads.
 
 ---
@@ -108,11 +114,12 @@ value received, and its neighbours still write.
 - **Why the old import broke:** an omitted `revisitOn` is `undefined`, not `null`, so
   a strict `/^\d{4}-\d{2}-\d{2}$/` test rejected entire 250-row batches with no row
   index. Fixed here — dates are tolerant and errors are per-row.
-- **Extraction beats scraping.** Reading records through a browser one at a time
-  takes weeks. Arman's 7/14 run extracted 7,130 leads — 109,293 pages, 947M
-  characters — from local PDFs in **33 minutes** on 8 workers. If you hold the PDFs
-  (`…/Documents/Codex/…/netsuite_leads_*_full` on the Windows laptop), extract
-  locally and push text; use the browser only for what the PDF genuinely lacks.
+- **The browser is for truncated records.** Some PDFs cut long fields off with
+  "(see more…)", and those leads genuinely need the NetSuite UI to grade honestly —
+  that is why Codex drives Chrome, and it should keep doing so for them. For the
+  rest, the local PDFs are enough: the 7/14 run extracted 7,130 leads — 109,293
+  pages, 947M characters — in **33 minutes** on 8 workers. Splitting the two lists
+  is worth doing, so the slow path only carries the leads that need it.
 
 ---
 

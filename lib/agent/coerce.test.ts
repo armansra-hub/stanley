@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { coerceBool, coerceDate, coerceList, coerceScore, pick } from "./coerce";
-import { applyScoringLaw, normalizeScoreBatch, normalizeScoreRow } from "./scores";
+import { deriveOldGold, normalizeScoreBatch, normalizeScoreRow } from "./scores";
+import { adjustScore } from "./adjust";
 
 describe("coerceDate — the field that broke the 2026-07-15 import", () => {
   it("accepts the format the old validator wanted", () => {
@@ -83,7 +84,8 @@ describe("normalizeScoreRow", () => {
       expect(r.row.internalId).toBe("92847818");
       expect(r.row.tamScore).toBe(12);
       expect(r.row.revisitOn).toBeNull();
-      expect(r.row.recordDead).toBe(false);
+      // null, NOT false — an unmentioned field must not un-kill a dead lead.
+      expect(r.row.recordDead).toBeNull();
     }
   });
 
@@ -125,29 +127,61 @@ describe("normalizeScoreRow", () => {
   });
 });
 
-describe("applyScoringLaw — rules a pushed grade cannot override", () => {
-  const row = { internalId: "1", tamScore: 55, oldGoldClass: null, oldGoldReasons: [], recordDigest: null,
-    recordDead: false, recordDeadReason: null, revisitOn: null, qualNote: null, lastSqlDate: null };
-
-  it("forces dead records to zero", () => {
-    const r = applyScoringLaw({ ...row, recordDead: true, recordDeadReason: "not interested" }, {});
-    expect(r.tamScore).toBe(0);
-    expect(r.hardZeroReason).toContain("not interested");
-  });
-
-  it("forces NetSuite incumbents to zero", () => {
-    expect(applyScoringLaw(row, { erp_incumbent: "netsuite" }).tamScore).toBe(0);
-  });
-
+describe("deriveOldGold", () => {
   it("derives oldgold only for rows that are genuinely Old Gold", () => {
-    expect(applyScoringLaw(row, { qual_note: "prior eval", last_sql_date: "2026-02-01" }).oldGoldScore).toBe(55);
-    expect(applyScoringLaw(row, { qual_note: "prior eval" }).oldGoldScore).toBeNull();   // no SQL date
-    expect(applyScoringLaw(row, { last_sql_date: "2026-02-01" }).oldGoldScore).toBeNull(); // no qual note
-    expect(applyScoringLaw(row, {}).oldGoldScore).toBeNull();
+    expect(deriveOldGold(55, { qual_note: "prior eval", last_sql_date: "2026-02-01" })).toBe(55);
+    expect(deriveOldGold(55, { qual_note: "prior eval" })).toBeNull();      // no SQL date
+    expect(deriveOldGold(55, { last_sql_date: "2026-02-01" })).toBeNull();  // no qual note
+    expect(deriveOldGold(55, {})).toBeNull();
   });
 
-  it("zeroes the old gold score too when the record is dead", () => {
-    const r = applyScoringLaw({ ...row, recordDead: true }, { qual_note: "x", last_sql_date: "2026-02-01" });
-    expect(r.oldGoldScore).toBe(0);
+  it("accepts a last-SQL date supplied by the push when the row lacks one", () => {
+    expect(deriveOldGold(55, { qual_note: "prior eval" }, "2026-02-01")).toBe(55);
+  });
+});
+
+describe("adjustScore — the signal layer a regrade must not erase", () => {
+  const today = new Date("2026-07-27T00:00:00Z");
+  const fresh = (type: string) => ({ type, signal_date: "2026-07-20", half_life_days: 30 });
+
+  it("adds weighted, decayed signal value on top of the pushed grade", () => {
+    const r = adjustScore(12, {}, [fresh("funding")], today);
+    expect(r.score).toBeGreaterThan(12);
+    expect(r.note).toContain("Stanley signals");
+    expect(r.note).toContain("funding");
+  });
+
+  it("caps the total bump at +15 no matter how many signals fire", () => {
+    const many = ["funding", "ma", "finance_hire", "erp_tech", "press", "news", "sba_loan"].map(fresh);
+    const r = adjustScore(10, { headcount_growth_pct: 90, pe_owned: true }, many, today);
+    expect(r.bump).toBeLessThanOrEqual(15);
+    expect(r.score).toBeLessThanOrEqual(25);
+  });
+
+  it("ignores signals that have decayed into noise", () => {
+    const stale = { type: "funding", signal_date: "2025-01-01", half_life_days: 30 };
+    expect(adjustScore(12, {}, [stale], today).score).toBe(12);
+  });
+
+  it("penalises a site-detected competitor ERP", () => {
+    const r = adjustScore(30, { erp_incumbent: "intacct" }, [], today);
+    expect(r.score).toBe(20);
+    expect(r.note).toContain("incumbent ERP");
+  });
+
+  it("hard-zeroes dead records and NetSuite incumbents, signals notwithstanding", () => {
+    expect(adjustScore(80, { record_dead: true }, [fresh("funding")], today).score).toBe(0);
+    expect(adjustScore(80, { erp_incumbent: "netsuite" }, [fresh("funding")], today).score).toBe(0);
+  });
+
+  it("counts 5500 headcount growth and PE ownership", () => {
+    expect(adjustScore(10, { headcount_growth_pct: 40 }, [], today).score).toBe(15);
+    expect(adjustScore(10, { pe_owned: true }, [], today).score).toBe(13);
+  });
+
+  it("leaves a grade untouched when nothing is firing", () => {
+    const r = adjustScore(9, {}, [], today);
+    expect(r.score).toBe(9);
+    expect(r.bump).toBe(0);
   });
 });

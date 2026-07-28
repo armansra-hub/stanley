@@ -16,7 +16,9 @@ export interface NormalizedScoreRow {
   oldGoldClass: string | null;
   oldGoldReasons: string[];
   recordDigest: string | null;
-  recordDead: boolean;
+  /** null = the push didn't mention it. Absent must NOT be read as false, or a
+   * partial re-push would resurrect every dead lead it touched. */
+  recordDead: boolean | null;
   recordDeadReason: string | null;
   revisitOn: string | null;
   qualNote: string | null;
@@ -91,7 +93,7 @@ export function normalizeScoreRow(
       oldGoldClass: coerceText(pick(raw, "oldGoldClass", "old gold class", "ogClass")),
       oldGoldReasons: coerceList(pick(raw, "oldGoldReasons", "old gold reasons", "ogReasons", "reasons")),
       recordDigest: coerceText(pick(raw, "recordDigest", "record digest", "digest", "rationale", "summary")),
-      recordDead: recordDead === true,
+      recordDead: recordDead ?? null, // undefined already returned above as a field error
       recordDeadReason: coerceText(pick(raw, "recordDeadReason", "record dead reason", "deadReason", "disqualifyReason")),
       revisitOn: revisitOn ?? null,
       qualNote: coerceText(pick(raw, "qualNote", "qual note", "qualificationNote")),
@@ -127,34 +129,21 @@ export function normalizeScoreBatch(rawRows: Record<string, unknown>[]): Normali
 }
 
 /**
- * Stanley's scoring law, applied at write time. Two rules that a pushed grade can
- * never override, because they encode facts the grader can't see or shouldn't restate:
+ * Old Gold is DERIVED, never copied. A row's oldgold_score equals its tam_score
+ * only when the row is genuinely Old Gold — it has both a qual note and a prior
+ * SQL date. For everyone else it must be null, not a copied number.
  *
- *  • HARD ZERO — a dead record, or a company already running NetSuite, scores 0.
- *  • DERIVED OLD GOLD — oldgold_score equals tam_score only for rows that are
- *    genuinely Old Gold (they have both a qual note and a prior SQL date); for
- *    everyone else it must be null, never a copied number.
+ * This is evaluated per company row, because duplicate NetSuite internal IDs exist
+ * and one twin can be Old Gold while the other isn't.
  *
- * The ±15 outside-signal adjustment is deliberately NOT applied here — it lives in
- * system/codex_rescore.py and runs as its own pass, so the law has one home rather
- * than two drifting implementations. A push therefore lands the raw grade; the
- * adjustment pass layers Stanley's own signals on top afterwards.
+ * (Hard zeros and the ±15 signal layer live in lib/agent/adjust.ts, so the scoring
+ * law has exactly one implementation on the write path.)
  */
-export function applyScoringLaw(
-  row: NormalizedScoreRow,
-  company: { qual_note?: unknown; last_sql_date?: unknown; erp_incumbent?: string | null },
-): { tamScore: number; oldGoldScore: number | null; hardZeroReason: string | null } {
-  let tamScore = row.tamScore;
-  let hardZeroReason: string | null = null;
-
-  if (row.recordDead) {
-    tamScore = 0;
-    hardZeroReason = `record dead: ${row.recordDeadReason ?? "disqualified"}`;
-  } else if (company.erp_incumbent === "netsuite") {
-    tamScore = 0;
-    hardZeroReason = "already on NetSuite";
-  }
-
-  const isOldGold = Boolean(company.qual_note) && Boolean(company.last_sql_date ?? row.lastSqlDate);
-  return { tamScore, oldGoldScore: isOldGold ? tamScore : null, hardZeroReason };
+export function deriveOldGold(
+  tamScore: number,
+  company: { qual_note?: unknown; last_sql_date?: unknown },
+  fallbackLastSql?: string | null,
+): number | null {
+  const isOldGold = Boolean(company.qual_note) && Boolean(company.last_sql_date ?? fallbackLastSql);
+  return isOldGold ? tamScore : null;
 }

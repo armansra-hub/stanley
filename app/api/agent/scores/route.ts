@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
 import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
-import { applyScoringLaw, normalizeScoreBatch } from "@/lib/agent/scores";
+import { deriveOldGold, normalizeScoreBatch } from "@/lib/agent/scores";
+import { adjustScore, type TriggerRow } from "@/lib/agent/adjust";
 
 /**
  * Grade ingest — the replacement for the endpoint Codex built and deleted on
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
   for (let i = 0; i < ids.length; i += 300) {
     const { data, error } = await db
       .from("companies")
-      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent")
+      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent, record_dead, pe_owned, headcount_growth_pct")
       .in("netsuite_internal_id", ids.slice(i, i + 300));
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     found.push(...(data ?? []));
@@ -78,14 +79,38 @@ export async function POST(req: Request) {
   }
   const missing = ids.filter((id) => !byNsid.has(id));
 
+  // Stanley's live signals for exactly these companies. Fetched per import so the
+  // ±15 layer is re-derived on every push — a grade write can no longer erase it.
+  const companyIds = [...new Set(found.map((c) => String(c.id)))];
+  const triggersByCompany = new Map<string, TriggerRow[]>();
+  for (let i = 0; i < companyIds.length; i += 300) {
+    const { data } = await db
+      .from("triggers")
+      .select("company_id, type, signal_date, detected_at, half_life_days")
+      .in("company_id", companyIds.slice(i, i + 300));
+    for (const t of data ?? []) {
+      const key = String((t as { company_id: string }).company_id);
+      triggersByCompany.set(key, [...(triggersByCompany.get(key) ?? []), t as TriggerRow]);
+    }
+  }
+
   const writes: Record<string, unknown>[] = [];
   const snapshots: Record<string, unknown>[] = [];
   const hardZeroed: { name: string; reason: string }[] = [];
+  const adjusted: { name: string; raw: number; final: number; note: string }[] = [];
 
   for (const row of rows) {
     for (const company of byNsid.get(row.internalId) ?? []) {
-      const law = applyScoringLaw(row, company as never);
+      // A push that doesn't mention record_dead must not un-kill the lead.
+      const isDead = row.recordDead ?? Boolean(company.record_dead);
+      const signals = adjustScore(row.tamScore, { ...company, record_dead: isDead } as never, triggersByCompany.get(String(company.id)) ?? []);
+      const law = {
+        tamScore: signals.score,
+        oldGoldScore: deriveOldGold(signals.score, company as never, row.lastSqlDate),
+        hardZeroReason: signals.hardZeroReason,
+      };
       if (law.hardZeroReason) hardZeroed.push({ name: String(company.name), reason: law.hardZeroReason });
+      else if (signals.note) adjusted.push({ name: String(company.name), raw: row.tamScore, final: signals.score, note: signals.note });
       snapshots.push({
         label,
         company_id: company.id,
@@ -101,13 +126,15 @@ export async function POST(req: Request) {
         codex_score: row.tamScore, // the grader's raw number, preserved for side-by-side reading
         oldgold_score: law.oldGoldScore,
         tam_provisional: false,
-        record_dead: row.recordDead,
+        ...(row.recordDead === null ? {} : { record_dead: row.recordDead }),
         ...(row.recordDeadReason ? { record_dead_reason: row.recordDeadReason } : {}),
         ...(row.recordDigest ? { record_digest: row.recordDigest } : {}),
         ...(row.oldGoldClass ? { oldgold_class: row.oldGoldClass } : {}),
         ...(row.oldGoldReasons.length ? { oldgold_reasons: row.oldGoldReasons } : {}),
         ...(row.revisitOn ? { revisit_on: row.revisitOn } : {}),
-        score_adjust_note: String(body.note ?? `${label}: raw grade, no outside-signal adjustment applied`).slice(0, 400),
+        // Provenance + exactly which signals moved the number, so the score is readable later.
+        score_adjust_note: [String(body.note ?? label), signals.note || (law.hardZeroReason ? `hard 0 — ${law.hardZeroReason}` : "no active outside signals")]
+          .filter(Boolean).join("; ").slice(0, 400),
       });
     }
   }
@@ -124,6 +151,8 @@ export async function POST(req: Request) {
     errorCount: errors.length,
     hardZeroed: hardZeroed.slice(0, 20),
     hardZeroedCount: hardZeroed.length,
+    signalAdjusted: adjusted.slice(0, 20),
+    signalAdjustedCount: adjusted.length,
     scoreDistribution: {
       min: scores[0],
       median: scores[Math.floor(scores.length / 2)],
