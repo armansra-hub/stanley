@@ -260,10 +260,20 @@ export async function POST(req: Request) {
         updates.push({
           id: duplicate.id,
           name: duplicate.name,
+          domain: duplicate.domain,
+          website_raw: duplicate.website_raw,
+          subindustry: duplicate.subindustry,
+          ns_industry: duplicate.ns_industry,
+          state: duplicate.state,
+          revenue_band: duplicate.revenue_band,
+          source: duplicate.source === "discovered" ? "discovered" : "imported",
           status: "removed_from_tam",
+          sources: Array.isArray(duplicate.sources) ? duplicate.sources.map(String) : [],
           lists: historicalLists(duplicate.lists, true),
           claimable: false,
           is_base: true,
+          lead_vendor: duplicate.lead_vendor ?? "netsuite",
+          netsuite_internal_id: row.internalId,
           last_updated_at: now,
         });
         duplicateRowsRetired++;
