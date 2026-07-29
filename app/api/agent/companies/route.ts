@@ -277,8 +277,8 @@ export async function POST(req: Request) {
         ns_industry: row.industry ?? company.ns_industry,
         state: row.state ?? company.state,
         revenue_band: row.revenueBand ?? company.revenue_band,
-        source: company.source,
-        status: company.status === "removed_from_tam" ? "new" : company.status,
+        source: company.source === "discovered" ? "discovered" : "imported",
+        status: company.status === "removed_from_tam" ? "new" : (company.status ?? "new"),
         sources: [...new Set([
           ...(Array.isArray(company.sources) ? company.sources.map(String) : []),
           "netsuite",
