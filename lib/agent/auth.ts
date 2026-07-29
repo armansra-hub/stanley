@@ -14,7 +14,11 @@ import { NextResponse } from "next/server";
  * dashboard trip. Set AGENT_TOKEN later to give the agents their own credential.
  */
 export function agentAuthOk(req: Request): boolean {
-  const expected = [process.env.AGENT_TOKEN, process.env.CRON_SECRET].filter(Boolean) as string[];
+  const expected = [
+    process.env.AGENT_TOKEN,
+    process.env.CODEX_AGENT_TOKEN,
+    process.env.CRON_SECRET,
+  ].filter(Boolean) as string[];
   if (!expected.length) return false; // never fail open
 
   const auth = req.headers.get("authorization");
