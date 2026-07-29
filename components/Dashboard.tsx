@@ -280,7 +280,7 @@ export default function Dashboard({
   const [baseSubs, setBaseSubs] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [tagMatchAll, setTagMatchAll] = useState(false);
-  const [claimableOnly, setClaimableOnly] = useState(false);
+  const [claimableOnly, setClaimableOnly] = useState(true);
   const [erpOnly, setErpOnly] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [exportingAll, setExportingAll] = useState(false);
