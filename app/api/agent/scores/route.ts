@@ -28,7 +28,14 @@ const MAX_ROWS = 1000;
 export async function POST(req: Request) {
   if (!agentAuthOk(req)) return unauthorized();
 
-  let body: { rows?: unknown; dryRun?: unknown; label?: unknown; note?: unknown; agent?: unknown };
+  let body: {
+    rows?: unknown;
+    dryRun?: unknown;
+    label?: unknown;
+    note?: unknown;
+    agent?: unknown;
+    resurfaceCurrentTam?: unknown;
+  };
   try {
     body = await req.json();
   } catch {
@@ -48,6 +55,9 @@ export async function POST(req: Request) {
   const agent = callerAgent(req, body.agent);
   const dryRun = body.dryRun === true;
   const label = String(body.label ?? `${agent}-import`).slice(0, 80);
+  const resurfaceCurrentTam = body.resurfaceCurrentTam === true
+    || /^tam-v9-/i.test(label)
+    || /^ars bs tam v9/i.test(label);
   const { rows, errors, duplicates } = normalizeScoreBatch(body.rows as Record<string, unknown>[]);
 
   if (!rows.length) {
@@ -63,7 +73,7 @@ export async function POST(req: Request) {
   for (let i = 0; i < ids.length; i += 300) {
     const { data, error } = await db
       .from("companies")
-      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent, record_dead, pe_owned, headcount_growth_pct, record_digest")
+      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent, record_dead, pe_owned, headcount_growth_pct, record_digest, status, lists, claimable")
       .in("netsuite_internal_id", ids.slice(i, i + 300));
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     found.push(...(data ?? []));
@@ -98,6 +108,8 @@ export async function POST(req: Request) {
   const snapshots: Record<string, unknown>[] = [];
   const hardZeroed: { name: string; reason: string }[] = [];
   const adjusted: { name: string; raw: number; final: number; note: string }[] = [];
+  const resurfaced: { id: string; internalId: string; priorStatus: string }[] = [];
+  const hiddenStatuses = new Set(["reviewed", "dismissed", "exported_csv", "exported_sql"]);
 
   for (const row of rows) {
     for (const company of byNsid.get(row.internalId) ?? []) {
@@ -110,6 +122,19 @@ export async function POST(req: Request) {
         oldGoldScore: deriveOldGold(signals.score, company as never, row.lastSqlDate),
         hardZeroReason: signals.hardZeroReason,
       };
+      const companyLists = Array.isArray(company.lists) ? company.lists.map(String) : [];
+      const priorStatus = String(company.status ?? "new");
+      const shouldResurface = resurfaceCurrentTam
+        && company.claimable === true
+        && companyLists.includes("netsuite_tam")
+        && hiddenStatuses.has(priorStatus);
+      if (shouldResurface) {
+        resurfaced.push({
+          id: String(company.id),
+          internalId: row.internalId,
+          priorStatus,
+        });
+      }
       if (law.hardZeroReason) hardZeroed.push({ name: String(company.name), reason: law.hardZeroReason });
       else if (signals.note) adjusted.push({ name: String(company.name), raw: row.tamScore, final: signals.score, note: signals.note });
       snapshots.push({
@@ -131,6 +156,7 @@ export async function POST(req: Request) {
         codex_score: row.tamScore, // the grader's raw number, preserved for side-by-side reading
         oldgold_score: law.oldGoldScore,
         tam_provisional: false,
+        status: shouldResurface ? "new" : priorStatus,
         ...(row.recordDead === null ? {} : { record_dead: row.recordDead }),
         ...(row.recordDeadReason ? { record_dead_reason: row.recordDeadReason } : {}),
         ...(row.recordDigest ? { record_digest: row.recordDigest } : {}),
@@ -163,6 +189,9 @@ export async function POST(req: Request) {
     hardZeroedCount: hardZeroed.length,
     signalAdjusted: adjusted.slice(0, 20),
     signalAdjustedCount: adjusted.length,
+    resurfaceCurrentTam,
+    resurfacedCount: resurfaced.length,
+    resurfaced: resurfaced.slice(0, 200),
     rationale: {
       withDigest: withDigest.length,
       missingDigest: noDigest.length,
@@ -204,7 +233,13 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   if (!agentAuthOk(req)) return unauthorized();
   return NextResponse.json({
-    post: { rows: "array (max 1000) of grade rows", dryRun: "boolean — always try this first", label: "string used for the undo snapshot", note: "score_adjust_note text" },
+    post: {
+      rows: "array (max 1000) of grade rows",
+      dryRun: "boolean - always try this first",
+      label: "string used for the undo snapshot",
+      note: "score_adjust_note text",
+      resurfaceCurrentTam: "optional boolean; restores current netsuite_tam rows from hidden workflow statuses without clearing export history",
+    },
     row: {
       internalId: "required — NetSuite internal ID, digits (aliases: internal_id, nsid, 'Internal ID')",
       tamScore: "required — 0-100 close probability (aliases: score, grade)",

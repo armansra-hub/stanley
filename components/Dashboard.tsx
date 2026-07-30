@@ -293,7 +293,7 @@ export default function Dashboard({
   const [scoreMax, setScoreMax] = useState<number | null>(null);
   const baseFilterBody = (extra: Record<string, unknown>) => ({
     tags: [...selectedTags], matchAll: tagMatchAll, claimable: claimableOnly, erp: erpOnly,
-    state: stateFilter, q: search, includeHidden: showClosed,
+    state: stateFilter, q: search, includeHidden: showClosed, currentTam: true,
     scoreMin: scoreMin ?? undefined, scoreMax: scoreMax ?? undefined, ...extra,
   });
 

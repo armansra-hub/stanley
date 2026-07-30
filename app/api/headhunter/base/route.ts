@@ -13,7 +13,7 @@ export async function GET() {
   }
 }
 
-/** POST { tags, matchAll, claimable, erp, state, q, limit, offset } → a page of the TAM Base. */
+/** POST { tags, matchAll, claimable, currentTam, erp, state, q, limit, offset } -> a page of the TAM Base. */
 export async function POST(req: NextRequest) {
   let f: BaseFilter;
   try { f = await req.json(); } catch { return NextResponse.json({ error: "invalid JSON" }, { status: 400 }); }

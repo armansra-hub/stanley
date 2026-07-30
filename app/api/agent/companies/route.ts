@@ -101,6 +101,8 @@ export async function POST(req: Request) {
   let body: {
     action?: unknown;
     internalIds?: unknown;
+    status?: unknown;
+    fromStatuses?: unknown;
     rows?: unknown;
     dryRun?: unknown;
     note?: unknown;
@@ -110,6 +112,97 @@ export async function POST(req: Request) {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+
+  if (body.action === "set_current_tam_status") {
+    if (!Array.isArray(body.internalIds) || body.internalIds.length === 0) {
+      return NextResponse.json({ error: "internalIds must be a non-empty array" }, { status: 400 });
+    }
+    if (body.internalIds.length > MAX_ROWS) {
+      return NextResponse.json({ error: `internalIds capped at ${MAX_ROWS}` }, { status: 400 });
+    }
+    const internalIds = [...new Set(
+      body.internalIds.map(text).filter((value): value is string => Boolean(value)),
+    )];
+    if (
+      internalIds.length !== body.internalIds.length
+      || internalIds.some((internalId) => !/^\d+$/.test(internalId))
+    ) {
+      return NextResponse.json({ error: "internalIds must be unique numeric strings" }, { status: 422 });
+    }
+    const status = text(body.status);
+    if (status !== "new" && status !== "reviewed") {
+      return NextResponse.json({ error: "status must be new or reviewed" }, { status: 422 });
+    }
+    const fromStatuses = Array.isArray(body.fromStatuses)
+      ? [...new Set(body.fromStatuses.map(text).filter((value): value is string => Boolean(value)))]
+      : [];
+    const allowedPriorStatuses = new Set([
+      "new", "reviewed", "dismissed", "exported_csv", "exported_sql",
+    ]);
+    if (fromStatuses.some((value) => !allowedPriorStatuses.has(value))) {
+      return NextResponse.json({ error: "fromStatuses contains an unsupported status" }, { status: 422 });
+    }
+
+    const db = serviceClient();
+    const { data, error } = await db
+      .from("companies")
+      .select("id,name,status,lists,claimable,netsuite_internal_id")
+      .in("netsuite_internal_id", internalIds);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const eligible = (data ?? []).filter((company) => {
+      const lists = Array.isArray(company.lists) ? company.lists.map(String) : [];
+      return company.claimable === true
+        && lists.includes(TAM_LIST)
+        && (!fromStatuses.length || fromStatuses.includes(String(company.status ?? "new")));
+    });
+    const now = new Date().toISOString();
+    const updates = eligible.map((company) => ({
+      id: company.id,
+      name: company.name,
+      status,
+      last_updated_at: now,
+    }));
+    const priorStatusCounts = eligible.reduce<Record<string, number>>((counts, company) => {
+      const prior = String(company.status ?? "new");
+      counts[prior] = (counts[prior] ?? 0) + 1;
+      return counts;
+    }, {});
+    const foundIds = new Set(eligible.map((company) => String(company.netsuite_internal_id)));
+    const summary = {
+      action: "set_current_tam_status",
+      received: internalIds.length,
+      eligibleCurrentTamRows: eligible.length,
+      targetStatus: status,
+      priorStatusCounts,
+      skippedInternalIds: internalIds.filter((internalId) => !foundIds.has(internalId)),
+    };
+    if (body.dryRun === true) return NextResponse.json({ dryRun: true, ...summary });
+
+    if (updates.length) {
+      const { error: writeError } = await db.from("companies").upsert(updates, { onConflict: "id" });
+      if (writeError) {
+        return NextResponse.json({ error: writeError.message, ...summary }, { status: 500 });
+      }
+    }
+
+    const agent = callerAgent(req, body.agent);
+    await logEvent("headhunter", "agent.tam_status_reconciled", {
+      summary: `${agent} changed ${updates.length} current TAM rows to ${status}`,
+      entity_type: "agent_bridge",
+      meta: {
+        agent,
+        note: text(body.note),
+        ...summary,
+        priorStatuses: eligible.map((company) => ({
+          id: company.id,
+          internalId: company.netsuite_internal_id,
+          status: company.status,
+        })),
+      },
+    });
+    return NextResponse.json({ written: updates.length, ...summary });
   }
 
   if (body.action === "retire_membership") {

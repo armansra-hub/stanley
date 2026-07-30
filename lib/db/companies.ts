@@ -108,6 +108,8 @@ export async function getCompanies(): Promise<Company[]> {
 export interface BaseFilter {
   tags?: string[]; matchAll?: boolean; claimable?: boolean; erp?: boolean; state?: string; q?: string;
   limit?: number; offset?: number; includeHidden?: boolean;
+  /** Restrict TAM Base to the exact current NetSuite saved-search membership. */
+  currentTam?: boolean;
   /** Inclusive tam_score range (0-100). When either bound is set, ungraded (null-score) rows are excluded. */
   scoreMin?: number; scoreMax?: number;
 }
@@ -142,6 +144,7 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
   // falls back to oldgold_score ordering pre-migration.
   const build = (withTam: boolean) => {
     let q = db.from("companies").select(`*, signals(*)`, { count: "exact" }).eq("is_base", true);
+    if (f.currentTam) q = q.contains("lists", ["netsuite_tam"]);
     if (f.claimable) q = q.eq("claimable", true);
     if (f.erp) q = q.eq("erp_ready", true);
     if (f.state) q = q.eq("state", f.state);
