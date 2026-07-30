@@ -3,6 +3,7 @@ import { serviceClient } from "@/lib/supabase/server";
 import { markPoolExported } from "@/lib/db/leadPool";
 import { normalizeDomain } from "@/lib/domain";
 import { importBlockReason } from "@/config/territory";
+import { decayFactor } from "@/lib/triggers/config";
 import { VENDOR_WEIGHT, fitWeightFor, parseTechnologies, isErpReady, parseEmployees, employeeBand, type LeadVendor } from "@/lib/baseImport";
 import type { BaseRow } from "@/lib/csv";
 import type { Company, Signal, CompanySource, ScoreTier, SignalType, SignalStrength } from "@/lib/types";
@@ -128,6 +129,25 @@ function usDateToIso(raw: string | null | undefined): string | null {
 /** Statuses that hide a lead from the active worklist (reviewed/dismissed/exported).
  * removed_from_tam = pulled out of the territory by the weekly TAM update; the record,
  * grade, and digest are KEPT and the lead is restored automatically if it returns. */
+/** A trigger as a tab row previews it. */
+export interface TriggerPreview { type: string; summary: string; signal_date: string | null; detected_at: string }
+
+/** Attach a lead's live events, strongest (freshness-decayed) first.
+ * Arman 2026-07-29: signals must be visible on EVERY tab where a lead appears, not
+ * only the Triggered tab — the shared row renderer already reads top_trigger /
+ * all_triggers, so attaching them here lights them up with no UI change. */
+export function withTriggers<T extends Record<string, unknown>>(
+  row: T,
+): { rest: Omit<T, "triggers">; top_trigger: TriggerPreview | null; all_triggers: TriggerPreview[]; trigger_count: number } {
+  const { triggers, ...rest } = row as Record<string, unknown> & { triggers?: unknown };
+  const list = (Array.isArray(triggers) ? triggers : []) as (TriggerPreview & { strength: number; half_life_days: number | null })[];
+  const ranked = list
+    .map((t) => ({ t, live: Number(t.strength) * decayFactor(t.signal_date, t.detected_at, Number(t.half_life_days) || 30) }))
+    .sort((a, b) => b.live - a.live)
+    .map(({ t }) => ({ type: t.type, summary: t.summary, signal_date: t.signal_date, detected_at: t.detected_at }));
+  return { rest: rest as Omit<T, "triggers">, top_trigger: ranked[0] ?? null, all_triggers: ranked, trigger_count: ranked.length };
+}
+
 const HIDDEN_STATUSES = "(reviewed,dismissed,exported_csv,exported_sql,removed_from_tam)";
 
 /** Server-side, paginated, filtered query over the TAM Base (is_base=true). Ordered
@@ -143,7 +163,7 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
   // claimable/fit as tiebreaks. Builders mutate, so each attempt is built fresh;
   // falls back to oldgold_score ordering pre-migration.
   const build = (withTam: boolean) => {
-    let q = db.from("companies").select(`*, signals(*)`, { count: "exact" }).eq("is_base", true);
+    let q = db.from("companies").select(`*, signals(*), triggers(*)`, { count: "exact" }).eq("is_base", true);
     if (f.currentTam) q = q.contains("lists", ["netsuite_tam"]);
     if (f.claimable) q = q.eq("claimable", true);
     if (f.erp) q = q.eq("erp_ready", true);
@@ -164,7 +184,13 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
   let { data, count, error } = await build(true);
   if (error && /tam_score/.test(error.message)) ({ data, count, error } = await build(false)); // pre-migration fallback
   if (error) throw new Error(`listBaseCompanies failed: ${error.message}`);
-  return { companies: (data ?? []).map((r) => mapCompany(r as Record<string, unknown>)), total: count ?? 0 };
+  return {
+    companies: (data ?? []).map((r) => {
+      const { rest, top_trigger, all_triggers, trigger_count } = withTriggers(r as Record<string, unknown>);
+      return { ...mapCompany(rest as Record<string, unknown>), top_trigger, all_triggers, trigger_count };
+    }),
+    total: count ?? 0,
+  };
 }
 
 /** Every starred lead, regardless of tab/source/status (Starred shows everything you

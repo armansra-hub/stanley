@@ -1,7 +1,7 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
-import { mapSignal } from "@/lib/db/companies";
+import { mapSignal, withTriggers } from "@/lib/db/companies";
 import type { Company } from "@/lib/types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -394,7 +394,7 @@ function mapBasic(r: any): Company {
 export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number } = {}): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
-  let q = db.from("companies").select("*", { count: "exact" })
+  let q = db.from("companies").select("*, triggers(*)", { count: "exact" })
     .eq("is_base", true).not("qual_note", "is", null).not("last_sql_date", "is", null)
     .not("status", "in", "(dismissed,removed_from_tam)"); // removed_from_tam: weekly-update pull-outs keep their grade but leave the mining list
   if (opts.state) q = q.eq("state", opts.state);
@@ -409,7 +409,13 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
     .order("last_sql_date", { ascending: false, nullsFirst: false })
     .range(offset, offset + limit - 1);
   if (error) throw new Error(`listOldGold failed: ${error.message}`);
-  return { companies: (data ?? []).map((r: any) => mapBasic(r)), total: count ?? 0 };
+  return {
+    companies: (data ?? []).map((r: any) => {
+      const { rest, top_trigger, all_triggers, trigger_count } = withTriggers(r);
+      return { ...mapBasic(rest), top_trigger, all_triggers, trigger_count };
+    }),
+    total: count ?? 0,
+  };
 }
 
 /** The Target Account List tab: EVERY tal_claimed lead, regardless of status —
