@@ -21,7 +21,8 @@ function mapStage(r: any): PipelineStage {
 function mapLead(r: any): Lead {
   return {
     id: String(r.id), name: String(r.name), website: r.website ?? null, description: r.description ?? null,
-    netsuite_url: r.netsuite_url ?? null, stage_id: r.stage_id ?? null, sort_in_stage: Number(r.sort_in_stage ?? 0),
+    netsuite_url: r.netsuite_url ?? null, intro_call_transcript_url: r.intro_call_transcript_url ?? null,
+    summary: r.summary ?? null, notes: r.notes ?? null, stage_id: r.stage_id ?? null, sort_in_stage: Number(r.sort_in_stage ?? 0),
     last_activity_at: String(r.last_activity_at ?? ""), created_at: String(r.created_at ?? ""), updated_at: String(r.updated_at ?? ""),
   };
 }
@@ -101,14 +102,15 @@ export async function getLead(id: string): Promise<Lead | null> {
   return data ? mapLead(data) : null;
 }
 
-export interface CreateLeadInput { name: string; website?: string | null; description?: string | null; netsuite_url?: string | null; stage_id?: string | null }
+export interface CreateLeadInput { name: string; website?: string | null; description?: string | null; netsuite_url?: string | null; intro_call_transcript_url?: string | null; summary?: string | null; notes?: string | null; stage_id?: string | null }
 export async function createLead(input: CreateLeadInput): Promise<Lead> {
   const db = serviceClient();
   let stage_id = input.stage_id ?? null;
   if (!stage_id) { const stages = await listStages(); stage_id = stages[0]?.id ?? null; } // default → first stage
   const { data, error } = await db.from("leads").insert({
     name: input.name, website: input.website ?? null, description: input.description ?? null,
-    netsuite_url: input.netsuite_url ?? null, stage_id,
+    netsuite_url: input.netsuite_url ?? null, intro_call_transcript_url: input.intro_call_transcript_url ?? null,
+    summary: input.summary ?? null, notes: input.notes ?? null, stage_id,
   }).select("*").single();
   if (error) throw new Error(`createLead failed: ${error.message}`);
   const lead = mapLead(data);
@@ -116,7 +118,7 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
   return lead;
 }
 
-export async function updateLead(id: string, patch: Partial<Pick<Lead, "name" | "website" | "description" | "netsuite_url" | "stage_id" | "sort_in_stage">>): Promise<Lead | null> {
+export async function updateLead(id: string, patch: Partial<Pick<Lead, "name" | "website" | "description" | "netsuite_url" | "intro_call_transcript_url" | "summary" | "notes" | "stage_id" | "sort_in_stage">>): Promise<Lead | null> {
   const db = serviceClient();
   const { data, error } = await db.from("leads").update({ ...patch, updated_at: now() }).eq("id", id).select("*").maybeSingle();
   if (error) throw new Error(`updateLead failed: ${error.message}`);

@@ -33,12 +33,12 @@ export async function applyKillActions(actions: Action[], tz: string): Promise<{
       const i = a.input ?? {};
       switch (a.name) {
         case "create_lead": {
-          const lead = await createLead({ name: i.name, website: i.website ?? null, description: i.description ?? null, netsuite_url: i.netsuite_url ?? null, stage_id: await stageIdByName(i.stage_name) });
+          const lead = await createLead({ name: i.name, website: i.website ?? null, netsuite_url: i.netsuite_url ?? null, intro_call_transcript_url: i.intro_call_transcript_url ?? null, summary: i.summary ?? null, notes: i.notes ?? null, stage_id: await stageIdByName(i.stage_name) });
           results.push(`Added “${lead.name}”`); changed = true; break;
         }
         case "update_lead": {
           const patch: any = {};
-          for (const k of ["name", "website", "description", "netsuite_url"]) if (i[k] !== undefined) patch[k] = i[k];
+          for (const k of ["name", "website", "netsuite_url", "intro_call_transcript_url", "summary", "notes"]) if (i[k] !== undefined) patch[k] = i[k];
           await updateLead(i.id, patch); results.push("Lead updated"); changed = true; break;
         }
         case "move_lead_stage": {

@@ -12,6 +12,9 @@ export interface Lead {
   website: string | null;
   description: string | null;
   netsuite_url: string | null;
+  intro_call_transcript_url?: string | null;
+  summary?: string | null;
+  notes?: string | null;
   stage_id: string | null;
   sort_in_stage: number;
   last_activity_at: string;
