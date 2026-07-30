@@ -107,8 +107,15 @@ export function headlineIsAboutCompany(name: string, headline: string): boolean 
   // Only a directly adjacent word (no punctuation between) can be part of the name.
   const adjacent = /([A-Za-z0-9&.'\u2019-]+)\s+$/.exec(before);
   if (adjacent) {
-    const prev = adjacent[1].toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (prev && !CONNECTIVES.has(prev)) return false;
+    const prevRaw = adjacent[1];
+    const prev = prevRaw.toLowerCase().replace(/[^a-z0-9]/g, "");
+    // Reject only a CAPITALISED proper noun — that is what makes our name a fragment
+    // of a longer company name ("Mindstream Jordan LLC", "Wind Point Partners").
+    // A lowercase descriptor is normal headline grammar and must NOT block the match:
+    // "Texas company Ajax Freight raises $5M", "Dallas-based Ajax Freight opens hub".
+    // An initial over-tight version of this guard cut real signals by ~95%.
+    const isProperNoun = /^[A-Z]/.test(prevRaw) && !/-(?:based|headquartered|founded|owned|led|backed)$/i.test(prevRaw);
+    if (isProperNoun && prev && !CONNECTIVES.has(prev)) return false;
   }
   return true;
 }

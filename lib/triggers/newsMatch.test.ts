@@ -42,3 +42,20 @@ describe("headlineIsAboutCompany — noise found by reading real sweep output", 
     expect(headlineIsAboutCompany("Strategic CFO", "Strategic CFO services expand nationwide")).toBe(false);
   });
 });
+
+describe("the left-edge guard must not eat normal headline grammar", () => {
+  it("accepts a lowercase descriptor before the name", () => {
+    expect(headlineIsAboutCompany("Acme Freight", "Texas company Acme Freight raises $5M Series A")).toBe(true);
+    expect(headlineIsAboutCompany("Acme Freight", "Logistics provider Acme Freight names new CFO")).toBe(true);
+  });
+
+  it("accepts a hyphenated location descriptor", () => {
+    expect(headlineIsAboutCompany("Acme Freight", "Dallas-based Acme Freight opens second hub")).toBe(true);
+    expect(headlineIsAboutCompany("Acme Freight", "PE-backed Acme Freight acquires rival")).toBe(true);
+  });
+
+  it("still rejects a capitalised proper noun before the name", () => {
+    expect(headlineIsAboutCompany("Jordan LLC", "Mindstream Energy d/b/a Mindstream Jordan LLC Expands Platform")).toBe(false);
+    expect(headlineIsAboutCompany("Point Partners", "Wind Point Partners Closes $3.2 Billion Fund XI")).toBe(false);
+  });
+});
