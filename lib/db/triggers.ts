@@ -101,6 +101,58 @@ export async function recomputePriority(companyId: string): Promise<number> {
   return priority;
 }
 
+/**
+ * Queue a headline-derived signal for verification instead of publishing it.
+ *
+ * Attributing a headline to a company by name is unreliable for the 40% of the TAM
+ * whose name is one ordinary word (Access, Weekday, Aerofly, Encore, Circle). Rather
+ * than guess, candidates land in trigger_candidates and Claude Code reads each one
+ * locally before it can become a trigger — so nothing unverified reaches the tab.
+ * Idempotent on (company_id, type, summary): re-running a sweep won't pile up dupes.
+ */
+export async function queueCandidate(
+  company: { id: string; name: string; netsuite_internal_id?: string | null },
+  t: { type: string; summary: string; source_name?: string | null; source_url?: string | null; signal_date?: string | null },
+): Promise<boolean> {
+  try {
+    const spec = TRIGGER_SPEC[t.type as keyof typeof TRIGGER_SPEC] as { strength?: number; half_life_days?: number } | undefined;
+    const { error } = await serviceClient().from("trigger_candidates").upsert({
+      company_id: company.id,
+      netsuite_internal_id: company.netsuite_internal_id ?? null,
+      company_name: company.name,
+      type: t.type,
+      summary: t.summary,
+      source_name: t.source_name ?? null,
+      source_url: t.source_url ?? null,
+      signal_date: t.signal_date ?? null,
+      strength: spec?.strength ?? null,
+      half_life_days: spec?.half_life_days ?? null,
+    }, { onConflict: "company_id,type,summary", ignoreDuplicates: true });
+    return !error;
+  } catch {
+    return false; // never break a sweep over the queue
+  }
+}
+
+/** Publish a verified candidate as a real trigger. */
+export async function promoteCandidate(candidateId: string): Promise<boolean> {
+  const db = serviceClient();
+  const { data: c } = await db.from("trigger_candidates").select("*").eq("id", candidateId).maybeSingle();
+  if (!c || c.verdict !== "keep" || c.promoted_trigger_id) return false;
+  const ok = await recordTrigger(String(c.company_id), {
+    type: String(c.type), summary: String(c.summary),
+    source_name: (c.source_name as string) ?? null, source_url: (c.source_url as string) ?? null,
+    signal_date: (c.signal_date as string) ?? null,
+  });
+  if (ok) {
+    const { data: t } = await db.from("triggers").select("id").eq("company_id", c.company_id)
+      .eq("type", c.type).order("detected_at", { ascending: false }).limit(1).maybeSingle();
+    await db.from("trigger_candidates").update({ promoted_trigger_id: t?.id ?? null }).eq("id", candidateId);
+    await recomputePriority(String(c.company_id));
+  }
+  return ok;
+}
+
 /** Set ERP-readiness flags on a company (graceful no-op before migration 0020). */
 export async function setErpFlags(companyId: string, flags: { pe_owned?: boolean; erp_incumbent?: string | null }): Promise<void> {
   try {

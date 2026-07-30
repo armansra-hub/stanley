@@ -1,5 +1,5 @@
 import "server-only";
-import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags } from "@/lib/db/triggers";
+import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
 import { fetchNewsForCompany, fetchNewsItems } from "@/lib/sources/googleNews";
 import { claimClassifierCall } from "@/lib/db/settings";
@@ -186,7 +186,8 @@ export async function classifyAndRecordHeadline(
     }
   }
   if (type === "ma" && !acquirer) return false; // target acquisition → suppress
-  return recordTrigger(company.id, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
+  // QUEUED, not published: headline-to-company attribution needs judgment, not regex.
+  return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
 export async function checkCompanyNews(company: { id: string; name: string }, opts: { llm?: boolean } = {}): Promise<number> {
@@ -212,7 +213,7 @@ export async function checkExecChange(company: { id: string; name: string }): Pr
     const clean = cleanHeadline(it.raw_excerpt);
     if (!headlineIsAboutCompany(company.name, clean)) continue;
     if (!(EXEC_HIRE_RE.test(clean) && FIN_TITLE_RE.test(clean))) continue;
-    if (await recordTrigger(company.id, { type: "finance_hire", summary: it.raw_excerpt, source_name: "Google News", source_url: it.source_url, signal_date: it.signal_date })) added++;
+    if (await queueCandidate(company, { type: "finance_hire", summary: it.raw_excerpt, source_name: "Google News", source_url: it.source_url, signal_date: it.signal_date })) added++;
   }
   return added;
 }
