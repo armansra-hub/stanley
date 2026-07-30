@@ -53,14 +53,72 @@ export function isGenericName(n: string): boolean {
  * (publisher-stripped, normalized) headline. Names that are ≥4 chars, single-word
  * names ≥5 chars, and NOT entirely generic business words (too ambiguous).
  */
-function headlineIsAboutCompany(name: string, headline: string): boolean {
+// Single-token names that are ordinary English words or calendar terms. The generic
+// BUSINESS-word list above doesn't catch these, so headlines matched them by accident:
+// "August" hit "…Effective as of August 1, 2026"; "Diagram" hit "Seed Round Led by
+// Diagram" (the investor); "Outpace" hit "AI agents outpace enterprise security";
+// "Mineral" hit "Critical Mineral Recovery Technology". A one-word common noun cannot
+// be told apart from its ordinary use, so it is never news-matched on its own.
+const AMBIGUOUS_SOLO_NAMES = new Set([
+  "january", "february", "march", "april", "may", "june", "july", "august", "september",
+  "october", "november", "december", "monday", "friday", "summer", "winter", "spring", "autumn",
+  "diagram", "outpace", "mineral", "founders", "founder", "circle", "scribe", "integra", "arete",
+  "encore", "cadence", "measure", "vista", "apex", "summit", "pinnacle", "compass", "beacon",
+  "anchor", "bridge", "catalyst", "momentum", "velocity", "vector", "matrix", "nexus", "origin",
+  "pioneer", "quantum", "spark", "surge", "thrive", "unity", "vertex", "zenith", "action",
+  "advantage", "alliance", "aspire", "elevate", "empower", "engage", "evolve", "focus", "forge",
+  "impact", "inspire", "legacy", "liberty", "premier", "prime", "pursuit", "reliance", "renew",
+  "reveal", "revive", "signal", "spectrum", "stride", "summitt", "synergy", "trust", "venture",
+]);
+
+/**
+ * RELEVANCE GATE: a headline only counts if it's actually ABOUT this company.
+ *
+ * Two ways this used to let noise through, both found by reading real 2026-07-30
+ * sweep output:
+ *   1. A one-word name that is an ordinary English word or a month — see
+ *      AMBIGUOUS_SOLO_NAMES above.
+ *   2. Our name being a SUBSTRING of a longer company name: "Jordan LLC" matched
+ *      "Mindstream Jordan LLC", "Point Partners" matched "Wind Point Partners",
+ *      "Family Farms" matched "Lipman Family Farms". The contiguous check passed, but
+ *      the story was about a different, longer-named company. So the match must not
+ *      be immediately preceded by another name-ish word.
+ */
+export function headlineIsAboutCompany(name: string, headline: string): boolean {
   const n = normalizeCompanyName(name);
   if (!n || n.length < 4 || isGenericName(n)) return false;
   const tokens = n.split(" ").filter(Boolean);
-  if (tokens.length === 1 && n.length < 5) return false;
-  const h = normalizeCompanyName(headline);
-  return h.includes(n);
+  if (tokens.length === 1) {
+    if (n.length < 5) return false;
+    if (AMBIGUOUS_SOLO_NAMES.has(n)) return false; // ordinary word — unmatchable alone
+  }
+  if (!normalizeCompanyName(headline).includes(n)) return false;
+
+  // Left-edge guard, run on the RAW headline so punctuation survives. Normalizing
+  // first would erase the colon in "Breaking: Acme Freight opens…" and make the
+  // prefix look like part of the company name.
+  const pattern = new RegExp(
+    tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^A-Za-z0-9]+"),
+    "i",
+  );
+  const m = pattern.exec(headline);
+  if (!m) return true; // normalized form matched but raw spacing differs — accept
+  const before = headline.slice(0, m.index);
+  // Only a directly adjacent word (no punctuation between) can be part of the name.
+  const adjacent = /([A-Za-z0-9&.'\u2019-]+)\s+$/.exec(before);
+  if (adjacent) {
+    const prev = adjacent[1].toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (prev && !CONNECTIVES.has(prev)) return false;
+  }
+  return true;
 }
+
+/** Words that may legitimately precede a company name in a headline. */
+const CONNECTIVES = new Set([
+  "of", "by", "at", "to", "for", "with", "from", "and", "the", "a", "an", "as", "on", "in",
+  "into", "via", "vs", "after", "before", "amid", "over", "under", "against", "joins", "buys",
+  "acquires", "names", "appoints", "hires", "taps", "led", "backs", "backed", "sells",
+]);
 
 /** A regex-safe, suffix-stripped name fragment for matching against a raw headline. */
 function nameFragment(name: string): string {
