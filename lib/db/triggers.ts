@@ -1,7 +1,7 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
-import { mapSignal } from "@/lib/db/companies";
+import { mapSignal, withTriggers } from "@/lib/db/companies";
 import type { Company } from "@/lib/types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -99,6 +99,58 @@ export async function recomputePriority(companyId: string): Promise<number> {
   const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * 100) / 100;
   await db.from("companies").update({ priority }).eq("id", companyId);
   return priority;
+}
+
+/**
+ * Queue a headline-derived signal for verification instead of publishing it.
+ *
+ * Attributing a headline to a company by name is unreliable for the 40% of the TAM
+ * whose name is one ordinary word (Access, Weekday, Aerofly, Encore, Circle). Rather
+ * than guess, candidates land in trigger_candidates and Claude Code reads each one
+ * locally before it can become a trigger — so nothing unverified reaches the tab.
+ * Idempotent on (company_id, type, summary): re-running a sweep won't pile up dupes.
+ */
+export async function queueCandidate(
+  company: { id: string; name: string; netsuite_internal_id?: string | null },
+  t: { type: string; summary: string; source_name?: string | null; source_url?: string | null; signal_date?: string | null },
+): Promise<boolean> {
+  try {
+    const spec = TRIGGER_SPEC[t.type as keyof typeof TRIGGER_SPEC] as { strength?: number; half_life_days?: number } | undefined;
+    const { error } = await serviceClient().from("trigger_candidates").upsert({
+      company_id: company.id,
+      netsuite_internal_id: company.netsuite_internal_id ?? null,
+      company_name: company.name,
+      type: t.type,
+      summary: t.summary,
+      source_name: t.source_name ?? null,
+      source_url: t.source_url ?? null,
+      signal_date: t.signal_date ?? null,
+      strength: spec?.strength ?? null,
+      half_life_days: spec?.half_life_days ?? null,
+    }, { onConflict: "company_id,type,summary", ignoreDuplicates: true });
+    return !error;
+  } catch {
+    return false; // never break a sweep over the queue
+  }
+}
+
+/** Publish a verified candidate as a real trigger. */
+export async function promoteCandidate(candidateId: string): Promise<boolean> {
+  const db = serviceClient();
+  const { data: c } = await db.from("trigger_candidates").select("*").eq("id", candidateId).maybeSingle();
+  if (!c || c.verdict !== "keep" || c.promoted_trigger_id) return false;
+  const ok = await recordTrigger(String(c.company_id), {
+    type: String(c.type), summary: String(c.summary),
+    source_name: (c.source_name as string) ?? null, source_url: (c.source_url as string) ?? null,
+    signal_date: (c.signal_date as string) ?? null,
+  });
+  if (ok) {
+    const { data: t } = await db.from("triggers").select("id").eq("company_id", c.company_id)
+      .eq("type", c.type).order("detected_at", { ascending: false }).limit(1).maybeSingle();
+    await db.from("trigger_candidates").update({ promoted_trigger_id: t?.id ?? null }).eq("id", candidateId);
+    await recomputePriority(String(c.company_id));
+  }
+  return ok;
 }
 
 /** Set ERP-readiness flags on a company (graceful no-op before migration 0020). */
@@ -394,7 +446,7 @@ function mapBasic(r: any): Company {
 export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number } = {}): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
-  let q = db.from("companies").select("*", { count: "exact" })
+  let q = db.from("companies").select("*, triggers(*)", { count: "exact" })
     .eq("is_base", true).not("qual_note", "is", null).not("last_sql_date", "is", null)
     .not("status", "in", "(dismissed,removed_from_tam)"); // removed_from_tam: weekly-update pull-outs keep their grade but leave the mining list
   if (opts.state) q = q.eq("state", opts.state);
@@ -409,7 +461,13 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
     .order("last_sql_date", { ascending: false, nullsFirst: false })
     .range(offset, offset + limit - 1);
   if (error) throw new Error(`listOldGold failed: ${error.message}`);
-  return { companies: (data ?? []).map((r: any) => mapBasic(r)), total: count ?? 0 };
+  return {
+    companies: (data ?? []).map((r: any) => {
+      const { rest, top_trigger, all_triggers, trigger_count } = withTriggers(r);
+      return { ...mapBasic(rest), top_trigger, all_triggers, trigger_count };
+    }),
+    total: count ?? 0,
+  };
 }
 
 /** The Target Account List tab: EVERY tal_claimed lead, regardless of status —

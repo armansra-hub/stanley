@@ -1,5 +1,7 @@
 import "server-only";
 import { extractAcquisitions } from "@/lib/sources/acquisition";
+import { extractGrowthSignals } from "@/lib/sources/growth";
+import { scanFinanceRoles } from "@/lib/sources/careers";
 
 /**
  * Company-website growth-signal reader (FREE). Fetches a claimable company's own
@@ -24,16 +26,10 @@ async function fetchText(url: string, ms = 7000): Promise<string> {
   } catch { return ""; }
 }
 
-// Strong growth phrases → trigger type. Deliberately tight to avoid noise.
-const PATTERNS: { type: "press" | "new_entity" | "ma"; re: RegExp; label: string }[] = [
-  { type: "press", re: /\bnew (office|location|headquarters|facility|branch|studio|warehouse)\b/, label: "new location/office" },
-  { type: "press", re: /\bgrand opening\b|\bnow open\b|\bopened (a|our) (new )?(office|location|branch|facility)\b/, label: "new site opening" },
-  { type: "press", re: /\bexpand(ing|ed)? (to|into|our (footprint|presence|team|operations))\b/, label: "expansion announced" },
-  { type: "new_entity", re: /\bnew (division|subsidiary|business unit|practice|brand)\b|\blaunch(ed|ing) (a |our )?new (division|brand|service line|practice)\b/, label: "new division/subsidiary" },
-  // NOTE: acquisitions are NOT pattern-diffed — extractAcquisitions() (named-target,
-  // acquirer-position, context-guarded) replaced the old bare "acquisition of" match
-  // that false-fired on advisory copy and news portals (removed 2026-07-20).
-];
+// Growth phrases moved to lib/sources/growth.ts (2026-07-30). The old inline
+// patterns matched company-description boilerplate — "expanding into their
+// wholeness", "we relish the opportunity to expand into other industries" — because
+// they required only the phrase, never evidence of an actual event.
 
 // Raw HTML (case preserved) — for parent-name capture + RSS-link discovery.
 async function fetchRaw(url: string, ms = 7000): Promise<string> {
@@ -63,29 +59,6 @@ function findFeedUrl(html: string, base: string): string | null {
   return null;
 }
 
-// Open finance-role titles on a company's OWN careers page = they do finance in-house
-// and are scaling it NOW (the strongest ERP-readiness tell). Tight titles; "controller"
-// guarded against logistics/ops false friends (inventory/quality/document controller).
-const FINANCE_ROLE_RES: { re: RegExp; label: string }[] = [
-  { re: /(?<!inventory |quality |document |traffic |air |stock |production |materials )\bcontroller\b/, label: "Controller" },
-  { re: /\bchief financial officer\b|\bcfo\b/, label: "CFO" },
-  { re: /\b(?:vp|vice president)[\s.,of-]{0,8}finance\b/, label: "VP Finance" },
-  { re: /\bdirector of finance\b|\bfinance director\b/, label: "Director of Finance" },
-  { re: /\b(?:accounting|finance) manager\b/, label: "Accounting/Finance Manager" },
-  { re: /\b(?:staff|senior|sr\.?) accountant\b/, label: "Staff/Senior Accountant" },
-  { re: /\baccounts payable\b|\bap clerk\b/, label: "Accounts Payable" },
-  { re: /\baccounts receivable\b|\bar clerk\b/, label: "Accounts Receivable" },
-  { re: /\bfp&a\b|\bfinancial planning (?:and|&) analysis\b/, label: "FP&A" },
-  { re: /\bbookkeeper\b/, label: "Bookkeeper" },
-  { re: /\bpayroll (?:specialist|manager|administrator|coordinator)\b/, label: "Payroll" },
-];
-function scanFinanceRoles(text: string): string[] {
-  if (!text.trim()) return [];
-  const found = new Set<string>();
-  for (const r of FINANCE_ROLE_RES) if (r.re.test(text)) found.add(r.label);
-  return [...found];
-}
-
 // Recruiting/staffing CLIENT-PLACEMENT-BOARD language — these roles are being filled
 // FOR A CLIENT, not the company's own headcount. High-precision phrases that ~never
 // appear on a company's own internal careers page. We DON'T exclude staffing firms;
@@ -96,11 +69,14 @@ function looksLikeClientBoard(text: string): boolean {
   return CLIENT_BOARD_RE.test(text);
 }
 
+/** A finance opening we verified, with the page and the line that proves it. */
+export interface FinanceRoleHit { role: string; snippet: string; url: string }
+
 export interface SiteScan {
   growth: { type: "press" | "new_entity" | "ma"; label: string; snippet?: string }[];
   parent: { name: string; confidence: "high" | "low" } | null;
   feedUrl: string | null;
-  financeRoles: string[];
+  financeRoles: FinanceRoleHit[];
 }
 
 /** One pass over a company's site: growth phrases + parent-company + RSS feed URL. */
@@ -109,22 +85,19 @@ export async function fetchSiteSignals(domain: string, companyName?: string): Pr
   const home = await fetchRaw(base);
   // Secondary pages fetched in PARALLEL with a shorter timeout, so one slow page can't
   // blow the wave's 60s budget (sequential fetches + the added careers pages timed out).
-  const [about, news, careersTxt, jobsTxt] = await Promise.all([
+  const [about, news, careersRaw, jobsRaw] = await Promise.all([
     fetchRaw(`${base}/about`, 5000), fetchRaw(`${base}/news`, 5000),
-    fetchText(`${base}/careers`, 5000), fetchText(`${base}/jobs`, 5000),
+    fetchRaw(`${base}/careers`, 5000), fetchRaw(`${base}/jobs`, 5000),
   ]);
+  const careersTxt = cleanHtml(careersRaw), jobsTxt = cleanHtml(jobsRaw);
   const raw = `${home} ${about} ${news}`;
   const rawText = `${cleanHtml(home)} ${cleanHtml(about)} ${cleanHtml(news)}`; // case preserved
   const text = rawText.toLowerCase();
   const growth: { type: "press" | "new_entity" | "ma"; label: string; snippet?: string }[] = [];
-  if (text.trim()) {
-    for (const p of PATTERNS) {
-      const m = p.re.exec(text);
-      if (!m) continue;
-      const at = m.index ?? 0;
-      const snippet = text.slice(Math.max(0, at - 70), at + (m[0]?.length ?? 0) + 90).replace(/\s+/g, " ").trim();
-      growth.push({ type: p.type, label: p.label, snippet });
-    }
+  if (rawText.trim()) {
+    // Growth phrases must read as a reported EVENT (announcement verb, date, or place),
+    // not company-description boilerplate — see lib/sources/growth.ts.
+    for (const g of extractGrowthSignals(rawText)) growth.push(g);
     // Acquisitions THEY made — only with a named target, acquirer-position, guarded.
     for (const a of extractAcquisitions(rawText, companyName)) {
       growth.push({ type: "ma", label: `acquired ${a.target}`, snippet: a.snippet });
@@ -135,10 +108,18 @@ export async function fetchSiteSignals(domain: string, companyName?: string): Pr
   // recruiting CLIENT BOARD (staffing firm posting roles for clients) is skipped — those
   // aren't the company's own hires. A staffing firm's OWN finance hire on a normal
   // careers page (no client-board language) still counts.
-  const roleSet = new Set<string>();
-  for (const t of [careersTxt, jobsTxt]) {
-    if (!t || looksLikeClientBoard(t)) continue;
-    for (const role of scanFinanceRoles(t)) roleSet.add(role);
+  const homeText = cleanHtml(home);
+  const financeRoles: FinanceRoleHit[] = [];
+  const seenRoles = new Set<string>();
+  for (const [pageUrl, pageText] of [[`${base}/careers`, careersTxt], [`${base}/jobs`, jobsTxt]] as const) {
+    if (!pageText || looksLikeClientBoard(pageText)) continue;
+    // requireJobPage rejects the soft-404 case where /careers serves the homepage,
+    // and drops role words that are the firm's own service offering.
+    for (const hit of scanFinanceRoles(pageText, { homeText })) {
+      if (seenRoles.has(hit.role)) continue;
+      seenRoles.add(hit.role);
+      financeRoles.push({ ...hit, url: pageUrl }); // the page we actually verified
+    }
   }
-  return { growth, parent: detectParent(cleanHtml(raw)), feedUrl: home ? findFeedUrl(home, base) : null, financeRoles: [...roleSet] };
+  return { growth, parent: detectParent(cleanHtml(raw)), feedUrl: home ? findFeedUrl(home, base) : null, financeRoles };
 }

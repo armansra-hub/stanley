@@ -946,6 +946,14 @@ export default function Dashboard({
                         {(c.oldgold_reasons ?? []).slice(0, 2).map((r, i) => <div key={i} className="text-xs text-[var(--text-muted)]">• {r}</div>)}
                         {!c.oldgold_class && <div className="truncate text-xs italic text-[var(--text-muted)]" title={c.qual_note ?? ""}>Note pending analysis: &quot;{(c.qual_note ?? "").slice(0, 90)}…&quot;</div>}
                         {c.revisit_on && <div className="text-[10px]" style={{ color: "var(--tier-a)" }}>⏰ revisit {c.revisit_on}</div>}
+                        {/* Live events matter on Old Gold too — a stalled lead that just
+                            raised money or hired finance is the one to call back first. */}
+                        {trig && (
+                          <div className="mt-0.5 text-xs font-semibold" style={{ color: "var(--gold)" }}>
+                            ⚡ {TRIGGER_LABELS[trig.type] ?? trig.type} · {sinceLabel(trig.signal_date ?? trig.detected_at)}
+                            {((c as TriggeredRow).trigger_count ?? 1) > 1 ? ` +${((c as TriggeredRow).trigger_count ?? 1) - 1} more` : ""}
+                          </div>
+                        )}
                       </>
                     ) : trig ? (
                       // EVERY trigger on the lead, strongest first (not just the top one
