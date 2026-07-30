@@ -71,9 +71,15 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         // 4) FINANCE HIRING — open finance roles on their OWN careers page (free; works
         // where ATS aggregators are empty on this small-firm TAM). Fires on detection,
         // deduped per role via source_url. A finance req = scaling finance in-house now.
-        for (const role of scan.financeRoles) {
-          const url = `https://${c.domain.replace(/\/+$/, "")}/careers#${encodeURIComponent(role)}`;
-          if (await recordTrigger(c.id, { type: "finance_hire", summary: `Hiring for ${role} (own careers page) — scaling finance in-house`, source_name: "Careers page", source_url: url, signal_date: new Date().toISOString() })) { stats.triggered++; touched = true; }
+        for (const hit of scan.financeRoles) {
+          // The REAL verified page, not a fabricated /careers#Role fragment — that
+          // fake anchor is what sent Arman to homepages. The snippet is the posting
+          // line itself, so the signal can be judged without opening anything.
+          if (await recordTrigger(c.id, {
+            type: "finance_hire",
+            summary: `Hiring ${hit.role} — “${hit.snippet.slice(0, 150)}”`,
+            source_name: "Careers page", source_url: hit.url, signal_date: new Date().toISOString(),
+          })) { stats.triggered++; touched = true; }
         }
 
         if (touched) await recomputePriority(c.id);
