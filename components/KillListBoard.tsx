@@ -16,7 +16,9 @@ const ago = (iso: string, tz: string) => fmtDay(iso, tz);
 
 async function post(url: string, body: unknown) {
   const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  return res.ok ? res.json() : null;
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(payload?.error ?? `Request failed (${res.status})`);
+  return payload;
 }
 
 export default function KillListBoard({
@@ -39,6 +41,7 @@ export default function KillListBoard({
   const [newName, setNewName] = useState("");
   const [query, setQuery] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // ── drawer detail ──
   const [detail, setDetail] = useState<{ lead: Lead; notes: LeadNote[]; tasks: LeadTask[] } | null>(null);
@@ -60,9 +63,16 @@ export default function KillListBoard({
     }
   }
   async function action(kind: string, body: Record<string, unknown>) {
-    const r = await post("/api/kill-list/action", { kind, ...body });
-    applyBoard(r);
-    return r;
+    try {
+      const r = await post("/api/kill-list/action", { kind, ...body });
+      applyBoard(r);
+      setActionError(null);
+      return r;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setActionError(message);
+      throw e;
+    }
   }
 
   // ── log-a-call (voice/text debrief → note + extracted tasks) ──
@@ -206,6 +216,7 @@ export default function KillListBoard({
           <button onClick={addStage} className="rounded-md border px-3 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" style={{ borderColor: "var(--border)" }}>+ Stage</button>
         </div>
       </div>
+      {actionError && <p role="alert" className="mb-3 rounded-md border px-3 py-2 text-xs" style={{ borderColor: "var(--blood)", color: "var(--blood)" }}>Kill List update failed: {actionError}</p>}
 
       {/* Stanley bar */}
       <div className="mb-4 flex items-center gap-2 rounded-lg border px-4 py-2" style={{ borderColor: "var(--border)", background: "rgba(31,22,13,0.6)" }}>

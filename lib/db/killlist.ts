@@ -154,7 +154,8 @@ export async function deleteLead(id: string): Promise<void> {
 // ── Notes (activity log) ──────────────────────────────────────────────────────
 export async function listLeadNotes(lead_id: string): Promise<LeadNote[]> {
   const db = serviceClient();
-  const { data } = await db.from("lead_notes").select("*").eq("lead_id", lead_id).order("created_at", { ascending: false });
+  const { data, error } = await db.from("lead_notes").select("*").eq("lead_id", lead_id).order("created_at", { ascending: false });
+  if (error) throw new Error(`listLeadNotes failed: ${error.message}`);
   return (data ?? []).map(mapNote);
 }
 
@@ -174,7 +175,8 @@ async function touchLead(id: string): Promise<void> {
 // ── Tasks + the Mission bridge ────────────────────────────────────────────────
 export async function listLeadTasks(lead_id: string): Promise<LeadTask[]> {
   const db = serviceClient();
-  const { data } = await db.from("lead_tasks").select("*").eq("lead_id", lead_id).order("due_at", { ascending: true, nullsFirst: false });
+  const { data, error } = await db.from("lead_tasks").select("*").eq("lead_id", lead_id).order("due_at", { ascending: true, nullsFirst: false });
+  if (error) throw new Error(`listLeadTasks failed: ${error.message}`);
   return (data ?? []).map(mapTask);
 }
 
