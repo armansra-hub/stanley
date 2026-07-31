@@ -1,7 +1,7 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
-import { mapSignal, withTriggers } from "@/lib/db/companies";
+import { mapSignal, withTriggers, withInsights, type InsightBadge } from "@/lib/db/companies";
 import type { Company } from "@/lib/types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -336,7 +336,7 @@ export async function pickSosCompaniesForRotation(state: string, limit: number, 
 
 /** Map a mapCompany-shaped row + attach the top trigger (for the Triggered worklist). */
 export interface TriggerPreview { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string }
-export interface TriggeredCompany extends Company { priority?: number; top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[] }
+export interface TriggeredCompany extends Company { priority?: number; top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[]; insights?: InsightBadge[] }
 
 /** The synthetic "signal" for DOL-5500 headcount leads in the signal-type filter
  * (they surface via headcount_growth_pct, not a trigger row). */
@@ -352,7 +352,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   const db = serviceClient();
   const typeFilter = (opts.types ?? []).filter(Boolean);
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
-  let q = db.from("companies").select("*, triggers(*)", { count: "exact" })
+  let q = db.from("companies").select("*, triggers(*), lead_insights(*)", { count: "exact" })
     .or('is_base.eq.true,sources.cs.["sales_nav_growth"]')
     .or("priority.gt.0,headcount_growth_pct.gte.25"); // a news trigger OR a ≥25% DOL-5500 headcount signal
   if (!opts.includeHidden) q = q.not("status", "in", "(reviewed,dismissed,exported_csv,exported_sql)");
@@ -389,7 +389,8 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
     const all_triggers: TriggerPreview[] = sorted.map((t) => ({ type: t.type, summary: t.summary, source_url: t.source_url, signal_date: t.signal_date, detected_at: t.detected_at }));
     const { triggers, ...rest } = r; void triggers;
     const trigger_types = [...new Set(trigs.map((t) => t.type))];
-    return { ...mapBasic(rest), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: all_triggers[0] ?? null, all_triggers, trigger_count: trigs.length, trigger_types } as TriggeredCompany;
+    const { rest: rest2, insights } = withInsights(rest);
+    return { ...mapBasic(rest2), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: all_triggers[0] ?? null, all_triggers, trigger_count: trigs.length, trigger_types, insights } as TriggeredCompany;
   });
   if (typeFilter.length) {
     const wantHeadcount = typeFilter.includes(HEADCOUNT_PSEUDO_TYPE);
@@ -446,7 +447,7 @@ function mapBasic(r: any): Company {
 export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number } = {}): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
-  let q = db.from("companies").select("*, triggers(*)", { count: "exact" })
+  let q = db.from("companies").select("*, triggers(*), lead_insights(*)", { count: "exact" })
     .eq("is_base", true).not("qual_note", "is", null).not("last_sql_date", "is", null)
     .not("status", "in", "(dismissed,removed_from_tam)"); // removed_from_tam: weekly-update pull-outs keep their grade but leave the mining list
   if (opts.state) q = q.eq("state", opts.state);
@@ -463,8 +464,9 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
   if (error) throw new Error(`listOldGold failed: ${error.message}`);
   return {
     companies: (data ?? []).map((r: any) => {
-      const { rest, top_trigger, all_triggers, trigger_count } = withTriggers(r);
-      return { ...mapBasic(rest), top_trigger, all_triggers, trigger_count };
+      const { rest: r1, top_trigger, all_triggers, trigger_count } = withTriggers(r);
+      const { rest: r2, insights } = withInsights(r1);
+      return { ...mapBasic(r2), top_trigger, all_triggers, trigger_count, insights };
     }),
     total: count ?? 0,
   };
@@ -475,9 +477,9 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
  * changes membership). Ordering = "what needs me today": unseen alerts first,
  * dead sinks last, then the holistic TAM grade. Includes the top trigger so the
  * tab can say WHAT the alert is. */
-export async function listTal(opts: { q?: string; state?: string; subindustry?: string } = {}): Promise<{ companies: (Company & { top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null })[]; total: number }> {
+export async function listTal(opts: { q?: string; state?: string; subindustry?: string } = {}): Promise<{ companies: (Company & { top_trigger?: { type: string; summary: string; signal_date: string | null; detected_at: string } | null; insights?: InsightBadge[] })[]; total: number }> {
   const db = serviceClient();
-  let q = db.from("companies").select("*, triggers(*)", { count: "exact" }).eq("tal_claimed", true);
+  let q = db.from("companies").select("*, triggers(*), lead_insights(*)", { count: "exact" }).eq("tal_claimed", true);
   if (opts.state) q = q.eq("state", opts.state);
   if (opts.subindustry) q = q.eq("subindustry", opts.subindustry);
   if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
@@ -492,7 +494,8 @@ export async function listTal(opts: { q?: string; state?: string; subindustry?: 
     const trigs = (r.triggers ?? []) as TriggerRow[];
     const top = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v)[0]?.t;
     const { triggers, ...rest } = r; void triggers;
-    return { ...mapBasic(rest), top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null };
+    const { rest: rest2, insights } = withInsights(rest);
+    return { ...mapBasic(rest2), top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null, insights };
   });
   return { companies, total: count ?? 0 };
 }
@@ -503,15 +506,16 @@ export interface LeadTrigger extends TriggerRow { live: number }
 /** Full detail for ONE lead, regardless of which tab opened it: the whole company
  * record + EVERY discovery signal + EVERY trigger (the "why it's here" events), so the
  * drawer can show everything we hold on this company across the database. */
-export async function getLeadDetail(id: string): Promise<{ company: Company; triggers: LeadTrigger[] } | null> {
+export async function getLeadDetail(id: string): Promise<{ company: Company; triggers: LeadTrigger[]; insights: InsightBadge[] } | null> {
   const db = serviceClient();
-  const { data, error } = await db.from("companies").select("*, signals(*), triggers(*)").eq("id", id).maybeSingle();
+  const { data, error } = await db.from("companies").select("*, signals(*), triggers(*), lead_insights(*)").eq("id", id).maybeSingle();
   if (error || !data) return null;
-  const { signals, triggers, ...rest } = data as any;
+  const { signals, triggers, lead_insights, ...rest } = data as any;
   const company = mapBasic(rest);
   company.signals = Array.isArray(signals) ? signals.map(mapSignal) : [];
   const trigs: LeadTrigger[] = ((triggers ?? []) as TriggerRow[])
     .map((t) => ({ ...t, live: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) }))
     .sort((a, b) => b.live - a.live);
-  return { company, triggers: trigs };
+  const insights: InsightBadge[] = Array.isArray(lead_insights) ? lead_insights : [];
+  return { company, triggers: trigs, insights };
 }

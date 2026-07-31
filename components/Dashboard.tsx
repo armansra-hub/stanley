@@ -375,7 +375,8 @@ export default function Dashboard({
   }, [isTal, search, stateFilter, subindustry]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Triggered worklist: base companies with an active (decaying) trigger, ranked ──
   type TriggerPreview = { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string };
-  type TriggeredRow = Company & { top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[] };
+  type InsightBadge = { kind: string; label: string; detail: string | null; evidence: string; confidence: string };
+  type TriggeredRow = Company & { top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[]; insights?: InsightBadge[] };
   const isTriggered = tab === "triggered";
   const [triggeredRows, setTriggeredRows] = useState<TriggeredRow[]>([]);
   const [triggeredTotal, setTriggeredTotal] = useState(0);
@@ -985,6 +986,16 @@ export default function Dashboard({
                     ) : (
                       <div className="text-xs text-[var(--text-muted)]">{isTal ? "🎯 On your Target Account List" : "In your claimable NetSuite TAM"}</div>
                     )}
+                    {/* LinkedIn/website reading findings — Arman 2026-07-30: "a little
+                        pop up that says LinkedIn and then whatever it is... a tag on
+                        the triggered." Tag-only: never affects ranking, renders on
+                        every tab a lead appears on (the join is on every list query). */}
+                    {((c as TriggeredRow).insights ?? []).slice(0, 3).map((ins, ii) => (
+                      <div key={ii} className="mt-0.5 truncate text-[11px]" style={{ color: "var(--accent)" }} title={ins.evidence}>
+                        🔗 LinkedIn · {ins.label}
+                        {ins.confidence === "low" ? " (low confidence)" : ""}
+                      </div>
+                    ))}
                   </Td>
                   <Td className="text-center">{isOldGold ? (
                     c.oldgold_score != null

@@ -148,6 +148,22 @@ export function withTriggers<T extends Record<string, unknown>>(
   return { rest: rest as Omit<T, "triggers">, top_trigger: ranked[0] ?? null, all_triggers: ranked, trigger_count: ranked.length };
 }
 
+/** A lead_insights row as a tab badge previews it. */
+export interface InsightBadge { kind: string; label: string; detail: string | null; evidence: string; confidence: string }
+
+/** Attach a lead's LinkedIn/website findings — Arman 2026-07-30: tags render on every
+ * tab a lead appears on, exactly like triggers. netsuite_fit/ops_profile are tag-only
+ * (never affect ranking); dated `trigger`-kind findings already became real triggers
+ * at write time (see /api/agent/insights), so they show up via all_triggers instead. */
+export function withInsights<T extends Record<string, unknown>>(
+  row: T,
+): { rest: Omit<T, "lead_insights">; insights: InsightBadge[] } {
+  const { lead_insights, ...rest } = row as Record<string, unknown> & { lead_insights?: unknown };
+  const list = (Array.isArray(lead_insights) ? lead_insights : []) as InsightBadge[];
+  const badges = list.map((i) => ({ kind: i.kind, label: i.label, detail: i.detail ?? null, evidence: i.evidence, confidence: i.confidence }));
+  return { rest: rest as Omit<T, "lead_insights">, insights: badges };
+}
+
 const HIDDEN_STATUSES = "(reviewed,dismissed,exported_csv,exported_sql,removed_from_tam)";
 
 /** Server-side, paginated, filtered query over the TAM Base (is_base=true). Ordered
@@ -163,7 +179,7 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
   // claimable/fit as tiebreaks. Builders mutate, so each attempt is built fresh;
   // falls back to oldgold_score ordering pre-migration.
   const build = (withTam: boolean) => {
-    let q = db.from("companies").select(`*, signals(*), triggers(*)`, { count: "exact" }).eq("is_base", true);
+    let q = db.from("companies").select(`*, signals(*), triggers(*), lead_insights(*)`, { count: "exact" }).eq("is_base", true);
     if (f.currentTam) q = q.contains("lists", ["netsuite_tam"]);
     if (f.claimable) q = q.eq("claimable", true);
     if (f.erp) q = q.eq("erp_ready", true);
@@ -186,8 +202,9 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
   if (error) throw new Error(`listBaseCompanies failed: ${error.message}`);
   return {
     companies: (data ?? []).map((r) => {
-      const { rest, top_trigger, all_triggers, trigger_count } = withTriggers(r as Record<string, unknown>);
-      return { ...mapCompany(rest as Record<string, unknown>), top_trigger, all_triggers, trigger_count };
+      const { rest: r1, top_trigger, all_triggers, trigger_count } = withTriggers(r as Record<string, unknown>);
+      const { rest: r2, insights } = withInsights(r1 as Record<string, unknown>);
+      return { ...mapCompany(r2 as Record<string, unknown>), top_trigger, all_triggers, trigger_count, insights };
     }),
     total: count ?? 0,
   };
