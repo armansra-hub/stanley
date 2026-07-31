@@ -47,11 +47,11 @@ export async function updateAppConfig(patch: Partial<AppConfig>): Promise<void> 
   if (error) throw new Error(`updateAppConfig failed: ${error.message}`);
 }
 
-// LLM classifier weekly budget gate. ~$0.0023/call on Opus 4.8 (≈290 tokens) →
-// 4,000 calls/week ≈ $9, under the $10/week cap. Returns true (and increments) only
+// LLM classifier weekly budget gate. The default classifier is the inexpensive
+// Haiku model; 4,000 calls/week remains a hard safety ceiling. Returns true only
 // if this week is under cap; false → caller uses the free regex classifier. If the
 // counter columns are absent (pre-0026) or anything errors, returns false (no
-// untracked spend). Increment isn't strictly atomic — fine for a safety bound.
+// untracked spend). Concurrent claims use a guarded compare-and-set below.
 const CLASSIFIER_WEEKLY_CAP_CALLS = 4000;
 function isoWeek(d = new Date()): string {
   const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -67,12 +67,24 @@ export async function claimClassifierCall(): Promise<boolean> {
     const { data, error } = await db.from("app_config").select("classifier_week, classifier_calls").eq("id", 1).single();
     if (error || !data) return false;
     const wk = isoWeek();
-    const calls = (data as any).classifier_week === wk ? Number((data as any).classifier_calls ?? 0) : 0;
+    const previousWeek = (data as any).classifier_week as string | null;
+    const previousCalls = Number((data as any).classifier_calls ?? 0);
+    const calls = previousWeek === wk ? previousCalls : 0;
     if (calls >= CLASSIFIER_WEEKLY_CAP_CALLS) return false;
-    await db.from("app_config").update({ classifier_week: wk, classifier_calls: calls + 1 }).eq("id", 1);
-    return true;
+
+    // Atomic compare-and-set: only one concurrent invocation can advance the exact
+    // counter state we read. Contenders match zero rows and fail closed to regex.
+    let claim = db.from("app_config")
+      .update({ classifier_week: wk, classifier_calls: calls + 1 })
+      .eq("id", 1)
+      .eq("classifier_calls", previousCalls);
+    claim = previousWeek === null
+      ? claim.is("classifier_week", null)
+      : claim.eq("classifier_week", previousWeek);
+    const { data: claimed, error: claimError } = await claim.select("classifier_calls").maybeSingle();
+    return !claimError && claimed !== null;
   } catch {
-    return false; // columns missing / error → no spend, regex fallback
+    return false; // columns missing / contention / error → no spend, regex fallback
   }
 }
 

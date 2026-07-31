@@ -116,7 +116,7 @@ export async function queueCandidate(
 ): Promise<boolean> {
   try {
     const spec = TRIGGER_SPEC[t.type as keyof typeof TRIGGER_SPEC] as { strength?: number; half_life_days?: number } | undefined;
-    const { error } = await serviceClient().from("trigger_candidates").upsert({
+    const { data, error } = await serviceClient().from("trigger_candidates").upsert({
       company_id: company.id,
       netsuite_internal_id: company.netsuite_internal_id ?? null,
       company_name: company.name,
@@ -127,10 +127,26 @@ export async function queueCandidate(
       signal_date: t.signal_date ?? null,
       strength: spec?.strength ?? null,
       half_life_days: spec?.half_life_days ?? null,
-    }, { onConflict: "company_id,type,summary", ignoreDuplicates: true });
-    return !error;
+    }, { onConflict: "company_id,type,summary", ignoreDuplicates: true }).select("id");
+    return !error && (data?.length ?? 0) === 1;
   } catch {
     return false; // never break a sweep over the queue
+  }
+}
+
+/** Avoid paying to classify a headline that this company has already reviewed or
+ * queued. The exact insert remains the concurrency-safe dedupe gate; this read is
+ * an inexpensive fast path for the common repeat-news case. */
+export async function headlineCandidateSeen(companyId: string, summary: string): Promise<boolean> {
+  try {
+    const { data, error } = await serviceClient().from("trigger_candidates")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("summary", summary)
+      .limit(1);
+    return !error && (data?.length ?? 0) > 0;
+  } catch {
+    return false;
   }
 }
 
