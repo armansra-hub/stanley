@@ -16,7 +16,9 @@ const ago = (iso: string, tz: string) => fmtDay(iso, tz);
 
 async function post(url: string, body: unknown) {
   const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  return res.ok ? res.json() : null;
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(payload?.error ?? `Request failed (${res.status})`);
+  return payload;
 }
 
 export default function KillListBoard({
@@ -39,6 +41,7 @@ export default function KillListBoard({
   const [newName, setNewName] = useState("");
   const [query, setQuery] = useState("");
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // ── drawer detail ──
   const [detail, setDetail] = useState<{ lead: Lead; notes: LeadNote[]; tasks: LeadTask[] } | null>(null);
@@ -60,9 +63,16 @@ export default function KillListBoard({
     }
   }
   async function action(kind: string, body: Record<string, unknown>) {
-    const r = await post("/api/kill-list/action", { kind, ...body });
-    applyBoard(r);
-    return r;
+    try {
+      const r = await post("/api/kill-list/action", { kind, ...body });
+      applyBoard(r);
+      setActionError(null);
+      return r;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setActionError(message);
+      throw e;
+    }
   }
 
   // ── log-a-call (voice/text debrief → note + extracted tasks) ──
@@ -206,6 +216,7 @@ export default function KillListBoard({
           <button onClick={addStage} className="rounded-md border px-3 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" style={{ borderColor: "var(--border)" }}>+ Stage</button>
         </div>
       </div>
+      {actionError && <p role="alert" className="mb-3 rounded-md border px-3 py-2 text-xs" style={{ borderColor: "var(--blood)", color: "var(--blood)" }}>Kill List update failed: {actionError}</p>}
 
       {/* Stanley bar */}
       <div className="mb-4 flex items-center gap-2 rounded-lg border px-4 py-2" style={{ borderColor: "var(--border)", background: "rgba(31,22,13,0.6)" }}>
@@ -339,8 +350,8 @@ function LeadDrawer({
   onLogCall: (leadId: string, transcript: string) => Promise<{ summary: string; taskCount: number } | null>;
 }) {
   const { lead, notes, tasks } = detail;
-  const [desc, setDesc] = useState(lead.description ?? "");
-  const [ns, setNs] = useState(lead.netsuite_url ?? "");
+  const [summary, setSummary] = useState(lead.summary ?? "");
+  const [leadNotes, setLeadNotes] = useState(lead.notes ?? "");
   const [noteText, setNoteText] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDue, setTaskDue] = useState("");
@@ -375,7 +386,7 @@ function LeadDrawer({
     if (res) { setCallText(""); setCallOpen(false); }
   }
 
-  useEffect(() => { setDesc(lead.description ?? ""); setNs(lead.netsuite_url ?? ""); }, [lead.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setSummary(lead.summary ?? ""); setLeadNotes(lead.notes ?? ""); }, [lead.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveLead = (patch: Record<string, unknown>) => { if (!usingSample) onAction("update_lead", { id: lead.id, patch }); };
   const addNote = async () => {
@@ -426,28 +437,43 @@ function LeadDrawer({
           </select>
         </label>
 
-        {/* Description */}
-        <label className="mb-3 block text-xs text-[var(--text-muted)]">
-          What they do
-          <textarea
-            value={desc} onChange={(e) => setDesc(e.target.value)} onBlur={() => saveLead({ description: desc })}
-            rows={3} placeholder="Type what they do…"
-            className="mt-1 w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none" style={{ borderColor: "var(--border)", color: "var(--text)" }}
-          />
-        </label>
+        <div className="mb-4 space-y-3">
+          <section>
+            <p className="western mb-1 text-sm" style={{ color: "var(--gold)" }}>Intro call transcript</p>
+            {lead.intro_call_transcript_url
+              ? <a href={lead.intro_call_transcript_url} target="_blank" rel="noreferrer" className="text-sm underline underline-offset-2" style={{ color: "var(--text)" }}>Open transcript PDF ↗</a>
+              : <p className="text-xs text-[var(--text-muted)]">No transcript PDF linked yet.</p>}
+          </section>
 
-        {/* NetSuite link */}
-        <label className="mb-4 block text-xs text-[var(--text-muted)]">
-          NetSuite lead record
-          <input
-            value={ns} onChange={(e) => setNs(e.target.value)} onBlur={() => saveLead({ netsuite_url: ns })}
-            placeholder="https://…" className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none" style={{ borderColor: "var(--border)", color: "var(--text)" }}
-          />
-        </label>
+          <label className="block text-xs text-[var(--text-muted)]">
+            <span className="western text-sm" style={{ color: "var(--gold)" }}>Summary</span>
+            <textarea
+              value={summary} onChange={(e) => setSummary(e.target.value)} onBlur={() => saveLead({ summary })}
+              rows={4} placeholder="Decision-makers, pain, commercial picture, and agreed outcome…"
+              className="mt-1 w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none" style={{ borderColor: "var(--border)", color: "var(--text)" }}
+            />
+          </label>
+
+          <label className="block text-xs text-[var(--text-muted)]">
+            <span className="western text-sm" style={{ color: "var(--gold)" }}>Notes</span>
+            <textarea
+              value={leadNotes} onChange={(e) => setLeadNotes(e.target.value)} onBlur={() => saveLead({ notes: leadNotes })}
+              rows={4} placeholder="Systems, stakeholders, objections, deadlines, and context…"
+              className="mt-1 w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none" style={{ borderColor: "var(--border)", color: "var(--text)" }}
+            />
+          </label>
+
+          <section>
+            <p className="western mb-1 text-sm" style={{ color: "var(--gold)" }}>Lead record</p>
+            {lead.netsuite_url
+              ? <a href={lead.netsuite_url} target="_blank" rel="noreferrer" className="text-sm underline underline-offset-2" style={{ color: "var(--text)" }}>Open NetSuite lead record ↗</a>
+              : <p className="text-xs text-[var(--text-muted)]">No NetSuite lead record linked yet.</p>}
+          </section>
+        </div>
 
         {/* Tasks */}
         <div className="mb-4">
-          <p className="western mb-2 text-sm" style={{ color: "var(--gold)" }}>Tasks</p>
+          <p className="western mb-2 text-sm" style={{ color: "var(--gold)" }}>Next steps</p>
           <div className="space-y-1.5">
             {tasks.map((t) => (
               <div key={t.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)" }}>
@@ -457,7 +483,7 @@ function LeadDrawer({
                 <button onClick={() => delTask(t)} className="text-[var(--text-muted)] hover:text-[var(--blood)]" title="Delete">✕</button>
               </div>
             ))}
-            {tasks.length === 0 && <p className="text-xs text-[var(--text-muted)]">No tasks yet.</p>}
+            {tasks.length === 0 && <p className="text-xs text-[var(--text-muted)]">No next steps yet.</p>}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addTask()} placeholder="New task…" className="flex-1 rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none" style={{ borderColor: "var(--border)" }} />
