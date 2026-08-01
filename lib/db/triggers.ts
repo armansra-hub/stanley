@@ -335,7 +335,7 @@ export async function pickSosCompaniesForRotation(state: string, limit: number, 
 }
 
 /** Map a mapCompany-shaped row + attach the top trigger (for the Triggered worklist). */
-export interface TriggerPreview { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string }
+export interface TriggerPreview { type: string; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string }
 export interface TriggeredCompany extends Company { priority?: number; top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[]; insights?: InsightBadge[] }
 
 /** The synthetic "signal" for DOL-5500 headcount leads in the signal-type filter
@@ -386,7 +386,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
       }
       return live(b) - live(a);
     });
-    const all_triggers: TriggerPreview[] = sorted.map((t) => ({ type: t.type, summary: t.summary, source_url: t.source_url, signal_date: t.signal_date, detected_at: t.detected_at }));
+    const all_triggers: TriggerPreview[] = sorted.map((t) => ({ type: t.type, summary: t.summary, source_name: t.source_name, source_url: t.source_url, signal_date: t.signal_date, detected_at: t.detected_at }));
     const { triggers, ...rest } = r; void triggers;
     const trigger_types = [...new Set(trigs.map((t) => t.type))];
     const { rest: rest2, insights } = withInsights(rest);

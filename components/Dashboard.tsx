@@ -15,6 +15,8 @@ import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongest
 import ChatPanel from "./ChatPanel";
 
 type Tab = "triggered" | "oldgold" | "tal" | "imported" | "starred" | "history";
+type TriggerPreview = { type: string; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string };
+type InsightBadge = { kind: string; label: string; detail: string | null; evidence: string; evidence_url: string | null; confidence: string };
 
 function download(filename: string, text: string, mime: string) {
   const blob = new Blob([text], { type: mime });
@@ -374,8 +376,6 @@ export default function Dashboard({
     return () => clearTimeout(t);
   }, [isTal, search, stateFilter, subindustry]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Triggered worklist: base companies with an active (decaying) trigger, ranked ──
-  type TriggerPreview = { type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string };
-  type InsightBadge = { kind: string; label: string; detail: string | null; evidence: string; confidence: string };
   type TriggeredRow = Company & { top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[]; insights?: InsightBadge[] };
   const isTriggered = tab === "triggered";
   const [triggeredRows, setTriggeredRows] = useState<TriggeredRow[]>([]);
@@ -962,8 +962,15 @@ export default function Dashboard({
                       <div className="space-y-1">
                         {((c as TriggeredRow).all_triggers ?? [trig]).map((t, ti) => (
                           <div key={ti}>
-                            <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{TRIGGER_LABELS[t.type] ?? t.type} · {sinceLabel(t.signal_date ?? t.detected_at)}</div>
+                            <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>
+                              {t.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : TRIGGER_LABELS[t.type] ?? t.type} · {sinceLabel(t.signal_date ?? t.detected_at)}
+                            </div>
                             <div className="text-xs text-[var(--text-muted)]">{t.summary}</div>
+                            {t.source_url ? (
+                              <a href={t.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>
+                                View source ↗
+                              </a>
+                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -989,11 +996,21 @@ export default function Dashboard({
                     {/* LinkedIn/website reading findings — Arman 2026-07-30: "a little
                         pop up that says LinkedIn and then whatever it is... a tag on
                         the triggered." Tag-only: never affects ranking, renders on
-                        every tab a lead appears on (the join is on every list query). */}
+                        every tab a lead appears on (the join is on every list query).
+                        Arman 2026-07-31: label must be self-explanatory on its own
+                        ("LinkedIn NetSuite fit — what/why"), and always link back to
+                        the source post/page, not just a hover tooltip. */}
                     {((c as TriggeredRow).insights ?? []).slice(0, 3).map((ins, ii) => (
-                      <div key={ii} className="mt-0.5 truncate text-[11px]" style={{ color: "var(--accent)" }} title={ins.evidence}>
-                        🔗 LinkedIn · {ins.label}
-                        {ins.confidence === "low" ? " (low confidence)" : ""}
+                      <div key={ii} className="mt-0.5 text-[11px]" style={{ color: "var(--accent)" }}>
+                        <div className="truncate" title={ins.detail ?? ins.evidence}>
+                          🔗 LinkedIn {ins.kind === "netsuite_fit" ? "NetSuite fit" : "ops profile"} — {ins.label}
+                          {ins.confidence === "low" ? " (low confidence)" : ""}
+                        </div>
+                        {ins.evidence_url ? (
+                          <a href={ins.evidence_url} target="_blank" rel="noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>
+                            View source ↗
+                          </a>
+                        ) : null}
                       </div>
                     ))}
                   </Td>
@@ -1379,7 +1396,7 @@ function DetailDrawer({
   const [ratingComment, setRatingComment] = useState(company.rating_comment ?? "");
   // Pull the FULL record (every signal + every trigger across the DB) on open — the row
   // object from Triggered/TAM-Base tabs is a light projection with no signals/triggers.
-  const [detail, setDetail] = useState<{ company: Company; triggers: DrawerTrigger[] } | null>(null);
+  const [detail, setDetail] = useState<{ company: Company; triggers: DrawerTrigger[]; insights?: InsightBadge[] } | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let live = true;
@@ -1393,6 +1410,7 @@ function DetailDrawer({
 
   const c = detail?.company ?? company; // merged: full record once loaded, row projection meanwhile
   const triggers = detail?.triggers ?? [];
+  const insights = detail?.insights ?? [];
   const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
 
   return (
@@ -1510,7 +1528,7 @@ function DetailDrawer({
           {triggers.map((t) => (
             <div key={t.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
               <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="font-medium capitalize">{t.type.replace(/_/g, " ")}</span>
+                <span className="font-medium capitalize">{t.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : t.type.replace(/_/g, " ")}</span>
                 <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(t.signal_date || t.detected_at)}{t.live < t.strength * 0.5 ? " · fading" : ""}</span>
               </div>
               <p className="text-[var(--text-muted)]">{t.summary}</p>
@@ -1518,6 +1536,28 @@ function DetailDrawer({
             </div>
           ))}
         </div>
+
+        {/* LinkedIn NetSuite-fit / ops-profile findings — tag-only, but must still say
+            WHY they're here and link back to source (Arman 2026-07-31: the lead-record
+            popup was showing generic company description with no "why" framing). */}
+        {insights.length > 0 && (
+          <>
+            <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">LinkedIn findings ({insights.length})</h3>
+            <div className="space-y-2">
+              {insights.map((ins, i) => (
+                <div key={i} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+                  <div className="mb-1 font-medium" style={{ color: "var(--accent)" }}>
+                    🔗 LinkedIn {ins.kind === "netsuite_fit" ? "NetSuite fit" : "ops profile"} — {ins.label}
+                    {ins.confidence === "low" ? " (low confidence)" : ""}
+                  </div>
+                  {ins.detail && <p className="text-[var(--text-muted)]">{ins.detail}</p>}
+                  <p className="mt-1 border-l-2 pl-2 text-xs italic text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>&quot;{ins.evidence}&quot;</p>
+                  {ins.evidence_url && <a href={ins.evidence_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">View source ↗</a>}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Signals ({c.signals.length})</h3>
         {c.signals.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No discovery signals on this lead."}</p>}

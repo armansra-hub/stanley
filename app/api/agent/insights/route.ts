@@ -24,7 +24,9 @@ import { TRIGGER_SPEC } from "@/lib/triggers/config";
  *                  explicit call: never reorders the Triggered tab. Written to
  *                  lead_insights and rendered as a badge everywhere the lead appears.
  *
- * POST { agent, findings: [{ internalId, kind, label, detail?, evidence, source?, confidence?, postedAt? }] }
+ * POST { agent, findings: [{ internalId, kind, label, detail?, evidence, sourceUrl?, confidence?, postedAt? }] }
+ * sourceUrl should always be the LinkedIn post/page URL the finding was read from — it's
+ * what the badge/trigger's "View source" link points at on the lead record.
  */
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -51,7 +53,7 @@ export async function POST(req: Request) {
   const dryRun = body.dryRun === true;
   const errors: { index: number; problem: string }[] = [];
   const rows: Record<string, unknown>[] = [];
-  const triggerRows: { internalId: string; type: string; label: string; evidence: string; source?: string; postedAt?: string }[] = [];
+  const triggerRows: { internalId: string; type: string; label: string; evidence: string; sourceUrl?: string; postedAt?: string }[] = [];
 
   (body.findings as Record<string, unknown>[]).forEach((f, i) => {
     const internalId = String(f.internalId ?? "").trim().replace(/\.0$/, "");
@@ -70,7 +72,7 @@ export async function POST(req: Request) {
       // mislabeling an expansion or launch as a finance hire.
       const type = String(f.type ?? "").trim();
       if (!(type in TRIGGER_SPEC)) return void errors.push({ index: i, problem: `trigger kind requires a valid type (one of ${Object.keys(TRIGGER_SPEC).join(", ")})`, });
-      triggerRows.push({ internalId, type, label, evidence, source: f.source ? String(f.source) : undefined, postedAt: f.postedAt ? String(f.postedAt) : undefined });
+      triggerRows.push({ internalId, type, label, evidence, sourceUrl: f.sourceUrl ? String(f.sourceUrl) : undefined, postedAt: f.postedAt ? String(f.postedAt) : undefined });
     } else {
       rows.push({
         netsuite_internal_id: internalId, source: "linkedin", kind, label,
@@ -123,7 +125,7 @@ export async function POST(req: Request) {
     const ok = await recordTrigger(cid, {
       type: t.type,
       summary: `LinkedIn: ${t.label} — “${t.evidence.slice(0, 150)}”`,
-      source_name: "LinkedIn", source_url: t.source ?? null, signal_date: t.postedAt ?? null,
+      source_name: "LinkedIn", source_url: t.sourceUrl ?? null, signal_date: t.postedAt ?? null,
     });
     if (ok) { triggersWritten++; await recomputePriority(cid); }
   }

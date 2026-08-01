@@ -149,7 +149,7 @@ export function withTriggers<T extends Record<string, unknown>>(
 }
 
 /** A lead_insights row as a tab badge previews it. */
-export interface InsightBadge { kind: string; label: string; detail: string | null; evidence: string; confidence: string }
+export interface InsightBadge { kind: string; label: string; detail: string | null; evidence: string; evidence_url: string | null; confidence: string }
 
 /** Attach a lead's LinkedIn/website findings — Arman 2026-07-30: tags render on every
  * tab a lead appears on, exactly like triggers. netsuite_fit/ops_profile are tag-only
@@ -160,7 +160,7 @@ export function withInsights<T extends Record<string, unknown>>(
 ): { rest: Omit<T, "lead_insights">; insights: InsightBadge[] } {
   const { lead_insights, ...rest } = row as Record<string, unknown> & { lead_insights?: unknown };
   const list = (Array.isArray(lead_insights) ? lead_insights : []) as InsightBadge[];
-  const badges = list.map((i) => ({ kind: i.kind, label: i.label, detail: i.detail ?? null, evidence: i.evidence, confidence: i.confidence }));
+  const badges = list.map((i) => ({ kind: i.kind, label: i.label, detail: i.detail ?? null, evidence: i.evidence, evidence_url: i.evidence_url ?? null, confidence: i.confidence }));
   return { rest: rest as Omit<T, "lead_insights">, insights: badges };
 }
 
