@@ -7,10 +7,13 @@ import Anthropic from "@anthropic-ai/sdk";
  * candidate event, it confirms the headline is genuinely ABOUT this company and a
  * real POSITIVE growth / ERP-readiness event, and returns the precise type (and for
  * M&A, whether this company is the ACQUIRER vs the target). Budget-gated by the
- * caller; this just makes the call. Opus 4.8 (configurable), thinking off (cheap +
- * fast for a one-line classification).
+ * caller; this just makes the call. Haiku is sufficient for this short structured
+ * pre-filter; every queued candidate still requires the independent final review.
+ * Automatic SDK retries are disabled because the regex result is a safe fallback.
  */
-const MODEL = process.env.MODEL_CLASSIFY || "claude-opus-4-8";
+const MODEL = process.env.MODEL_CLASSIFY || "claude-haiku-4-5";
+let client: Anthropic | null = null;
+const classifierClient = () => (client ??= new Anthropic({ maxRetries: 0 }));
 
 const SCHEMA = {
   type: "object",
@@ -31,10 +34,9 @@ export interface EventVerdict { about_company: boolean; event: "funding" | "ma" 
 
 export async function classifyEventLLM(companyName: string, headline: string): Promise<EventVerdict | null> {
   try {
-    const client = new Anthropic(); // reads ANTHROPIC_API_KEY
-    const msg = await client.messages.create({
+    const msg = await classifierClient().messages.create({
       model: MODEL,
-      max_tokens: 200,
+      max_tokens: 128,
       thinking: { type: "disabled" },
       system: "You classify whether a news headline reports a real, POSITIVE growth / ERP-readiness event about a SPECIFIC small company (the kind of company outgrowing QuickBooks that would buy NetSuite). Be strict: reject headlines that are not about this exact company, that report the company being ACQUIRED/sold, layoffs, an office relocation, a lawsuit, an award, or only coincidentally contain the company's name or generic words. Return only the structured JSON.",
       messages: [{ role: "user", content: `Company: ${companyName}\nHeadline: ${headline}` }],

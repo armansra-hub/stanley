@@ -1,5 +1,5 @@
 import "server-only";
-import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate } from "@/lib/db/triggers";
+import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate, headlineCandidateSeen } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
 import { fetchNewsForCompany, fetchNewsItems } from "@/lib/sources/googleNews";
 import { claimClassifierCall } from "@/lib/db/settings";
@@ -176,6 +176,7 @@ export async function classifyAndRecordHeadline(
   if (PE_RE.test(clean)) await setErpFlags(company.id, { pe_owned: true });
   let type = classifyHeadline(clean);
   if (type === "news") return false; // cheap regex prefilter — only candidate events proceed
+  if (await headlineCandidateSeen(company.id, it.raw_excerpt)) return false;
   let acquirer = type !== "ma" || maDirection(company.name, clean) === "acquirer";
   if (opts.llm && (await claimClassifierCall())) {
     const v = await classifyEventLLM(company.name, clean);
