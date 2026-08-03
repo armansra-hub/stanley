@@ -32,8 +32,9 @@ if ($Mode -eq 'Awards') {
     }
   }
   foreach ($row in ($batchRows | Group-Object offset | ForEach-Object { $_.Group | Sort-Object at | Select-Object -Last 1 })) {
-    if ([int]$row.checked -eq 10 -and [int]$row.errors -eq 0) {
-      for ($i = [int]$row.offset; $i -lt [Math]::Min([int]$row.offset + 10, $TotalCompanies); $i++) { [void]$completed.Add($i) }
+    $awardComplete = -not ($row.PSObject.Properties.Name -contains 'awardDone') -or [bool]$row.awardDone
+    if ([int]$row.checked -gt 0 -and [int]$row.errors -eq 0 -and $awardComplete) {
+      for ($i = [int]$row.offset; $i -lt [Math]::Min([int]$row.offset + [int]$row.checked, $TotalCompanies); $i++) { [void]$completed.Add($i) }
     }
   }
   $companyRows = @()
@@ -63,15 +64,46 @@ for ($offset = $StartOffset + $WorkerIndex * $BatchSize; $offset -lt $TotalCompa
   $pending = @($offset..($offset + $limit - 1) | Where-Object { -not $completed.Contains($_) })
   if ($pending.Count -eq 0) { continue }
   $uri = "$BaseUrl/api/cron/public-growth?source=$source&n=$limit&offset=$offset"
+  if ($Mode -eq 'Awards' -and $BatchSize -eq 1) {
+    $uri += '&awardOffset=0&awardLimit=50'
+  }
   try {
     $result = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec $RequestTimeoutSeconds
+    $primary = @($result.receipts)[0]
     Write-Receipt ([ordered]@{
       worker = $WorkerIndex; offset = $offset; checked = $result.checked
       matched = $result.matched; ambiguous = $result.ambiguous; errors = $result.errors
       awards = $result.awards; transactions = $result.transactions
       stored = $result.stored; triggers = $result.triggers
+      status = $primary.status; awardOffset = $primary.awardOffset
+      nextAwardOffset = $primary.nextAwardOffset; awardTotal = $primary.awardTotal
+      awardDone = $primary.awardDone
       receiptErrors = @($result.receipts | Where-Object { $_.error } | ForEach-Object { $_.error })
     })
+
+    if ($Mode -eq 'Awards' -and $BatchSize -eq 1 -and $primary.status -eq 'matched' -and $primary.awardDone -eq $false) {
+      $awardOffset = [int]$primary.nextAwardOffset
+      $awardTotal = [int]$primary.awardTotal
+      while ($awardOffset -lt $awardTotal) {
+        if ($CooldownMilliseconds -gt 0) { Start-Sleep -Milliseconds $CooldownMilliseconds }
+        $chunkUri = "$BaseUrl/api/cron/public-growth?source=usaspending&n=1&offset=$offset&awardOffset=$awardOffset&awardLimit=50"
+        $chunk = Invoke-RestMethod -Uri $chunkUri -Headers $headers -TimeoutSec $RequestTimeoutSeconds
+        $chunkReceipt = @($chunk.receipts)[0]
+        Write-Receipt ([ordered]@{
+          worker = $WorkerIndex; offset = $offset; checked = $chunk.checked
+          matched = $chunk.matched; ambiguous = $chunk.ambiguous; errors = $chunk.errors
+          awards = $chunk.awards; transactions = $chunk.transactions; triggers = $chunk.triggers
+          status = $chunkReceipt.status; awardOffset = $chunkReceipt.awardOffset
+          nextAwardOffset = $chunkReceipt.nextAwardOffset; awardTotal = $chunkReceipt.awardTotal
+          awardDone = $chunkReceipt.awardDone
+          receiptErrors = @($chunk.receipts | Where-Object { $_.error } | ForEach-Object { $_.error })
+        })
+        if ([int]$chunk.errors -gt 0 -or $chunkReceipt.status -eq 'error') { break }
+        $awardOffset = [int]$chunkReceipt.nextAwardOffset
+        $awardTotal = [int]$chunkReceipt.awardTotal
+        if ([bool]$chunkReceipt.awardDone) { break }
+      }
+    }
   }
   catch {
     Write-Receipt ([ordered]@{ worker = $WorkerIndex; offset = $offset; fatal = $_.Exception.Message })
