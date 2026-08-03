@@ -19,6 +19,17 @@ export async function saveGovernmentEntity(entity: Record<string, any>): Promise
     return String(existing.id);
   }
   const { data, error } = await db.from("government_entities").insert(payload).select("id").single();
+  if (error?.code === "23505") {
+    // Two matched TAM records can legitimately point at the same SAM entity
+    // (for example, duplicate domains or parent/division records). A bounded
+    // parallel batch may race after both initial lookups see no row. Resolve
+    // the winner deterministically instead of failing the whole checkpoint.
+    let collision: any = null;
+    if (entity.uei) ({ data: collision } = await db.from("government_entities").select("id").eq("uei", entity.uei).maybeSingle());
+    if (!collision && entity.cage_code) ({ data: collision } = await db.from("government_entities").select("id").eq("cage_code", entity.cage_code).maybeSingle());
+    if (!collision && entity.usaspending_recipient_id) ({ data: collision } = await db.from("government_entities").select("id").eq("usaspending_recipient_id", entity.usaspending_recipient_id).maybeSingle());
+    if (collision?.id) return String(collision.id);
+  }
   if (error || !data) throw new Error(`government entity insert failed: ${error?.message}`);
   return String(data.id);
 }
