@@ -13,6 +13,13 @@ def norm(value):
 
 def city_norm(value): return re.sub(r"[^a-z]", "", (value or "").lower())
 
+def parse_date(value):
+    raw = (value or "").strip()
+    for pattern in ("%Y-%m-%d", "%m/%d/%Y"):
+        try: return datetime.datetime.strptime(raw, pattern).date()
+        except ValueError: pass
+    return None
+
 def request_json(url, secret, body=None):
     data = None if body is None else json.dumps(body).encode()
     headers = {"x-cron-secret": secret, "content-type": "application/json"}
@@ -43,8 +50,8 @@ def scan_file(path, program, index, cutoff):
         reader = csv.DictReader(handle)
         for row in reader:
             scanned += 1
-            try: approved = datetime.datetime.strptime((row.get("ApprovalDate") or "").strip(), "%m/%d/%Y").date()
-            except ValueError: continue
+            approved = parse_date(row.get("ApprovalDate"))
+            if approved is None: continue
             if approved < cutoff: continue
             state = (row.get("BorrState") or "").strip().upper()
             name = (row.get("BorrName") or "").strip()
