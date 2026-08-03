@@ -4,6 +4,7 @@ import { getPublicGrowthDetail, type PublicGrowthDetail } from "@/lib/publicGrow
 import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
 import { mapSignal, withTriggers, withInsights, type InsightBadge } from "@/lib/db/companies";
 import type { Company } from "@/lib/types";
+import { scoreTalUrgency } from "@/lib/tal/urgency";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -287,7 +288,8 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
   if (error) return [];
   return (data ?? []).map((r: any) => {
     const trigs = (r.triggers ?? []) as TriggerRow[];
-    const top = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v)[0]?.t;
+    const rankedTriggers = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v);
+    const top = rankedTriggers[0]?.t;
     const { triggers, ...rest } = r; void triggers;
     return { ...mapBasic(rest), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null } as TriggeredCompany;
   });
@@ -365,9 +367,12 @@ export const HEADCOUNT_PSEUDO_TYPE = "headcount_growth";
  * least one trigger of a selected type (or ≥25% headcount when the pseudo-type is
  * selected). Filtering happens after the fetch — the active triggered set is a few
  * hundred rows, so we pull it whole and paginate in memory for correct totals. */
-export async function listTriggered(opts: { limit?: number; offset?: number; includeHidden?: boolean; q?: string; state?: string; subindustry?: string; band?: string; claimable?: boolean; erp?: boolean; tags?: string[]; matchAll?: boolean; types?: string[] } = {}): Promise<{ companies: TriggeredCompany[]; total: number }> {
+export async function listTriggered(opts: { limit?: number; offset?: number; includeHidden?: boolean; q?: string; state?: string; subindustry?: string; band?: string; claimable?: boolean; erp?: boolean; tags?: string[]; matchAll?: boolean; types?: string[]; signalMatchAll?: boolean; signalDateFrom?: string; signalDateTo?: string; minimumEmployees?: number; minimumParticipants?: number } = {}): Promise<{ companies: TriggeredCompany[]; total: number }> {
   const db = serviceClient();
   const typeFilter = (opts.types ?? []).filter(Boolean);
+  const signalDateFrom = opts.signalDateFrom ? Date.parse(`${opts.signalDateFrom}T00:00:00.000Z`) : null;
+  const signalDateTo = opts.signalDateTo ? Date.parse(`${opts.signalDateTo}T23:59:59.999Z`) : null;
+  const hasEventFilters = typeFilter.length > 0 || signalDateFrom != null || signalDateTo != null || opts.minimumEmployees != null || opts.minimumParticipants != null;
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
   let q = db.from("companies").select("*, triggers(*), lead_insights(*)", { count: "exact" })
     .or('is_base.eq.true,sources.cs.["sales_nav_growth"]')
@@ -388,7 +393,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   const { data, count, error } = await q
     .order("record_dead", { ascending: true }) // dead sinks even when its cached priority is stale
     .order("priority", { ascending: false }).order("name", { ascending: true })
-    .range(typeFilter.length ? 0 : offset, typeFilter.length ? 1999 : offset + limit - 1);
+    .range(hasEventFilters ? 0 : offset, hasEventFilters ? 0 + 1999 : offset + limit - 1);
   if (error) throw new Error(`listTriggered failed: ${error.message}`);
   let companies = (data ?? []).map((r: any) => {
     const trigs = (r.triggers ?? []) as TriggerRow[];
@@ -409,11 +414,27 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
     const { rest: rest2, insights } = withInsights(rest);
     return { ...mapBasic(rest2), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: all_triggers[0] ?? null, all_triggers, trigger_count: trigs.length, trigger_types, insights } as TriggeredCompany;
   });
-  if (typeFilter.length) {
+  if (hasEventFilters) {
+    const inSignalDateRange = (t: TriggerPreview) => {
+      const at = Date.parse(t.signal_date ?? t.detected_at);
+      return Number.isFinite(at) && (signalDateFrom == null || at >= signalDateFrom) && (signalDateTo == null || at <= signalDateTo);
+    };
+    const dateIsActive = signalDateFrom != null || signalDateTo != null;
     const wantHeadcount = typeFilter.includes(HEADCOUNT_PSEUDO_TYPE);
-    companies = companies.filter((c) =>
-      (c.trigger_types ?? []).some((t) => typeFilter.includes(t)) ||
-      (wantHeadcount && (c.headcount_growth_pct ?? 0) >= 25));
+    companies = companies.filter((c) => {
+      if (opts.minimumEmployees != null && (c.employee_count ?? -1) < opts.minimumEmployees) return false;
+      if (opts.minimumParticipants != null && (c.active_participant_count ?? -1) < opts.minimumParticipants) return false;
+
+      const datedTriggers = (c.all_triggers ?? []).filter(inSignalDateRange);
+      if (typeFilter.length) {
+        const matchedTypes = new Set(datedTriggers.map((t) => t.type));
+        const hasSyntheticHeadcount = wantHeadcount && !dateIsActive && (c.headcount_growth_pct ?? 0) >= 25;
+        const matchesType = (type: string) => type === HEADCOUNT_PSEUDO_TYPE ? hasSyntheticHeadcount : matchedTypes.has(type);
+        return opts.signalMatchAll ? typeFilter.every(matchesType) : typeFilter.some(matchesType);
+      }
+      // With no type selected, the date filter means “any signal happened in this range.”
+      return !dateIsActive || datedTriggers.length > 0;
+    });
     return { companies: companies.slice(offset, offset + limit), total: companies.length };
   }
   return { companies, total: count ?? 0 };
@@ -441,6 +462,7 @@ function mapBasic(r: any): Company {
     tal_claimed: Boolean(r.tal_claimed), tal_dq: Boolean(r.tal_dq), tal_alert: Boolean(r.tal_alert),
     claim_bullets: Array.isArray(r.claim_bullets) ? (r.claim_bullets as string[]) : null,
     headcount_growth_pct: r.headcount_growth_pct != null ? Number(r.headcount_growth_pct) : null,
+    active_participant_count: r.active_participant_count != null ? Number(r.active_participant_count) : null,
     has_parent: Boolean(r.has_parent), parent_name: r.parent_name ?? null, parent_confidence: r.parent_confidence ?? null,
     // Old Gold intelligence — migration 0030 (graceful pre-migration)
     last_sql_date: r.last_sql_date ?? null, qual_note: r.qual_note ?? null,
@@ -464,29 +486,60 @@ function mapBasic(r: any): Company {
 export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number } = {}): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
-  let q = db.from("companies").select("*, triggers(*), lead_insights(*)", { count: "exact" })
-    .eq("is_base", true).not("qual_note", "is", null).not("last_sql_date", "is", null)
-    .not("status", "in", "(dismissed,removed_from_tam)"); // removed_from_tam: weekly-update pull-outs keep their grade but leave the mining list
-  if (opts.state) q = q.eq("state", opts.state);
-  if (opts.subindustry) q = q.eq("subindustry", opts.subindustry);
-  // Inclusive oldgold_score range — when set, ungraded (null-score) rows drop out.
-  if (opts.scoreMin != null) q = q.gte("oldgold_score", opts.scoreMin);
-  if (opts.scoreMax != null) q = q.lte("oldgold_score", opts.scoreMax);
-  if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
-  const { data, count, error } = await q
-    .order("record_dead", { ascending: true }) // dead last
-    .order("oldgold_score", { ascending: false, nullsFirst: false })
-    .order("last_sql_date", { ascending: false, nullsFirst: false })
-    .range(offset, offset + limit - 1);
-  if (error) throw new Error(`listOldGold failed: ${error.message}`);
-  return {
-    companies: (data ?? []).map((r: any) => {
+  const known = "(timing_arrived,contract_clock,stalled_warm,lost_to_competitor,insufficient,dead)";
+  const buckets: Array<{ dead: boolean; cls: string | null; other?: boolean; any?: boolean }> = [
+    { dead: false, cls: "timing_arrived" }, { dead: false, cls: "contract_clock" },
+    { dead: false, cls: "stalled_warm" }, { dead: false, cls: "lost_to_competitor" },
+    { dead: false, cls: "insufficient" }, { dead: false, cls: null },
+    { dead: false, cls: null, other: true }, { dead: false, cls: "dead" },
+    { dead: true, cls: null, any: true },
+  ];
+  const base = (columns: string, options?: { count: "exact"; head: true }) => {
+    let query: any = db.from("companies").select(columns, options)
+      .eq("is_base", true)
+      .or("and(qual_note.not.is.null,last_sql_date.not.is.null),record_digest.ilike.*Opportunity confirmed:*,record_digest.ilike.*Opportunity created:*")
+      .not("status", "in", "(dismissed,removed_from_tam)");
+    if (opts.state) query = query.eq("state", opts.state);
+    if (opts.subindustry) query = query.eq("subindustry", opts.subindustry);
+    if (opts.scoreMin != null) query = query.gte("oldgold_score", opts.scoreMin);
+    if (opts.scoreMax != null) query = query.lte("oldgold_score", opts.scoreMax);
+    if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) query = query.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
+    return query;
+  };
+  const scoped = (query: any, bucket: typeof buckets[number]) => {
+    query = query.eq("record_dead", bucket.dead);
+    if (bucket.any) return query;
+    if (bucket.other) return query.not("oldgold_class", "is", null).not("oldgold_class", "in", known);
+    return bucket.cls == null ? query.is("oldgold_class", null) : query.eq("oldgold_class", bucket.cls);
+  };
+  const counts = await Promise.all(buckets.map(async (bucket) => {
+    const { count, error } = await scoped(base("id", { count: "exact", head: true }), bucket);
+    if (error) throw new Error(`listOldGold count failed: ${error.message}`);
+    return count ?? 0;
+  }));
+  const total = counts.reduce((sum, value) => sum + value, 0);
+  let skip = offset, needed = limit;
+  const rows: any[] = [];
+  for (let index = 0; index < buckets.length && needed > 0; index += 1) {
+    const bucketCount = counts[index];
+    if (skip >= bucketCount) { skip -= bucketCount; continue; }
+    const take = Math.min(needed, bucketCount - skip);
+    const { data, error } = await scoped(base("*, triggers(*), lead_insights(*)"), buckets[index])
+      .order("oldgold_score", { ascending: false, nullsFirst: false })
+      .order("last_sql_date", { ascending: false, nullsFirst: false })
+      .order("name", { ascending: true })
+      .range(skip, skip + take - 1);
+    if (error) throw new Error(`listOldGold failed: ${error.message}`);
+    rows.push(...(data ?? []));
+    needed -= take;
+    skip = 0;
+  }
+  const companies = rows.map((r: any) => {
       const { rest: r1, top_trigger, all_triggers, trigger_count } = withTriggers(r);
       const { rest: r2, insights } = withInsights(r1);
       return { ...mapBasic(r2), top_trigger, all_triggers, trigger_count, insights };
-    }),
-    total: count ?? 0,
-  };
+    });
+  return { companies, total };
 }
 
 /** The Target Account List tab: EVERY tal_claimed lead, regardless of status —
@@ -509,11 +562,24 @@ export async function listTal(opts: { q?: string; state?: string; subindustry?: 
   if (error) throw new Error(`listTal failed: ${error.message}`);
   const companies = (data ?? []).map((r: any) => {
     const trigs = (r.triggers ?? []) as TriggerRow[];
-    const top = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v)[0]?.t;
+    const rankedTriggers = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v);
+    const top = rankedTriggers[0]?.t;
     const { triggers, ...rest } = r; void triggers;
     const { rest: rest2, insights } = withInsights(rest);
-    return { ...mapBasic(rest2), top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null, insights };
+    const urgency = scoreTalUrgency({
+      tamScore: r.tam_score, talAlert: r.tal_alert, lastSqlDate: r.last_sql_date,
+      revisitOn: r.revisit_on, recordDead: r.record_dead,
+      text: [r.qual_note, r.record_digest, r.notes, r.score_reason].filter(Boolean).join("\n"),
+      triggers: rankedTriggers.map(({ t, v }) => ({ live: v, type: t.type, signalDate: t.signal_date, detectedAt: t.detected_at })),
+    });
+    return { ...mapBasic(rest2), top_trigger: top ? { type: top.type, summary: top.summary, signal_date: top.signal_date, detected_at: top.detected_at } : null, insights, tal_urgency_score: urgency.score, tal_urgency_reasons: urgency.reasons };
   });
+  companies.sort((a, b) =>
+    Number(a.record_dead ?? false) - Number(b.record_dead ?? false)
+    || (b.tal_urgency_score ?? 0) - (a.tal_urgency_score ?? 0)
+    || (b.tam_score ?? -1) - (a.tam_score ?? -1)
+    || a.name.localeCompare(b.name)
+  );
   return { companies, total: count ?? 0 };
 }
 

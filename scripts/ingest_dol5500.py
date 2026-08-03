@@ -57,6 +57,7 @@ print("base names:", len(norm2id))
 
 # 2) stream 5500-SF: best growth per matched company + ACA-threshold crossings
 best = {}          # company_id -> pct
+participants = {}  # company_id -> latest reported end-of-year active participants
 crossed = {}       # company_id -> (boy, eoy) where boy < 50 <= eoy
 f = open(SF, encoding="latin-1"); rd = csv.reader(f); hdr = next(rd)
 iS = hdr.index("SF_SPONSOR_NAME"); iD = hdr.index("SF_SPONSOR_DFE_DBA_NAME") if "SF_SPONSOR_DFE_DBA_NAME" in hdr else -1
@@ -74,6 +75,7 @@ for row in rd:
         if idx < 0 or idx >= len(row): continue
         cid = norm2id.get(norm(row[idx]))
         if not cid: continue
+        if eoy > participants.get(cid, 0): participants[cid] = eoy
         if boy >= MIN_BOY:
             pct = round(min(CAP_PCT, (eoy - boy) / boy * 100), 1)
             if pct > best.get(cid, -1): best[cid] = pct
@@ -99,6 +101,21 @@ for cid, pct in best.items():
 done = 0
 for pct, ids in bypct.items(): patch(ids, pct); done += len(ids)
 print(f"updated headcount_growth_pct on {done} (skipped {skipped} already >=)")
+
+# Preserve the reported current active-plan participant count separately from
+# vendor employee_count so the UI can filter either measure honestly.
+def patch_participants(ids, count):
+    for i in range(0, len(ids), 100):
+        idlist = ",".join(ids[i:i+100])
+        req = urllib.request.Request(f"{URL}/rest/v1/companies?id=in.({idlist})",
+            data=json.dumps({"active_participant_count": count}).encode(),
+            headers={**H, "content-type": "application/json", "Prefer": "return=minimal"}, method="PATCH")
+        urllib.request.urlopen(req, context=CTX).read()
+
+by_participants = defaultdict(list)
+for cid, count in participants.items(): by_participants[count].append(cid)
+for count, ids in by_participants.items(): patch_participants(ids, count)
+print(f"updated active_participant_count on {len(participants)} matched companies")
 
 # 4) crossed-50 (ACA ALE) triggers — deduped by the (company_id, source_url) unique index
 trig_rows = [{

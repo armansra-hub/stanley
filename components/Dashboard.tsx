@@ -385,13 +385,22 @@ export default function Dashboard({
   const TRIGGER_PAGE = 250;
   // Signal-type multi-select (mirrors the Tags dropdown): empty = all signals.
   const [selectedSignals, setSelectedSignals] = useState<Set<string>>(new Set());
+  const [signalMatchAll, setSignalMatchAll] = useState(false);
+  const [signalDateFrom, setSignalDateFrom] = useState("");
+  const [signalDateTo, setSignalDateTo] = useState("");
+  const [minimumEmployees, setMinimumEmployees] = useState("");
+  const [minimumParticipants, setMinimumParticipants] = useState("");
   const [signalsOpen, setSignalsOpen] = useState(false);
   const toggleSignal = (t: string) => setSelectedSignals((prev) => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
   /** The current Triggered filter as the server expects it (mirrors Discovered/TAM Base). */
   const triggeredFilterBody = (extra: Record<string, unknown>) => ({
     includeHidden: showClosed, q: search, state: stateFilter, subindustry, band,
     claimable: claimableOnly, erp: erpOnly, tags: [...selectedTags], matchAll: tagMatchAll,
-    types: [...selectedSignals], ...extra,
+    types: [...selectedSignals], signalMatchAll,
+    signalDateFrom: signalDateFrom || undefined, signalDateTo: signalDateTo || undefined,
+    minimumEmployees: minimumEmployees === "" ? undefined : Number(minimumEmployees),
+    minimumParticipants: minimumParticipants === "" ? undefined : Number(minimumParticipants),
+    ...extra,
   });
   async function fetchTriggered(offset = 0) {
     setTriggeredLoading(true);
@@ -421,7 +430,7 @@ export default function Dashboard({
     if (!isTriggered) return;
     const t = setTimeout(() => fetchTriggered(0), 250);
     return () => clearTimeout(t);
-  }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll, selectedSignals]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll, selectedSignals, signalMatchAll, signalDateFrom, signalDateTo, minimumEmployees, minimumParticipants]); // eslint-disable-line react-hooks/exhaustive-deps
   const TRIGGER_LABELS: Record<string, string> = {
     erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A (acquirer)", finance_hire: "🧮 Finance hire",
     new_entity: "🏛 New entity", gov_contract: "📜 Gov contract", fleet_expansion: "🚚 Fleet growth",
@@ -815,9 +824,33 @@ export default function Dashboard({
                         Clear — show all signals
                       </button>
                     )}
+                    {selectedSignals.size > 1 && (
+                      <label className="mt-2 flex items-center gap-2 border-t px-2 pt-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
+                        <input type="checkbox" checked={signalMatchAll} onChange={(e) => setSignalMatchAll(e.target.checked)} />
+                        Only show combined signals (match every selection)
+                      </label>
+                    )}
                   </div>
                 )}
               </div>
+            )}
+            {isTriggered && (
+              <>
+                <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+                  Signal date
+                  <input aria-label="Signal date from" type="date" value={signalDateFrom} onChange={(e) => setSignalDateFrom(e.target.value)} className="rounded border bg-[var(--surface)] px-2 py-1" style={{ borderColor: "var(--border)" }} />
+                  <span>to</span>
+                  <input aria-label="Signal date to" type="date" value={signalDateTo} onChange={(e) => setSignalDateTo(e.target.value)} className="rounded border bg-[var(--surface)] px-2 py-1" style={{ borderColor: "var(--border)" }} />
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+                  Employees at least
+                  <input aria-label="Minimum employees" type="number" min="0" inputMode="numeric" value={minimumEmployees} onChange={(e) => setMinimumEmployees(e.target.value)} className="w-20 rounded border bg-[var(--surface)] px-2 py-1" style={{ borderColor: "var(--border)" }} />
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]" title="DOL Form 5500 end-of-year active participant count; a public proxy for current headcount.">
+                  Benefit participants at least
+                  <input aria-label="Minimum active benefit participants" type="number" min="0" inputMode="numeric" value={minimumParticipants} onChange={(e) => setMinimumParticipants(e.target.value)} className="w-20 rounded border bg-[var(--surface)] px-2 py-1" style={{ borderColor: "var(--border)" }} />
+                </label>
+              </>
             )}
             <label className="ml-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
               <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
@@ -970,10 +1003,11 @@ export default function Dashboard({
                           </div>
                         )}
                       </>
-                    ) : rowTriggers.length > 0 ? (
+                    ) : allRowTriggers.length > 0 ? (<>
+                      <CompactTriggerSummary triggers={allRowTriggers} labels={TRIGGER_LABELS} sinceLabel={sinceLabel} />
                       // EVERY trigger on the lead, strongest first (not just the top one
                       // + a "+N more" count) — each with its label, age, and summary.
-                      <div className="space-y-1">
+                      <div className="hidden space-y-1">
                         {rowTriggers.map((t, ti) => (
                           <div key={ti}>
                             <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>
@@ -989,7 +1023,7 @@ export default function Dashboard({
                         ))}
                         {hiddenRowTriggerCount > 0 && <div className="text-[11px] font-medium text-[var(--accent)]">+{hiddenRowTriggerCount} more â€” open lead record</div>}
                       </div>
-                    ) : federalAwardCount > 0 ? (
+                    </>) : federalAwardCount > 0 ? (
                       <div className="text-xs font-medium" style={{ color: "var(--gold)" }}>Federal contract activity â€” open lead record for annual totals</div>
                     ) : top ? (
                       <>
@@ -1366,6 +1400,39 @@ function ExportHistoryPanel({
 }
 
 /** Old Gold revival classes — shared by the table rows and the drawer. */
+function CompactTriggerSummary({
+  triggers,
+  labels,
+  sinceLabel,
+}: {
+  triggers: Array<{ type: string; summary: string; signal_date: string | null; detected_at: string }>;
+  labels: Record<string, string>;
+  sinceLabel: (iso: string | null | undefined) => string;
+}) {
+  const groups = Array.from(triggers.reduce((map, trigger) => {
+    const current = map.get(trigger.type) ?? { type: trigger.type, count: 0, latest: trigger };
+    current.count += 1;
+    map.set(trigger.type, current);
+    return map;
+  }, new Map<string, { type: string; count: number; latest: typeof triggers[number] }>()).values());
+  const visible = groups.slice(0, 3);
+  const hiddenGroups = groups.length - visible.length;
+  const top = triggers[0];
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap gap-1">
+        {visible.map((group) => (
+          <span key={group.type} className="rounded border px-1.5 py-0.5 text-[10px] font-semibold" style={{ borderColor: "var(--gold)", color: "var(--gold)", background: "color-mix(in srgb, var(--gold) 12%, transparent)" }} title={group.latest.summary}>
+            {labels[group.type] ?? group.type.replace(/_/g, " ")} · {sinceLabel(group.latest.signal_date ?? group.latest.detected_at)}{group.count >= 3 ? ` ×${group.count}` : ""}
+          </span>
+        ))}
+        {hiddenGroups > 0 && <span className="px-1 text-[10px] text-[var(--text-muted)]">+{hiddenGroups} more type{hiddenGroups === 1 ? "" : "s"}</span>}
+      </div>
+      {top?.summary && <div className="truncate text-xs text-[var(--text-muted)]" title={top.summary}>{top.summary}</div>}
+    </div>
+  );
+}
+
 const OLDGOLD_CLASS: Record<string, { label: string; color: string }> = {
   timing_arrived: { label: "🔥 Timing arrived", color: "var(--tier-a)" },
   contract_clock: { label: "⏳ Contract clock", color: "var(--gold)" },

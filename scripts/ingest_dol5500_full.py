@@ -52,7 +52,7 @@ while True:
 print("base names:", len(norm2id))
 
 # 2) stream the full 5500: best growth + ACA-threshold crossings
-best = {}; crossed = {}
+best = {}; participants = {}; crossed = {}
 f = open(F5, encoding="latin-1"); rd = csv.reader(f); hdr = next(rd)
 iS = hdr.index("SPONSOR_DFE_NAME"); iD = hdr.index("SPONS_DFE_DBA_NAME") if "SPONS_DFE_DBA_NAME" in hdr else -1
 iB = hdr.index("TOT_ACT_PARTCP_BOY_CNT"); iE = hdr.index("TOT_ACTIVE_PARTCP_CNT")
@@ -69,6 +69,7 @@ for row in rd:
         if idx < 0 or idx >= len(row): continue
         cid = norm2id.get(norm(row[idx]))
         if not cid: continue
+        if eoy > participants.get(cid, 0): participants[cid] = eoy
         if boy >= MIN_BOY:
             pct = round(min(CAP_PCT, (eoy - boy) / boy * 100), 1)
             if pct > best.get(cid, -1): best[cid] = pct
@@ -94,6 +95,19 @@ for cid, pct in best.items():
 done = 0
 for pct, ids in bypct.items(): patch(ids, pct); done += len(ids)
 print(f"updated headcount_growth_pct on {done} (skipped {skipped} already >=)")
+
+def patch_participants(ids, count):
+    for i in range(0, len(ids), 100):
+        idlist = ",".join(ids[i:i+100])
+        req = urllib.request.Request(f"{URL}/rest/v1/companies?id=in.({idlist})",
+            data=json.dumps({"active_participant_count": count}).encode(),
+            headers={**H, "content-type": "application/json", "Prefer": "return=minimal"}, method="PATCH")
+        urllib.request.urlopen(req, context=CTX).read()
+
+by_participants = defaultdict(list)
+for cid, count in participants.items(): by_participants[count].append(cid)
+for count, ids in by_participants.items(): patch_participants(ids, count)
+print(f"updated active_participant_count on {len(participants)} matched companies")
 
 # 4) crossed-50 (ACA ALE) triggers
 trig_rows = [{
