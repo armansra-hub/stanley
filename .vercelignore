@@ -24,3 +24,4 @@ supabase/.branches
 supabase/.temp
 tsconfig.tsbuildinfo
 .git
+.foundation-run
