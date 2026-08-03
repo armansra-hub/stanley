@@ -23,6 +23,8 @@ csv.field_size_limit(10**7)
 CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
 
 def env(k):
+    if os.environ.get(k):
+        return os.environ[k]
     for line in open(os.path.join(os.path.dirname(__file__), "..", ".env.local")):
         if line.startswith(k + "="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")
