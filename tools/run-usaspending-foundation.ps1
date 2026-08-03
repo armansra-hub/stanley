@@ -32,7 +32,9 @@ if ($Mode -eq 'Awards') {
     }
   }
   foreach ($row in ($batchRows | Group-Object offset | ForEach-Object { $_.Group | Sort-Object at | Select-Object -Last 1 })) {
-    $awardComplete = -not ($row.PSObject.Properties.Name -contains 'awardDone') -or [bool]$row.awardDone
+    # Only a verified match needs every award page before it is complete.
+    # No-award and ambiguous identities are terminal outcomes for this pass.
+    $awardComplete = $row.status -ne 'matched' -or [bool]$row.awardDone
     if ([int]$row.checked -gt 0 -and [int]$row.errors -eq 0 -and $awardComplete) {
       for ($i = [int]$row.offset; $i -lt [Math]::Min([int]$row.offset + [int]$row.checked, $TotalCompanies); $i++) { [void]$completed.Add($i) }
     }
