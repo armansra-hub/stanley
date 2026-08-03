@@ -164,6 +164,14 @@ export async function sweepUsaspendingTamBatch(limit: number, offset: number) {
 
 export async function sweepUsaspendingSubawardsTamBatch(limit: number, offset: number) {
   const companies = await loadTamBatch(limit, offset), receipts = [];
-  for (const company of companies) receipts.push(await sweepUsaspendingSubawardsCompany(company));
+  // Most TAM companies have no verified federal identity. Resolve the whole
+  // batch in one query so empty companies do not each pay a database round trip.
+  const companyIds = companies.map((company) => company.id);
+  const { data: verified, error } = companyIds.length
+    ? await serviceClient().from("company_government_matches").select("company_id").in("company_id", companyIds).eq("match_status", "verified")
+    : { data: [], error: null };
+  if (error) throw new Error(`subaward match prefetch failed: ${error.message}`);
+  const linked = new Set((verified ?? []).map((row) => String(row.company_id)));
+  for (const company of companies) if (linked.has(company.id)) receipts.push(await sweepUsaspendingSubawardsCompany(company));
   return { source: "usaspending-subawards", offset, checked: companies.length, nextOffset: offset + companies.length, done: companies.length < limit, matched: receipts.filter((r) => r.status === "linked").length, errors: receipts.filter((r) => r.status === "error").length, stored: receipts.reduce((s, r) => s + r.stored, 0), triggers: receipts.reduce((s, r) => s + r.triggers, 0), receipts };
 }
