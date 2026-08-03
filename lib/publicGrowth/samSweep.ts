@@ -52,13 +52,10 @@ export async function ingestSamExtractObservations(rows: SamExtractObservationIn
     .neq("status", "removed_from_tam");
   if (error) throw new Error(`SAM extract TAM load failed: ${error.message}`);
   const byId = new Map((companies ?? []).map((company: TamIdentity) => [company.id, company]));
-  const receipts = [];
-
-  for (const row of rows) {
+  const receipts = await Promise.all(rows.map(async (row) => {
     const company = byId.get(row.companyId);
     if (!company) {
-      receipts.push({ companyId: row.companyId, status: "not_in_tam", entities: 0, naics: 0, triggers: 0 });
-      continue;
+      return { companyId: row.companyId, status: "not_in_tam", entities: 0, naics: 0, triggers: 0 };
     }
     try {
       const sam = row.sam;
@@ -83,11 +80,11 @@ export async function ingestSamExtractObservations(rows: SamExtractObservationIn
       await saveCompanyGovernmentMatch(company.id, entityId, decision);
       const triggers = decision.status === "verified" ? await saveNaicsAndDerive(entityId, company.id, sam) : 0;
       if (triggers) await recomputePriority(company.id);
-      receipts.push({ companyId: company.id, status: decision.status, entities: 1, naics: decision.status === "verified" ? sam.naics.length : 0, triggers });
+      return { companyId: company.id, status: decision.status, entities: 1, naics: decision.status === "verified" ? sam.naics.length : 0, triggers };
     } catch (ingestError) {
-      receipts.push({ companyId: row.companyId, status: "error", entities: 0, naics: 0, triggers: 0, error: ingestError instanceof Error ? ingestError.message : String(ingestError) });
+      return { companyId: row.companyId, status: "error", entities: 0, naics: 0, triggers: 0, error: ingestError instanceof Error ? ingestError.message : String(ingestError) };
     }
-  }
+  }));
   return {
     checked: rows.length,
     matched: receipts.filter((row) => row.status === "verified").length,
