@@ -6,6 +6,7 @@ import { serviceClient } from "@/lib/supabase/server";
 export interface PublicGrowthDetail {
   entities: any[];
   contractMetrics: any | null;
+  contractRevenueByYear: Array<{ year: number; obligated: number; transactions: number }>;
   awards: any[];
   naicsSize: any[];
   headcount: any[];
@@ -24,14 +25,26 @@ export async function getPublicGrowthDetail(companyId: string): Promise<PublicGr
   ]);
   const entities = (matches ?? []).map((m: any) => ({ ...m.government_entities, match_status: m.match_status, match_method: m.match_method, match_confidence: Number(m.confidence ?? 0), match_evidence: m.evidence }));
   const entityIds = entities.map((e: any) => e.id);
-  let awards: any[] = [], naicsSize: any[] = [];
+  let awards: any[] = [], naicsSize: any[] = [], contractRevenueByYear: Array<{ year: number; obligated: number; transactions: number }> = [];
   if (entityIds.length) {
     const [a, n] = await Promise.all([
       db.from("federal_awards").select("*").in("government_entity_id", entityIds).order("start_date", { ascending: false }).limit(250),
       db.from("entity_naics_size_status_snapshots").select("*").in("government_entity_id", entityIds).order("observed_on", { ascending: false }).limit(500),
     ]);
     awards = a.data ?? []; naicsSize = n.data ?? [];
+    const awardIds = awards.map((award: any) => award.id).filter(Boolean);
+    if (awardIds.length) {
+      const { data: transactions } = await db.from("federal_award_transactions").select("action_date,federal_action_obligation").in("federal_award_id", awardIds).order("action_date", { ascending: false }).limit(5000);
+      const annual = new Map<number, { year: number; obligated: number; transactions: number }>();
+      for (const transaction of transactions ?? []) {
+        const year = Number(String(transaction.action_date ?? "").slice(0, 4));
+        if (!Number.isFinite(year)) continue;
+        const row = annual.get(year) ?? { year, obligated: 0, transactions: 0 };
+        row.obligated += Number(transaction.federal_action_obligation ?? 0); row.transactions++;
+        annual.set(year, row);
+      }
+      contractRevenueByYear = [...annual.values()].sort((a, b) => b.year - a.year);
+    }
   }
-  return { entities, contractMetrics: metrics ?? null, awards, naicsSize, headcount: headcount ?? [], revenue: revenue ?? [], opportunities: opportunityMatches ?? [] };
+  return { entities, contractMetrics: metrics ?? null, contractRevenueByYear, awards, naicsSize, headcount: headcount ?? [], revenue: revenue ?? [], opportunities: opportunityMatches ?? [] };
 }
-

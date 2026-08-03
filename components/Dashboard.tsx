@@ -1372,6 +1372,7 @@ type DrawerTrigger = {
 type PublicGrowthDetail = {
   entities: Array<Record<string, unknown>>;
   contractMetrics: Record<string, unknown> | null;
+  contractRevenueByYear: Array<{ year: number; obligated: number; transactions: number }>;
   awards: Array<Record<string, unknown>>;
   naicsSize: Array<Record<string, unknown>>;
   headcount: Array<Record<string, unknown>>;
@@ -1389,6 +1390,21 @@ function Pill({ children, title, color }: { children: React.ReactNode; title?: s
     >
       {children}
     </span>
+  );
+}
+
+function CappedList<T>({ items, renderItem }: { items: T[]; renderItem: (item: T, index: number) => React.ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? items : items.slice(0, 3);
+  return (
+    <>
+      {visible.map(renderItem)}
+      {items.length > 3 && (
+        <button type="button" onClick={() => setExpanded((value) => !value)} className="mt-1 text-xs font-medium text-[var(--accent)] hover:underline">
+          {expanded ? "Show less" : `See more (${items.length - 3})`}
+        </button>
+      )}
+    </>
   );
 }
 
@@ -1429,6 +1445,14 @@ function DetailDrawer({
   const publicGrowth = detail?.publicGrowth;
   const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
   const dollars = (value: unknown) => Number(value ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  const dateValue = (value: unknown) => value ? new Date(String(value)).getTime() || 0 : 0;
+  const rankedAwards = [...(publicGrowth?.awards ?? [])].sort((a, b) => Math.max(Number(b.award_ceiling ?? 0), Number(b.total_obligations ?? 0), Number(b.current_award_amount ?? 0)) - Math.max(Number(a.award_ceiling ?? 0), Number(a.total_obligations ?? 0), Number(a.current_award_amount ?? 0)) || dateValue(b.start_date) - dateValue(a.start_date));
+  const recentNaics = [...(publicGrowth?.naicsSize ?? [])].sort((a, b) => dateValue(b.observed_on) - dateValue(a.observed_on));
+  const recentHeadcount = [...(publicGrowth?.headcount ?? [])].sort((a, b) => dateValue(b.plan_year_end ?? `${b.form_year}-12-31`) - dateValue(a.plan_year_end ?? `${a.form_year}-12-31`));
+  const recentRevenue = [...(publicGrowth?.revenue ?? [])].sort((a, b) => dateValue(b.observed_on) - dateValue(a.observed_on));
+  const recentOpportunities = [...(publicGrowth?.opportunities ?? [])].sort((a, b) => dateValue((b.sam_opportunities as Record<string, unknown> | undefined)?.posted_date) - dateValue((a.sam_opportunities as Record<string, unknown> | undefined)?.posted_date));
+  const triggerGroups = Object.entries([...triggers].sort((a, b) => dateValue(b.signal_date ?? b.detected_at) - dateValue(a.signal_date ?? a.detected_at)).reduce<Record<string, DrawerTrigger[]>>((groups, trigger) => { (groups[trigger.type] ??= []).push(trigger); return groups; }, {})).sort((a, b) => dateValue(b[1][0]?.signal_date ?? b[1][0]?.detected_at) - dateValue(a[1][0]?.signal_date ?? a[1][0]?.detected_at));
+  const signalGroups = Object.entries([...c.signals].sort((a, b) => dateValue(b.signal_date) - dateValue(a.signal_date)).reduce<Record<string, typeof c.signals>>((groups, signal) => { (groups[signal.type] ??= []).push(signal); return groups; }, {})).sort((a, b) => dateValue(b[1][0]?.signal_date) - dateValue(a[1][0]?.signal_date));
 
   return (
     <div className="fixed inset-0 z-20 flex justify-end bg-black/40" onClick={onClose}>
@@ -1448,7 +1472,7 @@ function DetailDrawer({
         {publicGrowth && (publicGrowth.entities.length > 0 || publicGrowth.awards.length > 0 || publicGrowth.naicsSize.length > 0 || publicGrowth.headcount.length > 0 || publicGrowth.revenue.length > 0 || publicGrowth.opportunities.length > 0) && (
           <div className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "rgba(110,168,230,0.45)", background: "rgba(110,168,230,0.05)" }}>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "#6ea8e6" }}>Public growth intelligence</h3>
-            {publicGrowth.entities.map((entity, i) => (
+            <CappedList items={publicGrowth.entities} renderItem={(entity, i) => (
               <div key={`entity-${i}`} className="mb-2 text-xs">
                 <span className="font-semibold">{String(entity.legal_name ?? c.name)}</span>
                 {entity.uei ? <span className="text-[var(--text-muted)]"> · UEI {String(entity.uei)}</span> : null}
@@ -1456,7 +1480,7 @@ function DetailDrawer({
                 {entity.registration_status ? <span className="text-[var(--text-muted)]"> · SAM {String(entity.registration_status)}</span> : null}
                 {entity.expiration_date ? <span className="text-[var(--text-muted)]"> through {fmt(String(entity.expiration_date))}</span> : null}
               </div>
-            ))}
+            )} />
             {publicGrowth.contractMetrics && (
               <div className="mb-3 grid grid-cols-2 gap-2 rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
                 <div><div className="text-[10px] uppercase text-[var(--text-muted)]">30d obligated</div><strong>{dollars(publicGrowth.contractMetrics.obligations_30d)}</strong></div>
@@ -1472,48 +1496,56 @@ function DetailDrawer({
             {publicGrowth.naicsSize.length > 0 && (
               <div className="mb-3">
                 <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">SBA size by NAICS</div>
-                {publicGrowth.naicsSize.slice(0, 20).map((n, i) => (
+                <CappedList items={recentNaics} renderItem={(n, i) => (
                   <div key={`naics-${i}`} className="flex justify-between gap-2 border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>
                     <span>{String(n.naics_code)}{n.naics_name ? ` · ${String(n.naics_name)}` : ""}{n.is_primary ? " · primary" : ""}</span>
                     <strong>{n.status === "other_than_small" ? "Other than small" : n.status === "small" ? "Small" : "Unknown"}{n.observed_on ? ` · ${String(n.observed_on)}` : ""}</strong>
                   </div>
-                ))}
+                )} />
               </div>
             )}
             {publicGrowth.awards.length > 0 && (
-              <details className="mb-2" open>
-                <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Federal awards ({publicGrowth.awards.length})</summary>
-                <div className="mt-1 space-y-2">
-                  {publicGrowth.awards.slice(0, 30).map((a, i) => (
+              <div className="mb-3">
+                <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">Federal contract revenue by year</div>
+                <CappedList items={publicGrowth.contractRevenueByYear ?? []} renderItem={(year) => (
+                  <div key={`contract-year-${year.year}`} className="flex items-center justify-between border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>
+                    <span>{year.year}</span><strong>{dollars(year.obligated)} obligated</strong>
+                  </div>
+                )} />
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Award details ({publicGrowth.awards.length})</summary>
+                  <div className="mt-1 space-y-2">
+                  <CappedList items={rankedAwards} renderItem={(a, i) => (
                     <div key={`award-${i}`} className="rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
                       <div className="font-semibold">{dollars(a.award_ceiling)} ceiling · {dollars(a.total_obligations)} obligated</div>
                       <div className="text-[var(--text-muted)]">{String(a.awarding_agency ?? "Federal award")}{a.award_id ? ` · ${String(a.award_id)}` : ""}{a.start_date ? ` · ${fmt(String(a.start_date))}` : ""}</div>
                       {a.description ? <p className="mt-1 text-[var(--text-muted)]">{String(a.description)}</p> : null}
                       {a.source_url ? <a href={String(a.source_url)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">USAspending ↗</a> : null}
                     </div>
-                  ))}
-                </div>
-              </details>
+                  )} />
+                  </div>
+                </details>
+              </div>
             )}
             {publicGrowth.headcount.length > 0 && (
-              <details className="mb-2">
+              <details className="mb-2" open>
                 <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Form 5500 history ({publicGrowth.headcount.length})</summary>
-                {publicGrowth.headcount.slice(0, 30).map((h, i) => <div key={`hc-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>{String(h.plan_year_begin ?? h.form_year)} → {String(h.plan_year_end ?? h.form_year)} · {Number(h.active_participants_boy ?? 0).toLocaleString()} → {Number(h.active_participants_eoy ?? 0).toLocaleString()} active participants · {String(h.plan_name ?? h.form_type)}</div>)}
+                <CappedList items={recentHeadcount} renderItem={(h, i) => <div key={`hc-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>{String(h.plan_year_begin ?? h.form_year)} → {String(h.plan_year_end ?? h.form_year)} · {Number(h.active_participants_boy ?? 0).toLocaleString()} → {Number(h.active_participants_eoy ?? 0).toLocaleString()} active participants · {String(h.plan_name ?? h.form_type)}</div>} />
               </details>
             )}
             {publicGrowth.revenue.length > 0 && (
-              <details className="mt-2">
+              <details className="mt-2" open>
                 <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Revenue observations ({publicGrowth.revenue.length})</summary>
-                {publicGrowth.revenue.slice(0, 30).map((r, i) => <div key={`rev-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>{String(r.observed_on)} · {dollars(r.estimated_revenue)} estimated · {String(r.revenue_band ?? r.source)}</div>)}
+                <CappedList items={recentRevenue} renderItem={(r, i) => <div key={`rev-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>{String(r.observed_on)} · {dollars(r.estimated_revenue)} estimated · {String(r.revenue_band ?? r.source)}</div>} />
               </details>
             )}
             {publicGrowth.opportunities.length > 0 && (
-              <details>
+              <details open>
                 <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">SAM opportunities ({publicGrowth.opportunities.length})</summary>
-                {publicGrowth.opportunities.slice(0, 20).map((m, i) => {
+                <CappedList items={recentOpportunities} renderItem={(m, i) => {
                   const opportunity = (m.sam_opportunities ?? {}) as Record<string, unknown>;
                   return <div key={`opp-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}><strong>{String(m.relationship)}</strong> · {String(opportunity.title ?? "SAM opportunity")}{opportunity.posted_date ? ` · posted ${String(opportunity.posted_date)}` : ""}{opportunity.response_deadline ? ` · due ${String(opportunity.response_deadline).slice(0, 10)}` : ""}{opportunity.source_url ? <a href={String(opportunity.source_url)} target="_blank" rel="noreferrer" className="ml-1 text-[var(--accent)] hover:underline">SAM ↗</a> : null}</div>;
-                })}
+                }} />
               </details>
             )}
           </div>
@@ -1612,18 +1644,25 @@ function DetailDrawer({
         <p className="mb-4 text-xs text-[var(--text-muted)]">{[c.subindustry, [c.city, c.state].filter(Boolean).join(", "), c.employee_band || (c.employee_count ? `${c.employee_count} emp` : null), c.revenue_band].filter(Boolean).join(" · ")}</p>
         {c.score_reason && <p className="mb-4 rounded-md bg-[var(--surface-2)] p-3 text-xs">{c.score_reason}</p>}
 
-        {/* WHY IT'S HERE — every trigger event we've recorded, strongest first. */}
+        {/* WHY IT'S HERE — grouped by signal type, newest first, three visible per type. */}
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Why it&apos;s here — triggers ({triggers.length})</h3>
         {triggers.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No trigger events recorded for this lead."}</p>}
-        <div className="space-y-2">
-          {triggers.map((t) => (
-            <div key={t.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="font-medium capitalize">{t.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : t.type.replace(/_/g, " ")}</span>
-                <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(t.signal_date || t.detected_at)}{t.live < t.strength * 0.5 ? " · fading" : ""}</span>
+        <div className="space-y-3">
+          {triggerGroups.map(([type, rows]) => (
+            <div key={type}>
+              <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">{type.replace(/_/g, " ")} ({rows.length})</div>
+              <div className="space-y-2">
+                <CappedList items={rows} renderItem={(t) => (
+                  <div key={t.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="font-medium capitalize">{t.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : t.type.replace(/_/g, " ")}</span>
+                      <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(t.signal_date || t.detected_at)}{t.live < t.strength * 0.5 ? " · fading" : ""}</span>
+                    </div>
+                    <p className="text-[var(--text-muted)]">{t.summary}</p>
+                    {t.source_url && <a href={t.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{t.source_name || "source"} ↗</a>}
+                  </div>
+                )} />
               </div>
-              <p className="text-[var(--text-muted)]">{t.summary}</p>
-              {t.source_url && <a href={t.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{t.source_name || "source"} ↗</a>}
             </div>
           ))}
         </div>
@@ -1652,19 +1691,21 @@ function DetailDrawer({
 
         <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Signals ({c.signals.length})</h3>
         {c.signals.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No discovery signals on this lead."}</p>}
-        <div className="space-y-2">
-          {[...c.signals].sort((a, b) => b.weight - a.weight).map((s) => (
-            <div key={s.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
-              <div className="mb-1 flex items-center justify-between">
-                <span className="font-medium capitalize">{s.type.replace(/_/g, " ")}</span>
-                <span className="text-xs text-[var(--text-muted)]">{s.strength} · +{s.weight}{s.subindustry_relevant ? " · vertical" : ""}</span>
+        <div className="space-y-3">
+          {signalGroups.map(([type, rows]) => (
+            <div key={type}>
+              <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">{type.replace(/_/g, " ")} ({rows.length})</div>
+              <div className="space-y-2">
+                <CappedList items={rows} renderItem={(s) => (
+                  <div key={s.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+                    <div className="mb-1 flex items-center justify-between"><span className="font-medium capitalize">{s.type.replace(/_/g, " ")}</span><span className="text-xs text-[var(--text-muted)]">{s.strength} · +{s.weight}{s.subindustry_relevant ? " · vertical" : ""}</span></div>
+                    {s.signal_date && <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(s.signal_date)}</p>}
+                    {s.signal_summary && <p className="text-[var(--text-muted)]">{s.signal_summary}</p>}
+                    {s.raw_excerpt && <p className="mt-1 border-l-2 pl-2 text-xs italic text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>&quot;{s.raw_excerpt}&quot;</p>}
+                    {s.source_url && <a href={s.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{s.source_name || "source"} ↗</a>}
+                  </div>
+                )} />
               </div>
-              {s.signal_date && (
-                <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(s.signal_date)}</p>
-              )}
-              {s.signal_summary && <p className="text-[var(--text-muted)]">{s.signal_summary}</p>}
-              {s.raw_excerpt && <p className="mt-1 border-l-2 pl-2 text-xs italic text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>&quot;{s.raw_excerpt}&quot;</p>}
-              {s.source_url && <a href={s.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{s.source_name || "source"} ↗</a>}
             </div>
           ))}
         </div>
