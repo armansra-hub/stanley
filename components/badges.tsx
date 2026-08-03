@@ -7,6 +7,26 @@ const TIER_COLOR: Record<ScoreTier, string> = {
   C: "var(--tier-c)",
 };
 
+const SIGNAL_CHIP_LABELS: Record<string, string> = {
+  finance_hire: "🧮 Finance hire",
+  pain_job_post: "⚡ ERP pain",
+  hiring_velocity: "🚀 Hiring surge",
+  funding: "💰 Funding",
+  m_and_a: "🤝 M&A",
+  new_entity: "🏛 New entity",
+  gov_contract: "📜 Federal award",
+  new_facility: "🏗 New facility",
+  fleet_expansion: "🚚 Fleet growth",
+  new_service_line: "✨ New service line",
+  new_location: "📍 New location",
+  new_service: "✨ New service",
+  ex_netsuite_alum: "🟦 Ex-NetSuite alum",
+  tech_stack: "⚙️ Tech stack",
+  intent: "🎯 Intent",
+  job_post: "💼 Job post",
+  news: "📰 News",
+};
+
 /** Independent LLM tier badge (A/B/C). */
 export function TierBadge({ tier }: { tier: ScoreTier | null }) {
   if (!tier) return <span className="text-[var(--text-muted)]">—</span>;
@@ -48,7 +68,7 @@ export function SignalChips({ signals }: { signals: Signal[] }) {
           className="rounded border px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]"
           style={{ borderColor: "var(--border)" }}
         >
-          {t.replace(/_/g, " ")}
+          {SIGNAL_CHIP_LABELS[t] ?? t.replace(/_/g, " ")}
         </span>
       ))}
     </div>

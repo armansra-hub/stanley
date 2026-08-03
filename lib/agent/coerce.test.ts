@@ -138,6 +138,16 @@ describe("deriveOldGold", () => {
   it("accepts a last-SQL date supplied by the push when the row lacks one", () => {
     expect(deriveOldGold(55, { qual_note: "prior eval" }, "2026-02-01")).toBe(55);
   });
+
+  it("includes an exact audited opportunity-backed lead without a qual-note/SQL pair", () => {
+    expect(deriveOldGold(67, {}, null, "Opportunity confirmed: 2025-04-03 — creation date not exposed; #12345 Example ERP.")).toBe(67);
+    expect(deriveOldGold(61, { record_digest: "Opportunity created: 2024-09-12 — #98765 Example ERP." })).toBe(61);
+  });
+
+  it("does not grant Old Gold membership for generic opportunity prose", () => {
+    expect(deriveOldGold(67, {}, null, "This may be a good opportunity someday.")).toBeNull();
+    expect(deriveOldGold(67, {}, null, "No Opportunity status was selected.")).toBeNull();
+  });
 });
 
 describe("adjustScore — external intelligence stays out of TAM and Old Gold", () => {

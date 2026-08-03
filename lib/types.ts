@@ -95,9 +95,12 @@ export interface Company {
   tal_claimed?: boolean; // on the AE's Target Account List — migration 0022
   tal_dq?: boolean; // was on a prior TAL, dropped from the latest → previously DQ'd — migration 0023
   tal_alert?: boolean; // claimed account has a new unseen signal (in-app notification) — migration 0025
+  tal_urgency_score?: number; // live read-time "reach out now" order — never persisted
+  tal_urgency_reasons?: string[]; // concise live evidence for that order
   claim_bullets?: string[] | null; // curated claiming-comment bullets (TAL deep-pass) — migration 0033; exports use these verbatim
   headcount_growth_pct?: number | null; // DOL 5500 within-year participant growth % — migration 0028
   has_parent?: boolean; // subsidiary of a larger parent — migration 0029
+  active_participant_count?: number | null; // DOL 5500 end-of-year active benefit-plan participants
   parent_name?: string | null;
   parent_confidence?: string | null; // 'high' | 'low'
   // Old Gold: qual-note + NetSuite-record intelligence — migration 0030

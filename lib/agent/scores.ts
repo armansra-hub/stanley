@@ -13,6 +13,7 @@ import { coerceBool, coerceDate, coerceList, coerceScore, coerceText, pick } fro
 export interface NormalizedScoreRow {
   internalId: string;
   tamScore: number;
+  oldGoldScore: number | null;
   oldGoldClass: string | null;
   oldGoldReasons: string[];
   recordDigest: string | null;
@@ -65,6 +66,12 @@ export function normalizeScoreRow(
     errors.push({ index, internalId, field: "tamScore", problem: "required — a row with no score has nothing to import", received: show(rawScore) });
   }
 
+  const rawOldGoldScore = pick(raw, "oldGoldScore", "old gold score", "ogScore", "revivalScore");
+  const oldGoldScore = coerceScore(rawOldGoldScore);
+  if (oldGoldScore === undefined) {
+    errors.push({ index, internalId, field: "oldGoldScore", problem: "not a number between 0 and 100", received: show(rawOldGoldScore) });
+  }
+
   const rawRevisit = pick(raw, "revisitOn", "revisit on", "revisit", "revisitDate", "followUpOn");
   const revisitOn = coerceDate(rawRevisit);
   if (revisitOn === undefined) {
@@ -90,6 +97,7 @@ export function normalizeScoreRow(
     row: {
       internalId: internalId as string,
       tamScore: tamScore as number,
+      oldGoldScore: oldGoldScore ?? null,
       oldGoldClass: coerceText(pick(raw, "oldGoldClass", "old gold class", "ogClass")),
       oldGoldReasons: coerceList(pick(raw, "oldGoldReasons", "old gold reasons", "ogReasons", "reasons")),
       recordDigest: coerceText(pick(raw, "recordDigest", "record digest", "digest", "rationale", "summary")),
@@ -166,9 +174,10 @@ export function assessDigest(digest: string | null, supporting: string[] = []): 
 }
 
 /**
- * Old Gold is DERIVED, never copied. A row's oldgold_score equals its tam_score
- * only when the row is genuinely Old Gold — it has both a qual note and a prior
- * SQL date. For everyone else it must be null, not a copied number.
+ * Old Gold is DERIVED, never copied. A row qualifies through either the legacy
+ * qual-note + prior-SQL pair or an exact audited opportunity sentence emitted
+ * after reading the real opportunity record. Generic opportunity prose does not
+ * qualify.
  *
  * This is evaluated per company row, because duplicate NetSuite internal IDs exist
  * and one twin can be Old Gold while the other isn't.
@@ -177,10 +186,14 @@ export function assessDigest(digest: string | null, supporting: string[] = []): 
  * law has exactly one implementation on the write path.)
  */
 export function deriveOldGold(
-  tamScore: number,
-  company: { qual_note?: unknown; last_sql_date?: unknown },
+  candidateScore: number,
+  company: { qual_note?: unknown; last_sql_date?: unknown; record_digest?: unknown },
   fallbackLastSql?: string | null,
+  fallbackOpportunityText?: string | null,
 ): number | null {
-  const isOldGold = Boolean(company.qual_note) && Boolean(company.last_sql_date ?? fallbackLastSql);
-  return isOldGold ? tamScore : null;
+  const opportunityText = `${String(company.record_digest ?? "")} ${String(fallbackOpportunityText ?? "")}`;
+  const hasAuditedOpportunity = /\bOpportunity (?:created|confirmed):\s*\d{4}-\d{2}-\d{2}\b/i.test(opportunityText);
+  const isOldGold = (Boolean(company.qual_note) && Boolean(company.last_sql_date ?? fallbackLastSql))
+    || hasAuditedOpportunity;
+  return isOldGold ? candidateScore : null;
 }

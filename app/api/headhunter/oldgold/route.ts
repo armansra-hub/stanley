@@ -4,7 +4,7 @@ import { listOldGold } from "@/lib/db/triggers";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/** Old Gold worklist: qual-note leads ranked by revival score (dead at the bottom). */
+/** Old Gold worklist: past-SQL or audited-opportunity leads ranked by revival class and score (dead at the bottom). */
 export async function POST(req: NextRequest) {
   let body: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number };
   try { body = await req.json(); } catch { body = {}; }

@@ -73,6 +73,7 @@ function mapCompany(r: Record<string, unknown>): Company {
     claim_bullets: Array.isArray(r.claim_bullets) ? (r.claim_bullets as string[]) : null,
     thumbs_down: Boolean(r.thumbs_down),
     headcount_growth_pct: r.headcount_growth_pct != null ? Number(r.headcount_growth_pct) : null,
+    active_participant_count: r.active_participant_count != null ? Number(r.active_participant_count) : null,
     has_parent: Boolean(r.has_parent), parent_name: (r.parent_name as string) ?? null, parent_confidence: (r.parent_confidence as string) ?? null,
     // Old Gold intelligence — migration 0030 (all graceful pre-migration)
     last_sql_date: (r.last_sql_date as string) ?? null,

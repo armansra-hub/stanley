@@ -119,7 +119,12 @@ export async function POST(req: Request) {
       const signals = adjustScore(row.tamScore, { ...company, record_dead: isDead, record_digest: row.recordDigest ?? company.record_digest } as never, triggersByCompany.get(String(company.id)) ?? []);
       const law = {
         tamScore: signals.score,
-        oldGoldScore: deriveOldGold(signals.score, company as never, row.lastSqlDate),
+        oldGoldScore: deriveOldGold(
+          isDead ? 0 : (row.oldGoldScore ?? signals.score),
+          company as never,
+          row.lastSqlDate,
+          [row.recordDigest ?? "", ...row.oldGoldReasons].join(" "),
+        ),
         hardZeroReason: signals.hardZeroReason,
       };
       const companyLists = Array.isArray(company.lists) ? company.lists.map(String) : [];
@@ -251,7 +256,7 @@ export async function GET(req: Request) {
     },
     rules: [
       "record_dead rows and NetSuite incumbents are forced to 0 regardless of the pushed score",
-      "oldgold_score is derived, never copied: it equals tam_score only when the row has both a qual note and a last SQL date",
+      "oldgold_score is derived per row: membership requires a qual note plus last SQL date, or an exact audited 'Opportunity created/confirmed: YYYY-MM-DD' sentence; the pushed independent revival score is used when supplied",
       "codex_score keeps the raw pushed number; tam_score is what the UI ranks on",
       "Stanley's ±15 outside-signal adjustment is a separate pass (system/codex_rescore.py) — it is not applied here",
       "duplicate NetSuite internal IDs exist; every company row sharing an ID receives the grade, scored per row",
