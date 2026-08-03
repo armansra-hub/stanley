@@ -11,7 +11,10 @@ export const maxDuration = 60;
 function authorized(req: NextRequest) {
   const url = new URL(req.url), auth = req.headers.get("authorization");
   const supplied = req.headers.get("x-cron-secret") ?? url.searchParams.get("secret") ?? (auth?.startsWith("Bearer ") ? auth.slice(7) : null);
-  return Boolean(process.env.CRON_SECRET && supplied === process.env.CRON_SECRET);
+  return Boolean(supplied && (
+    (process.env.TAM_GROWTH_SWEEP_SECRET && supplied === process.env.TAM_GROWTH_SWEEP_SECRET)
+    || (process.env.CRON_SECRET && supplied === process.env.CRON_SECRET)
+  ));
 }
 
 async function run(req: NextRequest) {
