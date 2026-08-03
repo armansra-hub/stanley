@@ -80,3 +80,32 @@ export async function recordPublicGrowthTrigger(companyId: string, event: Derive
   }
   return true;
 }
+
+export async function recordPublicGrowthTriggersBulk(rows: Array<{
+  companyId: string;
+  event: DerivedGrowthEvent;
+  sourceName: string;
+  sourceUrl: string;
+  confidence?: number;
+}>): Promise<number> {
+  if (!rows.length) return 0;
+  const payload = rows.map(({ companyId, event, sourceName, sourceUrl, confidence = 1 }) => ({
+    company_id: companyId,
+    type: event.type,
+    family: event.family,
+    strength: Math.round(event.strength),
+    half_life_days: event.family === "employee_growth" || event.family === "revenue_growth" ? 730 : 180,
+    summary: event.summary.slice(0, 280),
+    source_name: sourceName,
+    source_url: `${sourceUrl}${sourceUrl.includes("#") ? "&" : "#"}stanley-signal=${encodeURIComponent(event.dedupeKey)}`,
+    signal_date: event.signalDate,
+    confidence,
+    dedupe_key: event.dedupeKey,
+    metadata: event.metadata,
+  }));
+  const { data, error } = await serviceClient().from("triggers")
+    .upsert(payload, { onConflict: "company_id,dedupe_key", ignoreDuplicates: true })
+    .select("id");
+  if (error) throw new Error(`public growth trigger bulk upsert failed: ${error.message}`);
+  return data?.length ?? 0;
+}
