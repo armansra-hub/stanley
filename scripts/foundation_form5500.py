@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Download DOL Form 5500 public files and ingest matched current NetSuite TAM plans."""
-import argparse, csv, io, json, os, re, tempfile, urllib.request, zipfile
+import argparse, csv, io, json, os, re, time, urllib.error, urllib.request, zipfile
 from collections import defaultdict
 
 DATASET_PAGE = "https://www.dol.gov/agencies/ebsa/about-ebsa/our-activities/public-disclosure/foia/form-5500-datasets"
@@ -20,12 +20,22 @@ def env_file(name):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
     return None
 
-def request_json(url, secret, payload=None):
+def request_json(url, secret, payload=None, attempts=4):
     body = None if payload is None else json.dumps(payload).encode()
     method = "GET" if body is None else "POST"
     req = urllib.request.Request(url, data=body, method=method, headers={"x-cron-secret": secret, "content-type": "application/json", "user-agent": "Stanley-TAM-Form5500/1.0"})
-    with urllib.request.urlopen(req, timeout=120) as response:
-        return json.load(response)
+    last = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as response:
+                return json.load(response)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as error:
+            last = error
+            status = getattr(error, "code", None)
+            if status not in (429, 500, 502, 503, 504) or attempt + 1 >= attempts:
+                raise
+            time.sleep(2 ** attempt)
+    raise last
 
 def load_tam(app, secret):
     companies, offset = [], 0
@@ -98,6 +108,7 @@ def main():
     parser.add_argument("--app", default=os.getenv("APP_BASE_URL") or env_file("APP_BASE_URL") or "https://jarvis-sable-eta.vercel.app")
     parser.add_argument("--secret", default=os.getenv("CRON_SECRET") or env_file("CRON_SECRET"))
     parser.add_argument("--years", nargs="+", type=int, default=[2023, 2024, 2025])
+    parser.add_argument("--batch-size", type=int, default=10)
     args = parser.parse_args()
     if not args.secret: raise SystemExit("CRON_SECRET is required")
     companies = load_tam(args.app.rstrip("/"), args.secret)
@@ -116,7 +127,7 @@ def main():
                 if not hit: continue
                 matched += 1
                 batch.append(observation(row, *hit, year, form_type, url))
-                if len(batch) >= 200:
+                if len(batch) >= args.batch_size:
                     receipt = request_json(f"{args.app.rstrip('/')}/api/cron/public-growth/form5500", args.secret, {"observations": batch})
                     stored += receipt["stored"]; triggers += receipt["triggers"]; batch = []
             if batch:
