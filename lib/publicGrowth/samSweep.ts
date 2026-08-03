@@ -3,7 +3,7 @@ import { serviceClient } from "@/lib/supabase/server";
 import { recomputePriority } from "@/lib/db/triggers";
 import { decideIdentityMatch, normalizeName } from "./identity";
 import { compactSamEntity, sbaProfileUrl, searchSamEntities } from "./sam";
-import { recordPublicGrowthTrigger, saveCompanyGovernmentMatch, saveGovernmentEntity, stableHash } from "./storage";
+import { recordPublicGrowthTriggersBulk, saveCompanyGovernmentMatch, saveGovernmentEntity, stableHash } from "./storage";
 import { loadTamBatch } from "./usaspendingSweep";
 import type { DerivedGrowthEvent, TamIdentity } from "./types";
 
@@ -17,23 +17,34 @@ function statusValue(value: unknown): "small" | "other_than_small" | "unknown" {
 
 export async function saveNaicsAndDerive(entityId: string, companyId: string, sam: ReturnType<typeof compactSamEntity>): Promise<number> {
   const db = serviceClient(), observedOn = new Date().toISOString().slice(0, 10), profileUrl = sbaProfileUrl(sam.uei, sam.cageCode);
-  let triggers = 0;
+  if (!sam.naics.length) return 0;
+  const snapshots = sam.naics.map((n: any) => ({
+    government_entity_id: entityId, naics_code: n.code, naics_name: n.name,
+    is_primary: n.isPrimary, status: statusValue(n.isSmallBusiness),
+    has_size_changed: n.hasSizeChanged ?? null, has_sba_protest: n.hasSbaProtest ?? null,
+    exception_counter: n.exceptionCounter, source: "SAM.gov / SBA", source_url: profileUrl,
+    observed_on: observedOn, payload_hash: stableHash(n), evidence: n,
+  }));
+  const { error } = await db.from("entity_naics_size_status_snapshots")
+    .upsert(snapshots, { onConflict: "government_entity_id,naics_code,exception_counter,observed_on" });
+  if (error) throw new Error(`NAICS size snapshot bulk upsert failed: ${error.message}`);
+
+  const statusDate = sam.lastUpdateDate?.slice?.(0, 10) ?? observedOn;
+  const events: Array<{ companyId: string; event: DerivedGrowthEvent; sourceName: string; sourceUrl: string; confidence: number }> = [];
   for (const n of sam.naics) {
     const status = statusValue(n.isSmallBusiness);
-    const { data: previous } = await db.from("entity_naics_size_status_snapshots").select("status,has_size_changed,observed_on")
-      .eq("government_entity_id", entityId).eq("naics_code", n.code).eq("exception_counter", n.exceptionCounter)
-      .order("observed_on", { ascending: false }).limit(1).maybeSingle();
-    const snapshot = { government_entity_id: entityId, naics_code: n.code, naics_name: n.name, is_primary: n.isPrimary, status, has_size_changed: n.hasSizeChanged ?? null, has_sba_protest: n.hasSbaProtest ?? null, exception_counter: n.exceptionCounter, source: "SAM.gov / SBA", source_url: profileUrl, observed_on: observedOn, payload_hash: stableHash(n), evidence: n };
-    const { error } = await db.from("entity_naics_size_status_snapshots").upsert(snapshot, { onConflict: "government_entity_id,naics_code,exception_counter,observed_on" });
-    if (error) throw new Error(`NAICS size snapshot failed: ${error.message}`);
-
-    const events: DerivedGrowthEvent[] = [];
-    const statusDate = sam.lastUpdateDate?.slice?.(0, 10) ?? observedOn;
-    if (status === "other_than_small" && previous?.status !== "other_than_small") events.push({ family: "company_size", type: "sba_other_than_small", dedupeKey: `sam:${sam.uei}:naics:${n.code}:${n.exceptionCounter}:other-than-small`, strength: n.isPrimary ? 84 : 76, summary: `As of ${statusDate}, classified other than small for ${n.code}${n.name ? ` ${n.name}` : ""}${n.isPrimary ? " (primary NAICS)" : ""}.`, signalDate: statusDate, metadata: { naics: n.code, naicsName: n.name, isPrimary: n.isPrimary, status, previousStatus: previous?.status ?? null, hasSizeChanged: n.hasSizeChanged, hasSbaProtest: n.hasSbaProtest, asOf: statusDate } });
-    if (n.hasSizeChanged && previous?.has_size_changed !== true) events.push({ family: "company_size", type: "sba_size_changed", dedupeKey: `sam:${sam.uei}:naics:${n.code}:${n.exceptionCounter}:size-changed`, strength: 82, summary: `As of ${statusDate}, SAM reports a size-status change for NAICS ${n.code}${n.name ? ` ${n.name}` : ""}.`, signalDate: statusDate, metadata: { naics: n.code, naicsName: n.name, isPrimary: n.isPrimary, status, hasSizeChanged: true, asOf: statusDate } });
-    for (const event of events) if (await recordPublicGrowthTrigger(companyId, event, "SAM.gov / SBA Small Business Search", `${profileUrl}?signal=${encodeURIComponent(event.type)}&naics=${encodeURIComponent(n.code)}`, 1)) triggers++;
+    if (status === "other_than_small") events.push({
+      companyId, sourceName: "SAM.gov / SBA Small Business Search", confidence: 1,
+      sourceUrl: `${profileUrl}?signal=sba_other_than_small&naics=${encodeURIComponent(n.code)}`,
+      event: { family: "company_size", type: "sba_other_than_small", dedupeKey: `sam:${sam.uei}:naics:${n.code}:${n.exceptionCounter}:other-than-small`, strength: n.isPrimary ? 84 : 76, summary: `As of ${statusDate}, classified other than small for ${n.code}${n.name ? ` ${n.name}` : ""}${n.isPrimary ? " (primary NAICS)" : ""}.`, signalDate: statusDate, metadata: { naics: n.code, naicsName: n.name, isPrimary: n.isPrimary, status, hasSizeChanged: n.hasSizeChanged, hasSbaProtest: n.hasSbaProtest, asOf: statusDate } },
+    });
+    if (n.hasSizeChanged) events.push({
+      companyId, sourceName: "SAM.gov / SBA Small Business Search", confidence: 1,
+      sourceUrl: `${profileUrl}?signal=sba_size_changed&naics=${encodeURIComponent(n.code)}`,
+      event: { family: "company_size", type: "sba_size_changed", dedupeKey: `sam:${sam.uei}:naics:${n.code}:${n.exceptionCounter}:size-changed`, strength: 82, summary: `As of ${statusDate}, SAM reports a size-status change for NAICS ${n.code}${n.name ? ` ${n.name}` : ""}.`, signalDate: statusDate, metadata: { naics: n.code, naicsName: n.name, isPrimary: n.isPrimary, status, hasSizeChanged: true, asOf: statusDate } },
+    });
   }
-  return triggers;
+  return recordPublicGrowthTriggersBulk(events);
 }
 
 export type SamExtractObservationInput = {
