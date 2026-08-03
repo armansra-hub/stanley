@@ -114,9 +114,31 @@ export async function recordPublicGrowthTriggersBulk(rows: Array<{
     dedupe_key: event.dedupeKey,
     metadata: event.metadata,
   }));
-  const { data, error } = await serviceClient().from("triggers")
-    .upsert(payload, { onConflict: "company_id,dedupe_key", ignoreDuplicates: true })
-    .select("id");
-  if (error) throw new Error(`public growth trigger bulk upsert failed: ${error.message}`);
-  return data?.length ?? 0;
+  const db = serviceClient();
+  const existing = new Set<string>();
+  const byCompany = new Map<string, string[]>();
+  for (const row of payload) byCompany.set(row.company_id, [...(byCompany.get(row.company_id) ?? []), row.dedupe_key]);
+  for (const [companyId, keys] of byCompany) {
+    for (let start = 0; start < keys.length; start += 100) {
+      const { data, error } = await db.from("triggers").select("dedupe_key")
+        .eq("company_id", companyId).in("dedupe_key", keys.slice(start, start + 100));
+      if (error) throw new Error(`public growth trigger dedupe read failed: ${error.message}`);
+      for (const row of data ?? []) existing.add(`${companyId}:${row.dedupe_key}`);
+    }
+  }
+  const pending = payload.filter((row) => !existing.has(`${row.company_id}:${row.dedupe_key}`));
+  if (!pending.length) return 0;
+  const { data, error } = await db.from("triggers").insert(pending).select("id");
+  if (!error) return data?.length ?? 0;
+  if (error.code !== "23505") throw new Error(`public growth trigger bulk insert failed: ${error.message}`);
+
+  // A concurrent batch may win after the preflight read. Resolve that rare
+  // race row-by-row, ignoring only the database's exact uniqueness signal.
+  let inserted = 0;
+  for (const row of pending) {
+    const { error: rowError } = await db.from("triggers").insert(row);
+    if (!rowError) inserted++;
+    else if (rowError.code !== "23505") throw new Error(`public growth trigger insert recovery failed: ${rowError.message}`);
+  }
+  return inserted;
 }
