@@ -1443,7 +1443,7 @@ function DetailDrawer({
   const triggers = detail?.triggers ?? [];
   const insights = detail?.insights ?? [];
   const publicGrowth = detail?.publicGrowth;
-  const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
+  const fmt = (iso: string | null | undefined) => (iso ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
   const dollars = (value: unknown) => Number(value ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   const dateValue = (value: unknown) => value ? new Date(String(value)).getTime() || 0 : 0;
   const rankedAwards = [...(publicGrowth?.awards ?? [])].sort((a, b) => Math.max(Number(b.award_ceiling ?? 0), Number(b.total_obligations ?? 0), Number(b.current_award_amount ?? 0)) - Math.max(Number(a.award_ceiling ?? 0), Number(a.total_obligations ?? 0), Number(a.current_award_amount ?? 0)) || dateValue(b.start_date) - dateValue(a.start_date));
@@ -1451,7 +1451,8 @@ function DetailDrawer({
   const recentHeadcount = [...(publicGrowth?.headcount ?? [])].sort((a, b) => dateValue(b.plan_year_end ?? `${b.form_year}-12-31`) - dateValue(a.plan_year_end ?? `${a.form_year}-12-31`));
   const recentRevenue = [...(publicGrowth?.revenue ?? [])].sort((a, b) => dateValue(b.observed_on) - dateValue(a.observed_on));
   const recentOpportunities = [...(publicGrowth?.opportunities ?? [])].sort((a, b) => dateValue((b.sam_opportunities as Record<string, unknown> | undefined)?.posted_date) - dateValue((a.sam_opportunities as Record<string, unknown> | undefined)?.posted_date));
-  const triggerGroups = Object.entries([...triggers].sort((a, b) => dateValue(b.signal_date ?? b.detected_at) - dateValue(a.signal_date ?? a.detected_at)).reduce<Record<string, DrawerTrigger[]>>((groups, trigger) => { (groups[trigger.type] ??= []).push(trigger); return groups; }, {})).sort((a, b) => dateValue(b[1][0]?.signal_date ?? b[1][0]?.detected_at) - dateValue(a[1][0]?.signal_date ?? a[1][0]?.detected_at));
+  const visibleTriggers = triggers.filter((trigger) => trigger.type !== "federal_award");
+  const triggerGroups = Object.entries([...visibleTriggers].sort((a, b) => dateValue(b.signal_date ?? b.detected_at) - dateValue(a.signal_date ?? a.detected_at)).reduce<Record<string, DrawerTrigger[]>>((groups, trigger) => { (groups[trigger.type] ??= []).push(trigger); return groups; }, {})).sort((a, b) => dateValue(b[1][0]?.signal_date ?? b[1][0]?.detected_at) - dateValue(a[1][0]?.signal_date ?? a[1][0]?.detected_at));
   const signalGroups = Object.entries([...c.signals].sort((a, b) => dateValue(b.signal_date) - dateValue(a.signal_date)).reduce<Record<string, typeof c.signals>>((groups, signal) => { (groups[signal.type] ??= []).push(signal); return groups; }, {})).sort((a, b) => dateValue(b[1][0]?.signal_date) - dateValue(a[1][0]?.signal_date));
 
   return (
@@ -1645,7 +1646,7 @@ function DetailDrawer({
         {c.score_reason && <p className="mb-4 rounded-md bg-[var(--surface-2)] p-3 text-xs">{c.score_reason}</p>}
 
         {/* WHY IT'S HERE — grouped by signal type, newest first, three visible per type. */}
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Why it&apos;s here — triggers ({triggers.length})</h3>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Why it&apos;s here — triggers ({visibleTriggers.length})</h3>
         {triggers.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No trigger events recorded for this lead."}</p>}
         <div className="space-y-3">
           {triggerGroups.map(([type, rows]) => (
