@@ -5,6 +5,33 @@ const money = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString("en-US")
 const pct = (n: number) => `${Math.round(n).toLocaleString("en-US")}%`;
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
+export interface AnnualContractRevenue {
+  year: number;
+  obligated: number;
+  deobligated: number;
+  transactions: number;
+}
+
+/**
+ * Annual federal award revenue is gross positive obligation activity. Negative
+ * transactions are deobligations (funding reductions), not negative revenue,
+ * so retain them separately instead of subtracting them from the UI total.
+ */
+export function summarizeContractRevenueByYear(transactions: Array<Pick<TransactionFact, "actionDate" | "obligation">>): AnnualContractRevenue[] {
+  const annual = new Map<number, AnnualContractRevenue>();
+  for (const transaction of transactions) {
+    const year = Number(String(transaction.actionDate ?? "").slice(0, 4));
+    if (!Number.isFinite(year)) continue;
+    const row = annual.get(year) ?? { year, obligated: 0, deobligated: 0, transactions: 0 };
+    const obligation = Number(transaction.obligation ?? 0);
+    if (obligation > 0) row.obligated += obligation;
+    else if (obligation < 0) row.deobligated += Math.abs(obligation);
+    row.transactions++;
+    annual.set(year, row);
+  }
+  return [...annual.values()].sort((a, b) => b.year - a.year);
+}
+
 function inWindow(date: string, asOf: Date, fromDaysAgo: number, toDaysAgo = 0): boolean {
   const t = new Date(`${date.slice(0, 10)}T00:00:00Z`).getTime();
   const end = asOf.getTime() - toDaysAgo * DAY;

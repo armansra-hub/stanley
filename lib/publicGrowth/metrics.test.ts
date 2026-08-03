@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateContractMetrics, deriveContractEvents, deriveParticipantEvents, deriveRevenueEvents } from "./metrics";
+import { calculateContractMetrics, deriveContractEvents, deriveParticipantEvents, deriveRevenueEvents, summarizeContractRevenueByYear } from "./metrics";
 
 describe("participant growth events", () => {
   it("retains every milestone and growth level crossed", () => {
@@ -23,6 +23,17 @@ describe("revenue milestones", () => {
 });
 
 describe("federal contract metrics", () => {
+  it("reports positive obligation revenue by year without displaying deobligations as negative revenue", () => {
+    expect(summarizeContractRevenueByYear([
+      { actionDate: "2026-01-10", obligation: 100_000 },
+      { actionDate: "2026-03-10", obligation: -125_000 },
+      { actionDate: "2025-06-10", obligation: 50_000 },
+    ])).toEqual([
+      { year: 2026, obligated: 100_000, deobligated: 125_000, transactions: 2 },
+      { year: 2025, obligated: 50_000, deobligated: 0, transactions: 1 },
+    ]);
+  });
+
   it("uses signed obligations, distinguishes awards from modifications, and exposes ceiling separately", () => {
     const asOf = new Date("2026-08-02T00:00:00Z");
     const awards = [{ generatedAwardId: "a1", startDate: "2026-07-20", endDate: "2027-07-20", awardCeiling: 50_000_000, currentAwardAmount: 8_000_000, totalObligations: 7_000_000, awardingAgency: "VA" }];

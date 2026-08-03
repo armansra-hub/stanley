@@ -1,12 +1,13 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
+import { summarizeContractRevenueByYear, type AnnualContractRevenue } from "./metrics";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export interface PublicGrowthDetail {
   entities: any[];
   contractMetrics: any | null;
-  contractRevenueByYear: Array<{ year: number; obligated: number; transactions: number }>;
+  contractRevenueByYear: AnnualContractRevenue[];
   awards: any[];
   naicsSize: any[];
   headcount: any[];
@@ -25,25 +26,35 @@ export async function getPublicGrowthDetail(companyId: string): Promise<PublicGr
   ]);
   const entities = (matches ?? []).map((m: any) => ({ ...m.government_entities, match_status: m.match_status, match_method: m.match_method, match_confidence: Number(m.confidence ?? 0), match_evidence: m.evidence }));
   const entityIds = entities.map((e: any) => e.id);
-  let awards: any[] = [], naicsSize: any[] = [], contractRevenueByYear: Array<{ year: number; obligated: number; transactions: number }> = [];
+  let awards: any[] = [], naicsSize: any[] = [], contractRevenueByYear: AnnualContractRevenue[] = [];
   if (entityIds.length) {
-    const [a, n] = await Promise.all([
-      db.from("federal_awards").select("*").in("government_entity_id", entityIds).order("start_date", { ascending: false }).limit(250),
-      db.from("entity_naics_size_status_snapshots").select("*").in("government_entity_id", entityIds).order("observed_on", { ascending: false }).limit(500),
-    ]);
-    awards = a.data ?? []; naicsSize = n.data ?? [];
+    const { data: n } = await db.from("entity_naics_size_status_snapshots").select("*").in("government_entity_id", entityIds).order("observed_on", { ascending: false }).limit(500);
+    naicsSize = n ?? [];
+    for (let start = 0; ; start += 1000) {
+      const { data, error } = await db.from("federal_awards")
+        .select("id,generated_award_id,award_id,start_date,end_date,award_ceiling,current_award_amount,total_obligations,awarding_agency,description,source_url")
+        .in("government_entity_id", entityIds).order("start_date", { ascending: false }).range(start, start + 999);
+      if (error) throw new Error(`federal award detail load failed: ${error.message}`);
+      awards.push(...(data ?? []));
+      if ((data ?? []).length < 1000) break;
+    }
     const awardIds = awards.map((award: any) => award.id).filter(Boolean);
     if (awardIds.length) {
-      const { data: transactions } = await db.from("federal_award_transactions").select("action_date,federal_action_obligation").in("federal_award_id", awardIds).order("action_date", { ascending: false }).limit(5000);
-      const annual = new Map<number, { year: number; obligated: number; transactions: number }>();
-      for (const transaction of transactions ?? []) {
-        const year = Number(String(transaction.action_date ?? "").slice(0, 4));
-        if (!Number.isFinite(year)) continue;
-        const row = annual.get(year) ?? { year, obligated: 0, transactions: 0 };
-        row.obligated += Number(transaction.federal_action_obligation ?? 0); row.transactions++;
-        annual.set(year, row);
+      const transactions: Array<{ action_date: string; federal_action_obligation: number }> = [];
+      for (let awardStart = 0; awardStart < awardIds.length; awardStart += 100) {
+        const ids = awardIds.slice(awardStart, awardStart + 100);
+        for (let rowStart = 0; ; rowStart += 1000) {
+          const { data, error } = await db.from("federal_award_transactions").select("action_date,federal_action_obligation")
+            .in("federal_award_id", ids).order("action_date", { ascending: false }).range(rowStart, rowStart + 999);
+          if (error) throw new Error(`federal transaction detail load failed: ${error.message}`);
+          transactions.push(...((data ?? []) as Array<{ action_date: string; federal_action_obligation: number }>));
+          if ((data ?? []).length < 1000) break;
+        }
       }
-      contractRevenueByYear = [...annual.values()].sort((a, b) => b.year - a.year);
+      contractRevenueByYear = summarizeContractRevenueByYear(transactions.map((transaction, index) => ({
+        externalTransactionId: String(index), generatedAwardId: "", actionDate: transaction.action_date,
+        obligation: Number(transaction.federal_action_obligation ?? 0), modificationNumber: null,
+      })));
     }
   }
   return { entities, contractMetrics: metrics ?? null, contractRevenueByYear, awards, naicsSize, headcount: headcount ?? [], revenue: revenue ?? [], opportunities: opportunityMatches ?? [] };

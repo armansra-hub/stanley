@@ -878,7 +878,16 @@ export default function Dashboard({
           <tbody>
             {tableRows.map((c) => {
               const top = strongestSignal(c);
-              const trig = (c as TriggeredRow).top_trigger;
+              const rawTopTrigger = (c as TriggeredRow).top_trigger;
+              const allRowTriggers = (c as TriggeredRow).all_triggers ?? (rawTopTrigger ? [rawTopTrigger] : []);
+              const nonAwardRowTriggers = allRowTriggers
+                .filter((trigger) => trigger.type !== "federal_award")
+                .sort((a, b) => new Date(b.signal_date ?? b.detected_at ?? 0).getTime() - new Date(a.signal_date ?? a.detected_at ?? 0).getTime());
+              const rowTriggers = nonAwardRowTriggers.slice(0, 3);
+              const rowTopTrigger = rowTriggers[0];
+              const trig = rowTopTrigger;
+              const hiddenRowTriggerCount = Math.max(0, nonAwardRowTriggers.length - rowTriggers.length);
+              const federalAwardCount = allRowTriggers.length - nonAwardRowTriggers.length;
               return (
                 <tr
                   key={c.id}
@@ -954,18 +963,18 @@ export default function Dashboard({
                         {c.revisit_on && <div className="text-[10px]" style={{ color: "var(--tier-a)" }}>⏰ revisit {c.revisit_on}</div>}
                         {/* Live events matter on Old Gold too — a stalled lead that just
                             raised money or hired finance is the one to call back first. */}
-                        {trig && (
+                        {rowTopTrigger && (
                           <div className="mt-0.5 text-xs font-semibold" style={{ color: "var(--gold)" }}>
                             ⚡ {TRIGGER_LABELS[trig.type] ?? trig.type} · {sinceLabel(trig.signal_date ?? trig.detected_at)}
-                            {((c as TriggeredRow).trigger_count ?? 1) > 1 ? ` +${((c as TriggeredRow).trigger_count ?? 1) - 1} more` : ""}
+                            {hiddenRowTriggerCount > 0 ? ` +${hiddenRowTriggerCount} more` : ""}
                           </div>
                         )}
                       </>
-                    ) : trig ? (
+                    ) : rowTriggers.length > 0 ? (
                       // EVERY trigger on the lead, strongest first (not just the top one
                       // + a "+N more" count) — each with its label, age, and summary.
                       <div className="space-y-1">
-                        {((c as TriggeredRow).all_triggers ?? [trig]).map((t, ti) => (
+                        {rowTriggers.map((t, ti) => (
                           <div key={ti}>
                             <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>
                               {t.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : TRIGGER_LABELS[t.type] ?? t.type} · {sinceLabel(t.signal_date ?? t.detected_at)}
@@ -978,7 +987,10 @@ export default function Dashboard({
                             ) : null}
                           </div>
                         ))}
+                        {hiddenRowTriggerCount > 0 && <div className="text-[11px] font-medium text-[var(--accent)]">+{hiddenRowTriggerCount} more â€” open lead record</div>}
                       </div>
+                    ) : federalAwardCount > 0 ? (
+                      <div className="text-xs font-medium" style={{ color: "var(--gold)" }}>Federal contract activity â€” open lead record for annual totals</div>
                     ) : top ? (
                       <>
                         <div>{top.signal_summary}</div>
@@ -1372,7 +1384,7 @@ type DrawerTrigger = {
 type PublicGrowthDetail = {
   entities: Array<Record<string, unknown>>;
   contractMetrics: Record<string, unknown> | null;
-  contractRevenueByYear: Array<{ year: number; obligated: number; transactions: number }>;
+  contractRevenueByYear: Array<{ year: number; obligated: number; deobligated: number; transactions: number }>;
   awards: Array<Record<string, unknown>>;
   naicsSize: Array<Record<string, unknown>>;
   headcount: Array<Record<string, unknown>>;
@@ -1406,6 +1418,20 @@ function CappedList<T>({ items, renderItem }: { items: T[]; renderItem: (item: T
       )}
     </>
   );
+}
+
+const SIGNAL_CATEGORY_ORDER = ["Federal contracts", "Employee growth", "Revenue & company size", "Financing", "Hiring", "Expansion", "Technology", "News & press", "Other"];
+
+function signalCategory(type: string): string {
+  if (/^(federal_|sam_award|sam_incumbent|gov_contract)/.test(type)) return "Federal contracts";
+  if (/^(employee_|headcount_|hiring_velocity)/.test(type)) return "Employee growth";
+  if (/^(revenue_|sba_other_than_small|sba_size_changed)/.test(type)) return "Revenue & company size";
+  if (/^(funding|sba_loan|ucc_financing)/.test(type)) return "Financing";
+  if (type === "finance_hire") return "Hiring";
+  if (/^(ma|new_entity|press|fleet_expansion)/.test(type)) return "Expansion";
+  if (type === "erp_tech") return "Technology";
+  if (type === "news") return "News & press";
+  return "Other";
 }
 
 function DetailDrawer({
@@ -1445,6 +1471,7 @@ function DetailDrawer({
   const publicGrowth = detail?.publicGrowth;
   const fmt = (iso: string | null | undefined) => (iso ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
   const dollars = (value: unknown) => Number(value ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  const obligatedDollars = (value: unknown) => dollars(Math.max(0, Number(value ?? 0)));
   const dateValue = (value: unknown) => value ? new Date(String(value)).getTime() || 0 : 0;
   const rankedAwards = [...(publicGrowth?.awards ?? [])].sort((a, b) => Math.max(Number(b.award_ceiling ?? 0), Number(b.total_obligations ?? 0), Number(b.current_award_amount ?? 0)) - Math.max(Number(a.award_ceiling ?? 0), Number(a.total_obligations ?? 0), Number(a.current_award_amount ?? 0)) || dateValue(b.start_date) - dateValue(a.start_date));
   const recentNaics = [...(publicGrowth?.naicsSize ?? [])].sort((a, b) => dateValue(b.observed_on) - dateValue(a.observed_on));
@@ -1452,8 +1479,14 @@ function DetailDrawer({
   const recentRevenue = [...(publicGrowth?.revenue ?? [])].sort((a, b) => dateValue(b.observed_on) - dateValue(a.observed_on));
   const recentOpportunities = [...(publicGrowth?.opportunities ?? [])].sort((a, b) => dateValue((b.sam_opportunities as Record<string, unknown> | undefined)?.posted_date) - dateValue((a.sam_opportunities as Record<string, unknown> | undefined)?.posted_date));
   const visibleTriggers = triggers.filter((trigger) => trigger.type !== "federal_award");
-  const triggerGroups = Object.entries([...visibleTriggers].sort((a, b) => dateValue(b.signal_date ?? b.detected_at) - dateValue(a.signal_date ?? a.detected_at)).reduce<Record<string, DrawerTrigger[]>>((groups, trigger) => { (groups[trigger.type] ??= []).push(trigger); return groups; }, {})).sort((a, b) => dateValue(b[1][0]?.signal_date ?? b[1][0]?.detected_at) - dateValue(a[1][0]?.signal_date ?? a[1][0]?.detected_at));
-  const signalGroups = Object.entries([...c.signals].sort((a, b) => dateValue(b.signal_date) - dateValue(a.signal_date)).reduce<Record<string, typeof c.signals>>((groups, signal) => { (groups[signal.type] ??= []).push(signal); return groups; }, {})).sort((a, b) => dateValue(b[1][0]?.signal_date) - dateValue(a[1][0]?.signal_date));
+  const triggerGroups = Object.entries([...visibleTriggers]
+    .sort((a, b) => dateValue(b.signal_date ?? b.detected_at) - dateValue(a.signal_date ?? a.detected_at))
+    .reduce<Record<string, DrawerTrigger[]>>((groups, trigger) => { (groups[signalCategory(trigger.type)] ??= []).push(trigger); return groups; }, {}))
+    .sort((a, b) => SIGNAL_CATEGORY_ORDER.indexOf(a[0]) - SIGNAL_CATEGORY_ORDER.indexOf(b[0]));
+  const signalGroups = Object.entries([...c.signals]
+    .sort((a, b) => dateValue(b.signal_date) - dateValue(a.signal_date))
+    .reduce<Record<string, typeof c.signals>>((groups, signal) => { (groups[signalCategory(signal.type)] ??= []).push(signal); return groups; }, {}))
+    .sort((a, b) => SIGNAL_CATEGORY_ORDER.indexOf(a[0]) - SIGNAL_CATEGORY_ORDER.indexOf(b[0]));
 
   return (
     <div className="fixed inset-0 z-20 flex justify-end bg-black/40" onClick={onClose}>
@@ -1484,12 +1517,12 @@ function DetailDrawer({
             )} />
             {publicGrowth.contractMetrics && (
               <div className="mb-3 grid grid-cols-2 gap-2 rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
-                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">30d obligated</div><strong>{dollars(publicGrowth.contractMetrics.obligations_30d)}</strong></div>
-                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">90d obligated</div><strong>{dollars(publicGrowth.contractMetrics.obligations_90d)}</strong></div>
-                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">12m obligated</div><strong>{dollars(publicGrowth.contractMetrics.obligations_365d)}</strong></div>
-                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Prior 12m</div><strong>{dollars(publicGrowth.contractMetrics.prior_obligations_365d)}</strong></div>
-                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Active ceiling</div><strong>{dollars(publicGrowth.contractMetrics.active_award_ceiling)}</strong></div>
-                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Active obligated</div><strong>{dollars(publicGrowth.contractMetrics.active_award_obligations)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">30d obligated</div><strong>{obligatedDollars(publicGrowth.contractMetrics.obligations_30d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">90d obligated</div><strong>{obligatedDollars(publicGrowth.contractMetrics.obligations_90d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">12m obligated</div><strong>{obligatedDollars(publicGrowth.contractMetrics.obligations_365d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Prior 12m</div><strong>{obligatedDollars(publicGrowth.contractMetrics.prior_obligations_365d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Active ceiling</div><strong>{obligatedDollars(publicGrowth.contractMetrics.active_award_ceiling)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Active obligated</div><strong>{obligatedDollars(publicGrowth.contractMetrics.active_award_obligations)}</strong></div>
                 <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Subawards received · 12m</div><strong>{dollars(publicGrowth.contractMetrics.received_subaward_dollars_365d)}</strong></div>
                 <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Subawards issued · 12m</div><strong>{dollars(publicGrowth.contractMetrics.prime_subaward_dollars_365d)}</strong></div>
               </div>
@@ -1510,7 +1543,7 @@ function DetailDrawer({
                 <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">Federal contract revenue by year</div>
                 <CappedList items={publicGrowth.contractRevenueByYear ?? []} renderItem={(year) => (
                   <div key={`contract-year-${year.year}`} className="flex items-center justify-between border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>
-                    <span>{year.year}</span><strong>{dollars(year.obligated)} obligated</strong>
+                    <span>{year.year}</span><strong>{obligatedDollars(year.obligated)} obligated revenue</strong>
                   </div>
                 )} />
                 <details className="mt-2">
@@ -1518,7 +1551,7 @@ function DetailDrawer({
                   <div className="mt-1 space-y-2">
                   <CappedList items={rankedAwards} renderItem={(a, i) => (
                     <div key={`award-${i}`} className="rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
-                      <div className="font-semibold">{dollars(a.award_ceiling)} ceiling · {dollars(a.total_obligations)} obligated</div>
+                      <div className="font-semibold">{obligatedDollars(a.award_ceiling)} ceiling · {obligatedDollars(a.total_obligations)} obligated</div>
                       <div className="text-[var(--text-muted)]">{String(a.awarding_agency ?? "Federal award")}{a.award_id ? ` · ${String(a.award_id)}` : ""}{a.start_date ? ` · ${fmt(String(a.start_date))}` : ""}</div>
                       {a.description ? <p className="mt-1 text-[var(--text-muted)]">{String(a.description)}</p> : null}
                       {a.source_url ? <a href={String(a.source_url)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">USAspending ↗</a> : null}
@@ -1649,9 +1682,9 @@ function DetailDrawer({
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Why it&apos;s here — triggers ({visibleTriggers.length})</h3>
         {triggers.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No trigger events recorded for this lead."}</p>}
         <div className="space-y-3">
-          {triggerGroups.map(([type, rows]) => (
-            <div key={type}>
-              <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">{type.replace(/_/g, " ")} ({rows.length})</div>
+          {triggerGroups.map(([category, rows]) => (
+            <div key={category}>
+              <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">{category} ({rows.length})</div>
               <div className="space-y-2">
                 <CappedList items={rows} renderItem={(t) => (
                   <div key={t.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
@@ -1693,9 +1726,9 @@ function DetailDrawer({
         <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Signals ({c.signals.length})</h3>
         {c.signals.length === 0 && <p className="mb-3 text-xs text-[var(--text-muted)]">{loading ? "Loading…" : "No discovery signals on this lead."}</p>}
         <div className="space-y-3">
-          {signalGroups.map(([type, rows]) => (
-            <div key={type}>
-              <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">{type.replace(/_/g, " ")} ({rows.length})</div>
+          {signalGroups.map(([category, rows]) => (
+            <div key={category}>
+              <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">{category} ({rows.length})</div>
               <div className="space-y-2">
                 <CappedList items={rows} renderItem={(s) => (
                   <div key={s.id} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
