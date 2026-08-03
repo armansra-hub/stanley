@@ -1,5 +1,6 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
+import { getPublicGrowthDetail, type PublicGrowthDetail } from "@/lib/publicGrowth/detail";
 import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
 import { mapSignal, withTriggers, withInsights, type InsightBadge } from "@/lib/db/companies";
 import type { Company } from "@/lib/types";
@@ -522,7 +523,7 @@ export interface LeadTrigger extends TriggerRow { live: number }
 /** Full detail for ONE lead, regardless of which tab opened it: the whole company
  * record + EVERY discovery signal + EVERY trigger (the "why it's here" events), so the
  * drawer can show everything we hold on this company across the database. */
-export async function getLeadDetail(id: string): Promise<{ company: Company; triggers: LeadTrigger[]; insights: InsightBadge[] } | null> {
+export async function getLeadDetail(id: string): Promise<{ company: Company; triggers: LeadTrigger[]; insights: InsightBadge[]; publicGrowth: PublicGrowthDetail } | null> {
   const db = serviceClient();
   const { data, error } = await db.from("companies").select("*, signals(*), triggers(*), lead_insights(*)").eq("id", id).maybeSingle();
   if (error || !data) return null;
@@ -533,5 +534,6 @@ export async function getLeadDetail(id: string): Promise<{ company: Company; tri
     .map((t) => ({ ...t, live: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) }))
     .sort((a, b) => b.live - a.live);
   const insights: InsightBadge[] = Array.isArray(lead_insights) ? lead_insights : [];
-  return { company, triggers: trigs, insights };
+  const publicGrowth = await getPublicGrowthDetail(id);
+  return { company, triggers: trigs, insights, publicGrowth };
 }

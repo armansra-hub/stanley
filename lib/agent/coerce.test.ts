@@ -140,68 +140,22 @@ describe("deriveOldGold", () => {
   });
 });
 
-describe("adjustScore — the signal layer a regrade must not erase", () => {
+describe("adjustScore — external intelligence stays out of TAM and Old Gold", () => {
   const today = new Date("2026-07-27T00:00:00Z");
   const fresh = (type: string) => ({ type, signal_date: "2026-07-20", half_life_days: 30 });
 
-  it("adds weighted, decayed signal value on top of the pushed grade", () => {
-    const r = adjustScore(12, {}, [fresh("funding")], today);
-    expect(r.score).toBeGreaterThan(12);
-    expect(r.note).toContain("Stanley signals");
-    expect(r.note).toContain("funding");
+  it("ignores triggers, headcount, PE, and competitor ERP when returning the grade", () => {
+    const many = ["funding", "ma", "finance_hire", "federal_award"].map(fresh);
+    const r = adjustScore(37, { headcount_growth_pct: 400, pe_owned: true, erp_incumbent: "intacct" }, many, today);
+    expect(r).toMatchObject({ score: 37, bump: 0, penalty: 0, reasons: [], note: "" });
   });
 
-  it("counts each signal TYPE once, at its strongest — one event reported four times is one event", () => {
-    const fourDeals = [
-      { type: "ma", signal_date: "2026-07-20", half_life_days: 30 },
-      { type: "ma", signal_date: "2026-07-21", half_life_days: 30 },
-      { type: "ma", signal_date: "2026-07-22", half_life_days: 30 },
-      { type: "ma", signal_date: "2026-07-24", half_life_days: 30 },
-    ];
-    const four = adjustScore(15, {}, fourDeals, today);
-    const one = adjustScore(15, {}, [fourDeals[3]], today); // the freshest alone
-    expect(four.score).toBe(one.score);
-    expect(four.reasons).toHaveLength(1);
-    expect(four.bump).toBeLessThan(7); // was hitting the +15 cap when these summed
-  });
-
-  it("still stacks ACROSS different signal types", () => {
-    // Graded 45 = a viable verdict, so the cap doesn't interfere with what's being tested.
-    const mixed = adjustScore(45, {}, [fresh("ma"), fresh("finance_hire")], today);
-    const single = adjustScore(45, {}, [fresh("ma")], today);
-    expect(mixed.score).toBeGreaterThan(single.score);
-    expect(mixed.reasons).toHaveLength(2);
-  });
-
-  it("caps the total bump at +15 no matter how many signals fire", () => {
-    const many = ["funding", "ma", "finance_hire", "erp_tech", "press", "news", "sba_loan"].map(fresh);
-    const r = adjustScore(10, { headcount_growth_pct: 90, pe_owned: true }, many, today);
-    expect(r.bump).toBeLessThanOrEqual(15);
-    expect(r.score).toBeLessThanOrEqual(25);
-  });
-
-  it("ignores signals that have decayed into noise", () => {
-    const stale = { type: "funding", signal_date: "2025-01-01", half_life_days: 30 };
-    expect(adjustScore(12, {}, [stale], today).score).toBe(12);
-  });
-
-  it("penalises a site-detected competitor ERP", () => {
-    const r = adjustScore(30, { erp_incumbent: "intacct" }, [], today);
-    expect(r.score).toBe(20);
-    expect(r.note).toContain("incumbent ERP");
-  });
-
-  it("hard-zeroes dead records and NetSuite incumbents, signals notwithstanding", () => {
+  it("keeps record-derived hard zeros", () => {
     expect(adjustScore(80, { record_dead: true }, [fresh("funding")], today).score).toBe(0);
     expect(adjustScore(80, { erp_incumbent: "netsuite" }, [fresh("funding")], today).score).toBe(0);
   });
 
-  it("counts 5500 headcount growth and PE ownership", () => {
-    expect(adjustScore(10, { headcount_growth_pct: 40 }, [], today).score).toBe(15);
-    expect(adjustScore(10, { pe_owned: true }, [], today).score).toBe(13);
-  });
-
-  it("leaves a grade untouched when nothing is firing", () => {
+  it("preserves an ordinary raw grade exactly", () => {
     const r = adjustScore(9, {}, [], today);
     expect(r.score).toBe(9);
     expect(r.bump).toBe(0);
@@ -218,8 +172,8 @@ describe("adjustScore — a graded zero is decisive", () => {
     expect(r.note).toContain("decisive");
   });
 
-  it("still adjusts a lead graded even slightly above zero", () => {
-    expect(adjustScore(1, { pe_owned: true }, [], today).score).toBe(4);
+  it("also preserves a lead graded even slightly above zero", () => {
+    expect(adjustScore(1, { pe_owned: true }, [], today).score).toBe(1);
   });
 });
 
@@ -258,46 +212,6 @@ describe("assessDigest reads the whole rationale, not one field", () => {
   it("still reports a row with template digest and nothing else", () => {
     expect(assessDigest(boiler, []).auditable).toBe(false);
     expect(assessDigest(boiler, ["[COMMENTS] # 8 employees"]).markers).toContain("headcount");
-  });
-});
-
-describe("verdict caps the signal layer — testimony outranks scraped signal", () => {
-  const today = new Date("2026-07-27T00:00:00Z");
-  const loud = [
-    { type: "funding", signal_date: "2026-07-25", half_life_days: 30 },
-    { type: "ucc_financing", signal_date: "2026-07-25", half_life_days: 30 },
-  ];
-  const DQ = "Score 27/100: current evidence points to disqualification, poor timing, or a low probability of an ERP close.";
-
-  it("caps a disqualification verdict at +3 (the Ad Fontes case)", () => {
-    const r = adjustScore(27, { record_digest: DQ, headcount_growth_pct: 400 }, loud, today);
-    expect(r.verdict).toBe("disqualified");
-    expect(r.bump).toBe(3);
-    expect(r.score).toBe(30);          // was 35.8 when signals ran uncapped
-    expect(r.note).toContain("capped at +3");
-  });
-
-  it("lets a viable verdict run up to the full +15", () => {
-    const r = adjustScore(45, { headcount_growth_pct: 400 }, loud, today);
-    expect(r.verdict).toBe("viable");
-    expect(r.bump).toBeGreaterThan(14);   // 14.5 here: two decayed signals + headcount
-    expect(r.bump).toBeLessThanOrEqual(15);
-    expect(r.note).not.toContain("capped");
-  });
-
-  it("caps a weak grade at +8 even with everything firing", () => {
-    const r = adjustScore(12, { headcount_growth_pct: 400, pe_owned: true }, loud, today);
-    expect(r.verdict).toBe("weak");
-    expect(r.bump).toBe(8);
-  });
-
-  it("honours an explicit verdict from the grader over the score band", () => {
-    expect(adjustScore(50, { verdict: "disqualified" }, loud, today).bump).toBe(3);
-    expect(adjustScore(5, { verdict: "viable" }, loud, today).bump).toBeGreaterThan(3);
-  });
-
-  it("still lets a graded 0 take nothing at all", () => {
-    expect(adjustScore(0, { record_digest: DQ }, loud, today).bump).toBe(0);
   });
 });
 

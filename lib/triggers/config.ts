@@ -19,6 +19,24 @@ export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
   ucc_financing: { strength: 65, half_life_days: 180 }, // new UCC-1 financing statement → took secured debt (equipment/LOC) = growth investment
   press: { strength: 50, half_life_days: 30 },      // expansion / new office
   news: { strength: 40, half_life_days: 21 },       // generic mention
+  employee_milestone: { strength: 80, half_life_days: 730 },
+  employee_growth: { strength: 84, half_life_days: 730 },
+  employee_absolute_growth: { strength: 78, half_life_days: 730 },
+  employee_consecutive_growth: { strength: 92, half_life_days: 730 },
+  employee_decline: { strength: 45, half_life_days: 730 },
+  revenue_milestone: { strength: 82, half_life_days: 730 },
+  sba_other_than_small: { strength: 84, half_life_days: 730 },
+  sba_size_changed: { strength: 82, half_life_days: 730 },
+  federal_award: { strength: 86, half_life_days: 180 },
+  federal_new_award: { strength: 86, half_life_days: 180 },
+  federal_first_activity: { strength: 84, half_life_days: 180 },
+  federal_obligation_growth: { strength: 88, half_life_days: 180 },
+  federal_incumbent_funding: { strength: 82, half_life_days: 180 },
+  federal_active_ceiling: { strength: 60, half_life_days: 180 },
+  federal_subaward: { strength: 78, half_life_days: 180 },
+  federal_prime_subaward_activity: { strength: 74, half_life_days: 180 },
+  sam_award_notice: { strength: 88, half_life_days: 180 },
+  sam_incumbent_recompete: { strength: 78, half_life_days: 120 },
 };
 
 export const TRIGGER_LABEL: Record<string, string> = {
@@ -35,6 +53,24 @@ export const TRIGGER_LABEL: Record<string, string> = {
   ucc_financing: "New secured financing (UCC-1)",
   press: "Expansion",
   news: "In the news",
+  employee_milestone: "Employee threshold crossed",
+  employee_growth: "Employee growth",
+  employee_absolute_growth: "Absolute employee growth",
+  employee_consecutive_growth: "Consecutive employee growth",
+  employee_decline: "Employee decline",
+  revenue_milestone: "Revenue threshold crossed",
+  sba_other_than_small: "SBA other than small",
+  sba_size_changed: "SBA size status changed",
+  federal_award: "Federal award",
+  federal_new_award: "New federal award",
+  federal_first_activity: "First federal contract activity",
+  federal_obligation_growth: "Federal obligations growth",
+  federal_incumbent_funding: "Incumbent award funding increase",
+  federal_active_ceiling: "Active federal contract ceiling",
+  federal_subaward: "Federal subcontract",
+  federal_prime_subaward_activity: "Prime subcontract activity",
+  sam_award_notice: "SAM award notice",
+  sam_incumbent_recompete: "Possible incumbent recompete",
 };
 
 /** Classify a news headline into the strongest trigger type it implies. */

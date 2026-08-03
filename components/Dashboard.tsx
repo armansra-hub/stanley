@@ -427,6 +427,12 @@ export default function Dashboard({
     new_entity: "🏛 New entity", gov_contract: "📜 Gov contract", fleet_expansion: "🚚 Fleet growth",
     hiring_velocity: "🚛 Driver surge", headcount_50: "🏥 Crossed 50 emp (ACA)", ucc_financing: "🏦 Growth loan (UCC-1)",
     sba_loan: "💵 SBA growth loan", press: "📈 Expansion", news: "📰 News",
+    employee_milestone: "👥 Employee threshold", employee_growth: "📈 Employee growth", employee_absolute_growth: "➕ Employee addition", employee_consecutive_growth: "🚀 Consecutive employee growth", employee_decline: "📉 Employee decline",
+    revenue_milestone: "💰 Revenue threshold", sba_other_than_small: "🏢 Other than small", sba_size_changed: "📏 SBA size changed",
+    federal_award: "📜 Federal award", federal_new_award: "🆕 New federal award", federal_first_activity: "🏛 First federal activity",
+    federal_obligation_growth: "📈 Federal obligations growth", federal_incumbent_funding: "💵 Incumbent funding increase",
+    federal_active_ceiling: "📋 Active contract ceiling", federal_subaward: "🔗 Federal subcontract", federal_prime_subaward_activity: "🧩 Prime subcontract activity",
+    sam_award_notice: "🏆 SAM award notice", sam_incumbent_recompete: "🔄 Possible incumbent recompete",
   };
   // Options for the Signals ▾ filter — every trigger type plus the synthetic
   // DOL-5500 headcount signal (those leads surface without a trigger row).
@@ -909,7 +915,6 @@ export default function Dashboard({
                       {c.netsuite_internal_id && <CopyButton value={c.netsuite_internal_id} label="NetSuite internal ID">#</CopyButton>}
                       {c.tal_claimed && <span className="rounded px-1.5 text-[9px] font-bold uppercase tracking-wide" style={{ background: "rgba(220,38,38,0.18)", color: "#ef4444", border: "1px solid rgba(220,38,38,0.55)" }} title="On your ARS Target Account List">ARS TAL Claimed</span>}
                       {!c.tal_claimed && c.tal_dq && <span className="rounded px-1.5 text-[9px] font-semibold uppercase tracking-wide" style={{ background: "rgba(148,163,184,0.16)", color: "#94a3b8", border: "1px solid rgba(148,163,184,0.45)" }} title="Was on a previous TAL, dropped from the latest — you already passed on it">Previously DQ&apos;d</span>}
-                      {(c.headcount_growth_pct ?? 0) >= 25 && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(90,154,62,0.18)", color: "var(--tier-a)", border: "1px solid rgba(90,154,62,0.5)" }} title="DOL Form 5500: within-year active-participant (headcount) growth">📈 +{Math.round(c.headcount_growth_pct as number)}% headcount</span>}
                       {(c as TriggeredRow).trigger_types?.includes("finance_hire") && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(74,128,201,0.18)", color: "#6ea8e6", border: "1px solid rgba(74,128,201,0.5)" }} title="Hiring for a finance role (own careers page or announced) — scaling finance in-house">🧮 hiring for finance</span>}
                       {c.has_parent && <span className="rounded px-1.5 text-[9px] font-semibold" style={{ background: "rgba(180,140,40,0.16)", color: "#b48c28", border: "1px solid rgba(180,140,40,0.45)" }} title={`Detected as a subsidiary${c.parent_name ? ` of ${c.parent_name}` : ""} (${c.parent_confidence ?? "?"} confidence) — the parent usually owns the ERP decision`}>🏢 {c.parent_confidence === "high" ? "subsidiary" : "likely sub"}{c.parent_name ? ` of ${c.parent_name}` : ""}</span>}
                       {c.record_dead && <span className="rounded px-1.5 text-[9px] font-bold uppercase tracking-wide" style={{ background: "rgba(220,38,38,0.14)", color: "#ef4444", border: "1px solid rgba(220,38,38,0.5)" }} title={c.record_dead_reason ?? "NetSuite record marks this lead dead"}>⛔ dead — {c.record_dead_reason?.slice(0, 60) ?? "per record"}</span>}
@@ -1364,6 +1369,16 @@ type DrawerTrigger = {
   source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; live: number;
 };
 
+type PublicGrowthDetail = {
+  entities: Array<Record<string, unknown>>;
+  contractMetrics: Record<string, unknown> | null;
+  awards: Array<Record<string, unknown>>;
+  naicsSize: Array<Record<string, unknown>>;
+  headcount: Array<Record<string, unknown>>;
+  revenue: Array<Record<string, unknown>>;
+  opportunities: Array<Record<string, unknown>>;
+};
+
 /** Small labeled chip used in the drawer for flags, tags, and sources. */
 function Pill({ children, title, color }: { children: React.ReactNode; title?: string; color?: string }) {
   return (
@@ -1396,7 +1411,7 @@ function DetailDrawer({
   const [ratingComment, setRatingComment] = useState(company.rating_comment ?? "");
   // Pull the FULL record (every signal + every trigger across the DB) on open — the row
   // object from Triggered/TAM-Base tabs is a light projection with no signals/triggers.
-  const [detail, setDetail] = useState<{ company: Company; triggers: DrawerTrigger[]; insights?: InsightBadge[] } | null>(null);
+  const [detail, setDetail] = useState<{ company: Company; triggers: DrawerTrigger[]; insights?: InsightBadge[]; publicGrowth?: PublicGrowthDetail } | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let live = true;
@@ -1411,7 +1426,9 @@ function DetailDrawer({
   const c = detail?.company ?? company; // merged: full record once loaded, row projection meanwhile
   const triggers = detail?.triggers ?? [];
   const insights = detail?.insights ?? [];
+  const publicGrowth = detail?.publicGrowth;
   const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
+  const dollars = (value: unknown) => Number(value ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
   return (
     <div className="fixed inset-0 z-20 flex justify-end bg-black/40" onClick={onClose}>
@@ -1427,6 +1444,80 @@ function DetailDrawer({
           </div>
           <button onClick={onClose} className="text-[var(--text-muted)]">✕</button>
         </div>
+
+        {publicGrowth && (publicGrowth.entities.length > 0 || publicGrowth.awards.length > 0 || publicGrowth.naicsSize.length > 0 || publicGrowth.headcount.length > 0 || publicGrowth.revenue.length > 0 || publicGrowth.opportunities.length > 0) && (
+          <div className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "rgba(110,168,230,0.45)", background: "rgba(110,168,230,0.05)" }}>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "#6ea8e6" }}>Public growth intelligence</h3>
+            {publicGrowth.entities.map((entity, i) => (
+              <div key={`entity-${i}`} className="mb-2 text-xs">
+                <span className="font-semibold">{String(entity.legal_name ?? c.name)}</span>
+                {entity.uei ? <span className="text-[var(--text-muted)]"> · UEI {String(entity.uei)}</span> : null}
+                {entity.cage_code ? <span className="text-[var(--text-muted)]"> · CAGE {String(entity.cage_code)}</span> : null}
+                {entity.registration_status ? <span className="text-[var(--text-muted)]"> · SAM {String(entity.registration_status)}</span> : null}
+                {entity.expiration_date ? <span className="text-[var(--text-muted)]"> through {fmt(String(entity.expiration_date))}</span> : null}
+              </div>
+            ))}
+            {publicGrowth.contractMetrics && (
+              <div className="mb-3 grid grid-cols-2 gap-2 rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">30d obligated</div><strong>{dollars(publicGrowth.contractMetrics.obligations_30d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">90d obligated</div><strong>{dollars(publicGrowth.contractMetrics.obligations_90d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">12m obligated</div><strong>{dollars(publicGrowth.contractMetrics.obligations_365d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Prior 12m</div><strong>{dollars(publicGrowth.contractMetrics.prior_obligations_365d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Active ceiling</div><strong>{dollars(publicGrowth.contractMetrics.active_award_ceiling)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Active obligated</div><strong>{dollars(publicGrowth.contractMetrics.active_award_obligations)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Subawards received · 12m</div><strong>{dollars(publicGrowth.contractMetrics.received_subaward_dollars_365d)}</strong></div>
+                <div><div className="text-[10px] uppercase text-[var(--text-muted)]">Subawards issued · 12m</div><strong>{dollars(publicGrowth.contractMetrics.prime_subaward_dollars_365d)}</strong></div>
+              </div>
+            )}
+            {publicGrowth.naicsSize.length > 0 && (
+              <div className="mb-3">
+                <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">SBA size by NAICS</div>
+                {publicGrowth.naicsSize.slice(0, 20).map((n, i) => (
+                  <div key={`naics-${i}`} className="flex justify-between gap-2 border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>
+                    <span>{String(n.naics_code)}{n.naics_name ? ` · ${String(n.naics_name)}` : ""}{n.is_primary ? " · primary" : ""}</span>
+                    <strong>{n.status === "other_than_small" ? "Other than small" : n.status === "small" ? "Small" : "Unknown"}{n.observed_on ? ` · ${String(n.observed_on)}` : ""}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+            {publicGrowth.awards.length > 0 && (
+              <details className="mb-2" open>
+                <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Federal awards ({publicGrowth.awards.length})</summary>
+                <div className="mt-1 space-y-2">
+                  {publicGrowth.awards.slice(0, 30).map((a, i) => (
+                    <div key={`award-${i}`} className="rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
+                      <div className="font-semibold">{dollars(a.award_ceiling)} ceiling · {dollars(a.total_obligations)} obligated</div>
+                      <div className="text-[var(--text-muted)]">{String(a.awarding_agency ?? "Federal award")}{a.award_id ? ` · ${String(a.award_id)}` : ""}{a.start_date ? ` · ${fmt(String(a.start_date))}` : ""}</div>
+                      {a.description ? <p className="mt-1 text-[var(--text-muted)]">{String(a.description)}</p> : null}
+                      {a.source_url ? <a href={String(a.source_url)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">USAspending ↗</a> : null}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {publicGrowth.headcount.length > 0 && (
+              <details className="mb-2">
+                <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Form 5500 history ({publicGrowth.headcount.length})</summary>
+                {publicGrowth.headcount.slice(0, 30).map((h, i) => <div key={`hc-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>{String(h.plan_year_begin ?? h.form_year)} → {String(h.plan_year_end ?? h.form_year)} · {Number(h.active_participants_boy ?? 0).toLocaleString()} → {Number(h.active_participants_eoy ?? 0).toLocaleString()} active participants · {String(h.plan_name ?? h.form_type)}</div>)}
+              </details>
+            )}
+            {publicGrowth.revenue.length > 0 && (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Revenue observations ({publicGrowth.revenue.length})</summary>
+                {publicGrowth.revenue.slice(0, 30).map((r, i) => <div key={`rev-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>{String(r.observed_on)} · {dollars(r.estimated_revenue)} estimated · {String(r.revenue_band ?? r.source)}</div>)}
+              </details>
+            )}
+            {publicGrowth.opportunities.length > 0 && (
+              <details>
+                <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">SAM opportunities ({publicGrowth.opportunities.length})</summary>
+                {publicGrowth.opportunities.slice(0, 20).map((m, i) => {
+                  const opportunity = (m.sam_opportunities ?? {}) as Record<string, unknown>;
+                  return <div key={`opp-${i}`} className="border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}><strong>{String(m.relationship)}</strong> · {String(opportunity.title ?? "SAM opportunity")}{opportunity.posted_date ? ` · posted ${String(opportunity.posted_date)}` : ""}{opportunity.response_deadline ? ` · due ${String(opportunity.response_deadline).slice(0, 10)}` : ""}{opportunity.source_url ? <a href={String(opportunity.source_url)} target="_blank" rel="noreferrer" className="ml-1 text-[var(--accent)] hover:underline">SAM ↗</a> : null}</div>;
+                })}
+              </details>
+            )}
+          </div>
+        )}
         {/* Quick actions — act on the lead without closing the drawer + hunting the row. */}
         <div className="mb-3 flex items-center gap-2">
           <button onClick={() => onStar(c.id, !c.starred)} className="rounded-md border px-2.5 py-1 text-xs" style={{ borderColor: "var(--border)", color: c.starred ? "var(--tier-b)" : "var(--text-muted)" }}>
