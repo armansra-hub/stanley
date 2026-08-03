@@ -25,12 +25,15 @@ async function run(req: NextRequest) {
   const url = new URL(req.url), source = url.searchParams.get("source") ?? "usaspending";
   const n = Math.min(Math.max(Number(url.searchParams.get("n") ?? 2) || 2, 1), 10);
   const offset = Math.max(Number(url.searchParams.get("offset") ?? 0) || 0, 0);
+  const chunkAwards = url.searchParams.has("awardOffset") || url.searchParams.has("awardLimit");
+  const awardOffset = Math.max(Number(url.searchParams.get("awardOffset") ?? 0) || 0, 0);
+  const awardLimit = Math.min(100, Math.max(Number(url.searchParams.get("awardLimit") ?? 10) || 10, 1));
   if (!new Set(["usaspending", "usaspending-subawards", "sam-entity", "sam-opportunities", "revenue"]).has(source)) return NextResponse.json({ error: `unsupported source ${source}` }, { status: 400 });
   const result = source === "sam-entity" ? await sweepSamTamBatch(n, offset)
     : source === "sam-opportunities" ? await sweepSamOpportunities(Math.min(365, Math.max(1, Number(url.searchParams.get("days") ?? 31) || 31)), offset, Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 500) || 500)))
     : source === "revenue" ? await sweepRevenueTamBatch(Math.min(500, Math.max(n, Number(url.searchParams.get("limit") ?? 250) || 250)), offset)
     : source === "usaspending-subawards" ? await sweepUsaspendingSubawardsTamBatch(n, offset)
-    : await sweepUsaspendingTamBatch(n, offset);
+    : await sweepUsaspendingTamBatch(n, offset, chunkAwards ? { awardOffset, awardLimit } : {});
   const matched = "matched" in result ? result.matched : "matches" in result ? result.matches : "observed" in result ? result.observed : 0;
   await logEvent("headhunter", `public_growth.${source}`, { summary: `Public growth ${source}: ${matched}/${result.checked} matched or observed, ${result.triggers} trigger events`, entity_type: "cron", meta: { ...result, receipts: undefined } });
   return NextResponse.json(result);

@@ -18,7 +18,27 @@ export interface CompanySweepReceipt {
   awards: number;
   transactions: number;
   triggers: number;
+  awardOffset?: number;
+  nextAwardOffset?: number;
+  awardTotal?: number;
+  awardDone?: boolean;
   error?: string;
+}
+
+async function loadStoredContractFacts(entityId: string): Promise<{ awards: AwardFact[]; transactions: TransactionFact[]; agencies: string[] }> {
+  const db = serviceClient();
+  const { data: storedAwards, error } = await db.from("federal_awards").select("id,generated_award_id,start_date,end_date,award_ceiling,current_award_amount,total_obligations,awarding_agency").eq("government_entity_id", entityId).limit(5000);
+  if (error) throw new Error(`stored award metrics load failed: ${error.message}`);
+  const awards: AwardFact[] = (storedAwards ?? []).map((award: any) => ({ generatedAwardId: String(award.generated_award_id), startDate: award.start_date, endDate: award.end_date, awardCeiling: Number(award.award_ceiling ?? 0), currentAwardAmount: Number(award.current_award_amount ?? 0), totalObligations: Number(award.total_obligations ?? 0), awardingAgency: award.awarding_agency }));
+  const transactions: TransactionFact[] = [];
+  const ids = (storedAwards ?? []).map((award: any) => String(award.id));
+  for (let start = 0; start < ids.length; start += 100) {
+    const { data: rows, error: txError } = await db.from("federal_award_transactions").select("external_transaction_id,action_date,federal_action_obligation,modification_number,federal_award_id").in("federal_award_id", ids.slice(start, start + 100)).limit(5000);
+    if (txError) throw new Error(`stored transaction metrics load failed: ${txError.message}`);
+    const generatedById = new Map((storedAwards ?? []).map((award: any) => [String(award.id), String(award.generated_award_id)]));
+    transactions.push(...(rows ?? []).map((transaction: any) => ({ externalTransactionId: String(transaction.external_transaction_id), generatedAwardId: generatedById.get(String(transaction.federal_award_id)) ?? "", actionDate: String(transaction.action_date), obligation: Number(transaction.federal_action_obligation ?? 0), modificationNumber: transaction.modification_number ?? null })));
+  }
+  return { awards, transactions, agencies: [...new Set(awards.map((award) => award.awardingAgency).filter((agency): agency is string => Boolean(agency)))] };
 }
 
 async function saveMetrics(companyId: string, metrics: ReturnType<typeof calculateContractMetrics>, newAgencies: string[]) {
@@ -41,7 +61,7 @@ async function saveMetrics(companyId: string, metrics: ReturnType<typeof calcula
   if (error) throw new Error(`contract metrics upsert failed: ${error.message}`);
 }
 
-export async function sweepUsaspendingCompany(company: TamIdentity): Promise<CompanySweepReceipt> {
+export async function sweepUsaspendingCompany(company: TamIdentity, options: { awardOffset?: number; awardLimit?: number } = {}): Promise<CompanySweepReceipt> {
   const receipt: CompanySweepReceipt = { companyId: company.id, companyName: company.name, status: "no_awards", awards: 0, transactions: 0, triggers: 0 };
   try {
     const suggestions = await autocompleteRecipients(company.name);
@@ -49,9 +69,12 @@ export async function sweepUsaspendingCompany(company: TamIdentity): Promise<Com
     if (!exactNames.length) exactNames.push(company.name);
 
     for (const recipientName of exactNames.slice(0, 4)) {
-      const searchRows = (await searchContractAwards(recipientName)).filter((row) => normalizeName(row.recipientName) === normalizeName(recipientName));
-      if (!searchRows.length) continue;
-      const seed = compactAward(await fetchAwardDetail(searchRows[0].generatedId));
+      const allSearchRows = (await searchContractAwards(recipientName)).filter((row) => normalizeName(row.recipientName) === normalizeName(recipientName));
+      if (!allSearchRows.length) continue;
+      const awardOffset = Math.max(0, options.awardOffset ?? 0), awardLimit = Math.max(1, Math.min(100, options.awardLimit ?? allSearchRows.length));
+      const searchRows = allSearchRows.slice(awardOffset, awardOffset + awardLimit);
+      receipt.awardOffset = awardOffset; receipt.nextAwardOffset = awardOffset + searchRows.length; receipt.awardTotal = allSearchRows.length; receipt.awardDone = awardOffset + searchRows.length >= allSearchRows.length;
+      const seed = compactAward(await fetchAwardDetail(allSearchRows[0].generatedId));
       const decision = decideIdentityMatch(company, { legalName: seed.recipient.legalName, city: seed.recipient.city, state: seed.recipient.state, uei: seed.recipient.uei });
       const entityId = await saveGovernmentEntity({
         uei: seed.recipient.uei, usaspending_recipient_id: seed.recipient.recipientId, legal_name: seed.recipient.legalName,
@@ -95,12 +118,15 @@ export async function sweepUsaspendingCompany(company: TamIdentity): Promise<Com
         };
         if (await recordPublicGrowthTrigger(company.id, awardEvent, "USAspending", sourceUrl, decision.confidence)) receipt.triggers++;
       }
-      const metrics = calculateContractMetrics(awardFacts, transactionFacts);
-      await saveMetrics(company.id, metrics, [...agencies]);
-      for (const event of deriveContractEvents(metrics)) {
-        const profile = `https://www.usaspending.gov/recipient/${encodeURIComponent(seed.recipient.recipientId ?? seed.recipient.uei ?? seed.recipient.legalName)}`;
-        const eventUrl = `${profile}?signal=${encodeURIComponent(event.type)}&asof=${encodeURIComponent(event.signalDate ?? "unknown")}`;
-        if (await recordPublicGrowthTrigger(company.id, event, "USAspending", eventUrl, decision.confidence)) receipt.triggers++;
+      if (receipt.awardDone) {
+        const stored = await loadStoredContractFacts(entityId);
+        const metrics = calculateContractMetrics(stored.awards, stored.transactions);
+        await saveMetrics(company.id, metrics, stored.agencies);
+        for (const event of deriveContractEvents(metrics)) {
+          const profile = `https://www.usaspending.gov/recipient/${encodeURIComponent(seed.recipient.recipientId ?? seed.recipient.uei ?? seed.recipient.legalName)}`;
+          const eventUrl = `${profile}?signal=${encodeURIComponent(event.type)}&asof=${encodeURIComponent(event.signalDate ?? "unknown")}`;
+          if (await recordPublicGrowthTrigger(company.id, event, "USAspending", eventUrl, decision.confidence)) receipt.triggers++;
+        }
       }
       if (receipt.triggers) await recomputePriority(company.id);
       return receipt;
@@ -153,11 +179,11 @@ export async function loadTamBatch(limit: number, offset: number): Promise<TamId
   return (data ?? []) as TamIdentity[];
 }
 
-export async function sweepUsaspendingTamBatch(limit: number, offset: number) {
+export async function sweepUsaspendingTamBatch(limit: number, offset: number, options: { awardOffset?: number; awardLimit?: number } = {}) {
   const companies = await loadTamBatch(limit, offset), receipts: CompanySweepReceipt[] = [];
   // Deliberately serial: each company can fan out to award and transaction calls;
   // bounded execution and clean checkpointing are more valuable than burst speed.
-  for (const company of companies) receipts.push(await sweepUsaspendingCompany(company));
+  for (const company of companies) receipts.push(await sweepUsaspendingCompany(company, options));
   const totals = receipts.reduce((s, r) => ({ matched: s.matched + (r.status === "matched" ? 1 : 0), ambiguous: s.ambiguous + (r.status === "ambiguous" ? 1 : 0), errors: s.errors + (r.status === "error" ? 1 : 0), awards: s.awards + r.awards, transactions: s.transactions + r.transactions, triggers: s.triggers + r.triggers }), { matched: 0, ambiguous: 0, errors: 0, awards: 0, transactions: 0, triggers: 0 });
   return { source: "usaspending", offset, checked: companies.length, nextOffset: offset + companies.length, done: companies.length < limit, ...totals, receipts };
 }
