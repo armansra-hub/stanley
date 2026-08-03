@@ -333,10 +333,10 @@ export async function setSiteChecked(id: string, hash: string): Promise<void> {
 export async function pickCarriersForRotation(limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name")
-    .eq("is_base", true)
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam")
     .or("subindustry.ilike.*truck*,subindustry.ilike.*transport*,subindustry.ilike.*logistic*,subindustry.ilike.*freight*,subindustry.ilike.*carrier*,subindustry.ilike.*warehous*,subindustry.ilike.*moving*,subindustry.ilike.*hauling*")
-    .order("signals_checked_at", { ascending: true, nullsFirst: true })
-    .order("claimable", { ascending: false })
+    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
 }
