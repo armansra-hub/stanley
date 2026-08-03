@@ -6,7 +6,10 @@ import { sweepRevenueTamBatch } from "@/lib/publicGrowth/revenueSweep";
 import { sweepSamOpportunities } from "@/lib/publicGrowth/opportunitySweep";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Award-heavy incumbents can have hundreds of awards and thousands of
+// transactions. Keep the ordinary batches small, but allow one exact company
+// enough time to persist its complete history instead of failing at 60 seconds.
+export const maxDuration = 300;
 
 function authorized(req: NextRequest) {
   const url = new URL(req.url), auth = req.headers.get("authorization");
