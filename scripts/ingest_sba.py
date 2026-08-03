@@ -41,18 +41,18 @@ def norm(s):
     s = (s or "").lower(); s = re.sub(r"&", " and ", s); s = re.sub(r"[^a-z0-9]+", " ", s); s = NOISE.sub(" ", s)
     return re.sub(r"\s+", " ", s).strip()
 
-# 1) base: (norm name, state) -> {id, status, exported_at}
+# 1) exact NetSuite TAM only: (norm name, state) -> {id, status, exported_at}
 key2co = {}; frm = 0
 while True:
     b = json.load(urllib.request.urlopen(urllib.request.Request(
-        f"{URL}/rest/v1/companies?is_base=eq.true&select=id,name,state,city,status,exported_at&limit=1000&offset={frm}", headers=H), context=CTX))
+        f"{URL}/rest/v1/companies?lists=cs.%7Bnetsuite_tam%7D&status=neq.removed_from_tam&select=id,name,state,city,status,exported_at&order=id&limit=1000&offset={frm}", headers=H), context=CTX))
     for r in b:
         n = norm(r["name"]); st = (r.get("state") or "").strip().upper()
         if n and len(n) >= 5 and st:
             key2co.setdefault((n, st), r)
     if len(b) < 1000: break
     frm += 1000
-print("base name+state keys:", len(key2co))
+print("NetSuite TAM name+state keys:", len(key2co))
 
 # 2) scan both files for recent approvals on matched companies
 cutoff = datetime.datetime.now() - datetime.timedelta(days=LOOKBACK_DAYS)
@@ -105,7 +105,7 @@ def scan(path, program):
             detail = "; ".join(x for x in [f"filed as \"{row[iN].strip()}\" ({loan_city.title()}, {row[iS].upper()})", f"industry: {naics}" if naics else "", f"lender: {bank}" if bank else ""] if x)
             trig_rows.append({
                 "company_id": co["id"], "type": "sba_loan", "strength": 75, "half_life_days": 180,
-                "summary": f"SBA {program} loan approved {dt.strftime('%-m/%-d/%Y')} — {amt_s}. {check}. {detail}",
+                "summary": f"SBA {program} loan approved {dt.month}/{dt.day}/{dt.year} — {amt_s}. {check}. {detail}",
                 "source_name": f"SBA {program} FOIA", "source_url": f"{DATASET_PAGE}#{program.lower().replace('(','').replace(')','')}-{co['id'][:8]}-{day}",
                 "signal_date": f"{day}T00:00:00",
             })

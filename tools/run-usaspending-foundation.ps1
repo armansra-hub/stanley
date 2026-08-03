@@ -29,7 +29,12 @@ $resumeAwardOffsets = @{}
 
 if ($Mode -eq 'Awards') {
   $batchRows = @()
-  foreach ($file in Get-ChildItem -LiteralPath $runDirectory -Filter 'usaspending*.jsonl') {
+  $primeReceiptFiles = @(
+    Get-ChildItem -LiteralPath $runDirectory -Filter 'usaspending-foundation-*.jsonl'
+    Get-ChildItem -LiteralPath $runDirectory -Filter 'usaspending-worker-*.jsonl'
+    Get-ChildItem -LiteralPath $runDirectory -Filter 'usaspending-heavy-*.jsonl'
+  )
+  foreach ($file in $primeReceiptFiles) {
     foreach ($line in Get-Content -LiteralPath $file.FullName) {
       try { $row = $line | ConvertFrom-Json; if ($null -ne $row.offset) { $batchRows += $row } } catch {}
     }
