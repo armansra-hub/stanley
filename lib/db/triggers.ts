@@ -185,12 +185,10 @@ export async function setErpFlags(companyId: string, flags: { pe_owned?: boolean
  * same ordering before any are marked checked, so disjoint slices). */
 export async function pickForRotation(limit: number, offset = 0): Promise<{ id: string; name: string; domain: string | null; claimable: boolean }[]> {
   const db = serviceClient();
-  // Monitor the CSV base AND live Sales Nav Growth discoveries.
   const { data } = await db.from("companies").select("id, name, domain, claimable")
-    .or('is_base.eq.true,sources.cs.["sales_nav_growth"]')
-    .order("last_checked_at", { ascending: true, nullsFirst: true })
-    .order("claimable", { ascending: false }) // NetSuite TAM swept first
-    .order("fit_weight", { ascending: false })
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam")
+    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
 }
@@ -206,10 +204,10 @@ export async function markChecked(ids: string[]): Promise<void> {
 export async function pickAtsForRotation(limit: number, offset = 0): Promise<{ id: string; name: string; domain: string; ats_type: string | null; ats_token: string | null }[]> {
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name, domain, ats_type, ats_token")
-    .or("is_base.eq.true,sources.cs.[\"sales_nav_growth\"]")
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam")
     .not("domain", "is", null)
-    .order("ats_checked_at", { ascending: true, nullsFirst: true })
-    .order("claimable", { ascending: false })
+    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
 }
@@ -228,9 +226,9 @@ export async function setAtsChecked(id: string, patch: { ats_type?: string; ats_
 export async function pickSignalsForRotation(limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name")
-    .or("is_base.eq.true,sources.cs.[\"sales_nav_growth\"]")
-    .order("signals_checked_at", { ascending: true, nullsFirst: true })
-    .order("claimable", { ascending: false })
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam")
+    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
 }
@@ -301,12 +299,14 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
  *        "tail" = the monitored non-claimable base (ZoomInfo-only leads) — the AE
  *        mainly works claimable but still wants the ZoomInfo TAM watched. */
 export async function pickSitesForRotation(limit: number, offset = 0, scope: "claimable" | "tail" = "claimable"): Promise<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null }[]> {
+  if (scope === "tail") return [];
   const db = serviceClient();
   const base: any = db.from("companies").select("id, name, domain, site_hash, site_checked_at")
-    .eq("is_base", true).not("domain", "is", null);
-  const scoped = scope === "claimable" ? base.eq("claimable", true) : base.not("claimable", "is", true);
-  const { data } = await scoped
-    .order("site_checked_at", { ascending: true, nullsFirst: true })
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam")
+    .not("domain", "is", null);
+  const { data } = await base
+    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
 }
@@ -346,9 +346,10 @@ export async function pickCarriersForRotation(limit: number, offset = 0): Promis
 export async function pickSosCompaniesForRotation(state: string, limit: number, offset = 0): Promise<{ id: string; name: string; city: string | null }[]> {
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name, city")
-    .eq("is_base", true).eq("state", state)
-    .order("claimable", { ascending: false })
-    .order("name", { ascending: true })
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam")
+    .eq("state", state)
+    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
 }
@@ -375,7 +376,8 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   const hasEventFilters = typeFilter.length > 0 || signalDateFrom != null || signalDateTo != null || opts.minimumEmployees != null || opts.minimumParticipants != null;
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
   let q = db.from("companies").select("*, triggers(*), lead_insights(*)", { count: "exact" })
-    .or('is_base.eq.true,sources.cs.["sales_nav_growth"]')
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam")
     .or("priority.gt.0,headcount_growth_pct.gte.25"); // a news trigger OR a ≥25% DOL-5500 headcount signal
   if (!opts.includeHidden) q = q.not("status", "in", "(reviewed,dismissed,exported_csv,exported_sql)");
   // Same filter surface as Discovered / TAM Base.

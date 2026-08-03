@@ -12,7 +12,7 @@ async function run(req: NextRequest) {
   const auth = req.headers.get("authorization");
   const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
   const secret = req.headers.get("x-cron-secret") ?? url.searchParams.get("secret") ?? bearer;
-  if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
+  if (!secret || !((process.env.TAM_GROWTH_SWEEP_SECRET && secret === process.env.TAM_GROWTH_SWEEP_SECRET) || (process.env.CRON_SECRET && secret === process.env.CRON_SECRET))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const n = Math.min(Number(url.searchParams.get("n") ?? 120) || 120, 200);
