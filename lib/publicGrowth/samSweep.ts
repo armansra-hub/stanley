@@ -10,12 +10,12 @@ import type { DerivedGrowthEvent, TamIdentity } from "./types";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 function statusValue(value: unknown): "small" | "other_than_small" | "unknown" {
-  if (value === true || String(value).toLowerCase() === "yes") return "small";
-  if (value === false || String(value).toLowerCase() === "no") return "other_than_small";
+  if (value === true || /^(y|yes|true|1)$/i.test(String(value))) return "small";
+  if (value === false || /^(n|no|false|0)$/i.test(String(value))) return "other_than_small";
   return "unknown";
 }
 
-async function saveNaicsAndDerive(entityId: string, companyId: string, sam: ReturnType<typeof compactSamEntity>): Promise<number> {
+export async function saveNaicsAndDerive(entityId: string, companyId: string, sam: ReturnType<typeof compactSamEntity>): Promise<number> {
   const db = serviceClient(), observedOn = new Date().toISOString().slice(0, 10), profileUrl = sbaProfileUrl(sam.uei, sam.cageCode);
   let triggers = 0;
   for (const n of sam.naics) {
@@ -34,6 +34,70 @@ async function saveNaicsAndDerive(entityId: string, companyId: string, sam: Retu
     for (const event of events) if (await recordPublicGrowthTrigger(companyId, event, "SAM.gov / SBA Small Business Search", `${profileUrl}?signal=${encodeURIComponent(event.type)}&naics=${encodeURIComponent(n.code)}`, 1)) triggers++;
   }
   return triggers;
+}
+
+export type SamExtractObservationInput = {
+  companyId: string;
+  matchMethod?: "uei" | "cage" | "domain" | "name";
+  sam: ReturnType<typeof compactSamEntity>;
+};
+
+export async function ingestSamExtractObservations(rows: SamExtractObservationInput[]) {
+  const db = serviceClient();
+  const companyIds = [...new Set(rows.map((row) => row.companyId))];
+  const { data: companies, error } = await db.from("companies")
+    .select("id,name,city,state,domain,website_raw")
+    .in("id", companyIds)
+    .contains("lists", ["netsuite_tam"])
+    .neq("status", "removed_from_tam");
+  if (error) throw new Error(`SAM extract TAM load failed: ${error.message}`);
+  const byId = new Map((companies ?? []).map((company: TamIdentity) => [company.id, company]));
+  const receipts = [];
+
+  for (const row of rows) {
+    const company = byId.get(row.companyId);
+    if (!company) {
+      receipts.push({ companyId: row.companyId, status: "not_in_tam", entities: 0, naics: 0, triggers: 0 });
+      continue;
+    }
+    try {
+      const sam = row.sam;
+      const deterministic = decideIdentityMatch(company, {
+        legalName: sam.legalName, dbaName: sam.dbaName, domain: sam.domain,
+        city: sam.city, state: sam.state, uei: sam.uei, cageCode: sam.cageCode,
+      });
+      const decision = row.matchMethod === "uei" || row.matchMethod === "cage"
+        ? { status: "verified" as const, method: row.matchMethod, confidence: 1, evidence: { ...deterministic.evidence, identifierMatch: row.matchMethod } }
+        : deterministic;
+      const entityId = await saveGovernmentEntity({
+        uei: sam.uei, cage_code: sam.cageCode, legal_name: sam.legalName,
+        dba_name: sam.dbaName, website: sam.website, domain: sam.domain,
+        address_line1: sam.address, city: sam.city, state: sam.state,
+        postal_code: sam.postalCode, country_code: sam.countryCode,
+        registration_status: sam.registrationStatus, registration_date: sam.registrationDate,
+        expiration_date: sam.expirationDate, entity_start_date: sam.entityStartDate,
+        parent_uei: sam.parentUei, parent_name: sam.parentName, source: "SAM.gov public monthly extract",
+        source_url: `https://sam.gov/entity/${encodeURIComponent(sam.uei ?? sam.cageCode ?? sam.legalName)}/coreData`,
+        source_updated_at: sam.lastUpdateDate, evidence: { psc: sam.psc, businessTypes: sam.businessTypes, extract: true },
+      });
+      await saveCompanyGovernmentMatch(company.id, entityId, decision);
+      const triggers = decision.status === "verified" ? await saveNaicsAndDerive(entityId, company.id, sam) : 0;
+      if (triggers) await recomputePriority(company.id);
+      receipts.push({ companyId: company.id, status: decision.status, entities: 1, naics: decision.status === "verified" ? sam.naics.length : 0, triggers });
+    } catch (ingestError) {
+      receipts.push({ companyId: row.companyId, status: "error", entities: 0, naics: 0, triggers: 0, error: ingestError instanceof Error ? ingestError.message : String(ingestError) });
+    }
+  }
+  return {
+    checked: rows.length,
+    matched: receipts.filter((row) => row.status === "verified").length,
+    ambiguous: receipts.filter((row) => row.status === "pending").length,
+    errors: receipts.filter((row) => row.status === "error").length,
+    entities: receipts.reduce((sum, row) => sum + row.entities, 0),
+    naics: receipts.reduce((sum, row) => sum + row.naics, 0),
+    triggers: receipts.reduce((sum, row) => sum + row.triggers, 0),
+    receipts,
+  };
 }
 
 export async function sweepSamCompany(company: TamIdentity) {
