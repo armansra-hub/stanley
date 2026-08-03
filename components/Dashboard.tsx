@@ -1005,8 +1005,6 @@ export default function Dashboard({
                       </>
                     ) : allRowTriggers.length > 0 ? (<>
                       <QuickViewTriggerList triggers={allRowTriggers} labels={TRIGGER_LABELS} sinceLabel={sinceLabel} />
-                      // EVERY trigger on the lead, strongest first (not just the top one
-                      // + a "+N more" count) — each with its label, age, and summary.
                       <div className="hidden space-y-1">
                         {rowTriggers.map((t, ti) => (
                           <div key={ti}>
