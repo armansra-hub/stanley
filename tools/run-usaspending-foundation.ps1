@@ -23,6 +23,7 @@ try { $secret = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 $headers = @{ 'x-cron-secret' = $secret }
 $completed = [Collections.Generic.HashSet[int]]::new()
+$resumeAwardOffsets = @{}
 
 if ($Mode -eq 'Awards') {
   $batchRows = @()
@@ -37,6 +38,9 @@ if ($Mode -eq 'Awards') {
     $awardComplete = $row.status -ne 'matched' -or [bool]$row.awardDone
     if ([int]$row.checked -gt 0 -and [int]$row.errors -eq 0 -and $awardComplete) {
       for ($i = [int]$row.offset; $i -lt [Math]::Min([int]$row.offset + [int]$row.checked, $TotalCompanies); $i++) { [void]$completed.Add($i) }
+    }
+    elseif ($row.status -eq 'matched' -and $row.awardDone -eq $false -and [int]$row.nextAwardOffset -gt 0) {
+      $resumeAwardOffsets[[int]$row.offset] = [int]$row.nextAwardOffset
     }
   }
   $companyRows = @()
@@ -67,7 +71,8 @@ for ($offset = $StartOffset + $WorkerIndex * $BatchSize; $offset -lt $TotalCompa
   if ($pending.Count -eq 0) { continue }
   $uri = "$BaseUrl/api/cron/public-growth?source=$source&n=$limit&offset=$offset"
   if ($Mode -eq 'Awards' -and $BatchSize -eq 1) {
-    $uri += '&awardOffset=0&awardLimit=50'
+    $initialAwardOffset = if ($resumeAwardOffsets.ContainsKey($offset)) { [int]$resumeAwardOffsets[$offset] } else { 0 }
+    $uri += "&awardOffset=$initialAwardOffset&awardLimit=50"
   }
   try {
     $result = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec $RequestTimeoutSeconds

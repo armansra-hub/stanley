@@ -30,7 +30,7 @@ export interface AwardSearchRow {
   fundingSubagency: string;
 }
 
-export async function searchContractAwards(recipient: string, startDate = "2007-10-01", endDate = new Date(Date.now() + 120 * 86_400_000).toISOString().slice(0, 10), maxPages = 25): Promise<AwardSearchRow[]> {
+export async function searchContractAwards(recipient: string, startDate = "2007-10-01", endDate = new Date(Date.now() + 120 * 86_400_000).toISOString().slice(0, 10), maxPages = 100): Promise<AwardSearchRow[]> {
   const all: AwardSearchRow[] = [];
   for (let page = 1; page <= maxPages; page++) {
     const body = {
@@ -52,7 +52,7 @@ export async function searchContractAwards(recipient: string, startDate = "2007-
   return [...new Map(all.map((x) => [x.generatedId, x])).values()];
 }
 
-export async function searchReceivedContractSubawards(recipient: string, startDate = "2007-10-01", endDate = new Date().toISOString().slice(0, 10), maxPages = 25): Promise<any[]> {
+export async function searchReceivedContractSubawards(recipient: string, startDate = "2007-10-01", endDate = new Date().toISOString().slice(0, 10), maxPages = 100): Promise<any[]> {
   const all: any[] = [];
   for (let page = 1; page <= maxPages; page++) {
     const body = { filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: startDate, end_date: endDate }] }, fields: ["Sub-Award ID", "Sub-Awardee Name", "Sub-Award Date", "Sub-Award Amount", "Sub-Award Description", "Sub-Recipient UEI", "Awarding Agency", "Awarding Sub Agency", "Prime Award ID", "Prime Recipient Name", "Prime Award Recipient UEI"], limit: 100, page, sort: "Sub-Award Date", order: "desc", subawards: true, spending_level: "subawards" };
