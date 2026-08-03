@@ -4,6 +4,8 @@ param(
   [int]$WorkerIndex = 0,
   [int]$WorkerCount = 1,
   [int]$BatchSize = 10,
+  [ValidateRange(1, 100)]
+  [int]$AwardPageSize = 100,
   [int]$StartOffset = 0,
   [int]$TotalCompanies = 6949,
   [int]$RequestTimeoutSeconds = 75,
@@ -72,7 +74,7 @@ for ($offset = $StartOffset + $WorkerIndex * $BatchSize; $offset -lt $TotalCompa
   $uri = "$BaseUrl/api/cron/public-growth?source=$source&n=$limit&offset=$offset"
   if ($Mode -eq 'Awards' -and $BatchSize -eq 1) {
     $initialAwardOffset = if ($resumeAwardOffsets.ContainsKey($offset)) { [int]$resumeAwardOffsets[$offset] } else { 0 }
-    $uri += "&awardOffset=$initialAwardOffset&awardLimit=50"
+    $uri += "&awardOffset=$initialAwardOffset&awardLimit=$AwardPageSize"
   }
   try {
     $result = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec $RequestTimeoutSeconds
@@ -93,7 +95,7 @@ for ($offset = $StartOffset + $WorkerIndex * $BatchSize; $offset -lt $TotalCompa
       $awardTotal = [int]$primary.awardTotal
       while ($awardOffset -lt $awardTotal) {
         if ($CooldownMilliseconds -gt 0) { Start-Sleep -Milliseconds $CooldownMilliseconds }
-        $chunkUri = "$BaseUrl/api/cron/public-growth?source=usaspending&n=1&offset=$offset&awardOffset=$awardOffset&awardLimit=50"
+        $chunkUri = "$BaseUrl/api/cron/public-growth?source=usaspending&n=1&offset=$offset&awardOffset=$awardOffset&awardLimit=$AwardPageSize"
         $chunk = Invoke-RestMethod -Uri $chunkUri -Headers $headers -TimeoutSec $RequestTimeoutSeconds
         $chunkReceipt = @($chunk.receipts)[0]
         Write-Receipt ([ordered]@{
