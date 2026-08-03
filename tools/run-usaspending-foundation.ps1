@@ -5,7 +5,7 @@ param(
   [int]$WorkerCount = 1,
   [int]$BatchSize = 10,
   [ValidateRange(1, 100)]
-  [int]$AwardPageSize = 100,
+  [int]$AwardPageSize = 50,
   [int]$StartOffset = 0,
   [int]$TotalCompanies = 6949,
   [int]$RequestTimeoutSeconds = 75,
