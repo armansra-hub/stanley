@@ -1004,7 +1004,7 @@ export default function Dashboard({
                         )}
                       </>
                     ) : allRowTriggers.length > 0 ? (<>
-                      <CompactTriggerSummary triggers={allRowTriggers} labels={TRIGGER_LABELS} sinceLabel={sinceLabel} />
+                      <QuickViewTriggerList triggers={allRowTriggers} labels={TRIGGER_LABELS} sinceLabel={sinceLabel} />
                       // EVERY trigger on the lead, strongest first (not just the top one
                       // + a "+N more" count) — each with its label, age, and summary.
                       <div className="hidden space-y-1">
@@ -1429,6 +1429,38 @@ function CompactTriggerSummary({
         {hiddenGroups > 0 && <span className="px-1 text-[10px] text-[var(--text-muted)]">+{hiddenGroups} more type{hiddenGroups === 1 ? "" : "s"}</span>}
       </div>
       {top?.summary && <div className="truncate text-xs text-[var(--text-muted)]" title={top.summary}>{top.summary}</div>}
+    </div>
+  );
+}
+
+function QuickViewTriggerList({
+  triggers,
+  labels,
+  sinceLabel,
+}: {
+  triggers: Array<{ type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string }>;
+  labels: Record<string, string>;
+  sinceLabel: (iso: string | null | undefined) => string;
+}) {
+  const groups = Array.from(triggers.reduce((map, trigger) => {
+    const group = map.get(trigger.type) ?? [];
+    group.push(trigger);
+    map.set(trigger.type, group);
+    return map;
+  }, new Map<string, typeof triggers>()).values());
+  return (
+    <div className="space-y-1">
+      {groups.map((group) => group.length >= 3 ? (
+        <div key={group[0].type} className="rounded border px-2 py-1 text-xs font-semibold" style={{ borderColor: "var(--gold)", color: "var(--gold)", background: "color-mix(in srgb, var(--gold) 10%, transparent)" }} title={`Open the lead record to review all ${group.length} events.`}>
+          {labels[group[0].type] ?? group[0].type.replace(/_/g, " ")} x{group.length} - open lead record for details
+        </div>
+      ) : group.map((trigger, index) => (
+        <div key={`${trigger.type}-${index}`}>
+          <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{labels[trigger.type] ?? trigger.type.replace(/_/g, " ")} - {sinceLabel(trigger.signal_date ?? trigger.detected_at)}</div>
+          <div className="text-xs text-[var(--text-muted)]">{trigger.summary}</div>
+          {trigger.source_url ? <a href={trigger.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>View source</a> : null}
+        </div>
+      )))}
     </div>
   );
 }
