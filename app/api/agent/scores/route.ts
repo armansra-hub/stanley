@@ -109,7 +109,9 @@ export async function POST(req: Request) {
   const hardZeroed: { name: string; reason: string }[] = [];
   const adjusted: { name: string; raw: number; final: number; note: string }[] = [];
   const resurfaced: { id: string; internalId: string; priorStatus: string }[] = [];
-  const hiddenStatuses = new Set(["reviewed", "dismissed", "exported_csv", "exported_sql"]);
+  // Automated regrades may refresh exported leads, but a human review/dismissal
+  // is a durable worklist decision and must never be undone here.
+  const hiddenStatuses = new Set(["exported_csv", "exported_sql"]);
 
   for (const row of rows) {
     for (const company of byNsid.get(row.internalId) ?? []) {
@@ -243,7 +245,7 @@ export async function GET(req: Request) {
       dryRun: "boolean - always try this first",
       label: "string used for the undo snapshot",
       note: "score_adjust_note text",
-      resurfaceCurrentTam: "optional boolean; restores current netsuite_tam rows from hidden workflow statuses without clearing export history",
+      resurfaceCurrentTam: "optional boolean; restores current netsuite_tam rows from exported statuses only; reviewed/dismissed decisions remain hidden",
     },
     row: {
       internalId: "required — NetSuite internal ID, digits (aliases: internal_id, nsid, 'Internal ID')",

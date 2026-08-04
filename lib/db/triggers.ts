@@ -12,11 +12,8 @@ export interface TriggerInput { type: string; summary: string; source_name?: str
 export interface TriggerRow { id: string; company_id: string; type: string; strength: number; half_life_days: number; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string }
 
 /** Insert a trigger (deduped by company + source_url). Returns true if a NEW one landed.
- * RESURFACING: an exported/reviewed lead (NOT dismissed — that's an explicit rejection)
- * whose export is >14 days old gets flipped back to `new` when a genuinely NEW trigger
- * lands — "watch the TAM like a hawk" must include leads already pulled once, or a
- * post-export funding round would stay silently hidden forever. The 14-day grace stops
- * next-day churn on leads the AE just exported and is actively working. */
+ * Human review is durable: reviewed and dismissed leads stay hidden even when a new
+ * public signal lands. Only exported leads may re-enter after the 14-day grace. */
 export async function recordTrigger(companyId: string, t: TriggerInput): Promise<boolean> {
   const spec = TRIGGER_SPEC[t.type] ?? TRIGGER_SPEC.news;
   const db = serviceClient();
@@ -28,7 +25,9 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
   try {
     const { data: c } = await db.from("companies").select("status, exported_at").eq("id", companyId).maybeSingle();
     const s = (c as any)?.status as string | undefined;
-    if (s === "exported_csv" || s === "exported_sql" || s === "reviewed") {
+    // Human review is durable. New signals may resurface exported leads after the
+    // grace period, but must never reopen reviewed or dismissed accounts.
+    if (s === "exported_csv" || s === "exported_sql") {
       const exp = (c as any)?.exported_at ? new Date((c as any).exported_at).getTime() : 0;
       if (Date.now() - exp > 14 * 86_400_000) {
         await db.from("companies").update({ status: "new", has_new_signal: true }).eq("id", companyId);
