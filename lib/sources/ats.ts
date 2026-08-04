@@ -13,7 +13,7 @@ import "server-only";
  * No keys, no Apify. Source-isolated: any failure returns empty / null.
  */
 
-export type AtsType = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "recruitee" | "workable";
+export type AtsType = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "recruitee" | "workable" | "wizehire";
 export interface AtsJob { title: string; description: string; url: string; location: string; date: string | null }
 
 const UA = "Mozilla/5.0 (compatible; StanleyTAMBot/1.0; +https://jarvis-sable-eta.vercel.app)";
@@ -48,6 +48,7 @@ const ATS_PATTERNS: { type: AtsType; re: RegExp }[] = [
   { type: "smartrecruiters", re: /(?:careers|jobs)\.smartrecruiters\.com\/([a-z0-9][a-z0-9_-]+)/i },
   { type: "recruitee", re: /([a-z0-9][a-z0-9_-]+)\.recruitee\.com/i },
   { type: "workable", re: /apply\.workable\.com\/([a-z0-9][a-z0-9_-]+)/i },
+  { type: "wizehire", re: /wizehire\.com\/jobroll\/v1\/bootstrap\/(\d+)\/jobroll\.js/i },
 ];
 const BAD_TOKENS = new Set(["careers", "jobs", "company", "www", "embed", "job_board", "search", "about", "en-us", "en"]);
 
@@ -88,6 +89,11 @@ export async function fetchAtsJobs(type: AtsType, token: string, max = 60): Prom
     } else if (type === "workable") {
       const d = await fetchJson(`https://apply.workable.com/api/v1/widget/accounts/${token}?details=true`);
       for (const j of (d?.jobs ?? []).slice(0, max)) out.push({ title: String(j.title ?? ""), description: htmlToText(j.description ?? ""), url: String(j.url ?? j.shortlink ?? ""), location: String(j.location?.location_str ?? j.city ?? ""), date: j.published_on ?? j.created_at ?? null });
+    } else if (type === "wizehire") {
+      const body = await fetchText(`https://wizehire.com/jobroll/v1/jobs/${token}/jsonp`);
+      const match = body?.match(/^\s*wh_cb\((.*)\);?\s*$/s);
+      const jobs = match ? JSON.parse(match[1]) : [];
+      for (const j of (Array.isArray(jobs) ? jobs : []).slice(0, max)) out.push({ title: String(j.title ?? ""), description: htmlToText(j.snippet ?? ""), url: String(j.url ?? ""), location: String(j.location ?? ""), date: null });
     }
   } catch { /* isolated */ }
   return out.filter((j) => j.title);
