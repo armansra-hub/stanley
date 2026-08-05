@@ -920,7 +920,6 @@ export default function Dashboard({
               const rowTopTrigger = rowTriggers[0];
               const trig = rowTopTrigger;
               const hiddenRowTriggerCount = Math.max(0, nonAwardRowTriggers.length - rowTriggers.length);
-              const federalAwardCount = allRowTriggers.length - nonAwardRowTriggers.length;
               return (
                 <tr
                   key={c.id}
@@ -1003,26 +1002,8 @@ export default function Dashboard({
                           </div>
                         )}
                       </>
-                    ) : allRowTriggers.length > 0 ? (<>
+                    ) : allRowTriggers.length > 0 ? (
                       <QuickViewTriggerList triggers={allRowTriggers} labels={TRIGGER_LABELS} sinceLabel={sinceLabel} />
-                      <div className="hidden space-y-1">
-                        {rowTriggers.map((t, ti) => (
-                          <div key={ti}>
-                            <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>
-                              {t.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : TRIGGER_LABELS[t.type] ?? t.type} · {sinceLabel(t.signal_date ?? t.detected_at)}
-                            </div>
-                            <div className="text-xs text-[var(--text-muted)]">{t.summary}</div>
-                            {t.source_url ? (
-                              <a href={t.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>
-                                View source ↗
-                              </a>
-                            ) : null}
-                          </div>
-                        ))}
-                        {hiddenRowTriggerCount > 0 && <div className="text-[11px] font-medium text-[var(--accent)]">+{hiddenRowTriggerCount} more â€” open lead record</div>}
-                      </div>
-                    </>) : federalAwardCount > 0 ? (
-                      <div className="text-xs font-medium" style={{ color: "var(--gold)" }}>Federal contract activity â€” open lead record for annual totals</div>
                     ) : top ? (
                       <>
                         <div>{top.signal_summary}</div>
@@ -1397,71 +1378,58 @@ function ExportHistoryPanel({
   );
 }
 
-/** Old Gold revival classes — shared by the table rows and the drawer. */
-function CompactTriggerSummary({
-  triggers,
-  labels,
-  sinceLabel,
-}: {
-  triggers: Array<{ type: string; summary: string; signal_date: string | null; detected_at: string }>;
-  labels: Record<string, string>;
-  sinceLabel: (iso: string | null | undefined) => string;
-}) {
-  const groups = Array.from(triggers.reduce((map, trigger) => {
-    const current = map.get(trigger.type) ?? { type: trigger.type, count: 0, latest: trigger };
-    current.count += 1;
-    map.set(trigger.type, current);
-    return map;
-  }, new Map<string, { type: string; count: number; latest: typeof triggers[number] }>()).values());
-  const visible = groups.slice(0, 3);
-  const hiddenGroups = groups.length - visible.length;
-  const top = triggers[0];
-  return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap gap-1">
-        {visible.map((group) => (
-          <span key={group.type} className="rounded border px-1.5 py-0.5 text-[10px] font-semibold" style={{ borderColor: "var(--gold)", color: "var(--gold)", background: "color-mix(in srgb, var(--gold) 12%, transparent)" }} title={group.latest.summary}>
-            {labels[group.type] ?? group.type.replace(/_/g, " ")} · {sinceLabel(group.latest.signal_date ?? group.latest.detected_at)}{group.count >= 3 ? ` ×${group.count}` : ""}
-          </span>
-        ))}
-        {hiddenGroups > 0 && <span className="px-1 text-[10px] text-[var(--text-muted)]">+{hiddenGroups} more type{hiddenGroups === 1 ? "" : "s"}</span>}
-      </div>
-      {top?.summary && <div className="truncate text-xs text-[var(--text-muted)]" title={top.summary}>{top.summary}</div>}
-    </div>
-  );
-}
-
 function QuickViewTriggerList({
   triggers,
   labels,
   sinceLabel,
 }: {
-  triggers: Array<{ type: string; summary: string; source_url: string | null; signal_date: string | null; detected_at: string }>;
+  triggers: Array<{ type: string; summary: string; source_name?: string | null; source_url: string | null; signal_date: string | null; detected_at: string }>;
   labels: Record<string, string>;
   sinceLabel: (iso: string | null | undefined) => string;
 }) {
+  const groupKey = (type: string) => {
+    if (/^(federal_|sam_award|sam_incumbent|gov_contract)/.test(type)) return "federal_contracts";
+    if (/^(employee_|headcount_|hiring_velocity)/.test(type)) return "employee_growth";
+    return type;
+  };
+  const groupLabel = (key: string, firstType: string) => {
+    if (key === "federal_contracts") return "📜 Federal award";
+    if (key === "employee_growth") return "📈 Employee growth";
+    return labels[firstType] ?? firstType.replace(/_/g, " ");
+  };
+  const latestDateInGroup = (group: typeof triggers) => {
+    const latest = group.reduce((current, trigger) => {
+      const currentTime = new Date(current.signal_date ?? current.detected_at).getTime();
+      const triggerTime = new Date(trigger.signal_date ?? trigger.detected_at).getTime();
+      return triggerTime > currentTime ? trigger : current;
+    }, group[0]);
+    return latest.signal_date ?? latest.detected_at;
+  };
   const groups = Array.from(triggers.reduce((map, trigger) => {
-    const group = map.get(trigger.type) ?? [];
+    const key = groupKey(trigger.type);
+    const group = map.get(key) ?? [];
     group.push(trigger);
-    map.set(trigger.type, group);
+    map.set(key, group);
     return map;
-  }, new Map<string, typeof triggers>()).values());
+  }, new Map<string, typeof triggers>()).entries());
   return (
     <div className="space-y-1">
-      {groups.map((group) => group.length >= 3 ? (
-        <div key={group[0].type} className="rounded border px-2 py-1 text-xs font-semibold" style={{ borderColor: "var(--gold)", color: "var(--gold)", background: "color-mix(in srgb, var(--gold) 10%, transparent)" }} title={`Open the lead record to review all ${group.length} events.`}>
-          {labels[group[0].type] ?? group[0].type.replace(/_/g, " ")} x{group.length} - open lead record for details
+      {groups.map(([key, group]) => group.length >= 3 ? (
+        <div key={key} className="rounded border px-2 py-1 text-xs font-semibold" style={{ borderColor: "var(--gold)", color: "var(--gold)", background: "color-mix(in srgb, var(--gold) 10%, transparent)" }} title={`Open the lead record to review all ${group.length} events.`}>
+          {groupLabel(key, group[0].type)} ×{group.length} · latest {sinceLabel(latestDateInGroup(group))} — open lead record for details
         </div>
       ) : group.map((trigger, index) => (
         <div key={`${trigger.type}-${index}`}>
-          <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{labels[trigger.type] ?? trigger.type.replace(/_/g, " ")} - {sinceLabel(trigger.signal_date ?? trigger.detected_at)}</div>
+          <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{trigger.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : labels[trigger.type] ?? trigger.type.replace(/_/g, " ")} · {sinceLabel(trigger.signal_date ?? trigger.detected_at)}</div>
           <div className="text-xs text-[var(--text-muted)]">{trigger.summary}</div>
-          {trigger.source_url ? <a href={trigger.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>View source</a> : null}
+          {trigger.source_url ? <a href={trigger.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>View source ↗</a> : null}
         </div>
       )))}
     </div>
   );
 }
+
+/** Old Gold revival classes — shared by the table rows and the drawer. */
 
 const OLDGOLD_CLASS: Record<string, { label: string; color: string }> = {
   timing_arrived: { label: "🔥 Timing arrived", color: "var(--tier-a)" },
