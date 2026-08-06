@@ -11,6 +11,13 @@ import { scoreTalUrgency } from "@/lib/tal/urgency";
 export interface TriggerInput { type: string; summary: string; source_name?: string; source_url?: string | null; signal_date?: string | null }
 export interface TriggerRow { id: string; company_id: string; type: string; strength: number; half_life_days: number; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string }
 
+/** Homepage growth phrases were historically stored with a fabricated /# anchor.
+ * Preserve those rows for auditability, but never score or display them as events.
+ * A real M&A/expansion trigger must link to an actual article or evidence page. */
+export function isPublishableTrigger(t: Pick<TriggerRow, "type" | "source_url">): boolean {
+  return !(new Set(["ma", "press", "new_entity"]).has(String(t.type)) && /\/#/.test(String(t.source_url ?? "")));
+}
+
 /** Insert a trigger (deduped by company + source_url). Returns true if a NEW one landed.
  * Human review is durable: reviewed and dismissed leads stay hidden even when a new
  * public signal lands. Only exported leads may re-enter after the 14-day grace. */
@@ -63,7 +70,7 @@ export async function recomputePriority(companyId: string): Promise<number> {
   const listBonus = 1 + 0.1 * Math.max(0, ((c as any)?.lists?.length ?? 1) - 1);
   let best = 0;
   const activeTypes = new Set<string>();
-  for (const t of (trigs ?? []) as any[]) {
+  for (const t of ((trigs ?? []) as any[]).filter(isPublishableTrigger)) {
     const decay = decayFactor(t.signal_date, t.detected_at, t.half_life_days);
     const v = Number(t.strength) * decay;
     if (v > best) best = v;
@@ -284,7 +291,7 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
     .order("priority", { ascending: false }).order("name", { ascending: true }).limit(200);
   if (error) return [];
   return (data ?? []).map((r: any) => {
-    const trigs = (r.triggers ?? []) as TriggerRow[];
+    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger);
     const rankedTriggers = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v);
     const top = rankedTriggers[0]?.t;
     const { triggers, ...rest } = r; void triggers;
@@ -397,7 +404,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
     .range(hasEventFilters ? 0 : offset, hasEventFilters ? 0 + 1999 : offset + limit - 1);
   if (error) throw new Error(`listTriggered failed: ${error.message}`);
   let companies = (data ?? []).map((r: any) => {
-    const trigs = (r.triggers ?? []) as TriggerRow[];
+    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger);
     // ALL triggers, strongest (decayed) first — the row shows every one. When a
     // signal-type filter is active, matching types sort ahead of the rest so the
     // Why column leads with what you filtered for.
@@ -562,7 +569,7 @@ export async function listTal(opts: { q?: string; state?: string; subindustry?: 
     .limit(1000); // the TAL is ~250-300 by design; no paging needed
   if (error) throw new Error(`listTal failed: ${error.message}`);
   const companies = (data ?? []).map((r: any) => {
-    const trigs = (r.triggers ?? []) as TriggerRow[];
+    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger);
     const rankedTriggers = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v);
     const top = rankedTriggers[0]?.t;
     const { triggers, ...rest } = r; void triggers;
@@ -597,7 +604,7 @@ export async function getLeadDetail(id: string): Promise<{ company: Company; tri
   const { signals, triggers, lead_insights, ...rest } = data as any;
   const company = mapBasic(rest);
   company.signals = Array.isArray(signals) ? signals.map(mapSignal) : [];
-  const trigs: LeadTrigger[] = ((triggers ?? []) as TriggerRow[])
+  const trigs: LeadTrigger[] = ((triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger)
     .map((t) => ({ ...t, live: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) }))
     .sort((a, b) => b.live - a.live);
   const insights: InsightBadge[] = Array.isArray(lead_insights) ? lead_insights : [];

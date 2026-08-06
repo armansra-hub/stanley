@@ -131,7 +131,7 @@ function usDateToIso(raw: string | null | undefined): string | null {
  * removed_from_tam = pulled out of the territory by the weekly TAM update; the record,
  * grade, and digest are KEPT and the lead is restored automatically if it returns. */
 /** A trigger as a tab row previews it. */
-export interface TriggerPreview { type: string; summary: string; signal_date: string | null; detected_at: string }
+export interface TriggerPreview { type: string; summary: string; source_name?: string | null; source_url?: string | null; signal_date: string | null; detected_at: string }
 
 /** Attach a lead's live events, strongest (freshness-decayed) first.
  * Arman 2026-07-29: signals must be visible on EVERY tab where a lead appears, not
@@ -141,11 +141,14 @@ export function withTriggers<T extends Record<string, unknown>>(
   row: T,
 ): { rest: Omit<T, "triggers">; top_trigger: TriggerPreview | null; all_triggers: TriggerPreview[]; trigger_count: number } {
   const { triggers, ...rest } = row as Record<string, unknown> & { triggers?: unknown };
-  const list = (Array.isArray(triggers) ? triggers : []) as (TriggerPreview & { strength: number; half_life_days: number | null })[];
+  const list = ((Array.isArray(triggers) ? triggers : []) as (TriggerPreview & { strength: number; half_life_days: number | null })[])
+    // Preserve fabricated homepage-anchor rows in storage for auditability, but
+    // never display them as M&A/expansion events on any Stanley tab.
+    .filter((t) => !(new Set(["ma", "press", "new_entity"]).has(String(t.type)) && /\/#/.test(String(t.source_url ?? ""))));
   const ranked = list
     .map((t) => ({ t, live: Number(t.strength) * decayFactor(t.signal_date, t.detected_at, Number(t.half_life_days) || 30) }))
     .sort((a, b) => b.live - a.live)
-    .map(({ t }) => ({ type: t.type, summary: t.summary, signal_date: t.signal_date, detected_at: t.detected_at }));
+    .map(({ t }) => ({ type: t.type, summary: t.summary, source_name: t.source_name ?? null, source_url: t.source_url ?? null, signal_date: t.signal_date, detected_at: t.detected_at }));
   return { rest: rest as Omit<T, "triggers">, top_trigger: ranked[0] ?? null, all_triggers: ranked, trigger_count: ranked.length };
 }
 

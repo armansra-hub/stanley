@@ -9,14 +9,14 @@ import { classifyAndRecordHeadline } from "@/lib/triggers/sweep";
 const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now() - new Date(d).getTime()) / 86_400_000; return a >= 0 && a < 180; };
 
 /**
- * Website watch (FREE) over claimable leads, three jobs per company in one pass:
- *  1) GROWTH PHRASES — diff the set on their site vs last check; fire on NEW phrases
- *     (new office/location, new division/subsidiary, an acquisition they made).
- *  2) PARENT-COMPANY — detect "subsidiary of / division of / acquired by X"; flag it,
- *     and AUTO-DISMISS high-confidence subsidiaries (toggle: app_config.parent_autodismiss).
- *  3) NEWSROOM RSS — parse their own news/blog feed and run each item through the same
- *     event classifier as Google News (it's their feed, so no name-match needed).
- * First sight of the growth set = baseline (store, no fire).
+ * Website watch (FREE) over claimable leads:
+ *  1) retain a growth-phrase fingerprint for change detection only;
+ *  2) detect explicit parent-company language;
+ *  3) publish verified newsroom/feed events with their real article URLs;
+ *  4) publish finance openings from their real careers pages.
+ *
+ * Homepage/about-page phrases never publish M&A or expansion triggers. They do not
+ * provide a canonical evidence page and previously created fabricated /# links.
  */
 export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail" } = {}): Promise<{ checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
   const companies = await pickSitesForRotation(limit, opts.offset ?? 0, opts.scope ?? "claimable");
@@ -24,8 +24,6 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
   let autodismiss = true;
   try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch { /* default true */ }
 
-  // Time-boxed: setSiteChecked already stamps per-company, so stopping early just
-  // leaves the rest for the next wave — never a lost wave.
   const deadline = Date.now() + 48_000;
   const BATCH = 8;
   for (let i = 0; i < companies.length; i += BATCH) {
@@ -36,31 +34,20 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         const scan = await fetchSiteSignals(c.domain, c.name);
         let touched = false;
 
-        // 1) growth-phrase diff
         const current = [...new Set(scan.growth.map((h) => h.label))].sort();
         const fingerprint = current.join("|");
         const priorSet = new Set((c.site_hash ?? "").split("|").filter(Boolean));
-        const isBaseline = c.site_checked_at == null && c.site_hash == null;
         await setSiteChecked(c.id, fingerprint);
-        if (!isBaseline) {
-          for (const h of scan.growth.filter((x) => !priorSet.has(x.label))) {
-            stats.changed++;
-            const url = `https://${c.domain.replace(/\/+$/, "")}/#${encodeURIComponent(h.label)}`;
-            // Specific summaries: the label carries WHAT (incl. the acquired target),
-            // the snippet carries the site's own words — never a bare category again.
-            const summary = `Website: ${h.label}${h.snippet ? ` — “${h.snippet.slice(0, 140)}”` : ""}`;
-            if (await recordTrigger(c.id, { type: h.type, summary, source_name: "Company website", source_url: url, signal_date: new Date().toISOString() })) { stats.triggered++; touched = true; }
-          }
-        }
+        stats.changed += scan.growth.filter((x) => !priorSet.has(x.label)).length;
 
-        // 2) parent-company
         if (scan.parent) {
           await setParent(c.id, scan.parent.name, scan.parent.confidence);
           stats.parents++;
           if (scan.parent.confidence === "high" && autodismiss) { await setCompaniesStatus([c.id], "dismissed"); stats.dismissed++; }
         }
 
-        // 3) newsroom/blog RSS → same event classifier (own feed → no name-match needed)
+        // Real newsroom/blog items retain the exact source page and the existing
+        // event verifier, including the acquirer-position check for M&A.
         if (scan.feedUrl) {
           for (const it of await fetchFeed(scan.feedUrl, 8)) {
             if (!fresh(it.signal_date)) continue;
@@ -68,13 +55,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           }
         }
 
-        // 4) FINANCE HIRING — open finance roles on their OWN careers page (free; works
-        // where ATS aggregators are empty on this small-firm TAM). Fires on detection,
-        // deduped per role via source_url. A finance req = scaling finance in-house now.
         for (const hit of scan.financeRoles) {
-          // The REAL verified page, not a fabricated /careers#Role fragment — that
-          // fake anchor is what sent Arman to homepages. The snippet is the posting
-          // line itself, so the signal can be judged without opening anything.
           if (await recordTrigger(c.id, {
             type: "finance_hire",
             summary: `Hiring ${hit.role} — “${hit.snippet.slice(0, 150)}”`,
