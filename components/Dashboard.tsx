@@ -913,8 +913,9 @@ export default function Dashboard({
               const top = strongestSignal(c);
               const rawTopTrigger = (c as TriggeredRow).top_trigger;
               const allRowTriggers = (c as TriggeredRow).all_triggers ?? (rawTopTrigger ? [rawTopTrigger] : []);
+              const federalRowTriggers = allRowTriggers.filter((trigger) => /^(federal_|sam_award|sam_incumbent|gov_contract)/.test(trigger.type));
               const nonAwardRowTriggers = allRowTriggers
-                .filter((trigger) => trigger.type !== "federal_award")
+                .filter((trigger) => !/^(federal_|sam_award|sam_incumbent|gov_contract)/.test(trigger.type))
                 .sort((a, b) => new Date(b.signal_date ?? b.detected_at ?? 0).getTime() - new Date(a.signal_date ?? a.detected_at ?? 0).getTime());
               const rowTriggers = nonAwardRowTriggers.slice(0, 3);
               const rowTopTrigger = rowTriggers[0];
@@ -1002,8 +1003,13 @@ export default function Dashboard({
                           </div>
                         )}
                       </>
-                    ) : allRowTriggers.length > 0 ? (
-                      <QuickViewTriggerList triggers={allRowTriggers} labels={TRIGGER_LABELS} sinceLabel={sinceLabel} />
+                    ) : nonAwardRowTriggers.length > 0 ? (
+                      <>
+                        <QuickViewTriggerList triggers={nonAwardRowTriggers} labels={TRIGGER_LABELS} sinceLabel={sinceLabel} />
+                        {federalRowTriggers.length > 0 && <div className="mt-1 text-[11px] font-medium" style={{ color: "var(--gold)" }}>Federal contract activity — open lead record for annual totals</div>}
+                      </>
+                    ) : federalRowTriggers.length > 0 ? (
+                      <div className="text-xs font-medium" style={{ color: "var(--gold)" }}>Federal contract activity — open lead record for annual totals</div>
                     ) : top ? (
                       <>
                         <div>{top.signal_summary}</div>
@@ -1387,50 +1393,32 @@ function QuickViewTriggerList({
   labels: Record<string, string>;
   sinceLabel: (iso: string | null | undefined) => string;
 }) {
-  const groupKey = (type: string) => {
-    if (/^(federal_|sam_award|sam_incumbent|gov_contract)/.test(type)) return "federal_contracts";
-    if (/^(employee_|headcount_|hiring_velocity)/.test(type)) return "employee_growth";
-    return type;
-  };
-  const groupLabel = (key: string, firstType: string) => {
-    if (key === "federal_contracts") return "📜 Federal award";
-    if (key === "employee_growth") return "📈 Employee growth";
-    return labels[firstType] ?? firstType.replace(/_/g, " ");
-  };
-  const latestDateInGroup = (group: typeof triggers) => {
-    const latest = group.reduce((current, trigger) => {
-      const currentTime = new Date(current.signal_date ?? current.detected_at).getTime();
-      const triggerTime = new Date(trigger.signal_date ?? trigger.detected_at).getTime();
-      return triggerTime > currentTime ? trigger : current;
-    }, group[0]);
-    return latest.signal_date ?? latest.detected_at;
-  };
   const groups = Array.from(triggers.reduce((map, trigger) => {
-    const key = groupKey(trigger.type);
-    const group = map.get(key) ?? [];
+    const group = map.get(trigger.type) ?? [];
     group.push(trigger);
-    map.set(key, group);
+    map.set(trigger.type, group);
     return map;
-  }, new Map<string, typeof triggers>()).entries());
+  }, new Map<string, typeof triggers>()).entries()).map(([type, group]) => [type, [...group].sort((a, b) => new Date(b.signal_date ?? b.detected_at).getTime() - new Date(a.signal_date ?? a.detected_at).getTime())] as const)
+    .sort((a, b) => new Date(b[1][0].signal_date ?? b[1][0].detected_at).getTime() - new Date(a[1][0].signal_date ?? a[1][0].detected_at).getTime());
   return (
     <div className="space-y-1">
-      {groups.map(([key, group]) => group.length >= 3 ? (
-        <div key={key} className="rounded border px-2 py-1 text-xs font-semibold" style={{ borderColor: "var(--gold)", color: "var(--gold)", background: "color-mix(in srgb, var(--gold) 10%, transparent)" }} title={`Open the lead record to review all ${group.length} events.`}>
-          {groupLabel(key, group[0].type)} ×{group.length} · latest {sinceLabel(latestDateInGroup(group))} — open lead record for details
+      {groups.map(([type, group]) => (
+        <div key={type} className="space-y-1">
+          {group.slice(0, 3).map((trigger, index) => (
+            <div key={`${trigger.type}-${trigger.source_url ?? index}-${trigger.signal_date ?? trigger.detected_at}`}>
+              <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{trigger.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : labels[trigger.type] ?? trigger.type.replace(/_/g, " ")} · {sinceLabel(trigger.signal_date ?? trigger.detected_at)}</div>
+              <div className="text-xs text-[var(--text-muted)]">{trigger.summary}</div>
+              {trigger.source_url ? <a href={trigger.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>View source ↗</a> : null}
+            </div>
+          ))}
+          {group.length > 3 && <div className="text-[11px] font-medium text-[var(--accent)]">+{group.length - 3} more {labels[type] ?? type.replace(/_/g, " ")} signal{group.length - 3 === 1 ? "" : "s"} in expanded lead</div>}
         </div>
-      ) : group.map((trigger, index) => (
-        <div key={`${trigger.type}-${index}`}>
-          <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{trigger.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : labels[trigger.type] ?? trigger.type.replace(/_/g, " ")} · {sinceLabel(trigger.signal_date ?? trigger.detected_at)}</div>
-          <div className="text-xs text-[var(--text-muted)]">{trigger.summary}</div>
-          {trigger.source_url ? <a href={trigger.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>View source ↗</a> : null}
-        </div>
-      )))}
+      ))}
     </div>
   );
 }
 
 /** Old Gold revival classes — shared by the table rows and the drawer. */
-
 const OLDGOLD_CLASS: Record<string, { label: string; color: string }> = {
   timing_arrived: { label: "🔥 Timing arrived", color: "var(--tier-a)" },
   contract_clock: { label: "⏳ Contract clock", color: "var(--gold)" },
