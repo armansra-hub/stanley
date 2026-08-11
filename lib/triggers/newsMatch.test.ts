@@ -59,3 +59,31 @@ describe("the left-edge guard must not eat normal headline grammar", () => {
     expect(headlineIsAboutCompany("Point Partners", "Wind Point Partners Closes $3.2 Billion Fund XI")).toBe(false);
   });
 });
+
+/**
+ * Second audit pass (2026-08-10). These are verbatim rows that were sitting on the
+ * live Triggered tab, each attributing another company's news to one of ours.
+ */
+describe("ordinary nouns as solo company names — the 2026-08-10 Triggered audit", () => {
+  it("rejects a possessive use of a generic noun name", () => {
+    // "The Brand" normalises to "brand", which then matched another brand's story.
+    expect(headlineIsAboutCompany("The Brand",
+      "BEING FRENSHE EXPANDS INTO CANADA, MARKING THE BRAND'S FIRST INTERNATIONAL RETAIL EXPANSION")).toBe(false);
+    expect(headlineIsAboutCompany("The Brand",
+      "Hands-On: ProTek Series 4000 Aggressor Dive Watches Expand The Brand's Identity")).toBe(false);
+  });
+
+  it("rejects ordinary-sense nouns", () => {
+    expect(headlineIsAboutCompany("Access",
+      "USDA awards $2.8M to expand public access to outdoor recreation in Pennsylvania")).toBe(false);
+    expect(headlineIsAboutCompany("Bonanza",
+      "Goliath Resources Confirms Bonanza & Golden Gate Expansion With 8.09 g/t AuEq Over 16m")).toBe(false);
+    expect(headlineIsAboutCompany("Office",
+      "State Treasurer's Office names new chief financial officer")).toBe(false);
+  });
+
+  it("still accepts a distinctive solo name in the same shape", () => {
+    expect(headlineIsAboutCompany("ClimateDoor",
+      "ClimateDoor Acquires Standard Demand Partners, Expanding Into the United States")).toBe(true);
+  });
+});

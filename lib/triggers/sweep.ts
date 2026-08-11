@@ -69,6 +69,15 @@ const AMBIGUOUS_SOLO_NAMES = new Set([
   "advantage", "alliance", "aspire", "elevate", "empower", "engage", "evolve", "focus", "forge",
   "impact", "inspire", "legacy", "liberty", "premier", "prime", "pursuit", "reliance", "renew",
   "reveal", "revive", "signal", "spectrum", "stride", "summitt", "synergy", "trust", "venture",
+  // Second pass, from the 2026-08-10 audit of live Triggered rows. Same failure as
+  // above — an ordinary noun used in its ordinary sense: "Access" hit "expand public
+  // ACCESS to outdoor recreation"; "Bonanza" hit "Confirms BONANZA & Golden Gate
+  // Expansion" (a gold assay); "Office" hit "State Treasurer's OFFICE names new CFO".
+  // "Brand" is here because "The Brand" normalizes to it and then matched the
+  // possessive "…MARKING THE BRAND'S FIRST…" in a story about another company.
+  "access", "bonanza", "office", "brand", "value", "creation", "purpose", "method",
+  "source", "standard", "quality", "select", "choice", "essential", "element", "motion",
+  "freedom", "liberty", "heritage", "horizon", "keystone", "landmark", "milestone",
 ]);
 
 /**
