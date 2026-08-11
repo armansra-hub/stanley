@@ -1531,7 +1531,12 @@ function DetailDrawer({
   const recentHeadcount = [...(publicGrowth?.headcount ?? [])].sort((a, b) => dateValue(b.plan_year_end ?? `${b.form_year}-12-31`) - dateValue(a.plan_year_end ?? `${a.form_year}-12-31`));
   const recentRevenue = [...(publicGrowth?.revenue ?? [])].sort((a, b) => dateValue(b.observed_on) - dateValue(a.observed_on));
   const recentOpportunities = [...(publicGrowth?.opportunities ?? [])].sort((a, b) => dateValue((b.sam_opportunities as Record<string, unknown> | undefined)?.posted_date) - dateValue((a.sam_opportunities as Record<string, unknown> | undefined)?.posted_date));
+  // Federal awards are listed in their own panel below (hundreds of rows on an
+  // award-heavy contractor would bury every other signal here). They are still
+  // COUNTED and pointed at, so "triggers (2)" can't imply a lead is quiet when it
+  // actually has 300 federal awards on file.
   const visibleTriggers = triggers.filter((trigger) => trigger.type !== "federal_award");
+  const federalAwardCount = triggers.length - visibleTriggers.length;
   const triggerGroups = Object.entries([...visibleTriggers]
     .sort((a, b) => dateValue(b.signal_date ?? b.detected_at) - dateValue(a.signal_date ?? a.detected_at))
     .reduce<Record<string, DrawerTrigger[]>>((groups, trigger) => { (groups[signalCategory(trigger.type)] ??= []).push(trigger); return groups; }, {}))
@@ -1752,6 +1757,11 @@ function DetailDrawer({
               </div>
             </div>
           ))}
+          {federalAwardCount > 0 && (
+            <p className="text-xs text-[var(--text-muted)]">
+              + {federalAwardCount} federal award signal{federalAwardCount === 1 ? "" : "s"} — itemised with sources under <strong>Federal activity</strong> below.
+            </p>
+          )}
         </div>
 
         {/* LinkedIn NetSuite-fit / ops-profile findings — tag-only, but must still say
