@@ -219,7 +219,10 @@ export const tamAssessmentEvidenceSchema = z.object({
   old_gold_reasons: z.array(z.string()),
   intro_call_exists: z.boolean(),
   opportunity_exists: z.boolean(),
-  revisit_on: z.string().date().nullable(),
+  // Historical validated finals used an empty string for "no revisit" in 32
+  // otherwise-current records. Preserve those canonical provenance bytes and
+  // normalize the RPC argument to SQL null at publication time.
+  revisit_on: z.union([z.string().date(), z.literal("")]).nullable(),
   dq_reason: z.string().default(""),
   score_adjust_note: z.string().default(""),
   validation: z.object({
@@ -229,7 +232,7 @@ export const tamAssessmentEvidenceSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
-const tamGradeProvenanceDataSchema = z.object({
+export const tamGradeProvenanceDataSchema = z.object({
   schema: z.literal("tam-grade-provenance"),
   version: z.literal(1),
   runSlug: nonBlank,
@@ -244,6 +247,191 @@ const tamGradeProvenanceDataSchema = z.object({
   validatorHashScope: z.literal("canonical-record"),
   assessment: tamAssessmentEvidenceSchema,
 }).passthrough();
+
+export const tamRecoveryCohortSchema = z.enum([
+  "published_complete",
+  "legacy_schema_recovery",
+  "lost_staging_recovery",
+  "active_hold",
+  "unrepresented",
+]);
+
+export const tamCheckpointExpectedCountsSchema = z
+  .object({
+    currentTotal: z.number().int().positive(),
+    removedTotal: z.number().int().nonnegative(),
+    pdfVerified: z.number().int().nonnegative(),
+    publishedComplete: z.number().int().nonnegative(),
+    legacySchemaRecovery: z.number().int().nonnegative(),
+    lostStagingRecovery: z.number().int().nonnegative(),
+    activeHold: z.number().int().nonnegative(),
+    unrepresented: z.number().int().nonnegative(),
+  })
+  .superRefine((value, context) => {
+    const cohortTotal = value.publishedComplete
+      + value.legacySchemaRecovery
+      + value.lostStagingRecovery
+      + value.activeHold
+      + value.unrepresented;
+    if (cohortTotal !== value.currentTotal) {
+      context.addIssue({
+        code: "custom",
+        path: ["currentTotal"],
+        message: "checkpoint cohorts must exactly cover the current membership",
+      });
+    }
+    if (value.pdfVerified !== value.currentTotal) {
+      context.addIssue({
+        code: "custom",
+        path: ["pdfVerified"],
+        message: "every current checkpoint record must have a verified PDF",
+      });
+    }
+  });
+
+export const tamCheckpointCohortHashesSchema = z.object({
+  current: sha256,
+  removed: sha256,
+  publishedComplete: sha256,
+  legacySchemaRecovery: sha256,
+  lostStagingRecovery: sha256,
+  activeHold: sha256,
+  unrepresented: sha256,
+});
+
+export const tamCheckpointSeedBeginSchema = z.object({
+  runSlug: nonBlank.default(DEFAULT_TAM_RUN_SLUG),
+  actorKey: nonBlank,
+  manifestSha256: sha256,
+  manifestObjectPath: nonBlank,
+  releaseCommit: z.string().regex(/^[0-9a-f]{40}$/, "expected a full lowercase Git commit"),
+  expectedCounts: tamCheckpointExpectedCountsSchema,
+  cohortHashes: tamCheckpointCohortHashesSchema,
+  captureSnapshotHashes: z.object({
+    current: sha256,
+    allowedPrior: z.array(sha256).max(10),
+  }),
+  sourceHashes: z.record(z.string(), sha256).default({}),
+});
+
+const tamCheckpointRowBase = z.object({
+  netsuiteInternalId,
+  membershipOrdinal: z.number().int().positive(),
+  tableRowsSha256: sha256,
+  pdfObjectPath: nonBlank,
+  pdfSha256: sha256,
+  pdfPageCount: z.number().int().positive(),
+  pdfVerifiedAt: z.string().datetime({ offset: true }),
+  pdfCaptureSnapshotSha256: sha256,
+});
+
+const tamCheckpointPublishedRowSchema = tamCheckpointRowBase.extend({
+  recoveryCohort: z.literal("published_complete"),
+  finalAssessmentLineSha256: sha256,
+  publishQueueLineSha256: sha256,
+  historicalReceiptSha256: sha256.optional(),
+  historicalPublishedAt: z.string().datetime({ offset: true }),
+  finalScore: z.number().min(0).max(100),
+  // Historical queues can contain a reader-era value here. The seed transport
+  // deliberately drops it and derives coordination codex_score from finalScore.
+  codexScore: z.number().min(0).max(100).optional(),
+  scoreAdjustNote: z.string().trim().nullable().optional(),
+  recordDigest: nonBlank,
+  provenance: z.object({
+    sha256,
+    objectPath: nonBlank,
+    canonicalJson: z.string().min(2),
+    data: tamGradeProvenanceDataSchema,
+  }),
+  validation: z.object({
+    status: z.literal("passed"),
+    validatedBy: nonBlank,
+    validatedAt: z.string().datetime({ offset: true }),
+  }),
+}).superRefine((value, context) => {
+  const assessment = value.provenance.data.assessment;
+  const checks: Array<[boolean, (string | number)[], string]> = [
+    [value.provenance.data.netsuiteInternalId === value.netsuiteInternalId, ["provenance", "data", "netsuiteInternalId"], "provenance Internal ID must match"],
+    [assessment.exact_id === value.netsuiteInternalId, ["provenance", "data", "assessment", "exact_id"], "assessment Internal ID must match"],
+    [assessment.final_score === value.finalScore, ["provenance", "data", "assessment", "final_score"], "assessment final score must match"],
+    [assessment.record_digest === value.recordDigest, ["provenance", "data", "assessment", "record_digest"], "assessment digest must match"],
+    [assessment.validation.validated_by === value.validation.validatedBy, ["provenance", "data", "assessment", "validation", "validated_by"], "assessment validator must match"],
+    [assessment.validation.validated_at === value.validation.validatedAt, ["provenance", "data", "assessment", "validation", "validated_at"], "assessment validation time must match"],
+    [value.scoreAdjustNote == null || value.scoreAdjustNote === assessment.score_adjust_note, ["scoreAdjustNote"], "scoreAdjustNote must match the provenance assessment"],
+    [value.finalScore > 10 || assessment.old_gold_score === 0, ["provenance", "data", "assessment", "old_gold_score"], "dead-band assessments require old_gold_score 0"],
+    [value.finalScore > 10 || assessment.old_gold_class === "dead", ["provenance", "data", "assessment", "old_gold_class"], "dead-band assessments require old_gold_class dead"],
+    [value.finalScore <= 10 || assessment.old_gold_class !== "dead", ["provenance", "data", "assessment", "old_gold_class"], "live assessments cannot use old_gold_class dead"],
+    [value.finalScore > 10 || assessment.dq_reason.trim().length > 0, ["provenance", "data", "assessment", "dq_reason"], "dead-band assessments require a specific reason"],
+  ];
+  for (const [valid, path, message] of checks) {
+    if (!valid) context.addIssue({ code: "custom", path, message });
+  }
+});
+
+const tamCheckpointLegacyRowSchema = tamCheckpointRowBase.extend({
+  recoveryCohort: z.literal("legacy_schema_recovery"),
+  finalAssessmentLineSha256: sha256,
+  publishQueueLineSha256: sha256,
+  historicalReceiptSha256: sha256.optional(),
+});
+
+const tamCheckpointLostRowSchema = tamCheckpointRowBase.extend({
+  recoveryCohort: z.literal("lost_staging_recovery"),
+  historicalReceiptSha256: sha256,
+});
+
+const tamCheckpointHoldRowSchema = tamCheckpointRowBase.extend({
+  recoveryCohort: z.literal("active_hold"),
+  holdFileSha256: sha256,
+  holdReason: nonBlank.max(2_000),
+});
+
+const tamCheckpointUnrepresentedRowSchema = tamCheckpointRowBase.extend({
+  recoveryCohort: z.literal("unrepresented"),
+});
+
+export const tamCheckpointSeedRowSchema = z.discriminatedUnion("recoveryCohort", [
+  tamCheckpointPublishedRowSchema,
+  tamCheckpointLegacyRowSchema,
+  tamCheckpointLostRowSchema,
+  tamCheckpointHoldRowSchema,
+  tamCheckpointUnrepresentedRowSchema,
+]);
+
+export const tamCheckpointSeedBatchSchema = z
+  .object({
+    runSlug: nonBlank.default(DEFAULT_TAM_RUN_SLUG),
+    actorKey: nonBlank,
+    seedToken: claimToken,
+    rows: z.array(tamCheckpointSeedRowSchema).min(1).max(100),
+  })
+  .superRefine((value, context) => {
+    const ids = new Set<string>();
+    const ordinals = new Set<number>();
+    for (const [index, row] of value.rows.entries()) {
+      if (ids.has(row.netsuiteInternalId)) {
+        context.addIssue({ code: "custom", path: ["rows", index, "netsuiteInternalId"], message: "checkpoint batch repeats an exact Internal ID" });
+      }
+      if (ordinals.has(row.membershipOrdinal)) {
+        context.addIssue({ code: "custom", path: ["rows", index, "membershipOrdinal"], message: "checkpoint batch repeats a membership ordinal" });
+      }
+      ids.add(row.netsuiteInternalId);
+      ordinals.add(row.membershipOrdinal);
+      if (row.recoveryCohort === "published_complete" && row.provenance.data.runSlug !== value.runSlug) {
+        context.addIssue({
+          code: "custom",
+          path: ["rows", index, "provenance", "data", "runSlug"],
+          message: "provenance run slug must match the checkpoint run",
+        });
+      }
+    }
+  });
+
+export const tamCheckpointSeedFinalizeSchema = z.object({
+  runSlug: nonBlank.default(DEFAULT_TAM_RUN_SLUG),
+  actorKey: nonBlank,
+  seedToken: claimToken,
+});
 
 export const finalGradePublishSchema = z
   .object({
@@ -285,6 +473,9 @@ export const finalGradePublishSchema = z
       [assessment.validation.validated_at === value.validation.validatedAt, ["provenance", "data", "assessment", "validation", "validated_at"], "assessment validation time must match"],
       [value.scoreAdjustNote == null || value.scoreAdjustNote === assessment.score_adjust_note, ["scoreAdjustNote"], "scoreAdjustNote must match the provenance assessment"],
       [value.finalScore > 10 || assessment.old_gold_score === 0, ["provenance", "data", "assessment", "old_gold_score"], "dead-band assessments require old_gold_score 0"],
+      [value.finalScore > 10 || assessment.old_gold_class === "dead", ["provenance", "data", "assessment", "old_gold_class"], "dead-band assessments require old_gold_class dead"],
+      [value.finalScore <= 10 || assessment.old_gold_class !== "dead", ["provenance", "data", "assessment", "old_gold_class"], "live assessments cannot use old_gold_class dead"],
+      [value.finalScore > 10 || assessment.dq_reason.trim().length > 0, ["provenance", "data", "assessment", "dq_reason"], "dead-band assessments require a specific reason"],
     ];
     for (const [valid, path, message] of checks) {
       if (!valid) context.addIssue({ code: "custom", path, message });
@@ -298,6 +489,9 @@ export const finalGradePublishBatchSchema = z.object({
 
 export const tamCoordinationActionSchema = z.discriminatedUnion("action", [
   bootstrapTamRunSchema.extend({ action: z.literal("bootstrap") }),
+  tamCheckpointSeedBeginSchema.extend({ action: z.literal("checkpoint_seed_begin") }),
+  tamCheckpointSeedBatchSchema.safeExtend({ action: z.literal("checkpoint_seed_batch") }),
+  tamCheckpointSeedFinalizeSchema.extend({ action: z.literal("checkpoint_seed_finalize") }),
   tamActorHeartbeatSchema.safeExtend({ action: z.literal("heartbeat") }),
   tamEventSchema.extend({ action: z.literal("event") }),
   tamMembershipBatchSchema.safeExtend({ action: z.literal("membership") }),
@@ -308,6 +502,9 @@ export const tamCoordinationActionSchema = z.discriminatedUnion("action", [
 ]);
 
 export type BootstrapTamRunInput = z.infer<typeof bootstrapTamRunSchema>;
+export type TamCheckpointSeedBeginInput = z.infer<typeof tamCheckpointSeedBeginSchema>;
+export type TamCheckpointSeedBatchInput = z.infer<typeof tamCheckpointSeedBatchSchema>;
+export type TamCheckpointSeedFinalizeInput = z.infer<typeof tamCheckpointSeedFinalizeSchema>;
 export type TamActorHeartbeatInput = z.infer<typeof tamActorHeartbeatSchema>;
 export type TamEventInput = z.infer<typeof tamEventSchema>;
 export type TamMembershipBatchInput = z.infer<typeof tamMembershipBatchSchema>;

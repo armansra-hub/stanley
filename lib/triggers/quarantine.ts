@@ -1,6 +1,6 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
-import { recomputePriority } from "@/lib/db/triggers";
+import { recomputePriority, reconcilePublishableSignalFlags } from "@/lib/db/triggers";
 import {
   isCareerEvidenceUrl,
   sourceRequiresCareerLink,
@@ -16,7 +16,13 @@ import {
 interface StoredTrigger extends TriggerEvidence {
   id: string;
   company_id: string;
+  metadata?: Record<string, unknown> | null;
   companies: FinanceHireCompanyEvidence | FinanceHireCompanyEvidence[] | null;
+}
+
+interface QuarantineRpcResult {
+  marker: Record<string, unknown>;
+  changed: boolean;
 }
 
 export interface TriggerQuarantineReceipt {
@@ -26,6 +32,7 @@ export interface TriggerQuarantineReceipt {
   planned: number;
   applied: number;
   readbackVerified: number;
+  flagsCleared: number;
   failures: { id: string; reason: string }[];
   reasonCounts: Record<string, number>;
   nextCursor: string | null;
@@ -33,7 +40,7 @@ export interface TriggerQuarantineReceipt {
 }
 
 const BATCH = "signal-integrity-2026-08-10";
-const RELEVANT_TYPES = ["finance_hire", "funding", "ma", "press", "new_entity"];
+const RELEVANT_TYPES = ["finance_hire", "funding", "gov_contract", "ma", "press", "new_entity"];
 
 function companyFor(row: StoredTrigger): FinanceHireCompanyEvidence {
   const value = Array.isArray(row.companies) ? row.companies[0] : row.companies;
@@ -90,6 +97,16 @@ export async function quarantineInvalidTriggers(opts: {
   const rows = (data ?? []) as unknown as StoredTrigger[];
 
   const planned = await mapConcurrent(rows, 8, async (row) => {
+    const existingMarker = row.metadata?.stanley_quarantine;
+    if (
+      existingMarker
+      && typeof existingMarker === "object"
+      && !Array.isArray(existingMarker)
+      && (existingMarker as Record<string, unknown>).active === true
+    ) {
+      const priorReason = String((existingMarker as Record<string, unknown>).reason ?? "").trim();
+      return { row, reason: priorReason || "existing_active_quarantine" };
+    }
     let reason = triggerQuarantineReason(row, companyFor(row));
     if (!reason && opts.verifyCareerLinks !== false && row.type === "finance_hire" && sourceRequiresCareerLink(row.source_name)) {
       reason = await verifyLiveCareerLink(row.source_url);
@@ -107,6 +124,7 @@ export async function quarantineInvalidTriggers(opts: {
     planned: actions.length,
     applied: 0,
     readbackVerified: 0,
+    flagsCleared: 0,
     failures: [],
     reasonCounts,
     nextCursor: rows.at(-1)?.id ?? null,
@@ -115,19 +133,34 @@ export async function quarantineInvalidTriggers(opts: {
   if (!opts.apply || actions.length === 0) return receipt;
 
   const writes = await mapConcurrent(actions, 8, async ({ row, reason }) => {
-    const { data: marker, error: writeError } = await db.rpc("quarantine_trigger", {
+    const { data, error: writeError } = await db.rpc("quarantine_trigger", {
       p_trigger_id: row.id,
       p_reason: reason,
       p_batch: BATCH,
       p_actor: "stanley-signal-integrity",
     });
-    if (writeError) return { id: row.id, companyId: row.company_id, reason, error: writeError.message, applied: false };
-    return { id: row.id, companyId: row.company_id, reason, error: null, applied: marker != null };
+    if (writeError) return { id: row.id, companyId: row.company_id, reason, marker: null, error: writeError.message, applied: false };
+    const result = data as QuarantineRpcResult | null;
+    if (!result?.marker) {
+      return { id: row.id, companyId: row.company_id, reason, marker: null, error: "quarantine target missing", applied: false };
+    }
+    return {
+      id: row.id,
+      companyId: row.company_id,
+      reason,
+      marker: result.marker,
+      error: null,
+      applied: result.changed === true,
+    };
   });
   receipt.applied = writes.filter((write) => write.applied).length;
   receipt.failures.push(...writes.filter((write) => write.error).map((write) => ({ id: write.id, reason: String(write.error) })));
 
-  const expected = new Map(writes.filter((write) => !write.error).map((write) => [write.id, write]));
+  const expected = new Map<string, (typeof writes)[number] & { marker: Record<string, unknown> }>();
+  for (const write of writes) {
+    const marker = write.marker;
+    if (!write.error && marker) expected.set(write.id, { ...write, marker });
+  }
   const ids = [...expected.keys()];
   const readbackRows: { id: string; metadata: Record<string, unknown> | null }[] = [];
   for (let i = 0; i < ids.length; i += 100) {
@@ -143,7 +176,14 @@ export async function quarantineInvalidTriggers(opts: {
   for (const row of readbackRows) {
     const want = expected.get(row.id);
     const marker = row.metadata?.stanley_quarantine as Record<string, unknown> | undefined;
-    if (want && marker?.active === true && marker.reason === want.reason && marker.batch === BATCH) {
+    if (
+      want
+      && marker?.active === true
+      && marker.reason === want.marker.reason
+      && marker.batch === want.marker.batch
+      && marker.actor === want.marker.actor
+      && marker.quarantined_at === want.marker.quarantined_at
+    ) {
       receipt.readbackVerified++;
       verifiedCompanyIds.add(want.companyId);
     } else if (want) {
@@ -154,6 +194,28 @@ export async function quarantineInvalidTriggers(opts: {
     if (!readbackRows.some((row) => row.id === id)) receipt.failures.push({ id, reason: "quarantine readback missing" });
   }
 
-  await mapConcurrent([...verifiedCompanyIds], 8, async (companyId) => recomputePriority(companyId));
+  const repairResults = await mapConcurrent([...verifiedCompanyIds], 8, async (companyId) => {
+    const failures: { id: string; reason: string }[] = [];
+    try {
+      await recomputePriority(companyId);
+    } catch (error) {
+      failures.push({
+        id: `priority:${companyId}`,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    let flagsCleared = false;
+    try {
+      flagsCleared = await reconcilePublishableSignalFlags(companyId);
+    } catch (error) {
+      failures.push({
+        id: `flags:${companyId}`,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return { failures, flagsCleared };
+  });
+  receipt.flagsCleared = repairResults.filter((result) => result.flagsCleared).length;
+  receipt.failures.push(...repairResults.flatMap((result) => result.failures));
   return receipt;
 }

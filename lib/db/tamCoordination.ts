@@ -7,6 +7,9 @@ import {
   DEFAULT_TAM_LEASE_SECONDS,
   finalGradePublishSchema,
   tamActorHeartbeatSchema,
+  tamCheckpointSeedBatchSchema,
+  tamCheckpointSeedBeginSchema,
+  tamCheckpointSeedFinalizeSchema,
   tamEventSchema,
   tamGradeClaimSchema,
   tamGradeWorkSchema,
@@ -16,6 +19,9 @@ import {
   type BootstrapTamRunInput,
   type FinalGradePublishInput,
   type TamActorHeartbeatInput,
+  type TamCheckpointSeedBatchInput,
+  type TamCheckpointSeedBeginInput,
+  type TamCheckpointSeedFinalizeInput,
   type TamEventInput,
   type TamGradeClaimInput,
   type TamGradeWorkInput,
@@ -41,6 +47,15 @@ const SAFE_RECORD_SELECT = [
   "source_coordinates",
   "saved_search_row_count",
   "table_rows_sha256",
+  "membership_ordinal",
+  "recovery_cohort",
+  "checkpoint_seed_id",
+  "checkpoint_artifact_sha256",
+  "checkpoint_payload_sha256",
+  "checkpoint_source_hashes",
+  "publication_origin",
+  "historical_published_at",
+  "checkpoint_seeded_at",
   "pdf_status",
   "pdf_object_path",
   "pdf_sha256",
@@ -104,6 +119,66 @@ export async function bootstrapTamRegradeRun(raw: BootstrapTamRunInput) {
     p_source_snapshot_sha256: input.sourceSnapshotSha256 ?? null,
   });
   if (error) throw new Error(`TAM run bootstrap failed: ${error.message}`);
+  return data as Record<string, unknown>;
+}
+
+export async function beginTamCheckpointSeed(raw: TamCheckpointSeedBeginInput) {
+  const input = tamCheckpointSeedBeginSchema.parse(raw);
+  const { data, error } = await serviceClient().rpc("begin_tam_regrade_checkpoint_seed", {
+    p_run_slug: input.runSlug,
+    p_actor_key: input.actorKey,
+    p_manifest_sha256: input.manifestSha256,
+    p_manifest_object_path: input.manifestObjectPath,
+    p_release_commit: input.releaseCommit,
+    p_expected_counts: input.expectedCounts,
+    p_cohort_hashes: input.cohortHashes,
+    p_capture_snapshot_hashes: input.captureSnapshotHashes,
+    p_source_hashes: input.sourceHashes,
+  });
+  if (error) throw new Error(`TAM checkpoint seed begin failed: ${error.message}`);
+  return data as Record<string, unknown>;
+}
+
+export async function seedTamCheckpointBatch(raw: TamCheckpointSeedBatchInput) {
+  const input = tamCheckpointSeedBatchSchema.parse(raw);
+  const rows = input.rows.map((row) => {
+    if (row.recoveryCohort !== "published_complete") return row;
+    const { codexScore: _ignoredLegacyReaderScore, ...derivedRow } = row;
+    let canonicalData: unknown;
+    try {
+      canonicalData = JSON.parse(derivedRow.provenance.canonicalJson);
+    } catch {
+      throw new Error(`Checkpoint provenance canonical JSON is invalid for ${row.netsuiteInternalId}`);
+    }
+    if (!isDeepStrictEqual(canonicalData, derivedRow.provenance.data)) {
+      throw new Error(`Checkpoint provenance canonical JSON differs from structured data for ${row.netsuiteInternalId}`);
+    }
+    const computedSha256 = createHash("sha256")
+      .update(derivedRow.provenance.canonicalJson, "utf8")
+      .digest("hex");
+    if (computedSha256 !== derivedRow.provenance.sha256) {
+      throw new Error(`Checkpoint provenance SHA-256 differs from canonical JSON bytes for ${row.netsuiteInternalId}`);
+    }
+    return derivedRow;
+  });
+  const { data, error } = await serviceClient().rpc("seed_tam_regrade_checkpoint_batch", {
+    p_run_slug: input.runSlug,
+    p_actor_key: input.actorKey,
+    p_seed_token: input.seedToken,
+    p_rows: rows,
+  });
+  if (error) throw new Error(`TAM checkpoint seed batch failed: ${error.message}`);
+  return data as Record<string, unknown>;
+}
+
+export async function finalizeTamCheckpointSeed(raw: TamCheckpointSeedFinalizeInput) {
+  const input = tamCheckpointSeedFinalizeSchema.parse(raw);
+  const { data, error } = await serviceClient().rpc("finalize_tam_regrade_checkpoint_seed", {
+    p_run_slug: input.runSlug,
+    p_actor_key: input.actorKey,
+    p_seed_token: input.seedToken,
+  });
+  if (error) throw new Error(`TAM checkpoint seed finalization failed: ${error.message}`);
   return data as Record<string, unknown>;
 }
 
@@ -295,7 +370,7 @@ export async function publishValidatedTamGrade(raw: FinalGradePublishInput) {
     p_old_gold_reasons: assessment.old_gold_reasons,
     p_intro_call_exists: assessment.intro_call_exists,
     p_opportunity_exists: assessment.opportunity_exists,
-    p_revisit_on: assessment.revisit_on,
+    p_revisit_on: assessment.revisit_on || null,
     p_record_dead: recordDead,
     p_record_dead_reason: recordDead ? assessment.dq_reason : null,
     p_assessment_score_note: input.scoreAdjustNote ?? assessment.score_adjust_note,

@@ -24,6 +24,7 @@ export interface MintedTicket {
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function mintTicket(opts: {
   scopeIds: string[];
@@ -66,33 +67,35 @@ export interface TicketCheck {
   remaining?: number;
 }
 
-/** Validate a "<id>.<secret>" ticket. Does NOT consume a use — call consumeTicket after a successful upload. */
-export async function verifyTicket(raw: string | null): Promise<TicketCheck> {
+/** Atomically validate and reserve one use of a "<id>.<secret>" ticket. */
+export async function reserveTicket(raw: string | null): Promise<TicketCheck> {
   if (!raw || !raw.includes(".")) return { ok: false, reason: "malformed ticket" };
   const idx = raw.indexOf(".");
   const id = raw.slice(0, idx);
   const secret = raw.slice(idx + 1);
-  if (!/^[0-9a-f-]{36}$/i.test(id) || secret.length < 20) return { ok: false, reason: "malformed ticket" };
+  if (!uuidPattern.test(id) || secret.length < 20) return { ok: false, reason: "malformed ticket" };
 
-  const { data } = await serviceClient().from("upload_tickets").select("*").eq("id", id).maybeSingle();
-  if (!data) return { ok: false, reason: "unknown ticket" };
-  if (data.revoked_at) return { ok: false, reason: "ticket revoked" };
-  if (new Date(String(data.expires_at)).getTime() < Date.now()) return { ok: false, reason: "ticket expired" };
-  if (Number(data.uses) >= Number(data.max_uses)) return { ok: false, reason: "ticket use limit reached" };
-  if (sha256(secret) !== data.secret_sha256) return { ok: false, reason: "bad ticket secret" };
+  const { data, error } = await serviceClient().rpc("reserve_upload_ticket", {
+    p_ticket_id: id,
+    p_secret_sha256: sha256(secret),
+  });
+  if (error) throw new Error(`upload ticket reservation failed: ${error.message}`);
+  const receipt = data as {
+    accepted?: unknown;
+    id?: unknown;
+    scope_ids?: unknown;
+    remaining?: unknown;
+  } | null;
+  if (receipt?.accepted !== true) return { ok: false, reason: "ticket unavailable" };
+  if (String(receipt.id) !== id || !Array.isArray(receipt.scope_ids)
+      || !Number.isInteger(Number(receipt.remaining)) || Number(receipt.remaining) < 0) {
+    throw new Error("upload ticket reservation returned an invalid receipt");
+  }
 
   return {
     ok: true,
     id,
-    scopeIds: new Set((data.scope_ids as string[]).map(String)),
-    remaining: Number(data.max_uses) - Number(data.uses),
+    scopeIds: new Set(receipt.scope_ids.map(String)),
+    remaining: Number(receipt.remaining),
   };
-}
-
-export async function consumeTicket(id: string): Promise<void> {
-  const db = serviceClient();
-  const { data } = await db.from("upload_tickets").select("uses").eq("id", id).maybeSingle();
-  await db.from("upload_tickets")
-    .update({ uses: Number(data?.uses ?? 0) + 1, last_used_at: new Date().toISOString() })
-    .eq("id", id);
 }

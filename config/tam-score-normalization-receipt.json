@@ -16,7 +16,7 @@
     "current_record_dead_rows_with_nonzero_raw_codex_score": 2801
   },
   "example": {
-    "company": "Ad Fontes Media",
+    "company_reference": "anonymized_production_example",
     "before_tam_score": 52.3,
     "after_tam_score": 42,
     "raw_codex_score": 42

@@ -66,6 +66,56 @@ begin
 end;
 $$;
 
+-- Keyset continuation for recurring cycles. Eligibility may change while a
+-- cycle is in flight; UUID keyset traversal cannot shift already-passed rows
+-- the way OFFSET can. New lower UUIDs are picked up after the terminal wrap.
+create or replace function list_public_growth_recurring_tam_batch_v2(
+  p_source text,
+  p_limit integer,
+  p_after_company_id uuid default null
+)
+returns setof companies
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if p_source not in ('usaspending', 'usaspending-subawards', 'sam-entity') then
+    raise exception 'unsupported recurring public-growth source %', p_source;
+  end if;
+  if p_limit is null or p_limit < 1 or p_limit > 11 then
+    raise exception 'recurring public-growth limit must be between 1 and 11';
+  end if;
+
+  return query
+    select c.*
+    from companies c
+    where (p_after_company_id is null or c.id > p_after_company_id)
+      and coalesce(c.lists, '{}'::text[]) @> array['netsuite_tam']::text[]
+      and c.status is distinct from 'removed_from_tam'
+      and exists (
+        select 1
+        from company_government_matches m
+        join government_entities e on e.id = m.government_entity_id
+        where m.company_id = c.id
+          and m.match_status = 'verified'
+          and (
+            (p_source in ('usaspending', 'usaspending-subawards')
+              and (
+                e.usaspending_recipient_id is not null
+                or exists (
+                  select 1 from federal_awards a
+                  where a.government_entity_id = e.id
+                )
+              ))
+            or (p_source = 'sam-entity' and e.uei is not null)
+          )
+      )
+    order by c.id
+    limit p_limit;
+end;
+$$;
+
 create or replace function complete_public_growth_sweep_lease(
   p_source text,
   p_lease_token uuid,
@@ -141,7 +191,8 @@ $$;
 -- foundation refresh remain a separate explicit-offset operation with a deliberate
 -- cadence. This keeps the measured ten-company request budget useful for the known
 -- set: USAspending-linked companies cycle monthly, while UEI-linked SAM
--- registrations cycle annually.
+-- registrations cycle annually. The RPC permits one lookahead row so a caller
+-- processing ten can detect an exact-multiple end without an empty extra day.
 create or replace function list_public_growth_recurring_tam_batch(
   p_source text,
   p_limit integer,
@@ -156,8 +207,8 @@ begin
   if p_source not in ('usaspending', 'usaspending-subawards', 'sam-entity') then
     raise exception 'unsupported recurring public-growth source %', p_source;
   end if;
-  if p_limit is null or p_limit < 1 or p_limit > 10 then
-    raise exception 'recurring public-growth limit must be between 1 and 10';
+  if p_limit is null or p_limit < 1 or p_limit > 11 then
+    raise exception 'recurring public-growth limit must be between 1 and 11';
   end if;
   if p_offset is null or p_offset < 0 then
     raise exception 'recurring public-growth offset must be non-negative';
@@ -200,6 +251,8 @@ revoke all on function fail_public_growth_sweep_lease(text, uuid, text)
   from public, anon, authenticated;
 revoke all on function list_public_growth_recurring_tam_batch(text, integer, integer)
   from public, anon, authenticated;
+revoke all on function list_public_growth_recurring_tam_batch_v2(text, integer, uuid)
+  from public, anon, authenticated;
 
 grant execute on function acquire_public_growth_sweep_lease(text, integer)
   to service_role;
@@ -207,7 +260,7 @@ grant execute on function complete_public_growth_sweep_lease(text, uuid, jsonb, 
   to service_role;
 grant execute on function fail_public_growth_sweep_lease(text, uuid, text)
   to service_role;
-grant execute on function list_public_growth_recurring_tam_batch(text, integer, integer)
+grant execute on function list_public_growth_recurring_tam_batch_v2(text, integer, uuid)
   to service_role;
 
 notify pgrst, 'reload schema';

@@ -3,6 +3,7 @@ import {
   financeHireEligibility,
   isCareerEvidenceUrl,
   isFabricatedRootAnchor,
+  isLegacyNameOnlyGovernmentTrigger,
   isPublishableTriggerEvidence,
   isPublishableTriggerForCompany,
   strictEntityIdentityMatches,
@@ -52,8 +53,8 @@ describe("career evidence", () => {
   });
 });
 
-describe("strict Form D identity", () => {
-  it("accepts exact identities across legal suffix and punctuation differences", () => {
+describe("Form D name component", () => {
+  it("recognizes exact names across legal suffix and punctuation differences", () => {
     expect(strictEntityIdentityMatches("Acme Services LLC", "ACME SERVICES, INC. (CIK 1234567) (Filer)")).toBe(true);
   });
 
@@ -105,7 +106,7 @@ describe("legacy quarantine visibility", () => {
     })).toBe(true);
   });
 
-  it("hides legacy Form D search links while retaining exact filing links", () => {
+  it("hides every name-only Form D row, including an exact filing link", () => {
     expect(isPublishableTriggerEvidence({
       type: "funding",
       source_name: "SEC EDGAR",
@@ -117,6 +118,28 @@ describe("legacy quarantine visibility", () => {
       source_name: "SEC EDGAR",
       summary: "Filed SEC Form D (private capital raise) — Acme Services LLC",
       source_url: "https://www.sec.gov/Archives/edgar/data/123/000000000000000001/0000000000-00-000001.txt",
+    })).toBe(false);
+  });
+
+  it("hides and quarantines only the retired name-only USAspending writer rows", () => {
+    const legacy = {
+      type: "gov_contract",
+      source_name: "USAspending",
+      source_url: "https://www.usaspending.gov/award/CONT_AWD_123",
+    };
+    expect(isLegacyNameOnlyGovernmentTrigger(legacy)).toBe(true);
+    expect(isPublishableTriggerEvidence(legacy)).toBe(false);
+    expect(triggerQuarantineReason(legacy, { name: "Acme" }))
+      .toBe("legacy_name_only_government_identity_unverifiable");
+
+    expect(isLegacyNameOnlyGovernmentTrigger({
+      type: "federal_award",
+      source_name: "USAspending",
+    })).toBe(false);
+    expect(isPublishableTriggerEvidence({
+      type: "federal_award",
+      source_name: "USAspending",
+      source_url: "https://www.usaspending.gov/award/CONT_AWD_123",
     })).toBe(true);
   });
 
@@ -127,6 +150,13 @@ describe("legacy quarantine visibility", () => {
       summary: "Filed SEC Form D (private capital raise) — Bridge Growth Partners III",
       source_url: "https://www.sec.gov/cgi-bin/srqsb?text=Growth%20Partners",
     }, { name: "Growth Partners" })).toBe("form_d_entity_mismatch");
+
+    expect(triggerQuarantineReason({
+      type: "funding",
+      source_name: "SEC EDGAR",
+      summary: "Filed SEC Form D (private capital raise) — Acme Services LLC",
+      source_url: "https://www.sec.gov/Archives/edgar/data/123/000000000000000001/0000000000-00-000001.txt",
+    }, { name: "Acme Services" })).toBe("form_d_identity_unverifiable");
 
     expect(triggerQuarantineReason({
       type: "finance_hire",

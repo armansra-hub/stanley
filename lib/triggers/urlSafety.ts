@@ -236,9 +236,137 @@ function requestPinned(
   });
 }
 
+function requestPinnedText(
+  url: URL,
+  address: ResolvedPublicAddress,
+  timeoutMs: number,
+  maxBytes: number,
+  accept: string,
+): Promise<{ status: number; location: string | null; body: string; contentType: string | null }> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (
+      result: { status: number; location: string | null; body: string; contentType: string | null } | null,
+      error?: Error,
+    ) => {
+      if (settled) return;
+      settled = true;
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      if (error) reject(error);
+      else resolve(result!);
+    };
+    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+      method: "GET",
+      agent: false,
+      maxHeaderSize: 16_384,
+      headers: {
+        "user-agent": "Mozilla/5.0 (compatible; StanleyTAMBot/1.0; +https://jarvis-sable-eta.vercel.app)",
+        accept,
+      },
+      // Connect only to the address set that passed the all-answers-public gate.
+      // TLS certificate validation and SNI still use the original hostname.
+      lookup: ((_: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) => {
+        if (options?.all) callback(null, [address]);
+        else callback(null, address.address, address.family);
+      }) as never,
+    }, (response) => {
+      const locationHeader = response.headers.location;
+      const location = Array.isArray(locationHeader) ? locationHeader[0] ?? null : locationHeader ?? null;
+      const contentTypeHeader = response.headers["content-type"];
+      const contentType = Array.isArray(contentTypeHeader) ? contentTypeHeader[0] ?? null : contentTypeHeader ?? null;
+      const status = response.statusCode ?? 0;
+      if ([301, 302, 303, 307, 308].includes(status) || status < 200 || status >= 300) {
+        response.destroy();
+        finish({ status, location, body: "", contentType });
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      response.on("data", (chunk: Buffer | string) => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytes += buffer.length;
+        if (bytes > maxBytes) {
+          response.destroy(new Error("HTTP response exceeded size limit"));
+          return;
+        }
+        chunks.push(buffer);
+      });
+      response.once("end", () => finish({
+        status,
+        location,
+        body: Buffer.concat(chunks).toString("utf8"),
+        contentType,
+      }));
+      response.once("error", (error) => finish(null, error));
+    });
+    // Absolute wall-clock bound includes connection, headers, and body. A peer
+    // cannot extend it indefinitely by trickling bytes.
+    deadlineTimer = setTimeout(
+      () => request.destroy(new Error("HTTP fetch timed out")),
+      timeoutMs,
+    );
+    request.once("error", (error) => finish(null, error));
+    request.end();
+  });
+}
+
 export interface PublicHttpStatus {
   status: number;
   finalUrl: string;
+}
+
+export interface PublicHttpTextResponse extends PublicHttpStatus {
+  body: string;
+  contentType: string | null;
+}
+
+export interface PublicHttpFetchOptions {
+  timeoutMs?: number;
+  maxRedirects?: number;
+  maxBytes?: number;
+  accept?: string;
+  resolver?: PublicHostResolver;
+}
+
+/**
+ * Bounded body fetch for public sources. Every hop is syntax-checked, resolved
+ * with an all-answers-public policy, and connected through a pinned address.
+ * Redirects are followed manually under the same absolute deadline.
+ */
+export async function fetchPublicHttpText(
+  rawUrl: string,
+  opts: PublicHttpFetchOptions = {},
+): Promise<PublicHttpTextResponse> {
+  const timeoutMs = Math.max(250, Math.min(opts.timeoutMs ?? 7_000, 15_000));
+  const maxRedirects = Math.max(0, Math.min(opts.maxRedirects ?? 4, 6));
+  const maxBytes = Math.max(16_384, Math.min(opts.maxBytes ?? 4_000_000, 5_000_000));
+  const accept = (opts.accept ?? "text/html,application/xhtml+xml,application/xml,text/xml,application/json,text/plain;q=0.8")
+    .replace(/[\r\n]/g, "")
+    .slice(0, 512);
+  const deadline = Date.now() + timeoutMs;
+  const seen = new Set<string>();
+  let current = validatePublicHttpUrl(rawUrl);
+
+  for (let redirects = 0; ; redirects++) {
+    const key = current.toString();
+    if (seen.has(key)) throw new UnsafeHttpTargetError("redirect loop");
+    seen.add(key);
+
+    const addresses = await deadlinePromise(
+      resolvePublicAddresses(current.hostname, opts.resolver),
+      deadline - Date.now(),
+    );
+    const remainingForRequest = deadline - Date.now();
+    if (remainingForRequest <= 0) throw new Error("HTTP fetch timed out");
+    const response = await requestPinnedText(current, addresses[0], remainingForRequest, maxBytes, accept);
+    if (![301, 302, 303, 307, 308].includes(response.status) || !response.location) {
+      return { ...response, finalUrl: current.toString() };
+    }
+    if (redirects >= maxRedirects) throw new UnsafeHttpTargetError("redirect limit exceeded");
+    current = resolveSafeHttpRedirect(current, response.location);
+  }
 }
 
 /**

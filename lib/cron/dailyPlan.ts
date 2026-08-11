@@ -1,16 +1,17 @@
 /** Vercel parent-cron safety ceiling. The active plan intentionally stays below it. */
 export const DAILY_CHILD_REQUEST_LIMIT = 65;
-export const DAILY_PLANNED_CHILDREN = 52;
+export const DAILY_PLANNED_CHILDREN = 51;
 
 /**
- * Foundation receipts measured ordinary USAspending/SAM batches at ten companies.
+ * Foundation receipts measured ordinary SAM/subaward batches at ten companies.
+ * Award-history continuation is bounded to one USAspending company per request.
  * Evidence retained under stanley-public-growth/.foundation-run on 2026-08-03:
  * usaspending-foundation-0.jsonl reported 244 matched checks,
  * usaspending-subawards-foundation-0.jsonl reported 222 matches, and
  * sam-extract-foundation.json reported 3,560 matched UEI-linked companies.
  * The rounded 250 USA baseline is deliberately conservative. One bounded request
- * per day therefore targets a 25-day federal-award cycle and a 356-day SAM-
- * registration cycle for that measured verified population.
+ * per day therefore targets a roughly 250-day federal-award baseline cycle, a
+ * 25-day subaward cycle, and a 356-day SAM-registration cycle.
  *
  * This recurrence does not discover a newly linked company. Full-TAM discovery
  * and foundation refresh remain a separate, explicit-offset operation with their
@@ -19,10 +20,10 @@ export const DAILY_PLANNED_CHILDREN = 52;
 export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
   {
     source: "usaspending",
-    path: "/api/cron/public-growth?source=usaspending&scope=verified&n=10",
+    path: "/api/cron/public-growth?source=usaspending&scope=verified&n=1",
     foundationEligibleBaseline: 250,
-    batchSize: 10,
-    targetCycleDays: 25,
+    batchSize: 1,
+    targetCycleDays: 250,
   },
   {
     source: "usaspending-subawards",
@@ -58,7 +59,6 @@ export const DAILY_GET_ROUTE_PREFIXES = [
   "/api/cron/website",
   "/api/cron/cosos",
   "/api/cron/ats",
-  "/api/cron/signals",
   "/api/cron/public-growth",
   "/api/cron/reconcile-hidden",
   "/api/cron/recompute",
@@ -81,13 +81,12 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
     "/api/cron/tal-news",
     ...Array.from({ length: TRIGGER_WAVES }, (_, k) => `/api/cron/triggers?n=${TRIGGER_N}&wave=${k}`),
     ...Array.from({ length: FMCSA_WAVES }, (_, k) => `/api/cron/fmcsa?n=${FMCSA_N}&wave=${k}`),
-    // Capacity tradeoff: three 30-site claimable waves fund the three additional
-    // daily public-growth sources (website claimable volume is 480 -> 390/day).
+    // Capacity tradeoff against the deployed 24-wave plan: website claimable
+    // volume is 720 -> 390/day, funding recurring public-growth and ATS work.
     ...Array.from({ length: 13 }, (_, k) => `/api/cron/website?n=${SITE_N}&wave=${k}`),
     ...Array.from({ length: 4 }, (_, k) => `/api/cron/website?n=${SITE_N}&scope=tail&wave=${k}`),
     ...Array.from({ length: 2 }, (_, k) => `/api/cron/cosos?n=200&wave=${k}`),
     "/api/cron/ats?n=200",
-    "/api/cron/signals?n=250",
     ...PUBLIC_GROWTH_PATHS,
     "/api/cron/reconcile-hidden",
     "/api/cron/recompute",

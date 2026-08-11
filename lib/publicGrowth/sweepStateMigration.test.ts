@@ -32,14 +32,14 @@ describe("0047 public-growth sweep leases", () => {
   });
 
   it("keeps every RPC service-role-only with a fixed search path", () => {
-    expect(sql.match(/security definer/g)).toHaveLength(4);
-    expect(sql.match(/set search_path = public, pg_temp/g)).toHaveLength(4);
+    expect(sql.match(/security definer/g)).toHaveLength(5);
+    expect(sql.match(/set search_path = public, pg_temp/g)).toHaveLength(5);
     for (const role of ["public", "anon", "authenticated"]) expect(sql).toContain(role);
     for (const name of [
       "acquire_public_growth_sweep_lease",
       "complete_public_growth_sweep_lease",
       "fail_public_growth_sweep_lease",
-      "list_public_growth_recurring_tam_batch",
+      "list_public_growth_recurring_tam_batch_v2",
     ]) expect(sql).toContain(`grant execute on function ${name}`);
     expect(sql).toContain("notify pgrst, 'reload schema'");
   });
@@ -49,7 +49,9 @@ describe("0047 public-growth sweep leases", () => {
     expect(sql).toContain("e.usaspending_recipient_id is not null");
     expect(sql).toContain("from federal_awards a");
     expect(sql).toContain("e.uei is not null");
-    expect(sql).toContain("offset p_offset");
+    expect(sql).toContain("p_limit > 11");
+    expect(sql).toContain("p_after_company_id is null or c.id > p_after_company_id");
     expect(sql).toContain("order by c.id");
+    expect(sql).not.toContain("grant execute on function list_public_growth_recurring_tam_batch(text, integer, integer)");
   });
 });

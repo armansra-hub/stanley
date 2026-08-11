@@ -16,6 +16,7 @@ const gitProduction = {
 describe("production source guard", () => {
   it("does not interfere with local or preview builds", () => {
     expect(verifyProductionSource({}).ok).toBe(true);
+    expect(verifyProductionSource({ STANLEY_PRODUCTION_SOURCE_POLICY: "" })).toMatchObject({ ok: true, checked: false });
     expect(verifyProductionSource({ VERCEL: "1", VERCEL_ENV: "preview" }).ok).toBe(true);
   });
 
@@ -56,13 +57,14 @@ describe("production source guard", () => {
     expect(verifyProductionSource({ ...gitProduction, VERCEL_GIT_COMMIT_SHA: "main" }).ok).toBe(false);
   });
 
-  it("is wired into builds and contains ordinary CLI source uploads", () => {
+  it("is wired into builds without excluding the Git-sourced application", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     expect(pkg.scripts.prebuild).toBe("node scripts/verify-production-source.mjs");
 
     const ignore = readFileSync(new URL("../.vercelignore", import.meta.url), "utf8");
-    expect(ignore).toContain("/*");
-    expect(ignore).toContain("!scripts/verify-production-source.mjs");
-    expect(ignore).not.toMatch(/!app(?:\/|\s)/);
+    expect(ignore).toContain("node_modules");
+    expect(ignore).toContain(".env*");
+    expect(ignore).not.toContain("/*");
+    expect(ignore).not.toMatch(/(?:^|\n)(?:app|lib|config|scripts)(?:\/|\r?$)/m);
   });
 });

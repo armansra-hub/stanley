@@ -8,10 +8,10 @@ const CONTRACT_CODES = ["A", "B", "C", "D"];
 
 export interface RecipientSuggestion { recipient_name: string; uei: string | null; duns: string | null }
 
-export async function autocompleteRecipients(searchText: string): Promise<RecipientSuggestion[]> {
+export async function autocompleteRecipients(searchText: string, attempts = 3): Promise<RecipientSuggestion[]> {
   const data = await fetchJson<{ results?: RecipientSuggestion[] }>(`${API}/autocomplete/recipient/`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ search_text: searchText }),
-  });
+  }, 20_000, attempts);
   return data.results ?? [];
 }
 
@@ -30,6 +30,40 @@ export interface AwardSearchRow {
   fundingSubagency: string;
 }
 
+export interface AwardSearchPage {
+  rows: AwardSearchRow[];
+  hasNext: boolean;
+}
+
+function awardSearchRow(x: any): AwardSearchRow {
+  return {
+    generatedId: String(x.generated_internal_id ?? x.generated_unique_award_id ?? ""), awardId: String(x["Award ID"] ?? ""),
+    recipientName: String(x["Recipient Name"] ?? ""), recipientUei: x["Recipient UEI"] ? String(x["Recipient UEI"]) : null,
+    awardAmount: Number(x["Award Amount"] ?? 0), startDate: x["Start Date"] ?? null, endDate: x["End Date"] ?? null,
+    description: String(x.Description ?? ""), awardingAgency: String(x["Awarding Agency"] ?? ""), awardingSubagency: String(x["Awarding Sub Agency"] ?? ""),
+    fundingAgency: String(x["Funding Agency"] ?? ""), fundingSubagency: String(x["Funding Sub Agency"] ?? ""),
+  };
+}
+
+/** One bounded page used by the durable cron continuation state machine. */
+export async function searchContractAwardsPage(
+  recipient: string,
+  page: number,
+  endDate: string,
+  limit = 100,
+): Promise<AwardSearchPage> {
+  const body = {
+    filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
+    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Award Amount", "Awarding Agency", "Awarding Sub Agency", "Funding Agency", "Funding Sub Agency", "Description", "Start Date", "End Date"],
+    limit: Math.max(1, Math.min(100, Math.trunc(limit))), page: Math.max(1, Math.trunc(page)), sort: "Start Date", order: "desc",
+  };
+  const data = await fetchJson<any>(`${API}/search/spending_by_award/`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  }, 20_000, 1);
+  const rows: AwardSearchRow[] = (data.results ?? []).map(awardSearchRow).filter((row: AwardSearchRow) => row.generatedId);
+  return { rows: [...new Map(rows.map((row: AwardSearchRow) => [row.generatedId, row])).values()], hasNext: data.page_metadata?.hasNext === true };
+}
+
 export async function searchContractAwards(recipient: string, startDate = "2007-10-01", endDate = new Date(Date.now() + 120 * 86_400_000).toISOString().slice(0, 10), maxPages = 100): Promise<AwardSearchRow[]> {
   const all: AwardSearchRow[] = [];
   for (let page = 1; page <= maxPages; page++) {
@@ -39,13 +73,7 @@ export async function searchContractAwards(recipient: string, startDate = "2007-
       limit: 100, page, sort: "Start Date", order: "desc",
     };
     const data = await fetchJson<any>(`${API}/search/spending_by_award/`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }, 20_000);
-    const rows = (data.results ?? []).map((x: any): AwardSearchRow => ({
-      generatedId: String(x.generated_internal_id ?? x.generated_unique_award_id ?? ""), awardId: String(x["Award ID"] ?? ""),
-      recipientName: String(x["Recipient Name"] ?? ""), recipientUei: x["Recipient UEI"] ? String(x["Recipient UEI"]) : null,
-      awardAmount: Number(x["Award Amount"] ?? 0), startDate: x["Start Date"] ?? null, endDate: x["End Date"] ?? null,
-      description: String(x.Description ?? ""), awardingAgency: String(x["Awarding Agency"] ?? ""), awardingSubagency: String(x["Awarding Sub Agency"] ?? ""),
-      fundingAgency: String(x["Funding Agency"] ?? ""), fundingSubagency: String(x["Funding Sub Agency"] ?? ""),
-    })).filter((x: AwardSearchRow) => x.generatedId);
+    const rows = (data.results ?? []).map(awardSearchRow).filter((x: AwardSearchRow) => x.generatedId);
     all.push(...rows);
     if (!data.page_metadata?.hasNext || rows.length === 0) break;
   }
@@ -66,8 +94,22 @@ export async function searchReceivedContractSubawards(recipient: string, startDa
   return all;
 }
 
-export async function fetchAwardDetail(generatedId: string): Promise<any> {
-  return fetchJson<any>(`${API}/awards/${encodeURIComponent(generatedId)}/`, {}, 20_000);
+export async function fetchAwardDetail(generatedId: string, attempts = 3): Promise<any> {
+  return fetchJson<any>(`${API}/awards/${encodeURIComponent(generatedId)}/`, {}, 20_000, attempts);
+}
+
+export interface AwardTransactionPage {
+  rows: any[];
+  hasNext: boolean;
+}
+
+/** One bounded transaction page used by the durable cron continuation. */
+export async function fetchAwardTransactionsPage(generatedId: string, page: number): Promise<AwardTransactionPage> {
+  const data = await fetchJson<any>(`${API}/transactions/`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ award_id: generatedId, page: Math.max(1, Math.trunc(page)), limit: 500, sort: "action_date", order: "desc" }),
+  }, 20_000, 1);
+  return { rows: data.results ?? [], hasNext: data.page_metadata?.hasNext === true };
 }
 
 export async function fetchAwardTransactions(generatedId: string): Promise<any[]> {
@@ -85,6 +127,11 @@ export async function fetchAwardTransactions(generatedId: string): Promise<any[]
 
 export function awardUrl(generatedId: string): string {
   return `https://www.usaspending.gov/award/${encodeURIComponent(generatedId)}/latest`;
+}
+
+export function recipientProfileUrl(identity: { recipientId?: string | null; uei?: string | null; name: string }): string {
+  const key = identity.recipientId ?? identity.uei ?? identity.name;
+  return `https://www.usaspending.gov/recipient/${encodeURIComponent(key)}/latest`;
 }
 
 export function compactAward(detail: any) {

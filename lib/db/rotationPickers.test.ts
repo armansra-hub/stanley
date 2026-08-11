@@ -123,6 +123,7 @@ describe("durable source rotation pickers", () => {
     expect(sql).toContain("priority_recompute_reserved_at");
     expect(sql).toContain("p_zombie_slots");
     expect(sql).toContain("for update of c skip locked");
+    expect(sql).toContain("t.metadata #> '{stanley_quarantine,active}' is distinct from 'true'::jsonb");
     expect(sql.replace(/--.*$/gm, "")).not.toMatch(/order by\s+c\.priority\b/i);
     expect(sql).toContain("grant execute on function reserve_priority_recompute");
     expect(sql).toContain("notify pgrst, 'reload schema'");

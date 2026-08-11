@@ -82,10 +82,13 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
 export async function recomputePriority(companyId: string): Promise<number> {
   const db = serviceClient();
   // select * so optional ERP-readiness columns (migration 0020) are included when present.
-  const { data: c } = await db.from("companies").select("*").eq("id", companyId).maybeSingle();
-  const { data: trigs } = await db.from("triggers")
+  const { data: c, error: companyError } = await db.from("companies").select("*").eq("id", companyId).maybeSingle();
+  if (companyError) throw new Error(`priority company read failed: ${companyError.message}`);
+  if (!c) throw new Error(`priority company not found: ${companyId}`);
+  const { data: trigs, error: triggerError } = await db.from("triggers")
     .select("type, strength, half_life_days, signal_date, detected_at, summary, source_name, source_url, metadata")
     .eq("company_id", companyId);
+  if (triggerError) throw new Error(`priority trigger read failed: ${triggerError.message}`);
   const fit = Number((c as any)?.fit_weight ?? 1);
   const listBonus = 1 + 0.1 * Math.max(0, ((c as any)?.lists?.length ?? 1) - 1);
   let best = 0;
@@ -114,10 +117,8 @@ export async function recomputePriority(companyId: string): Promise<number> {
   // what belongs at the top. Only a closed-out lead is damped, because an event does
   // not make a company worth calling after they have told us no.
   //
-  // Deliberately NOT the same rule as the score cap in lib/agent/adjust.ts. That one
-  // governs tam_score (a quality measure, where the grade band matters); this governs
-  // an event worklist. Same principle — a human's no outranks a scraper's yes — but
-  // the grade band belongs only in the former.
+  // This affects only the event worklist. The retired outside-signal score layer
+  // must never feed this priority back into TAM or Old Gold.
   const graded = (c as any)?.tam_score;
   const digest = String((c as any)?.record_digest ?? "").toLowerCase();
   let verdictFactor = 1;
@@ -125,8 +126,32 @@ export async function recomputePriority(companyId: string): Promise<number> {
   else if (digest.includes("points to disqualification")) verdictFactor = 0.35;
   else if (digest.includes("some historical fit or pain exists")) verdictFactor = 0.85;
   const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * 100) / 100;
-  await db.from("companies").update({ priority }).eq("id", companyId);
+  const { error: updateError } = await db.from("companies").update({ priority }).eq("id", companyId);
+  if (updateError) throw new Error(`priority update failed: ${updateError.message}`);
   return priority;
+}
+
+/** Clear only the cached trigger alert in one company-row-locked transaction
+ * when no unquarantined trigger remains. `has_new_signal` belongs to the separate
+ * signals table and is deliberately outside this repair. */
+export async function reconcilePublishableSignalFlags(companyId: string): Promise<boolean> {
+  const { data, error } = await serviceClient().rpc("reconcile_company_signal_flags", {
+    p_company_id: companyId,
+  });
+  if (error) throw new Error(`signal-flag reconciliation failed: ${error.message}`);
+  const readback = data as {
+    cleared?: unknown;
+    tal_alert?: unknown;
+    unquarantined_triggers?: unknown;
+  } | null;
+  if (!readback) throw new Error(`signal-flag company not found: ${companyId}`);
+  if (readback.cleared === true && readback.tal_alert !== false) {
+    throw new Error(`signal-flag readback mismatch: ${companyId}`);
+  }
+  if (readback.cleared !== true && readback.cleared !== false) {
+    throw new Error(`signal-flag receipt invalid: ${companyId}`);
+  }
+  return readback.cleared;
 }
 
 /**
@@ -295,8 +320,9 @@ export async function setAtsChecked(id: string, patch: { ats_type?: string; ats_
   } catch { /* columns missing pre-0020 → no-op */ }
 }
 
-/** Rotation for the slow structured-signal sweep (USAspending + EDGAR), on its own
- * cursor (signals_checked_at, migration 0021) so it doesn't fight the news sweep.
+/** Rotation for the slow structured-signal sweep (USAspending; name-only Form D
+ * is retired until a second identity corroborates it), on its own cursor
+ * (signals_checked_at, migration 0021) so it doesn't fight the news sweep.
  * NetSuite-TAM first; never/longest-checked first. Positive offsets are manual only. */
 export async function pickSignalsForRotation(limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
   if (offset === 0) return reserveRotation("signals", limit);

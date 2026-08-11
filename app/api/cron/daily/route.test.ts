@@ -31,10 +31,10 @@ describe("daily cron terminal receipt", () => {
     const response = await responsePromise;
     expect(response.status).toBe(200);
     expect(logEvent).toHaveBeenCalledWith("headhunter", "daily.done", expect.objectContaining({
-      meta: expect.objectContaining({ status: "deadline", total: 52 }),
+      meta: expect.objectContaining({ status: "deadline", total: 51 }),
     }));
     const calls = vi.mocked(fetch).mock.calls;
-    expect(calls).toHaveLength(52);
+    expect(calls).toHaveLength(51);
     expect(calls.every(([target]) => !String(target).includes("test-cron-secret"))).toBe(true);
     expect(calls.every(([, init]) => (init?.headers as Record<string, string>)?.["x-cron-secret"] === "test-cron-secret")).toBe(true);
   });

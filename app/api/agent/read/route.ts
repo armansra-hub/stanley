@@ -1,34 +1,27 @@
 import { NextResponse } from "next/server";
 import { agentAuthOk, unauthorized } from "@/lib/agent/auth";
+import { isReadableTable, readableTables, safeScalarSelect } from "@/lib/agent/readSelect";
 
 /**
- * Read access to Stanley's data for the agents — every business table, the full
- * PostgREST filter language, one token.
+ * Read access to Stanley's data for the agents — allowlisted business tables,
+ * allowlisted scalar columns, scalar PostgREST filters, and one token.
  *
  * WHY THIS EXISTS INSTEAD OF SHARING THE DATABASE KEY: the obvious way to let Codex
  * "see everything" is to hand it SUPABASE_SERVICE_ROLE_KEY. That key bypasses RLS
  * and grants full WRITE and DELETE on every table — it could empty all 15,257
  * companies — and once a secret leaves, rotation is the only way back. This route
- * gives the same visibility with a credential that can only read: the service key
- * stays on the server, the method is GET-only, and the table list is an allowlist.
+ * gives broad business visibility with a credential that can only read: the service
+ * key stays on the server, and tables and scalar columns are explicit allowlists.
  *
  * GET /api/agent/read?table=companies&select=name,tam_score&tam_score=gte.40&order=tam_score.desc&limit=50
  *
- * Every PostgREST operator works: eq, neq, gt, gte, lt, lte, like, ilike, in, is,
- * not, or, and — e.g. `?table=triggers&type=in.(funding,ma)&order=detected_at.desc`.
+ * Scalar PostgREST filters work normally. Select relationship embeds, aliases,
+ * spreads, casts, JSON paths, and computed expressions are deliberately rejected.
  */
 export const dynamic = "force-dynamic";
 
-/** Business data: readable. Anything holding credentials or Arman's personal
- * calendar is deliberately absent — say the word and it can be added. */
-const READABLE = new Set([
-  "companies", "triggers", "signals", "exports", "app_events", "lead_documents",
-  "lead_pool", "leads", "lead_notes", "lead_tasks", "missions", "pipeline_stages",
-  "scoring_weights", "score_snapshots", "import_batches", "discovery_coverage",
-  "fmcsa_snapshots", "agent_messages", "agent_tasks", "stanley_logs",
-  "territory_config", "schema_migrations",
-]);
-
+/** Anything holding credentials, TAM coordination claims/seeds, or Arman's
+ * personal calendar is deliberately absent. */
 const MAX_LIMIT = 1000;
 /** Ours, not PostgREST's — must not be forwarded upstream. */
 const OWN_PARAMS = new Set(["table", "token"]);
@@ -41,13 +34,20 @@ export async function GET(req: Request) {
   if (!table) {
     return NextResponse.json({
       error: "table is required",
-      readable: [...READABLE].sort(),
+      readable: [...readableTables()].sort(),
       example: "/api/agent/read?table=companies&select=name,tam_score,codex_score&tam_score=gte.40&order=tam_score.desc&limit=25",
     }, { status: 400 });
   }
-  if (!READABLE.has(table)) {
-    return NextResponse.json({ error: `table '${table}' is not readable`, readable: [...READABLE].sort() }, { status: 403 });
+  if (!isReadableTable(table)) {
+    return NextResponse.json({ error: `table '${table}' is not readable`, readable: [...readableTables()].sort() }, { status: 403 });
   }
+
+  const selects = url.searchParams.getAll("select");
+  if (selects.length > 1) {
+    return NextResponse.json({ error: "select may be supplied at most once" }, { status: 400 });
+  }
+  const safeSelect = safeScalarSelect(table, selects[0] ?? null);
+  if (!safeSelect.ok) return NextResponse.json({ error: safeSelect.error }, { status: 400 });
 
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -58,7 +58,7 @@ export async function GET(req: Request) {
     if (OWN_PARAMS.has(k) || k === "limit") continue;
     forwarded.append(k, v);
   }
-  if (!forwarded.has("select")) forwarded.set("select", "*");
+  forwarded.set("select", safeSelect.select);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? 100) || 100, MAX_LIMIT);
 
   const upstream = `${base}/rest/v1/${table}?${forwarded.toString()}`;
@@ -72,7 +72,7 @@ export async function GET(req: Request) {
 
   let rows: unknown = [];
   try { rows = JSON.parse(text); } catch { /* upstream returned non-JSON */ }
-  // content-range is "0-24/7402" — the total is what tells a caller whether to page.
+  // content-range is "0-24/6949" — the total is what tells a caller whether to page.
   const total = res.headers.get("content-range")?.split("/")?.[1] ?? null;
   return NextResponse.json({ table, count: Array.isArray(rows) ? rows.length : 0, total, rows });
 }

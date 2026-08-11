@@ -64,6 +64,7 @@ begin
               from triggers t
               where t.company_id = c.id
                 and t.detected_at > v_trigger_cutoff
+                and t.metadata #> '{stanley_quarantine,active}' is distinct from 'true'::jsonb
             )
           )
         )

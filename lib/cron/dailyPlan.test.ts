@@ -30,14 +30,14 @@ describe("daily cron plan", () => {
     expect(pathsFor(paths, "/api/cron/website")).toHaveLength(17);
     expect(paths.filter((path) => path.includes("scope=tail"))).toHaveLength(4);
     expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(1);
-    expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(1);
+    expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(0);
     expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(5);
     expect(paths).toContain("/api/cron/reconcile-hidden");
 
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
       .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
     expect(triggerCoverage).toBe(5000);
-    for (const pathname of ["/api/cron/triggers", "/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats", "/api/cron/signals"]) {
+    for (const pathname of ["/api/cron/triggers", "/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const waves = pathsFor(paths, pathname);
       expect(waves.every((path) => !new URL(path, "https://local").searchParams.has("offset"))).toBe(true);
       expect(new Set(waves.map((path) => {
@@ -70,7 +70,7 @@ describe("daily cron plan", () => {
     }
   });
 
-  it("uses the measured ten-company budget against explicit recurring eligible sets", () => {
+  it("uses source-specific bounded budgets against explicit recurring eligible sets", () => {
     for (const target of PUBLIC_GROWTH_RECURRING_COVERAGE) {
       const url = new URL(target.path, "https://local");
       expect(url.searchParams.get("scope")).toBe("verified");
@@ -78,7 +78,7 @@ describe("daily cron plan", () => {
       expect(Math.ceil(target.foundationEligibleBaseline / target.batchSize)).toBe(target.targetCycleDays);
     }
     expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending")?.targetCycleDays)
-      .toBeLessThanOrEqual(31);
+      .toBe(250);
     expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "sam-entity")?.targetCycleDays)
       .toBeLessThanOrEqual(366);
   });

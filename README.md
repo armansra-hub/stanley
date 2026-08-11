@@ -108,22 +108,27 @@ npm install
 cp .env.example .env.local      # fill in values (comments in the file)
 ```
 
-Run the SQL migrations in the **Supabase SQL editor**, in order:
-`supabase/migrations/0001_init.sql` … `0030_old_gold.sql`.
+Apply every SQL file in `supabase/migrations/` in exact full-basename order,
+through `0051_agent_bridge_rls.sql`. Record and compare the full filename in
+`schema_migrations`; numeric prefixes alone are unsafe because both `0034` and
+`0038` have two distinct migrations. Production releases must stop if the live
+ledger, catalog readback, or PostgREST schema-cache checks do not match the
+reviewed migration set.
 
 ```bash
 npm run dev                     # http://localhost:3000
-npm test                        # vitest — 66 passing, no secrets needed
+npm test                        # vitest — 427 passing, 1 skipped at the 2026-08-11 release gate
 ```
 
 Deploying (Vercel): production has one source — GitHub
 `armansra-hub/stanley`, branch `main`, through the linked Git integration. Push
 `main`; never upload a local directory or prebuilt output to production. Set the
 Production-only `STANLEY_PRODUCTION_SOURCE_POLICY=github-main-only-v1`. The
-prebuild source check and `.vercelignore` contain ordinary mistakes, but Vercel
-permissions plus exact post-deploy `src=git`/repository/branch/commit readback are
-the release authority. The committed `public/art/` files therefore ship with the
-same reviewed source as the app. Add the env vars from `.env.example`, set
+prebuild source check is defense in depth; Vercel permissions plus exact
+post-deploy `src=git`/repository/branch/commit readback are the release authority.
+The denylist-only `.vercelignore` excludes secrets and build junk without omitting
+the Git-sourced application. The committed `public/art/` files therefore ship with
+the same reviewed source as the app. Copy the env vars from `.env.example`, set
 `APP_PASSWORD` + `APP_SESSION_TOKEN` for the login gate, and the cron in
 `vercel.json` drives monitoring.
 
@@ -153,6 +158,11 @@ chat) · Web Speech API voice · Vercel (single daily cron; every sweep its own
 **The thesis:** NetSuite wins when operational/financial complexity outgrows
 QuickBooks — multi-entity, multi-location, project costing, rev-rec,
 audit/compliance. Every signal is a proxy for a complexity spike; every kill
-(ATS 0/60, federal contracts 0/150, Form D 0/150, H-1B 0.6%, USPTO, FCC ~3%)
+(ATS 0/60, federal contracts 0/150, H-1B 0.6%, USPTO, FCC ~3%)
 was an empirical dry-match against this specific small-private-company base.
+Form D is separately retired because name-only issuer matching cannot safely
+distinguish same-named entities; it may return only with a second stable issuer
+identifier or location. The older name-only USAspending writer is also retired:
+federal-award signals now come only from verified government-entity bindings in
+the public-growth path, and legacy `gov_contract` rows are hidden/quarantined.
 Show-me-the-match-rate before building is the house rule.

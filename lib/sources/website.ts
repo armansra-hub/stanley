@@ -3,6 +3,7 @@ import { extractAcquisitions } from "@/lib/sources/acquisition";
 import { extractGrowthSignals } from "@/lib/sources/growth";
 import { scanFinanceRoles } from "@/lib/sources/careers";
 import { isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
+import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 
 /**
  * Company-website growth-signal reader (FREE). Fetches a claimable company's own
@@ -12,21 +13,6 @@ import { isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
  * trigger only when a NEW phrase appears, so incidental page changes don't create
  * noise. Conservative on purpose (no generic "we're hiring").
  */
-const UA = "Mozilla/5.0 (compatible; StanleyTAMBot/1.0; +https://jarvis-sable-eta.vercel.app)";
-
-async function fetchText(url: string, ms = 7000): Promise<string> {
-  try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), ms);
-    const r = await fetch(url, { signal: ctl.signal, redirect: "follow", headers: { "user-agent": UA } });
-    clearTimeout(to);
-    if (!r.ok) return "";
-    const html = await r.text();
-    return html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").toLowerCase();
-  } catch { return ""; }
-}
-
 // Growth phrases moved to lib/sources/growth.ts (2026-07-30). The old inline
 // patterns matched company-description boilerplate — "expanding into their
 // wholeness", "we relish the opportunity to expand into other industries" — because
@@ -37,10 +23,14 @@ interface FetchedPage { html: string; finalUrl: string }
 
 async function fetchPage(url: string, ms = 7000): Promise<FetchedPage> {
   try {
-    const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), ms);
-    const r = await fetch(url, { signal: ctl.signal, redirect: "follow", headers: { "user-agent": UA } });
-    clearTimeout(to);
-    return r.ok ? { html: await r.text(), finalUrl: r.url || url } : { html: "", finalUrl: r.url || url };
+    const response = await fetchPublicHttpText(url, {
+      timeoutMs: ms,
+      maxBytes: 4_000_000,
+      accept: "text/html,application/xhtml+xml",
+    });
+    return response.status >= 200 && response.status < 300
+      ? { html: response.body, finalUrl: response.finalUrl }
+      : { html: "", finalUrl: response.finalUrl };
   } catch { return { html: "", finalUrl: url }; }
 }
 const cleanHtml = (h: string) => h.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim();

@@ -36,7 +36,7 @@ export async function GET(req: Request) {
       "POST /api/agent/messages": "{ to: 'claude'|'codex'|'arman'|'all', subject, body?, kind?: note|status|question|answer|handoff|error|contract, ref?: {} }",
       "GET  /api/agent/status": "the live board — who is working on what, with stall detection",
       "POST /api/agent/status": "{ title, state?, done?, total?, note?, detail? } → returns taskId; pass taskId back to update/finish",
-      "GET  /api/agent/read?table=companies&…": "READ ANY BUSINESS TABLE. Full PostgREST filters (eq/gt/like/in/or), select, order, limit (max 1000). Call without ?table to list what's readable.",
+      "GET  /api/agent/read?table=companies&…": "Read allowlisted tables and scalar columns. Scalar PostgREST filters (eq/gt/like/in/or), order, and limit (max 1000) are supported; relationship embeds, aliases, spreads, casts, JSON paths, and computed selects are rejected. Call without ?table to list readable tables.",
       "GET  /api/agent/lead?internalId=123": "everything about one lead in one call — company rows, live triggers, record text, prior scores. Also ?name=<fuzzy>.",
       "GET  /api/agent/documents?internalId=123": "read a lead's stored record text",
       "POST /api/agent/documents": "{ docs: [{ internalId, body, docType?, source?, title?, capturedAt? }] } — max 200/request",
@@ -63,15 +63,15 @@ export async function GET(req: Request) {
     },
     knownHistory: SCORE_KNOWN_HISTORY,
     reading: [
-      "You have READ access to every business table via /api/agent/read — companies, triggers, exports, app_events, score_snapshots and more. Call it with no ?table to see the list.",
-      "The database key is deliberately NOT shared: /api/agent/read is GET-only over an allowlist, so your token can read everything but cannot delete or overwrite anything.",
+      "You have READ access to explicitly allowlisted business tables and scalar columns via /api/agent/read — including companies, triggers, exports, app_events, and score_snapshots. Call it with no ?table to see the table list.",
+      "The database key is deliberately NOT shared: /api/agent/read is GET-only over table and scalar-column allowlists, rejects relationship traversal, and cannot delete or overwrite anything.",
       "Examples: ?table=companies&tam_score=gte.40&order=tam_score.desc | ?table=triggers&type=in.(funding,ma)&order=detected_at.desc | ?table=companies&score_adjust_note=is.null&netsuite_internal_id=not.is.null",
     ],
     conventions: [
       "netsuite_internal_id is the shared key between agents. Match on it first, always.",
       "Re-sending an identical payload is safe: documents dedupe on content hash, grades overwrite deterministically.",
-      "Before any bulk grade write, every field that may change is preserved in score_snapshots.prior_values under the write label. Snapshot failure blocks all company writes; restoration is an explicit reviewed operation, never an automatic retry.",
-      "Push extracted TEXT, never PDF binaries — free-tier Supabase is 500MB and the PDF corpus is ~15GB.",
+      "Every bulk grade write is one row-locked database transaction: all mutable fields are first preserved in score_snapshots.prior_values under the label, then all target rows are updated. Any validation, snapshot, or update failure rolls the whole batch back; restoration remains an explicit reviewed operation.",
+      "Push extracted TEXT, never PDF binaries. The verified current PDF corpus is 1,728,918,143 bytes, above the 1GB Free Storage quota; binaries remain in the trusted local evidence corpus.",
     ],
   });
 }

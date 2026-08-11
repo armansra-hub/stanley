@@ -361,10 +361,15 @@ declare
   v_table_rows jsonb;
   v_coordinates jsonb;
   v_row_count int;
+  v_existing tam_regrade_records%rowtype;
+  v_had_existing boolean;
+  v_evidence_changed boolean;
+  v_revived boolean;
   v_now timestamptz := now();
   v_upserted int := 0;
   v_inserted int := 0;
   v_updated int := 0;
+  v_invalidated int := 0;
 begin
   if nullif(btrim(p_actor_key), '') is null then raise exception 'actor key is required'; end if;
   if jsonb_typeof(p_rows) <> 'array' or jsonb_array_length(p_rows) = 0 then raise exception 'membership rows must be a non-empty array'; end if;
@@ -395,6 +400,15 @@ begin
     if (v_item->>'tableRowsSha256') !~ '^[0-9a-f]{64}$' then raise exception 'invalid membership SHA-256 for %', v_internal_id; end if;
 
     perform pg_advisory_xact_lock(hashtextextended('tam-company:' || v_internal_id, 0));
+    select * into v_existing
+    from tam_regrade_records
+    where run_id = v_run_id and netsuite_internal_id = v_internal_id
+    for update;
+    v_had_existing := found;
+    v_evidence_changed := v_had_existing
+      and v_existing.table_rows_sha256 is distinct from (v_item->>'tableRowsSha256');
+    v_revived := v_had_existing and not v_existing.is_current;
+
     v_company_id := tam_canonical_company_id(v_internal_id);
     v_company_name := nullif(btrim(v_item->>'companyName'), '');
     if v_company_name is null then
@@ -459,7 +473,138 @@ begin
         source_coordinates = excluded.source_coordinates,
         saved_search_row_count = excluded.saved_search_row_count,
         table_rows_sha256 = excluded.table_rows_sha256,
+        pdf_status = case
+          when v_evidence_changed or v_revived then 'stale'
+          else tam_regrade_records.pdf_status
+        end,
+        grade_status = case
+          when v_evidence_changed or v_revived then 'pending'
+          else tam_regrade_records.grade_status
+        end,
+        hold_reason = case
+          when v_evidence_changed or v_revived then null
+          else tam_regrade_records.hold_reason
+        end,
+        claim_actor = case
+          when v_evidence_changed or v_revived then null
+          else tam_regrade_records.claim_actor
+        end,
+        claim_token = case
+          when v_evidence_changed or v_revived then null
+          else tam_regrade_records.claim_token
+        end,
+        claim_started_at = case
+          when v_evidence_changed or v_revived then null
+          else tam_regrade_records.claim_started_at
+        end,
+        claim_heartbeat_at = case
+          when v_evidence_changed or v_revived then null
+          else tam_regrade_records.claim_heartbeat_at
+        end,
+        claim_expires_at = case
+          when v_evidence_changed or v_revived then null
+          else tam_regrade_records.claim_expires_at
+        end,
+        validation_status = case
+          when v_evidence_changed or v_revived then 'pending'
+          else tam_regrade_records.validation_status
+        end,
         last_actor = excluded.last_actor;
+
+    if v_evidence_changed or v_revived then
+      v_invalidated := v_invalidated + 1;
+      update tam_regrade_records
+      set pdf_status = 'stale',
+          pdf_error = 'Membership evidence changed; local PDF re-verification required',
+          grade_status = 'pending',
+          hold_reason = null,
+          claim_actor = null,
+          claim_token = null,
+          claim_started_at = null,
+          claim_heartbeat_at = null,
+          claim_expires_at = null,
+          final_score = null,
+          codex_score = null,
+          tam_score = null,
+          score_adjust_note = null,
+          assessment_score_note = null,
+          record_digest = null,
+          record_dead = null,
+          record_dead_reason = null,
+          assessment_old_gold_score = null,
+          old_gold_class = null,
+          old_gold_reasons = '[]'::jsonb,
+          intro_call_exists = null,
+          opportunity_exists = null,
+          revisit_on = null,
+          grade_provenance = '{}'::jsonb,
+          grade_provenance_object_path = null,
+          grade_provenance_canonical_json = null,
+          grade_provenance_sha256 = null,
+          validation_status = 'pending',
+          validated_by = null,
+          validated_at = null,
+          graded_at = null,
+          published_at = null
+      where run_id = v_run_id and netsuite_internal_id = v_internal_id;
+
+      insert into tam_regrade_events (
+        run_id, actor_key, kind, netsuite_internal_id, summary, metadata
+      ) values (
+        v_run_id,
+        p_actor_key,
+        'membership.evidence_changed',
+        v_internal_id,
+        format('Invalidated stale PDF and grade state for NetSuite ID %s', v_internal_id),
+        jsonb_build_object(
+          'revived', v_revived,
+          'table_rows_changed', v_evidence_changed,
+          'previous', jsonb_build_object(
+            'table_rows_sha256', v_existing.table_rows_sha256,
+            'pdf_status', v_existing.pdf_status,
+            'pdf_object_path', v_existing.pdf_object_path,
+            'pdf_sha256', v_existing.pdf_sha256,
+            'pdf_page_count', v_existing.pdf_page_count,
+            'pdf_verified_at', v_existing.pdf_verified_at,
+            'pdf_error', v_existing.pdf_error,
+            'grade_status', v_existing.grade_status,
+            'hold_reason', v_existing.hold_reason,
+            'claim_actor', v_existing.claim_actor,
+            'claim_started_at', v_existing.claim_started_at,
+            'claim_heartbeat_at', v_existing.claim_heartbeat_at,
+            'claim_expires_at', v_existing.claim_expires_at,
+            'final_score', v_existing.final_score,
+            'codex_score', v_existing.codex_score,
+            'tam_score', v_existing.tam_score,
+            'score_adjust_note', v_existing.score_adjust_note,
+            'assessment_score_note', v_existing.assessment_score_note,
+            'record_digest', v_existing.record_digest,
+            'record_dead', v_existing.record_dead,
+            'record_dead_reason', v_existing.record_dead_reason,
+            'assessment_old_gold_score', v_existing.assessment_old_gold_score,
+            'old_gold_class', v_existing.old_gold_class,
+            'old_gold_reasons', v_existing.old_gold_reasons,
+            'intro_call_exists', v_existing.intro_call_exists,
+            'opportunity_exists', v_existing.opportunity_exists,
+            'revisit_on', v_existing.revisit_on,
+            'grade_provenance', v_existing.grade_provenance,
+            'grade_provenance_object_path', v_existing.grade_provenance_object_path,
+            'grade_provenance_canonical_json', v_existing.grade_provenance_canonical_json,
+            'grade_provenance_sha256', v_existing.grade_provenance_sha256,
+            'validation_status', v_existing.validation_status,
+            'validated_by', v_existing.validated_by,
+            'validated_at', v_existing.validated_at,
+            'graded_at', v_existing.graded_at,
+            'published_at', v_existing.published_at
+          ),
+          'replacement', jsonb_build_object(
+            'table_rows_sha256', v_item->>'tableRowsSha256',
+            'pdf_status', 'stale',
+            'grade_status', 'pending'
+          )
+        )
+      );
+    end if;
     v_upserted := v_upserted + 1;
   end loop;
 
@@ -475,7 +620,8 @@ begin
     format('Upserted %s current TAM records by exact NetSuite ID', v_upserted),
     jsonb_build_object(
       'count', v_upserted, 'companies_inserted', v_inserted,
-      'companies_updated', v_updated, 'source_total', p_source_total,
+      'companies_updated', v_updated, 'evidence_invalidated', v_invalidated,
+      'source_total', p_source_total,
       'source_snapshot_sha256', p_source_snapshot_sha256
     )
   );
@@ -484,7 +630,8 @@ begin
     'upserted', v_upserted,
     'distinctIds', v_upserted,
     'companiesInserted', v_inserted,
-    'companiesUpdated', v_updated
+    'companiesUpdated', v_updated,
+    'evidenceInvalidated', v_invalidated
   );
 end;
 $$;
@@ -968,6 +1115,7 @@ declare
   v_live_old_gold_score numeric;
   v_score_note text;
   v_opportunity_text text;
+  v_previous jsonb;
 begin
   if p_netsuite_internal_id is null or p_netsuite_internal_id !~ '^[0-9]+$' then raise exception 'exact numeric NetSuite Internal ID is required'; end if;
   if nullif(btrim(p_actor_key), '') is null or p_claim_token is null then raise exception 'actor and claim token are required'; end if;
@@ -990,7 +1138,9 @@ begin
   if p_assessment_old_gold_score is null or p_assessment_old_gold_score < 0 or p_assessment_old_gold_score > 100 then raise exception 'assessment Old Gold score is required on the 0-100 scale'; end if;
   if nullif(btrim(p_old_gold_class), '') is null or jsonb_typeof(p_old_gold_reasons) <> 'array' then raise exception 'complete Old Gold assessment evidence is required'; end if;
   if p_intro_call_exists is null or p_opportunity_exists is null or p_record_dead is null then raise exception 'current assessment booleans are required'; end if;
-  if p_final_score <= 10 and (not p_record_dead or p_assessment_old_gold_score <> 0) then raise exception 'dead-band final requires record_dead and assessment Old Gold score 0'; end if;
+  if p_record_dead is distinct from (p_final_score <= 10) then raise exception 'record_dead must exactly match the final-score dead band'; end if;
+  if p_record_dead and (p_assessment_old_gold_score <> 0 or p_old_gold_class <> 'dead') then raise exception 'dead-band final requires assessment Old Gold score 0 and class dead'; end if;
+  if not p_record_dead and p_old_gold_class = 'dead' then raise exception 'live final cannot use Old Gold class dead'; end if;
   if p_record_dead and nullif(btrim(p_record_dead_reason), '') is null then raise exception 'record-dead final needs a specific reason'; end if;
   if not p_record_dead and nullif(btrim(coalesce(p_record_dead_reason, '')), '') is not null then raise exception 'non-dead final cannot carry a record-dead reason'; end if;
   if jsonb_typeof(p_provenance) <> 'object' then raise exception 'structured grade provenance is required'; end if;
@@ -1016,7 +1166,7 @@ begin
      or (p_provenance->'assessment'->'old_gold_reasons') is distinct from p_old_gold_reasons
      or (p_provenance->'assessment'->>'intro_call_exists')::boolean is distinct from p_intro_call_exists
      or (p_provenance->'assessment'->>'opportunity_exists')::boolean is distinct from p_opportunity_exists
-     or (p_provenance->'assessment'->>'revisit_on')::date is distinct from p_revisit_on
+     or nullif(p_provenance->'assessment'->>'revisit_on', '')::date is distinct from p_revisit_on
      or (p_provenance->'assessment'->>'score_adjust_note') is distinct from coalesce(p_assessment_score_note, '')
      or (p_record_dead and (p_provenance->'assessment'->>'dq_reason') is distinct from p_record_dead_reason)
      or (p_provenance->'assessment'->'validation'->>'status') is distinct from 'passed'
@@ -1139,6 +1289,21 @@ begin
     raise exception 'publish rejected for stale or unowned NetSuite ID %', p_netsuite_internal_id;
   end if;
 
+  v_previous := jsonb_build_object(
+    'codex_score', v_company.codex_score,
+    'tam_score', v_company.tam_score,
+    'oldgold_score', v_company.oldgold_score,
+    'oldgold_class', v_company.oldgold_class,
+    'oldgold_reasons', v_company.oldgold_reasons,
+    'revisit_on', v_company.revisit_on,
+    'record_dead', v_company.record_dead,
+    'record_dead_reason', v_company.record_dead_reason,
+    'record_digest', v_company.record_digest,
+    'score_adjust_note', v_company.score_adjust_note,
+    'tam_provisional', v_company.tam_provisional,
+    'last_updated_at', v_company.last_updated_at
+  );
+
   update companies
   set codex_score = p_final_score,
       tam_score = v_tam_score,
@@ -1203,14 +1368,7 @@ begin
       'validated_at', p_validated_at,
       'company_id', v_company.id,
       'claim_generation', v_record.claim_generation,
-      'previous', jsonb_build_object(
-        'codex_score', v_company.codex_score,
-        'tam_score', v_company.tam_score,
-        'oldgold_score', v_company.oldgold_score,
-        'record_dead', v_company.record_dead,
-        'record_digest', v_company.record_digest,
-        'status', v_company.status
-      )
+      'previous', v_previous
     )
   );
   insert into tam_regrade_actors (run_id, actor_key, status, current_work, heartbeat_at)
@@ -1312,15 +1470,11 @@ grant execute on function set_tam_regrade_work_status(text,text,text,uuid,text,t
 grant execute on function publish_tam_regrade_final(text,text,text,uuid,numeric,text,text,text,timestamptz,jsonb,numeric,text,jsonb,boolean,boolean,date,boolean,text,text,text,text) to service_role;
 grant execute on function get_tam_regrade_status(text,int) to service_role;
 
--- PDFs remain private and outside the application bundle.
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values (
-  'tam-lead-records', 'tam-lead-records', false, 104857600,
-  array['application/pdf']
-)
-on conflict (id) do update
-set public = false,
-    file_size_limit = excluded.file_size_limit,
-    allowed_mime_types = excluded.allowed_mime_types;
+-- PDF binaries remain in the canonical local evidence corpus. The Free storage
+-- quota is smaller than the verified 1.729 GB current-PDF set, so this migration
+-- deliberately creates no bucket. The coordination record stores the locally
+-- verified relative locator, SHA-256, page count, and verification time; the
+-- bootstrap importer must prove those values against the local file before it
+-- may set pdf_status='verified'.
 
 notify pgrst, 'reload schema';

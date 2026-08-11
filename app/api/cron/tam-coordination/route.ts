@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { agentAuthOk } from "@/lib/agent/auth";
+import { tamMachineAuthOk } from "@/lib/agent/auth";
 import {
   appendTamEvent,
+  beginTamCheckpointSeed,
   bootstrapTamRegradeRun,
   claimTamGradeWork,
   getTamRegradeStatus,
   heartbeatTamActor,
+  finalizeTamCheckpointSeed,
   listTamRegradeRecords,
   markTamMembershipRemoved,
+  seedTamCheckpointBatch,
   setTamGradeWorkStatus,
   updateTamPdfStatus,
   upsertTamMembership,
@@ -22,7 +25,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 function isTamMachineAuthorized(req: NextRequest) {
-  return agentAuthOk(req);
+  return tamMachineAuthOk(req);
 }
 
 function errorResponse(error: unknown) {
@@ -116,6 +119,12 @@ export async function POST(req: NextRequest) {
     switch (action.action) {
       case "bootstrap":
         return NextResponse.json({ run: await bootstrapTamRegradeRun(action) });
+      case "checkpoint_seed_begin":
+        return NextResponse.json({ seed: await beginTamCheckpointSeed(action) });
+      case "checkpoint_seed_batch":
+        return NextResponse.json({ seed: await seedTamCheckpointBatch(action) });
+      case "checkpoint_seed_finalize":
+        return NextResponse.json({ seed: await finalizeTamCheckpointSeed(action) });
       case "heartbeat":
         return NextResponse.json(await heartbeatTamActor(action));
       case "event":

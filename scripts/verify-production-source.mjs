@@ -23,7 +23,7 @@ export const PRODUCTION_SOURCE_SENTINEL = "github-main-only-v1";
  */
 export function verifyProductionSource(env = process.env) {
   const isVercelProduction = env.VERCEL === "1" && env.VERCEL_ENV === "production";
-  const sentinelConfigured = env.STANLEY_PRODUCTION_SOURCE_POLICY !== undefined;
+  const sentinelConfigured = Boolean(env.STANLEY_PRODUCTION_SOURCE_POLICY?.trim());
   if (!isVercelProduction && !sentinelConfigured) {
     return { ok: true, checked: false, reason: "production source attestation not requested" };
   }

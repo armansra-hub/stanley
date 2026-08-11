@@ -3,6 +3,7 @@ import Parser from "rss-parser";
 import { googleNewsRss } from "@/config/news";
 import { parseDateLoose } from "@/lib/time";
 import type { Candidate } from "@/lib/ingest/types";
+import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 
 /**
  * Google News RSS adapter (FREE). Each item becomes a name-only candidate whose
@@ -12,12 +13,22 @@ import type { Candidate } from "@/lib/ingest/types";
  */
 const parser = new Parser({ timeout: 12000 });
 
+async function parsePublicFeed(url: string) {
+  const response = await fetchPublicHttpText(url, {
+    timeoutMs: 12_000,
+    maxBytes: 4_000_000,
+    accept: "application/rss+xml,application/atom+xml,application/xml,text/xml",
+  });
+  if (response.status < 200 || response.status >= 300) throw new Error("feed request failed");
+  return parser.parseString(response.body);
+}
+
 export interface NewsItem { source_name: string; source_url: string; raw_excerpt: string; signal_date: string | null }
 
 /** Free Google News RSS fetch for an arbitrary query. Top N recent items. */
 export async function fetchNewsItems(query: string, n = 6): Promise<NewsItem[]> {
   try {
-    const feed = await parser.parseURL(googleNewsRss(query));
+    const feed = await parsePublicFeed(googleNewsRss(query));
     return (feed.items ?? [])
       .slice(0, n)
       .map((item) => ({
@@ -40,7 +51,7 @@ export async function fetchNewsForCompany(name: string, n = 2): Promise<NewsItem
 /** Parse an arbitrary RSS/Atom feed URL (a company's own newsroom/blog). */
 export async function fetchFeed(url: string, n = 8): Promise<NewsItem[]> {
   try {
-    const feed = await parser.parseURL(url);
+    const feed = await parsePublicFeed(url);
     return (feed.items ?? []).slice(0, n).map((item) => ({
       source_name: "Company newsroom",
       source_url: (item.link ?? url).trim(),
@@ -57,7 +68,7 @@ export async function fetchGoogleNewsCandidates(
 ): Promise<Candidate[]> {
   // Fetch all queries in parallel (source-isolated), then dedupe by article
   // link across queries and cap the total to bound enrichment cost.
-  const feeds = await Promise.allSettled(queries.map((q) => parser.parseURL(googleNewsRss(q))));
+  const feeds = await Promise.allSettled(queries.map((q) => parsePublicFeed(googleNewsRss(q))));
   const seen = new Set<string>();
   const out: Candidate[] = [];
   for (const f of feeds) {

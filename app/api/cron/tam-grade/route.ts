@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { agentAuthOk } from "@/lib/agent/auth";
+import { tamMachineAuthOk } from "@/lib/agent/auth";
 import { publishValidatedTamGrade } from "@/lib/db/tamCoordination";
 import {
   finalGradePublishBatchSchema,
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 function isTamMachineAuthorized(req: NextRequest) {
-  return agentAuthOk(req);
+  return tamMachineAuthOk(req);
 }
 
 export async function POST(req: NextRequest) {

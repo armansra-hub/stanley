@@ -81,9 +81,9 @@ export async function POST(req: Request) {
     found.push(...(data ?? []));
   }
 
-  // One internal ID can map to several company rows (the base import created ~20
-  // duplicate NetSuite IDs). The grade belongs to all of them, but each row's
-  // Old Gold status is its own — hence the per-row scoring pass below.
+  // One internal ID can map to several historical company rows. Retired
+  // tam_duplicate rows are immutable; more than one non-retired row is ambiguous
+  // and fails closed. Only the sole canonical row may receive a grade.
   const byNsid = new Map<string, Record<string, unknown>[]>();
   let retiredDuplicateRowsSkipped = 0;
   for (const c of found) {
@@ -97,14 +97,9 @@ export async function POST(req: Request) {
   const missing = ids.filter((id) => !byNsid.has(id));
   const ambiguousInternalIds = ids.filter((id) => (byNsid.get(id)?.length ?? 0) > 1);
 
-  const writes: Record<string, unknown>[] = [];
-  const snapshots: Record<string, unknown>[] = [];
+  let writes: Record<string, unknown>[] = [];
   const hardZeroed: { name: string; reason: string }[] = [];
   const deadReasonFailures: { internalId: string; companyId: string }[] = [];
-  const resurfaced: { id: string; internalId: string; priorStatus: string }[] = [];
-  // Automated regrades may refresh exported leads, but a human review/dismissal
-  // is a durable worklist decision and must never be undone here.
-  const hiddenStatuses = new Set(["exported_csv", "exported_sql"]);
 
   for (const row of rows) {
     if (ambiguousInternalIds.includes(row.internalId)) continue;
@@ -114,70 +109,72 @@ export async function POST(req: Request) {
       const recordDeadReason = effectiveRecordDeadReason(row, company, law.recordDead);
       if (law.recordDead && !recordDeadReason) {
         deadReasonFailures.push({ internalId: row.internalId, companyId: String(company.id) });
+        // This row is already known to violate the specific-dead-reason gate.
+        // Reject it independently so it cannot roll back otherwise healthy rows;
+        // the RPC still revalidates every retained row under its database lock.
         continue;
       }
-      const companyLists = Array.isArray(company.lists) ? company.lists.map(String) : [];
-      const priorStatus = String(company.status ?? "new");
-      const shouldResurface = resurfaceCurrentTam
-        && company.claimable === true
-        && companyLists.includes("netsuite_tam")
-        && hiddenStatuses.has(priorStatus);
-      if (shouldResurface) {
-        resurfaced.push({
-          id: String(company.id),
-          internalId: row.internalId,
-          priorStatus,
-        });
-      }
       if (law.hardZeroReason) hardZeroed.push({ name: String(company.name), reason: law.hardZeroReason });
-      snapshots.push({
-        label,
-        company_id: company.id,
-        netsuite_internal_id: row.internalId,
-        tam_score: company.tam_score ?? null,
-        codex_score: company.codex_score ?? null,
-        oldgold_score: company.oldgold_score ?? null,
-        score_adjust_note: company.score_adjust_note ?? null,
-        prior_values: {
-          tam_score: company.tam_score ?? null,
-          codex_score: company.codex_score ?? null,
-          oldgold_score: company.oldgold_score ?? null,
-          score_adjust_note: company.score_adjust_note ?? null,
-          tam_provisional: company.tam_provisional ?? null,
-          status: company.status ?? null,
-          record_dead: company.record_dead ?? null,
-          record_dead_reason: company.record_dead_reason ?? null,
-          record_digest: company.record_digest ?? null,
-          oldgold_class: company.oldgold_class ?? null,
-          oldgold_reasons: company.oldgold_reasons ?? null,
-          revisit_on: company.revisit_on ?? null,
-        },
-      });
       writes.push({
         id: company.id,
-        // PostgREST upsert is INSERT … ON CONFLICT, and NOT NULL is checked on the
-        // proposed row before the conflict resolves — so `name` must be carried
-        // through unchanged or the whole batch fails. It is the only such column.
-        name: company.name,
-        tam_score: law.tamScore,
-        codex_score: law.codexScore,
-        oldgold_score: law.oldGoldScore,
-        tam_provisional: false,
-        status: shouldResurface ? "new" : priorStatus,
-        record_dead: law.recordDead,
-        record_dead_reason: recordDeadReason,
-        ...(row.recordDigest ? { record_digest: row.recordDigest } : {}),
-        ...(row.oldGoldClassProvided ? { oldgold_class: row.oldGoldClass } : {}),
-        ...(row.oldGoldReasonsProvided ? { oldgold_reasons: row.oldGoldReasons } : {}),
-        ...(row.revisitOnProvided ? { revisit_on: row.revisitOn } : {}),
-        // Provenance plus the immutable raw-grade/hard-zero invariant.
-        score_adjust_note: [String(body.note ?? label), law.scoreNote]
-          .filter(Boolean).join("; ").slice(0, 400),
+        netsuite_internal_id: row.internalId,
+        raw_score: row.tamScore,
+        old_gold_score_input: row.oldGoldScore,
+        record_dead_input: row.recordDead,
+        record_dead_reason: row.recordDeadReason,
+        record_dead_reason_provided: row.recordDeadReasonProvided,
+        record_digest: row.recordDigest,
+        old_gold_class: row.oldGoldClass,
+        old_gold_class_provided: row.oldGoldClassProvided,
+        old_gold_reasons: row.oldGoldReasons,
+        old_gold_reasons_provided: row.oldGoldReasonsProvided,
+        revisit_on: row.revisitOn,
+        revisit_on_provided: row.revisitOnProvided,
+        fallback_last_sql: row.lastSqlDate,
+        note_prefix: String(body.note ?? label),
+        // The RPC evaluates this intent against the row-locked current status,
+        // so a concurrent reviewed/dismissed decision cannot be overwritten.
+        resurface_exported: resurfaceCurrentTam,
       });
     }
   }
 
   // Rationale quality on this batch — never blocks, always reported.
+  // A checkpoint seed transfers current TAM ownership to the fenced coordinator.
+  // Exclude those known rows individually so dry-run is truthful and they cannot
+  // roll back unrelated non-TAM writes in the atomic RPC.
+  const coordinatorOnly: { internalId: string; companyId: string }[] = [];
+  if (writes.length > 0) {
+    const { data: seedRows, error: seedError } = await db
+      .from("tam_regrade_checkpoint_seeds")
+      .select("run_id")
+      .limit(1000);
+    if (seedError) {
+      return NextResponse.json({ error: `checkpoint preflight failed: ${seedError.message}` }, { status: 500 });
+    }
+    const runIds = [...new Set((seedRows ?? []).map((seed) => String(seed.run_id)))];
+    const candidateIds = writes.map((write) => String(write.id));
+    const coordinatorIds = new Set<string>();
+    for (let i = 0; i < candidateIds.length && runIds.length > 0; i += 300) {
+      const { data: seededRecords, error: recordError } = await db
+        .from("tam_regrade_records")
+        .select("company_id,netsuite_internal_id")
+        .in("run_id", runIds)
+        .eq("is_current", true)
+        .in("company_id", candidateIds.slice(i, i + 300));
+      if (recordError) {
+        return NextResponse.json({ error: `checkpoint record preflight failed: ${recordError.message}` }, { status: 500 });
+      }
+      for (const record of seededRecords ?? []) {
+        const companyId = String(record.company_id);
+        if (coordinatorIds.has(companyId)) continue;
+        coordinatorIds.add(companyId);
+        coordinatorOnly.push({ internalId: String(record.netsuite_internal_id), companyId });
+      }
+    }
+    writes = writes.filter((write) => !coordinatorIds.has(String(write.id)));
+  }
+
   const withDigest = rows.filter((r) => r.recordDigest);
   const unauditable = withDigest.filter((r) => !assessDigest(r.recordDigest, [...r.oldGoldReasons, r.qualNote ?? ""]).auditable).map((r) => r.internalId);
   const noDigest = rows.filter((r) => !r.recordDigest).map((r) => r.internalId);
@@ -194,14 +191,16 @@ export async function POST(req: Request) {
     retiredDuplicateRowsSkipped,
     deadReasonFailures: deadReasonFailures.slice(0, 50),
     deadReasonFailureCount: deadReasonFailures.length,
+    coordinatorOnly: coordinatorOnly.slice(0, 50),
+    coordinatorOnlyCount: coordinatorOnly.length,
     duplicateInternalIds: duplicates,
     rowErrors: errors.slice(0, 50),
     errorCount: errors.length,
     hardZeroed: hardZeroed.slice(0, 20),
     hardZeroedCount: hardZeroed.length,
     resurfaceCurrentTam,
-    resurfacedCount: resurfaced.length,
-    resurfaced: resurfaced.slice(0, 200),
+    resurfacedCount: 0,
+    resurfaced: [] as string[],
     rationale: {
       withDigest: withDigest.length,
       missingDigest: noDigest.length,
@@ -218,26 +217,54 @@ export async function POST(req: Request) {
     },
   };
 
-  if (dryRun) return NextResponse.json({ dryRun: true, wouldWrite: writes.length, ...summary });
+  if (dryRun) return NextResponse.json({
+    dryRun: true,
+    wouldAttempt: writes.length,
+    preflightEligible: writes.length,
+    wouldRejectKnown: deadReasonFailures.length,
+    lockedValidationRequired: true,
+    ...summary,
+  });
 
-  if (writes.length === 0 && (ambiguousInternalIds.length > 0 || deadReasonFailures.length > 0)) {
+  if (writes.length === 0 && (
+    ambiguousInternalIds.length > 0
+    || deadReasonFailures.length > 0
+    || coordinatorOnly.length > 0
+  )) {
     return NextResponse.json({ error: "no safe score targets", label, ...summary }, { status: 422 });
   }
 
-  for (let i = 0; i < snapshots.length; i += 500) {
-    const { error } = await db.from("score_snapshots").insert(snapshots.slice(i, i + 500));
-    if (error) {
+  if (writes.length > 0) {
+    const { data: writeReceipt, error: writeError } = await db.rpc("apply_agent_score_batch", {
+      p_label: label,
+      p_rows: writes,
+    });
+    if (writeError) {
       return NextResponse.json({
-        error: `score snapshot failed before any company write: ${error.message}`,
+        error: `atomic score batch rolled back: ${writeError.message}`,
+        written: 0,
         label,
-        snapshottedBeforeFailure: i,
       }, { status: 500 });
     }
-  }
-  for (let i = 0; i < writes.length; i += 500) {
-    const { error } = await db.from("companies").upsert(writes.slice(i, i + 500), { onConflict: "id" });
-    if (error) {
-      return NextResponse.json({ error: error.message, writtenBefore: i, label, hint: "prior values are in score_snapshots under this label" }, { status: 500 });
+    const receipt = writeReceipt as {
+      written?: unknown;
+      label?: unknown;
+      resurfaced?: unknown;
+      resurfaced_internal_ids?: unknown;
+      hard_zeroed?: unknown;
+    } | null;
+    Object.assign(summary, {
+      resurfacedCount: Number(receipt?.resurfaced ?? 0),
+      resurfaced: Array.isArray(receipt?.resurfaced_internal_ids)
+        ? receipt.resurfaced_internal_ids.map(String).slice(0, 200)
+        : [],
+      hardZeroedCount: Array.isArray(receipt?.hard_zeroed) ? receipt.hard_zeroed.length : 0,
+      hardZeroed: Array.isArray(receipt?.hard_zeroed) ? receipt.hard_zeroed.slice(0, 20) : [],
+    });
+    if (Number(receipt?.written) !== writes.length || receipt?.label !== label) {
+      // The RPC returned success, so do not surface a retryable failure after a
+      // possible commit. Preserve the anomaly in the response and timeline.
+      Object.assign(summary, { databaseReceiptMismatch: true });
     }
   }
 
@@ -251,7 +278,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     written: writes.length,
     label,
-    snapshot: `score_snapshots where label='${label}' (complete prior_values; restoration requires explicit review)`,
+    snapshot: `score_snapshots where label='${label}' (atomic complete prior_values; restoration requires explicit review)`,
     timelineLogged,
     ...summary,
   });

@@ -35,11 +35,18 @@ export async function POST(req: NextRequest) {
       verifyCareerLinks: body.verifyCareerLinks !== false,
     });
     if (apply) {
-      await logEvent("headhunter", "signals.quarantined", {
-        summary: `Signal cleanup preserved and quarantined ${receipt.readbackVerified}/${receipt.planned} planned rows`,
-        entity_type: "trigger_cleanup",
-        meta: receipt as unknown as Record<string, unknown>,
-      });
+      try {
+        await logEvent("headhunter", "signals.quarantined", {
+          summary: `Signal cleanup preserved and quarantined ${receipt.readbackVerified}/${receipt.planned} planned rows`,
+          entity_type: "trigger_cleanup",
+          meta: receipt as unknown as Record<string, unknown>,
+        });
+      } catch (error) {
+        receipt.failures.push({
+          id: "event:signals.quarantined",
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     return NextResponse.json(receipt, { status: receipt.failures.length ? 409 : 200 });
   } catch (error) {

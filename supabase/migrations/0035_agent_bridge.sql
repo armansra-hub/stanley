@@ -11,8 +11,7 @@
 --   agent_tasks     — a live status board: what each agent is doing RIGHT NOW, how far along
 --   lead_documents  — the record TEXT behind a lead (NetSuite record body, PDF text),
 --                     pushed up by whichever agent can see it, readable by both
--- Plus score_snapshots so a bulk grade write has evidence for reviewed recovery.
--- Migration 0046 extends this historical core snapshot to every mutated field.
+-- Plus score_snapshots so any bulk grade write can be rolled back.
 --
 -- NOTE ON PDFs: push TEXT, not binaries. This project is on Supabase's free tier
 -- (500MB database, and no storage buckets provisioned); the local PDF corpus alone

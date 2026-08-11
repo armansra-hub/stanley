@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  fetchPublicHttpText,
   isPublicHostname,
   isPublicIpAddress,
   resolvePublicAddresses,
@@ -96,5 +97,23 @@ describe("career-link URL safety", () => {
     expect(resolveSafeHttpRedirect(current, "/jobs/123").toString()).toBe("https://careers.acme.com/jobs/123");
     expect(() => resolveSafeHttpRedirect(current, "http://127.0.0.1/admin")).toThrow(UnsafeHttpTargetError);
     expect(() => resolveSafeHttpRedirect(current, "http://metadata.internal/latest")).toThrow(UnsafeHttpTargetError);
+  });
+
+  it("rejects unsafe body-fetch targets before any request", async () => {
+    await expect(fetchPublicHttpText("https://user:password@public.example/feed.xml"))
+      .rejects.toBeInstanceOf(UnsafeHttpTargetError);
+    await expect(fetchPublicHttpText("http://2130706433/latest/meta-data"))
+      .rejects.toBeInstanceOf(UnsafeHttpTargetError);
+    await expect(fetchPublicHttpText("https://news.example:8443/rss"))
+      .rejects.toBeInstanceOf(UnsafeHttpTargetError);
+  });
+
+  it("rejects body fetches when DNS mixes public and private answers", async () => {
+    const resolver = vi.fn(async () => [
+      { address: "93.184.216.34", family: 4 as const },
+      { address: "169.254.169.254", family: 4 as const },
+    ]);
+    await expect(fetchPublicHttpText("https://news.acme.com/rss", { resolver }))
+      .rejects.toBeInstanceOf(UnsafeHttpTargetError);
   });
 });

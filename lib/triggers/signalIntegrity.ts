@@ -129,9 +129,9 @@ export function normalizeEntityIdentity(value: string | null | undefined): strin
 }
 
 /**
- * Name-only Form D evidence is accepted only for an exact normalized legal-entity
- * identity. In particular, a shorter company name can never match inside a fund or
- * SPV name. Entirely generic fund names fail closed even when textually equal.
+ * Exact normalized name equality is one useful Form D identity component, but it
+ * is never sufficient by itself. A corroborated future implementation must also
+ * bind a stable identifier or location before publishing a funding signal.
  */
 export function strictEntityIdentityMatches(companyName: string, filerName: string): boolean {
   const company = normalizeEntityIdentity(companyName);
@@ -141,15 +141,28 @@ export function strictEntityIdentityMatches(companyName: string, filerName: stri
   return tokens.length > 0 && !tokens.every((token) => GENERIC_ENTITY_WORD.has(token));
 }
 
+export function isFormDTrigger(trigger: TriggerEvidence): boolean {
+  return String(trigger.type) === "funding"
+    && /SEC EDGAR|Form D/i.test(`${trigger.source_name ?? ""} ${trigger.summary ?? ""}`);
+}
+
 export function isLegacyFormDSearchTrigger(trigger: TriggerEvidence): boolean {
-  if (String(trigger.type) !== "funding") return false;
-  const looksLikeFormD = /SEC EDGAR|Form D/i.test(`${trigger.source_name ?? ""} ${trigger.summary ?? ""}`);
-  if (!looksLikeFormD) return false;
+  if (!isFormDTrigger(trigger)) return false;
   const url = parsedHttpUrl(trigger.source_url);
   const exactFiling = Boolean(url
     && /(?:^|\.)sec\.gov$/i.test(url.hostname)
     && /\/Archives\/edgar\/data\/\d+\/\d{18}\/[^/]+$/i.test(url.pathname));
   return !exactFiling;
+}
+
+/**
+ * Retired pre-verified-identity USAspending rows. The legacy signals sweep
+ * attached awards by company-name substring alone; the public-growth pipeline
+ * uses government-entity bindings and emits `federal_award` instead.
+ */
+export function isLegacyNameOnlyGovernmentTrigger(trigger: TriggerEvidence): boolean {
+  return String(trigger.type) === "gov_contract"
+    && /^USAspending$/i.test(String(trigger.source_name ?? "").trim());
 }
 
 function hasQuarantineMarker(metadata: Record<string, unknown> | null | undefined): boolean {
@@ -163,8 +176,12 @@ function hasQuarantineMarker(metadata: Record<string, unknown> | null | undefine
 /** Storage-level visibility/scoring gate that does not need company context. */
 export function isPublishableTriggerEvidence(trigger: TriggerEvidence): boolean {
   if (hasQuarantineMarker(trigger.metadata)) return false;
+  if (isLegacyNameOnlyGovernmentTrigger(trigger)) return false;
+  // Form D discovery is retired until a filing can be corroborated by a second
+  // stable company identifier/location. Exact name + exact filing URL alone is
+  // not enough to distinguish same-named issuers.
+  if (isFormDTrigger(trigger)) return false;
   if (new Set(["ma", "press", "new_entity", "finance_hire"]).has(String(trigger.type)) && isFabricatedRootAnchor(trigger.source_url)) return false;
-  if (isLegacyFormDSearchTrigger(trigger)) return false;
   if (String(trigger.type) === "finance_hire" && !isFinanceHireEvidenceUrl(trigger.source_url, trigger.source_name)) return false;
   return true;
 }
@@ -189,15 +206,19 @@ export function triggerQuarantineReason(
   company: FinanceHireCompanyEvidence,
 ): string | null {
   if (hasQuarantineMarker(trigger.metadata)) return null;
+  if (isLegacyNameOnlyGovernmentTrigger(trigger)) {
+    return "legacy_name_only_government_identity_unverifiable";
+  }
   if (new Set(["ma", "press", "new_entity", "finance_hire"]).has(String(trigger.type)) && isFabricatedRootAnchor(trigger.source_url)) {
     return "fabricated_root_anchor_evidence";
   }
 
-  if (String(trigger.type) === "funding" && /SEC EDGAR|Form D/i.test(`${trigger.source_name ?? ""} ${trigger.summary ?? ""}`)) {
+  if (isFormDTrigger(trigger)) {
     const filer = formDFilerFromSummary(trigger.summary);
     if (!filer) return "form_d_identity_unverifiable";
     if (!strictEntityIdentityMatches(company.name, filer)) return "form_d_entity_mismatch";
     if (isLegacyFormDSearchTrigger(trigger)) return "legacy_form_d_nonfiling_evidence";
+    return "form_d_identity_unverifiable";
   }
 
   if (String(trigger.type) === "finance_hire") {
