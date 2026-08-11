@@ -166,3 +166,12 @@ value received, and its neighbours still write.
   both agents and Arman read to understand what happened.
 - One branch, `main`, deployed by Vercel on push. Both agents write to it, so keep
   changes small and don't refactor across the other's work in flight.
+- **Never run `vercel --prod` (or any CLI deploy).** Ship by pushing to `main`; the
+  git integration deploys in under a minute. A CLI deploy uploads whatever files sit
+  in a local folder and takes over the production alias, so `main` stops describing
+  what production runs. That is not hypothetical: repeated `src=cli` deploys between
+  2026-08-03 and 2026-08-10 kept the July 29 news name-match guard and the
+  queue-for-review gate off in production for ~2 weeks, and 245 mis-attributed news
+  triggers reached the Triggered tab as a result. If you think you need a CLI deploy,
+  ask Arman first. Check what production is actually serving with:
+  `vercel inspect <deployment-url>` — or list deploys and confirm `src=git`.
