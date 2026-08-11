@@ -1,6 +1,7 @@
 import "server-only";
 import { pickAtsForRotation, setAtsChecked, setErpFlags, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { detectAts, fetchAtsJobs, scanJob, type AtsType } from "@/lib/sources/ats";
+import { isCareerEvidenceUrl, isFinanceHireEligible } from "@/lib/triggers/signalIntegrity";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -39,11 +40,17 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
         if (type === "none" || !token) return;
         stats.with_board++;
 
+        // A finance role at a record-dead or finance-services company is not an
+        // in-house-finance readiness signal. We still stamp/detect its board, but
+        // do not infer triggers or an incumbent from its delivery-team postings.
+        if (!isFinanceHireEligible(c)) return;
+
         // 2) Poll + scan.
         const jobs = await fetchAtsJobs(type as AtsType, token);
         let incumbent: "quickbooks" | "erp" | null = null;
         let financeCount = 0;
         for (const j of jobs) {
+          if (!isCareerEvidenceUrl(j.url)) continue;
           const scan = scanJob(j.title, j.description);
           if (scan.incumbent === "quickbooks") incumbent = "quickbooks";
           else if (scan.incumbent === "erp" && incumbent !== "quickbooks") incumbent = "erp";
@@ -62,6 +69,11 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
           touched.add(c.id); // recompute (QB boosts, ERP suppresses)
         }
       } catch { /* per-company isolated */ }
+      finally {
+        // Detection/network failures still advance the fair rotation; retry after
+        // the rest of the TAM instead of starving every later row.
+        await setAtsChecked(c.id, {});
+      }
     }));
   }
 

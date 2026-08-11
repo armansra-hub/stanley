@@ -1,5 +1,5 @@
 import "server-only";
-import { pickSosCompaniesForRotation, recordTrigger, recomputePriority } from "@/lib/db/triggers";
+import { markSosChecked, pickSosCompaniesForRotation, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { fetchNewCoEntities, fetchRecentUccFilings, brandKey, lightNorm } from "@/lib/sources/coSos";
 
 /**
@@ -71,6 +71,7 @@ export async function sweepCoSos(limit = 200, opts: { offset?: number } = {}): P
         }
       } catch { /* per-company isolated */ }
     }));
+    await markSosChecked(slice.map((company) => company.id));
   }
 
   for (const id of touched) await recomputePriority(id);

@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/server";
 import { agentAuthOk, unauthorized } from "@/lib/agent/auth";
+import {
+  ASSESSMENT_ARTIFACT_RULES,
+  SCORE_KNOWN_HISTORY,
+  SCORE_STORAGE_RULES,
+} from "@/lib/agent/scoreContract";
+import { verifyProductionSource } from "@/scripts/verify-production-source.mjs";
 
 /**
  * Self-describing protocol for the agent bridge — one URL an agent can hit to
@@ -12,6 +18,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   if (!agentAuthOk(req)) return unauthorized();
   const db = serviceClient();
+  const sourceAttestation = verifyProductionSource(process.env);
 
   const [msgs, tasks, docs, graded] = await Promise.all([
     db.from("agent_messages").select("*", { count: "exact", head: true }).is("read_at", null),
@@ -29,7 +36,7 @@ export async function GET(req: Request) {
       "POST /api/agent/messages": "{ to: 'claude'|'codex'|'arman'|'all', subject, body?, kind?: note|status|question|answer|handoff|error|contract, ref?: {} }",
       "GET  /api/agent/status": "the live board — who is working on what, with stall detection",
       "POST /api/agent/status": "{ title, state?, done?, total?, note?, detail? } → returns taskId; pass taskId back to update/finish",
-      "GET  /api/agent/read?table=companies&…": "READ ANY BUSINESS TABLE. Full PostgREST filters (eq/gt/like/in/or), select, order, limit (max 1000). Call without ?table to list what's readable.",
+      "GET  /api/agent/read?table=companies&…": "Read allowlisted tables and scalar columns. Scalar PostgREST filters (eq/gt/like/in/or), order, and limit (max 1000) are supported; relationship embeds, aliases, spreads, casts, JSON paths, and computed selects are rejected. Call without ?table to list readable tables.",
       "GET  /api/agent/lead?internalId=123": "everything about one lead in one call — company rows, live triggers, record text, prior scores. Also ?name=<fuzzy>.",
       "GET  /api/agent/documents?internalId=123": "read a lead's stored record text",
       "POST /api/agent/documents": "{ docs: [{ internalId, body, docType?, source?, title?, capturedAt? }] } — max 200/request",
@@ -42,22 +49,29 @@ export async function GET(req: Request) {
       leadDocuments: docs.count ?? 0,
       companiesWithCodexScore: graded.count ?? 0,
     },
-    knownHistory: [
-      "2026-07-15: a full-record regrade landed for 6,912 of 7,402 TAM leads (93.4%) via a since-deleted endpoint. Those grades are LIVE in companies.codex_score / tam_score with score_adjust_note 'Codex full-record regrade 2026-07-15'.",
-      "That import set tam_score = codex_score, which overwrote Stanley's ±15 outside-signal adjustments. Re-running system/codex_rescore.py re-applies them.",
-      "490 TAM leads (6.6%) never received that regrade — check before regrading everything from scratch.",
-      "The import that broke did so on one field: revisitOn. An omitted key is undefined (not null), so a strict /^\\d{4}-\\d{2}-\\d{2}$/ test rejected the whole 250-row batch with no row index. This bridge accepts loose dates and reports errors per row.",
-    ],
+    deploymentSource: {
+      attested: sourceAttestation.ok && sourceAttestation.checked,
+      checked: sourceAttestation.checked,
+      reason: sourceAttestation.reason,
+      received: "received" in sourceAttestation ? sourceAttestation.received : null,
+      policySentinelConfigured: process.env.STANLEY_PRODUCTION_SOURCE_POLICY === "github-main-only-v1",
+      releaseRule: "Production is valid only after exact Vercel readback confirms src=git, GitHub armansra-hub/stanley, main, and the intended immutable commit.",
+    },
+    scoring: {
+      storageRules: SCORE_STORAGE_RULES,
+      assessmentArtifactRules: ASSESSMENT_ARTIFACT_RULES,
+    },
+    knownHistory: SCORE_KNOWN_HISTORY,
     reading: [
-      "You have READ access to every business table via /api/agent/read — companies, triggers, exports, app_events, score_snapshots and more. Call it with no ?table to see the list.",
-      "The database key is deliberately NOT shared: /api/agent/read is GET-only over an allowlist, so your token can read everything but cannot delete or overwrite anything.",
+      "You have READ access to explicitly allowlisted business tables and scalar columns via /api/agent/read — including companies, triggers, exports, app_events, and score_snapshots. Call it with no ?table to see the table list.",
+      "The database key is deliberately NOT shared: /api/agent/read is GET-only over table and scalar-column allowlists, rejects relationship traversal, and cannot delete or overwrite anything.",
       "Examples: ?table=companies&tam_score=gte.40&order=tam_score.desc | ?table=triggers&type=in.(funding,ma)&order=detected_at.desc | ?table=companies&score_adjust_note=is.null&netsuite_internal_id=not.is.null",
     ],
     conventions: [
       "netsuite_internal_id is the shared key between agents. Match on it first, always.",
       "Re-sending an identical payload is safe: documents dedupe on content hash, grades overwrite deterministically.",
-      "Every bulk grade write snapshots prior values into score_snapshots under its label, so it can be undone.",
-      "Push extracted TEXT, never PDF binaries — free-tier Supabase is 500MB and the PDF corpus is ~15GB.",
+      "Every bulk grade write is one row-locked database transaction: all mutable fields are first preserved in score_snapshots.prior_values under the label, then all target rows are updated. Any validation, snapshot, or update failure rolls the whole batch back; restoration remains an explicit reviewed operation.",
+      "Push extracted TEXT, never PDF binaries. The verified current PDF corpus is 1,728,918,143 bytes, above the 1GB Free Storage quota; binaries remain in the trusted local evidence corpus.",
     ],
   });
 }

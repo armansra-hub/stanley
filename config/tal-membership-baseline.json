@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-08-11T02:57:00Z",
+  "source": "Stanley production read-only agent bridge companies.tal_claimed=true",
+  "identity": "exact NetSuite Internal ID",
+  "rowCount": 160,
+  "uniqueInternalIds": 160,
+  "nullInternalIds": 0,
+  "retiredDuplicateRows": 0,
+  "membershipSha256": "29e25665a050c220b733535c83a3473d9738b6d520c813dd1f8bad2f1247d766",
+  "hashInput": "unique exact Internal IDs, ordinal-sorted, joined with LF and no trailing LF",
+  "note": "This is an audit baseline, not a hard-coded import allowlist. Future full TAL uploads may intentionally change membership, but must resolve and read back by exact Internal ID only."
+}

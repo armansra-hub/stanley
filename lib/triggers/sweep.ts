@@ -8,6 +8,12 @@ import { classifyHeadline } from "@/lib/triggers/config";
 import { runActor } from "@/lib/apify/run";
 import { normalizeDomain } from "@/lib/domain";
 import { parseDateLoose } from "@/lib/time";
+import {
+  isCareerEvidenceUrl,
+  isFinanceHireEligible,
+  isFinanceHireEvidenceUrl,
+  type FinanceHireCompanyEvidence,
+} from "@/lib/triggers/signalIntegrity";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -176,7 +182,7 @@ const PE_RE = /\b(private equity|pe firm|portfolio company|portfolio of|backed b
  * newsroom RSS (requireNameMatch=false — it's already their feed). Returns true if a
  * NEW trigger landed. opts.llm = use the Opus verifier (budget-gated) on claimable. */
 export async function classifyAndRecordHeadline(
-  company: { id: string; name: string },
+  company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence,
   it: { raw_excerpt: string; source_url: string; signal_date: string | null; source_name: string },
   opts: { llm?: boolean; requireNameMatch?: boolean } = {},
 ): Promise<boolean> {
@@ -197,10 +203,11 @@ export async function classifyAndRecordHeadline(
   }
   if (type === "ma" && !acquirer) return false; // target acquisition → suppress
   // QUEUED, not published: headline-to-company attribution needs judgment, not regex.
+  if (type === "finance_hire" && (!isFinanceHireEligible(company) || !isFinanceHireEvidenceUrl(it.source_url, it.source_name))) return false;
   return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
-export async function checkCompanyNews(company: { id: string; name: string }, opts: { llm?: boolean } = {}): Promise<number> {
+export async function checkCompanyNews(company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence, opts: { llm?: boolean } = {}): Promise<number> {
   let added = 0;
   for (const it of await fetchNewsForCompany(company.name, 6)) {
     if (!isFresh(it.signal_date)) continue;
@@ -215,7 +222,8 @@ export async function checkCompanyNews(company: { id: string; name: string }, op
 const EXEC_HIRE_RE = /\b(names?|appoints?|appointed|hires?|hired|welcomes?|adds?|promotes?|promoted|joins?|joined|taps?|elevates?|announces?)\b/i;
 const FIN_TITLE_RE = /\b(cfo|chief financial officer|controller|comptroller|vp[\s.,-]{0,6}finance|vice president[\s,]+(of\s+)?finance|head of finance|finance director|director of finance|chief accounting officer|chief accountant)\b/i;
 /** Check a (claimable) company for a new finance-leadership hire. Returns new triggers added. */
-export async function checkExecChange(company: { id: string; name: string }): Promise<number> {
+export async function checkExecChange(company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence): Promise<number> {
+  if (!isFinanceHireEligible(company)) return 0;
   let added = 0;
   const q = `"${company.name}" (CFO OR controller OR "chief financial officer" OR "VP Finance" OR "head of finance" OR "finance director")`;
   for (const it of await fetchNewsItems(q, 6)) {
@@ -245,7 +253,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   // Tested 2026-06-27: 0 hits across 250 base domains — the NetSuite-TAM base skews to
   // small companies with no ATS career page the actor indexes, so this is near-zero ROI
   // here. Kept (gated) for future LARGER-company lists. Free news below is the workhorse.
-  const withDomain = opts.finance ? (companies.filter((c) => c.domain) as { id: string; name: string; domain: string }[]) : [];
+  const withDomain = opts.finance ? (companies.filter((c) => c.domain && isFinanceHireEligible(c)) as { id: string; name: string; domain: string }[]) : [];
   const byDomain = new Map(withDomain.map((c) => [c.domain, c.id]));
   const domains = withDomain.map((c) => c.domain);
   if (domains.length) {
@@ -264,6 +272,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
         const role = String(r.title ?? "a finance role").slice(0, 80);
         const sd = parseDateLoose(r.date_posted ?? r.date_validfrom ?? r.date);
         const url = str(r.url) ?? null;
+        if (!isCareerEvidenceUrl(url)) continue;
         if (await recordTrigger(cid, { type: "finance_hire", summary: `Hiring: ${role}`, source_name: "Career site", source_url: url, signal_date: sd })) { finance++; touched.add(cid); }
         const desc = String(r.description_text ?? "").toLowerCase();
         if (/quickbooks|\bqbo\b/.test(desc) && !/netsuite|sage intacct|intacct|acumatica|dynamics 365/.test(desc)) {

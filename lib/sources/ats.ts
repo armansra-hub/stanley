@@ -1,4 +1,5 @@
 import "server-only";
+import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -16,24 +17,24 @@ import "server-only";
 export type AtsType = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "recruitee" | "workable" | "wizehire";
 export interface AtsJob { title: string; description: string; url: string; location: string; date: string | null }
 
-const UA = "Mozilla/5.0 (compatible; StanleyTAMBot/1.0; +https://jarvis-sable-eta.vercel.app)";
-
 async function fetchText(url: string, ms = 7000): Promise<string | null> {
   try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), ms);
-    const r = await fetch(url, { signal: ctl.signal, redirect: "follow", headers: { "user-agent": UA } });
-    clearTimeout(to);
-    return r.ok ? await r.text() : null;
+    const response = await fetchPublicHttpText(url, {
+      timeoutMs: ms,
+      maxBytes: 4_000_000,
+      accept: "text/html,application/xhtml+xml,text/plain",
+    });
+    return response.status >= 200 && response.status < 300 ? response.body : null;
   } catch { return null; }
 }
 async function fetchJson(url: string, ms = 8000): Promise<any | null> {
   try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), ms);
-    const r = await fetch(url, { signal: ctl.signal, redirect: "follow", headers: { "user-agent": UA, accept: "application/json" } });
-    clearTimeout(to);
-    return r.ok ? await r.json() : null;
+    const response = await fetchPublicHttpText(url, {
+      timeoutMs: ms,
+      maxBytes: 4_000_000,
+      accept: "application/json",
+    });
+    return response.status >= 200 && response.status < 300 ? JSON.parse(response.body) : null;
   } catch { return null; }
 }
 

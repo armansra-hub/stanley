@@ -7,7 +7,15 @@ import "server-only";
  * policy). Recent Form D filings = a private capital raise (Reg D exempt offering).
  * Searched by company name; the caller verifies the filer name actually matches.
  */
-export interface EdgarHit { name: string; date: string | null; form: string }
+export interface EdgarHit { name: string; date: string | null; form: string; url: string | null }
+
+/** Exact immutable SEC submission text URL from an EFTS accession + filer CIK. */
+export function edgarSubmissionUrl(accession: unknown, cik: unknown): string | null {
+  const acc = String(accession ?? "").match(/\d{10}-\d{2}-\d{6}/)?.[0] ?? "";
+  const cikDigits = String(cik ?? "").replace(/\D/g, "").replace(/^0+/, "");
+  if (!acc || !cikDigits) return null;
+  return `https://www.sec.gov/Archives/edgar/data/${cikDigits}/${acc.replace(/-/g, "")}/${acc}.txt`;
+}
 
 export async function fetchEdgarFunding(name: string, sinceDays = 180, max = 5): Promise<EdgarHit[]> {
   try {
@@ -24,10 +32,14 @@ export async function fetchEdgarFunding(name: string, sinceDays = 180, max = 5):
     if (!r.ok) return [];
     const d = await r.json();
     const hits = d?.hits?.hits ?? [];
-    return hits.slice(0, max).map((x: any) => ({
-      name: Array.isArray(x._source?.display_names) ? String(x._source.display_names[0] ?? "") : "",
-      date: x._source?.file_date ?? null,
-      form: Array.isArray(x._source?.root_forms) ? String(x._source.root_forms[0] ?? "D") : "D",
-    }));
+    return hits.slice(0, max).map((x: any) => {
+      const cik = Array.isArray(x._source?.ciks) ? x._source.ciks[0] : x._source?.cik;
+      return {
+        name: Array.isArray(x._source?.display_names) ? String(x._source.display_names[0] ?? "") : "",
+        date: x._source?.file_date ?? null,
+        form: Array.isArray(x._source?.root_forms) ? String(x._source.root_forms[0] ?? "D") : "D",
+        url: edgarSubmissionUrl(x._id, cik),
+      };
+    });
   } catch { return []; }
 }

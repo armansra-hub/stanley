@@ -3,18 +3,17 @@ import { createHash } from "crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
 import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
-import { consumeTicket, verifyTicket } from "@/lib/agent/tickets";
+import { reserveTicket } from "@/lib/agent/tickets";
 import { coerceDate, coerceText, pick } from "@/lib/agent/coerce";
 
 /**
  * Lead record TEXT, pushed by whichever agent can see the record and readable by
  * the other. This is how the TAM's source material crosses between machines.
  *
- * TEXT, NOT PDFs, on purpose. The PDF corpus is ~15GB; this project runs on
- * Supabase's free tier (500MB database, no storage buckets provisioned). The full
- * extracted text of all ~7,400 leads is ~100MB and fits comfortably — and text is
- * what a grader actually reads. Extract on the machine that holds the PDFs, push
- * the text. (Arman's 7/14 run extracted 7,130 leads — 109k pages — in 33 minutes.)
+ * TEXT, NOT PDFs, on purpose. The verified current PDF corpus is 1,728,918,143
+ * bytes, above Supabase Free Storage's 1GB quota, and stays in the trusted local
+ * evidence corpus. The full record text is what either agent needs to grade;
+ * Codex pushes it after local verification and Claude reads it here.
  *
  * POST { docs: [{ internalId, body, docType?, source?, title?, capturedAt? }] }
  * GET  ?internalId=123 | ?missing=1 (which TAM leads still have no text)
@@ -43,7 +42,9 @@ function sessionOk(req: Request): boolean {
 
 export async function POST(req: Request) {
   const ticketRaw = new URL(req.url).searchParams.get("ticket");
-  const ticket = ticketRaw ? await verifyTicket(ticketRaw) : null;
+  // Reserve a use before reading the body. Invalid input still consumes a
+  // successfully authenticated attempt; concurrent calls cannot overspend.
+  const ticket = ticketRaw ? await reserveTicket(ticketRaw) : null;
   if (ticket && !ticket.ok) {
     return NextResponse.json({ error: `ticket rejected: ${ticket.reason}` }, { status: 401 });
   }
@@ -123,8 +124,6 @@ export async function POST(req: Request) {
     .upsert(rows, { onConflict: "netsuite_internal_id,doc_type,sha256", ignoreDuplicates: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  if (ticket?.ok && ticket.id) await consumeTicket(ticket.id);
-
   const chars = rows.reduce((n, r) => n + String(r.body).length, 0);
   await logEvent("headhunter", "agent.documents_pushed", {
     summary: `${agent} pushed ${rows.length} lead documents (${Math.round(chars / 1000)}k chars, ${ids.length} leads)`,
@@ -135,7 +134,7 @@ export async function POST(req: Request) {
   return NextResponse.json({
     stored: rows.length, leads: ids.length, chars,
     unmatchedToCompany: rows.filter((r) => !r.company_id).length, errors,
-    ...(ticket?.ok ? { ticketUsesRemaining: (ticket.remaining ?? 1) - 1 } : {}),
+    ...(ticket?.ok ? { ticketUsesRemaining: ticket.remaining ?? 0 } : {}),
   });
 }
 

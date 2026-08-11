@@ -4,7 +4,8 @@ import { recomputePriority } from "@/lib/db/triggers";
 import { decideIdentityMatch, normalizeName } from "./identity";
 import { compactSamEntity, sbaProfileUrl, searchSamEntities } from "./sam";
 import { recordPublicGrowthTriggersBulk, saveCompanyGovernmentMatch, saveGovernmentEntity, stableHash } from "./storage";
-import { loadTamBatch } from "./usaspendingSweep";
+import { loadRecurringTamBatch, loadTamBatch, type PublicGrowthCompanyScope } from "./usaspendingSweep";
+import { takeRecurringBatch } from "./sweepState";
 import type { DerivedGrowthEvent, TamIdentity } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -112,7 +113,8 @@ export async function sweepSamCompany(company: TamIdentity) {
   const receipt = { companyId: company.id, companyName: company.name, status: "not_found", entities: 0, naics: 0, triggers: 0, error: undefined as string | undefined };
   try {
     const db = serviceClient();
-    const { data: linked } = await db.from("company_government_matches").select("government_entities(uei)").eq("company_id", company.id).eq("match_status", "verified");
+    const { data: linked, error: linkedError } = await db.from("company_government_matches").select("government_entities(uei)").eq("company_id", company.id).eq("match_status", "verified");
+    if (linkedError) throw new Error(`SAM verified-link load failed: ${linkedError.message}`);
     const linkedUeis = (linked ?? []).map((x: any) => x.government_entities?.uei).filter(Boolean);
     const rows = linkedUeis.length ? (await Promise.all(linkedUeis.map((uei: string) => searchSamEntities({ uei })))).flat() : await searchSamEntities({ legalBusinessName: company.name });
     for (const row of rows) {
@@ -132,8 +134,18 @@ export async function sweepSamCompany(company: TamIdentity) {
   }
 }
 
-export async function sweepSamTamBatch(limit: number, offset: number) {
-  const companies = await loadTamBatch(limit, offset), receipts = [];
+export async function sweepSamTamBatch(
+  limit: number,
+  offset: number,
+  scope: PublicGrowthCompanyScope = "tam",
+  afterCompanyId: string | null = null,
+) {
+  const recurring = scope === "verified"
+    ? await loadRecurringTamBatch("sam-entity", limit + 1, afterCompanyId)
+    : null;
+  const recurringWindow = recurring ? takeRecurringBatch(recurring, limit) : null;
+  const companies = recurringWindow ? recurringWindow.rows : await loadTamBatch(limit, offset);
+  const receipts = [];
   for (const company of companies) receipts.push(await sweepSamCompany(company));
-  return { source: "sam-entity", offset, checked: companies.length, nextOffset: offset + companies.length, done: companies.length < limit, matched: receipts.filter((r) => r.status === "matched").length, ambiguous: receipts.filter((r) => r.status === "ambiguous").length, errors: receipts.filter((r) => r.status === "error").length, entities: receipts.reduce((s, r) => s + r.entities, 0), naics: receipts.reduce((s, r) => s + r.naics, 0), triggers: receipts.reduce((s, r) => s + r.triggers, 0), receipts };
+  return { source: "sam-entity", offset, checked: companies.length, nextOffset: offset + companies.length, done: recurringWindow ? recurringWindow.done : companies.length < limit, ...(recurringWindow ? { advanceCursor: false, cursorPatch: { afterCompanyId: recurringWindow.done ? null : companies.at(-1)?.id ?? null } } : {}), matched: receipts.filter((r) => r.status === "matched").length, ambiguous: receipts.filter((r) => r.status === "ambiguous").length, errors: receipts.filter((r) => r.status === "error").length, entities: receipts.reduce((s, r) => s + r.entities, 0), naics: receipts.reduce((s, r) => s + r.naics, 0), triggers: receipts.reduce((s, r) => s + r.triggers, 0), receipts };
 }

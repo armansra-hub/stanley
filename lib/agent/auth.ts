@@ -9,28 +9,32 @@ import { NextResponse } from "next/server";
  * must not repeat it: these routes accept bulk writes to the grading data Arman's
  * whole pipeline depends on.
  *
- * Accepts AGENT_TOKEN when set, and falls back to CRON_SECRET — which is already
- * provisioned in Vercel — so the bridge works the moment it deploys, with no
- * dashboard trip. Set AGENT_TOKEN later to give the agents their own credential.
+ * Accept only a dedicated agent credential in a header. Cron credentials and
+ * query-string tokens are deliberately not bridge credentials: URLs are logged,
+ * and cron secrets have a different operational scope.
  */
 export function agentAuthOk(req: Request): boolean {
   const expected = [
     process.env.AGENT_TOKEN,
     process.env.CODEX_AGENT_TOKEN,
-    process.env.CRON_SECRET,
   ].filter(Boolean) as string[];
   if (!expected.length) return false; // never fail open
 
   const auth = req.headers.get("authorization");
-  const url = new URL(req.url);
-  const presented =
-    (auth?.startsWith("Bearer ") ? auth.slice(7) : null) ??
-    req.headers.get("x-agent-token") ??
-    req.headers.get("x-cron-secret") ??
-    url.searchParams.get("token");
+  const presented = (auth?.startsWith("Bearer ") ? auth.slice(7) : null)
+    ?? req.headers.get("x-agent-token");
   if (!presented) return false;
 
   return expected.some((e) => timingSafeEqual(e, presented));
+}
+
+/**
+ * High-impact TAM coordination/publish routes accept only the dedicated agent
+ * credential in a header. They deliberately reject CRON_SECRET, x-cron-secret,
+ * and query-string tokens so a logged cron URL cannot become a grading key.
+ */
+export function tamMachineAuthOk(req: Request): boolean {
+  return agentAuthOk(req);
 }
 
 /** Constant-time compare — a length-independent loop so a token can't be probed byte by byte. */

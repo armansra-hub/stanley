@@ -2,6 +2,8 @@ import "server-only";
 import { extractAcquisitions } from "@/lib/sources/acquisition";
 import { extractGrowthSignals } from "@/lib/sources/growth";
 import { scanFinanceRoles } from "@/lib/sources/careers";
+import { isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
+import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 
 /**
  * Company-website growth-signal reader (FREE). Fetches a claimable company's own
@@ -11,34 +13,25 @@ import { scanFinanceRoles } from "@/lib/sources/careers";
  * trigger only when a NEW phrase appears, so incidental page changes don't create
  * noise. Conservative on purpose (no generic "we're hiring").
  */
-const UA = "Mozilla/5.0 (compatible; StanleyTAMBot/1.0; +https://jarvis-sable-eta.vercel.app)";
-
-async function fetchText(url: string, ms = 7000): Promise<string> {
-  try {
-    const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), ms);
-    const r = await fetch(url, { signal: ctl.signal, redirect: "follow", headers: { "user-agent": UA } });
-    clearTimeout(to);
-    if (!r.ok) return "";
-    const html = await r.text();
-    return html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").toLowerCase();
-  } catch { return ""; }
-}
-
 // Growth phrases moved to lib/sources/growth.ts (2026-07-30). The old inline
 // patterns matched company-description boilerplate — "expanding into their
 // wholeness", "we relish the opportunity to expand into other industries" — because
 // they required only the phrase, never evidence of an actual event.
 
 // Raw HTML (case preserved) — for parent-name capture + RSS-link discovery.
-async function fetchRaw(url: string, ms = 7000): Promise<string> {
+interface FetchedPage { html: string; finalUrl: string }
+
+async function fetchPage(url: string, ms = 7000): Promise<FetchedPage> {
   try {
-    const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), ms);
-    const r = await fetch(url, { signal: ctl.signal, redirect: "follow", headers: { "user-agent": UA } });
-    clearTimeout(to);
-    return r.ok ? await r.text() : "";
-  } catch { return ""; }
+    const response = await fetchPublicHttpText(url, {
+      timeoutMs: ms,
+      maxBytes: 4_000_000,
+      accept: "text/html,application/xhtml+xml",
+    });
+    return response.status >= 200 && response.status < 300
+      ? { html: response.body, finalUrl: response.finalUrl }
+      : { html: "", finalUrl: response.finalUrl };
+  } catch { return { html: "", finalUrl: url }; }
 }
 const cleanHtml = (h: string) => h.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim();
 
@@ -82,14 +75,15 @@ export interface SiteScan {
 /** One pass over a company's site: growth phrases + parent-company + RSS feed URL. */
 export async function fetchSiteSignals(domain: string, companyName?: string): Promise<SiteScan> {
   const base = `https://${domain.replace(/\/+$/, "")}`;
-  const home = await fetchRaw(base);
+  const homePage = await fetchPage(base);
   // Secondary pages fetched in PARALLEL with a shorter timeout, so one slow page can't
   // blow the wave's 60s budget (sequential fetches + the added careers pages timed out).
-  const [about, news, careersRaw, jobsRaw] = await Promise.all([
-    fetchRaw(`${base}/about`, 5000), fetchRaw(`${base}/news`, 5000),
-    fetchRaw(`${base}/careers`, 5000), fetchRaw(`${base}/jobs`, 5000),
+  const [aboutPage, newsPage, careersPage, jobsPage] = await Promise.all([
+    fetchPage(`${base}/about`, 5000), fetchPage(`${base}/news`, 5000),
+    fetchPage(`${base}/careers`, 5000), fetchPage(`${base}/jobs`, 5000),
   ]);
-  const careersTxt = cleanHtml(careersRaw), jobsTxt = cleanHtml(jobsRaw);
+  const home = homePage.html, about = aboutPage.html, news = newsPage.html;
+  const careersTxt = cleanHtml(careersPage.html), jobsTxt = cleanHtml(jobsPage.html);
   const raw = `${home} ${about} ${news}`;
   const rawText = `${cleanHtml(home)} ${cleanHtml(about)} ${cleanHtml(news)}`; // case preserved
   const text = rawText.toLowerCase();
@@ -111,8 +105,8 @@ export async function fetchSiteSignals(domain: string, companyName?: string): Pr
   const homeText = cleanHtml(home);
   const financeRoles: FinanceRoleHit[] = [];
   const seenRoles = new Set<string>();
-  for (const [pageUrl, pageText] of [[`${base}/careers`, careersTxt], [`${base}/jobs`, jobsTxt]] as const) {
-    if (!pageText || looksLikeClientBoard(pageText)) continue;
+  for (const [pageUrl, pageText] of [[careersPage.finalUrl, careersTxt], [jobsPage.finalUrl, jobsTxt]] as const) {
+    if (!pageText || !isCareerEvidenceUrl(pageUrl) || looksLikeClientBoard(pageText)) continue;
     // requireJobPage rejects the soft-404 case where /careers serves the homepage,
     // and drops role words that are the firm's own service offering.
     for (const hit of scanFinanceRoles(pageText, { homeText })) {

@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serviceClient } from "@/lib/supabase/server";
-import { recomputePriority } from "@/lib/db/triggers";
+import {
+  recomputePriority,
+  reservePriorityRecompute,
+  utcDailyRotationEpoch,
+} from "@/lib/db/triggers";
 import { logEvent } from "@/lib/db/events";
 
 /**
- * Priority recompute. Three modes:
- *  • POST {ids:[...]} — recompute exactly those companies (used by offline ingests
- *    that insert triggers directly, e.g. the DOL 5500 scripts).
- *  • default (GET/POST, no ids) — every lead with priority>0 ("ghosts": trigger
- *    deleted/decayed + headcount<25 → drop to 0 and leave Triggered) PLUS "zombies":
- *    leads with a recent trigger but priority stuck at 0 (recordTrigger landed but the
- *    inline recompute crashed) so real signals can never be silently lost.
- * Secret-guarded. ?limit= caps the batch (default 1000).
+ * Priority recompute. Two modes:
+ *  - POST {ids:[...]} recomputes exactly those companies.
+ *  - Default GET/POST uses a durable oldest-reservation cursor across priority>0
+ *    "ghosts" and a protected share of priority-zero "zombies" whose recent
+ *    trigger landed but inline recompute failed. Priority is eligibility, never
+ *    ordering.
+ * Secret-guarded. ?limit= caps attempts (default 1000).
  */
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -24,41 +26,72 @@ async function run(req: NextRequest) {
   if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const limit = Math.min(Number(url.searchParams.get("limit") ?? 1000) || 1000, 2000);
-  const db = serviceClient();
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") ?? 1000) || 1000, 2000));
 
   let body: { ids?: string[] } = {};
   try { body = await req.json(); } catch { /* GET / empty body */ }
-  let ids: string[];
-  if (Array.isArray(body.ids) && body.ids.length) {
-    ids = body.ids.slice(0, limit).map(String);
-  } else {
-    // Ghosts: currently surfaced (priority>0) — re-derive from live triggers + headcount.
-    const { data } = await db.from("companies").select("id").gt("priority", 0).order("priority", { ascending: true }).limit(limit);
-    const set = new Set((data ?? []).map((r) => (r as { id: string }).id));
-    // Zombies: recent trigger exists but priority never got set (inline recompute failed).
-    const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
-    const { data: trigCos } = await db.from("triggers").select("company_id").gt("detected_at", since).limit(3000);
-    const trigIds = [...new Set((trigCos ?? []).map((r) => (r as { company_id: string }).company_id))].filter((id) => !set.has(id));
-    for (let i = 0; i < trigIds.length; i += 200) {
-      const { data: zero } = await db.from("companies").select("id").in("id", trigIds.slice(i, i + 200)).or("priority.is.null,priority.eq.0");
-      for (const r of zero ?? []) set.add((r as { id: string }).id);
+  const explicitIds = Array.isArray(body.ids) && body.ids.length
+    ? [...new Set(body.ids.map(String))].slice(0, limit)
+    : null;
+
+  // Reserve one micro-batch at a time. Once reserved, every row in that batch is
+  // attempted before checking the deadline again, so a large unstarted tail is
+  // never checkpointed merely because this invocation reached its timebox.
+  const deadline = Date.now() + 50_000;
+  const epoch = utcDailyRotationEpoch();
+  let dropped = 0, kept = 0, failed = 0, processed = 0;
+  let ghostsReserved = 0, zombiesReserved = 0, totalReserved = 0;
+  const BATCH = 10;
+
+  const attempt = async (ids: string[]) => {
+    // Mapping starts every reserved attempt synchronously before Promise.all waits.
+    const results = await Promise.all(ids.map((id) => recomputePriority(id).catch(() => null)));
+    processed += results.length;
+    for (const priority of results) {
+      if (priority === null) failed++;
+      else if (priority <= 0) dropped++;
+      else kept++;
     }
-    ids = [...set].slice(0, limit);
+  };
+
+  if (explicitIds) {
+    for (let i = 0; i < explicitIds.length; i += BATCH) {
+      if (Date.now() > deadline) break;
+      await attempt(explicitIds.slice(i, i + BATCH));
+    }
+  } else {
+    while (processed < limit && Date.now() <= deadline) {
+      const batchLimit = Math.min(BATCH, limit - processed);
+      const zombieSlots = Math.min(batchLimit, Math.max(1, Math.ceil(batchLimit / 5)));
+      const reservations = await reservePriorityRecompute(batchLimit, zombieSlots, epoch);
+      if (reservations.length === 0) break;
+      totalReserved += reservations.length;
+      ghostsReserved += reservations.filter((row) => row.reservation_kind === "ghost").length;
+      zombiesReserved += reservations.filter((row) => row.reservation_kind === "zombie").length;
+      await attempt(reservations.map((row) => row.company_id));
+    }
   }
 
-  // Time-boxed so a big batch commits partial progress instead of dying at the 60s kill.
-  const deadline = Date.now() + 50_000;
-  let dropped = 0, kept = 0, processed = 0;
-  const BATCH = 10;
-  for (let i = 0; i < ids.length; i += BATCH) {
-    if (Date.now() > deadline) break;
-    const r = await Promise.all(ids.slice(i, i + BATCH).map((id) => recomputePriority(id).catch(() => null)));
-    processed += r.length;
-    for (const p of r) { if (p === null) continue; if (p <= 0) dropped++; else kept++; }
-  }
-  await logEvent("headhunter", "priority.recompute", { summary: `Priority recompute: ${dropped} ghosts dropped, ${kept} kept (${processed}/${ids.length})`, entity_type: "cron", meta: { dropped, kept, processed, total: ids.length } }).catch(() => {});
-  return NextResponse.json({ checked: processed, of: ids.length, dropped, kept });
+  const mode = explicitIds ? "explicit" : "rotation";
+  const total = explicitIds?.length ?? totalReserved;
+  const receipt = {
+    mode,
+    checked: processed,
+    of: total,
+    capacity: limit,
+    dropped,
+    kept,
+    failed,
+    ghosts_reserved: ghostsReserved,
+    zombies_reserved: zombiesReserved,
+    epoch,
+  };
+  await logEvent("headhunter", "priority.recompute", {
+    summary: `Priority recompute (${mode}): ${dropped} dropped, ${kept} kept, ${failed} failed (${processed}/${total} attempted)`,
+    entity_type: "cron",
+    meta: receipt,
+  }).catch(() => {});
+  return NextResponse.json(receipt);
 }
 
 export async function GET(req: NextRequest) { return run(req); }

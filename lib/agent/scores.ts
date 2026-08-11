@@ -15,13 +15,19 @@ export interface NormalizedScoreRow {
   tamScore: number;
   oldGoldScore: number | null;
   oldGoldClass: string | null;
+  oldGoldClassProvided: boolean;
   oldGoldReasons: string[];
+  oldGoldReasonsProvided: boolean;
   recordDigest: string | null;
   /** null = the push didn't mention it. Absent must NOT be read as false, or a
    * partial re-push would resurrect every dead lead it touched. */
   recordDead: boolean | null;
   recordDeadReason: string | null;
+  /** Distinguishes omitted (preserve live value) from explicit null (clear it). */
+  recordDeadReasonProvided: boolean;
   revisitOn: string | null;
+  /** Distinguishes omitted (preserve live value) from explicit null (clear it). */
+  revisitOnProvided: boolean;
   qualNote: string | null;
   lastSqlDate: string | null;
 }
@@ -71,6 +77,8 @@ export function normalizeScoreRow(
   if (oldGoldScore === undefined) {
     errors.push({ index, internalId, field: "oldGoldScore", problem: "not a number between 0 and 100", received: show(rawOldGoldScore) });
   }
+  const rawOldGoldClass = pick(raw, "oldGoldClass", "old gold class", "ogClass");
+  const rawOldGoldReasons = pick(raw, "oldGoldReasons", "old gold reasons", "ogReasons", "reasons");
 
   const rawRevisit = pick(raw, "revisitOn", "revisit on", "revisit", "revisitDate", "followUpOn");
   const revisitOn = coerceDate(rawRevisit);
@@ -89,6 +97,7 @@ export function normalizeScoreRow(
   if (recordDead === undefined) {
     errors.push({ index, internalId, field: "recordDead", problem: "unreadable boolean (accepts true/false, yes/no, 1/0, or blank)", received: show(rawDead) });
   }
+  const rawDeadReason = pick(raw, "recordDeadReason", "record dead reason", "deadReason", "disqualifyReason");
 
   if (errors.length) return { ok: false, errors };
 
@@ -98,12 +107,16 @@ export function normalizeScoreRow(
       internalId: internalId as string,
       tamScore: tamScore as number,
       oldGoldScore: oldGoldScore ?? null,
-      oldGoldClass: coerceText(pick(raw, "oldGoldClass", "old gold class", "ogClass")),
-      oldGoldReasons: coerceList(pick(raw, "oldGoldReasons", "old gold reasons", "ogReasons", "reasons")),
+      oldGoldClass: coerceText(rawOldGoldClass),
+      oldGoldClassProvided: rawOldGoldClass !== undefined,
+      oldGoldReasons: coerceList(rawOldGoldReasons),
+      oldGoldReasonsProvided: rawOldGoldReasons !== undefined,
       recordDigest: coerceText(pick(raw, "recordDigest", "record digest", "digest", "rationale", "summary")),
       recordDead: recordDead ?? null, // undefined already returned above as a field error
-      recordDeadReason: coerceText(pick(raw, "recordDeadReason", "record dead reason", "deadReason", "disqualifyReason")),
+      recordDeadReason: coerceText(rawDeadReason),
+      recordDeadReasonProvided: rawDeadReason !== undefined,
       revisitOn: revisitOn ?? null,
+      revisitOnProvided: rawRevisit !== undefined,
       qualNote: coerceText(pick(raw, "qualNote", "qual note", "qualificationNote")),
       lastSqlDate: lastSqlDate ?? null,
     },
@@ -182,8 +195,8 @@ export function assessDigest(digest: string | null, supporting: string[] = []): 
  * This is evaluated per company row, because duplicate NetSuite internal IDs exist
  * and one twin can be Old Gold while the other isn't.
  *
- * (Hard zeros and the ±15 signal layer live in lib/agent/adjust.ts, so the scoring
- * law has exactly one implementation on the write path.)
+ * Hard zeros live in lib/agent/adjust.ts. Public signals are intentionally absent
+ * from this law and from the grade write path.
  */
 export function deriveOldGold(
   candidateScore: number,

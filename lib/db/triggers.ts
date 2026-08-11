@@ -5,17 +5,24 @@ import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
 import { mapSignal, withTriggers, withInsights, type InsightBadge } from "@/lib/db/companies";
 import type { Company } from "@/lib/types";
 import { scoreTalUrgency } from "@/lib/tal/urgency";
+import {
+  isFinanceHireEligible,
+  isFinanceHireEvidenceUrl,
+  isPublishableTriggerEvidence,
+  isPublishableTriggerForCompany,
+  type TriggerEvidence,
+} from "@/lib/triggers/signalIntegrity";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export interface TriggerInput { type: string; summary: string; source_name?: string; source_url?: string | null; signal_date?: string | null }
-export interface TriggerRow { id: string; company_id: string; type: string; strength: number; half_life_days: number; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string }
+export interface TriggerRow { id: string; company_id: string; type: string; strength: number; half_life_days: number; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; metadata?: Record<string, unknown> | null }
 
 /** Homepage growth phrases were historically stored with a fabricated /# anchor.
  * Preserve those rows for auditability, but never score or display them as events.
  * A real M&A/expansion trigger must link to an actual article or evidence page. */
-export function isPublishableTrigger(t: Pick<TriggerRow, "type" | "source_url">): boolean {
-  return !(new Set(["ma", "press", "new_entity"]).has(String(t.type)) && /\/#/.test(String(t.source_url ?? "")));
+export function isPublishableTrigger(t: TriggerEvidence): boolean {
+  return isPublishableTriggerEvidence(t);
 }
 
 /** Insert a trigger (deduped by company + source_url). Returns true if a NEW one landed.
@@ -24,6 +31,17 @@ export function isPublishableTrigger(t: Pick<TriggerRow, "type" | "source_url">)
 export async function recordTrigger(companyId: string, t: TriggerInput): Promise<boolean> {
   const spec = TRIGGER_SPEC[t.type] ?? TRIGGER_SPEC.news;
   const db = serviceClient();
+  // Defensive storage gate: call sites also filter to avoid wasted source work, but
+  // every writer (including agent-insight promotion) ultimately passes through here.
+  if (!isPublishableTriggerEvidence(t)) return false;
+  if (t.type === "finance_hire") {
+    if (!isFinanceHireEvidenceUrl(t.source_url, t.source_name)) return false;
+    const { data: company, error: companyError } = await db.from("companies")
+      .select("name, record_dead, description, subindustry, ns_industry")
+      .eq("id", companyId)
+      .maybeSingle();
+    if (companyError || !company || !isFinanceHireEligible(company)) return false;
+  }
   const { error } = await db.from("triggers").insert({
     company_id: companyId, type: t.type, strength: spec.strength, half_life_days: spec.half_life_days,
     summary: t.summary.slice(0, 280), source_name: t.source_name ?? null, source_url: t.source_url ?? null, signal_date: t.signal_date ?? null,
@@ -64,13 +82,18 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
 export async function recomputePriority(companyId: string): Promise<number> {
   const db = serviceClient();
   // select * so optional ERP-readiness columns (migration 0020) are included when present.
-  const { data: c } = await db.from("companies").select("*").eq("id", companyId).maybeSingle();
-  const { data: trigs } = await db.from("triggers").select("type, strength, half_life_days, signal_date, detected_at").eq("company_id", companyId);
+  const { data: c, error: companyError } = await db.from("companies").select("*").eq("id", companyId).maybeSingle();
+  if (companyError) throw new Error(`priority company read failed: ${companyError.message}`);
+  if (!c) throw new Error(`priority company not found: ${companyId}`);
+  const { data: trigs, error: triggerError } = await db.from("triggers")
+    .select("type, strength, half_life_days, signal_date, detected_at, summary, source_name, source_url, metadata")
+    .eq("company_id", companyId);
+  if (triggerError) throw new Error(`priority trigger read failed: ${triggerError.message}`);
   const fit = Number((c as any)?.fit_weight ?? 1);
   const listBonus = 1 + 0.1 * Math.max(0, ((c as any)?.lists?.length ?? 1) - 1);
   let best = 0;
   const activeTypes = new Set<string>();
-  for (const t of ((trigs ?? []) as any[]).filter(isPublishableTrigger)) {
+  for (const t of ((trigs ?? []) as any[]).filter((trigger) => isPublishableTriggerForCompany(trigger, c as any))) {
     const decay = decayFactor(t.signal_date, t.detected_at, t.half_life_days);
     const v = Number(t.strength) * decay;
     if (v > best) best = v;
@@ -94,10 +117,8 @@ export async function recomputePriority(companyId: string): Promise<number> {
   // what belongs at the top. Only a closed-out lead is damped, because an event does
   // not make a company worth calling after they have told us no.
   //
-  // Deliberately NOT the same rule as the score cap in lib/agent/adjust.ts. That one
-  // governs tam_score (a quality measure, where the grade band matters); this governs
-  // an event worklist. Same principle — a human's no outranks a scraper's yes — but
-  // the grade band belongs only in the former.
+  // This affects only the event worklist. The retired outside-signal score layer
+  // must never feed this priority back into TAM or Old Gold.
   const graded = (c as any)?.tam_score;
   const digest = String((c as any)?.record_digest ?? "").toLowerCase();
   let verdictFactor = 1;
@@ -105,8 +126,32 @@ export async function recomputePriority(companyId: string): Promise<number> {
   else if (digest.includes("points to disqualification")) verdictFactor = 0.35;
   else if (digest.includes("some historical fit or pain exists")) verdictFactor = 0.85;
   const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * 100) / 100;
-  await db.from("companies").update({ priority }).eq("id", companyId);
+  const { error: updateError } = await db.from("companies").update({ priority }).eq("id", companyId);
+  if (updateError) throw new Error(`priority update failed: ${updateError.message}`);
   return priority;
+}
+
+/** Clear only the cached trigger alert in one company-row-locked transaction
+ * when no unquarantined trigger remains. `has_new_signal` belongs to the separate
+ * signals table and is deliberately outside this repair. */
+export async function reconcilePublishableSignalFlags(companyId: string): Promise<boolean> {
+  const { data, error } = await serviceClient().rpc("reconcile_company_signal_flags", {
+    p_company_id: companyId,
+  });
+  if (error) throw new Error(`signal-flag reconciliation failed: ${error.message}`);
+  const readback = data as {
+    cleared?: unknown;
+    tal_alert?: unknown;
+    unquarantined_triggers?: unknown;
+  } | null;
+  if (!readback) throw new Error(`signal-flag company not found: ${companyId}`);
+  if (readback.cleared === true && readback.tal_alert !== false) {
+    throw new Error(`signal-flag readback mismatch: ${companyId}`);
+  }
+  if (readback.cleared !== true && readback.cleared !== false) {
+    throw new Error(`signal-flag receipt invalid: ${companyId}`);
+  }
+  return readback.cleared;
 }
 
 /**
@@ -119,10 +164,11 @@ export async function recomputePriority(companyId: string): Promise<number> {
  * Idempotent on (company_id, type, summary): re-running a sweep won't pile up dupes.
  */
 export async function queueCandidate(
-  company: { id: string; name: string; netsuite_internal_id?: string | null },
+  company: { id: string; name: string; netsuite_internal_id?: string | null; record_dead?: boolean | null; description?: string | null; subindustry?: string | null; ns_industry?: string | null },
   t: { type: string; summary: string; source_name?: string | null; source_url?: string | null; signal_date?: string | null },
 ): Promise<boolean> {
   try {
+    if (t.type === "finance_hire" && (!isFinanceHireEligible(company) || !isFinanceHireEvidenceUrl(t.source_url, t.source_name))) return false;
     const spec = TRIGGER_SPEC[t.type as keyof typeof TRIGGER_SPEC] as { strength?: number; half_life_days?: number } | undefined;
     const { data, error } = await serviceClient().from("trigger_candidates").upsert({
       company_id: company.id,
@@ -185,15 +231,61 @@ export async function setErpFlags(companyId: string, flags: { pe_owned?: boolean
   } catch { /* columns missing pre-0020 → no-op */ }
 }
 
-/** The next batch of base companies to sweep — never-checked first, then oldest,
- * NetSuite-TAM (claimable) ahead of the rest, then highest fit. `offset` lets the
- * cron fan the day's sweep into non-overlapping parallel waves (each wave reads the
- * same ordering before any are marked checked, so disjoint slices). */
-export async function pickForRotation(limit: number, offset = 0): Promise<{ id: string; name: string; domain: string | null; claimable: boolean }[]> {
+/** The next batch of base companies to sweep — never-checked first, then oldest.
+ * The default path atomically reserves work. A positive `offset` is retained only
+ * for bounded manual recovery; mutable-cursor offset pages must never run in parallel. */
+export interface RotationSignalContext {
+  record_dead: boolean;
+  description: string | null;
+  subindustry: string | null;
+  ns_industry: string | null;
+}
+
+/** All default cron waves in one UTC day share this immutable reservation cutoff. */
+export function utcDailyRotationEpoch(now = new Date()): string {
+  const timestamp = now.getTime();
+  if (!Number.isFinite(timestamp)) throw new Error("rotation epoch requires a valid date");
+  return new Date(Math.floor(timestamp / 86_400_000) * 86_400_000).toISOString();
+}
+
+async function reserveRotation<T>(source: string, limit: number, scope: string | null = null): Promise<T[]> {
+  const { data, error } = await serviceClient().rpc("reserve_company_rotation", {
+    p_source: source,
+    p_limit: limit,
+    p_scope: scope,
+    p_epoch: utcDailyRotationEpoch(),
+  });
+  if (error) throw new Error(`${source} rotation reservation failed: ${error.message}`);
+  return (data ?? []) as T[];
+}
+
+export interface PriorityRecomputeReservation {
+  company_id: string;
+  reservation_kind: "ghost" | "zombie";
+}
+
+/** Reserve one immediately attempted recompute micro-batch without ordering by priority. */
+export async function reservePriorityRecompute(
+  limit: number,
+  zombieSlots: number,
+  epoch = utcDailyRotationEpoch(),
+): Promise<PriorityRecomputeReservation[]> {
+  const { data, error } = await serviceClient().rpc("reserve_priority_recompute", {
+    p_epoch: epoch,
+    p_limit: limit,
+    p_zombie_slots: zombieSlots,
+  });
+  if (error) throw new Error(`priority recompute reservation failed: ${error.message}`);
+  return (data ?? []) as PriorityRecomputeReservation[];
+}
+
+export async function pickForRotation(limit: number, offset = 0): Promise<Array<{ id: string; name: string; domain: string | null; claimable: boolean } & RotationSignalContext>> {
+  if (offset === 0) return reserveRotation("trigger", limit);
   const db = serviceClient();
-  const { data } = await db.from("companies").select("id, name, domain, claimable")
+  const { data } = await db.from("companies").select("id, name, domain, claimable, record_dead, description, subindustry, ns_industry")
     .contains("lists", ["netsuite_tam"])
     .neq("status", "removed_from_tam")
+    .order("last_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
@@ -206,13 +298,15 @@ export async function markChecked(ids: string[]): Promise<void> {
 }
 
 /** The next batch of base companies to ATS-check — must have a domain; longest-since
- * (or never) ats-checked first, NetSuite-TAM (claimable) ahead. `offset` for waves. */
-export async function pickAtsForRotation(limit: number, offset = 0): Promise<{ id: string; name: string; domain: string; ats_type: string | null; ats_token: string | null }[]> {
+ * (or never) ats-checked first. Positive offsets are manual recovery only. */
+export async function pickAtsForRotation(limit: number, offset = 0): Promise<Array<{ id: string; name: string; domain: string; ats_type: string | null; ats_token: string | null } & RotationSignalContext>> {
+  if (offset === 0) return reserveRotation("ats", limit);
   const db = serviceClient();
-  const { data } = await db.from("companies").select("id, name, domain, ats_type, ats_token")
+  const { data } = await db.from("companies").select("id, name, domain, ats_type, ats_token, record_dead, description, subindustry, ns_industry")
     .contains("lists", ["netsuite_tam"])
     .neq("status", "removed_from_tam")
     .not("domain", "is", null)
+    .order("ats_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
@@ -226,14 +320,17 @@ export async function setAtsChecked(id: string, patch: { ats_type?: string; ats_
   } catch { /* columns missing pre-0020 → no-op */ }
 }
 
-/** Rotation for the slow structured-signal sweep (USAspending + EDGAR), on its own
- * cursor (signals_checked_at, migration 0021) so it doesn't fight the news sweep.
- * NetSuite-TAM first; never/longest-checked first. `offset` for parallel waves. */
+/** Rotation for the slow structured-signal sweep (USAspending; name-only Form D
+ * is retired until a second identity corroborates it), on its own cursor
+ * (signals_checked_at, migration 0021) so it doesn't fight the news sweep.
+ * NetSuite-TAM first; never/longest-checked first. Positive offsets are manual only. */
 export async function pickSignalsForRotation(limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
+  if (offset === 0) return reserveRotation("signals", limit);
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name")
     .contains("lists", ["netsuite_tam"])
     .neq("status", "removed_from_tam")
+    .order("signals_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
@@ -248,12 +345,12 @@ export async function markSignalsChecked(ids: string[]): Promise<void> {
 }
 
 /** All TAL (claimed) companies, for the daily highest-priority news sweep. */
-export async function listTalCompanies(): Promise<{ id: string; name: string }[]> {
+export async function listTalCompanies(): Promise<Array<{ id: string; name: string } & RotationSignalContext>> {
   const db = serviceClient();
-  const out: { id: string; name: string }[] = [];
+  const out: Array<{ id: string; name: string } & RotationSignalContext> = [];
   for (let from = 0; ; from += 1000) {
-    const { data } = await db.from("companies").select("id, name").eq("tal_claimed", true).range(from, from + 999);
-    const batch = (data ?? []) as { id: string; name: string }[];
+    const { data } = await db.from("companies").select("id, name, record_dead, description, subindustry, ns_industry").eq("tal_claimed", true).range(from, from + 999);
+    const batch = (data ?? []) as Array<{ id: string; name: string } & RotationSignalContext>;
     out.push(...batch);
     if (batch.length < 1000) break;
   }
@@ -291,7 +388,7 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
     .order("priority", { ascending: false }).order("name", { ascending: true }).limit(200);
   if (error) return [];
   return (data ?? []).map((r: any) => {
-    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger);
+    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter((trigger) => isPublishableTriggerForCompany(trigger, r));
     const rankedTriggers = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v);
     const top = rankedTriggers[0]?.t;
     const { triggers, ...rest } = r; void triggers;
@@ -304,14 +401,17 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
  * scope: "claimable" = NetSuite TAM (the priority set, refreshed fastest);
  *        "tail" = the monitored non-claimable base (ZoomInfo-only leads) — the AE
  *        mainly works claimable but still wants the ZoomInfo TAM watched. */
-export async function pickSitesForRotation(limit: number, offset = 0, scope: "claimable" | "tail" = "claimable"): Promise<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null }[]> {
-  if (scope === "tail") return [];
+export async function pickSitesForRotation(limit: number, offset = 0, scope: "claimable" | "tail" = "claimable"): Promise<Array<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null } & RotationSignalContext>> {
+  if (offset === 0) return reserveRotation("site", limit, scope);
   const db = serviceClient();
-  const base: any = db.from("companies").select("id, name, domain, site_hash, site_checked_at")
-    .contains("lists", ["netsuite_tam"])
+  const base: any = db.from("companies").select("id, name, domain, site_hash, site_checked_at, record_dead, description, subindustry, ns_industry")
     .neq("status", "removed_from_tam")
     .not("domain", "is", null);
-  const { data } = await base
+  const scoped = scope === "claimable"
+    ? base.contains("lists", ["netsuite_tam"])
+    : base.eq("is_base", true).not("claimable", "is", true);
+  const { data } = await scoped
+    .order("site_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
   return (data ?? []) as any[];
@@ -333,31 +433,59 @@ export async function setSiteChecked(id: string, hash: string): Promise<void> {
   } catch { /* columns missing pre-0027 → no-op */ }
 }
 
-/** TAM carriers (transportation/trucking/logistics subindustries) for the FMCSA
- * fleet-growth monitor. Shares the signals_checked_at cursor (the gov/EDGAR sweep is
- * off on this base, so it's free). NetSuite-TAM first; `offset` for waves. */
+/** Stamp a failed website attempt without replacing its last known fingerprint. */
+export async function markSiteAttempted(id: string): Promise<void> {
+  const { error } = await serviceClient().from("companies")
+    .update({ site_checked_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw new Error(`website rotation checkpoint failed: ${error.message}`);
+}
+
+/** TAM carriers for the FMCSA fleet-growth monitor, oldest FMCSA check first. */
 export async function pickCarriersForRotation(limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
+  if (offset === 0) return reserveRotation("fmcsa", limit);
   const db = serviceClient();
-  const { data } = await db.from("companies").select("id, name")
+  const { data, error } = await db.from("companies").select("id, name")
     .contains("lists", ["netsuite_tam"])
     .neq("status", "removed_from_tam")
     .or("subindustry.ilike.*truck*,subindustry.ilike.*transport*,subindustry.ilike.*logistic*,subindustry.ilike.*freight*,subindustry.ilike.*carrier*,subindustry.ilike.*warehous*,subindustry.ilike.*moving*,subindustry.ilike.*hauling*")
+    .order("fmcsa_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
+  if (error) throw new Error(`FMCSA rotation load failed: ${error.message}`);
   return (data ?? []) as any[];
+}
+
+export async function markFmcsaChecked(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const { error } = await serviceClient().from("companies")
+    .update({ fmcsa_checked_at: new Date().toISOString() })
+    .in("id", ids);
+  if (error) throw new Error(`FMCSA rotation checkpoint failed: ${error.message}`);
 }
 
 /** Base companies in a given state (for the state-registry watch: new entities + UCC).
  * Whole monitored base, claimable first — the AE watches the ZoomInfo tail too. */
 export async function pickSosCompaniesForRotation(state: string, limit: number, offset = 0): Promise<{ id: string; name: string; city: string | null }[]> {
+  if (offset === 0) return reserveRotation("sos", limit, state);
   const db = serviceClient();
-  const { data } = await db.from("companies").select("id, name, city")
+  const { data, error } = await db.from("companies").select("id, name, city")
     .contains("lists", ["netsuite_tam"])
     .neq("status", "removed_from_tam")
     .eq("state", state)
+    .order("sos_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
+  if (error) throw new Error(`SOS rotation load failed: ${error.message}`);
   return (data ?? []) as any[];
+}
+
+export async function markSosChecked(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const { error } = await serviceClient().from("companies")
+    .update({ sos_checked_at: new Date().toISOString() })
+    .in("id", ids);
+  if (error) throw new Error(`SOS rotation checkpoint failed: ${error.message}`);
 }
 
 /** Map a mapCompany-shaped row + attach the top trigger (for the Triggered worklist). */
@@ -404,7 +532,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
     .range(hasEventFilters ? 0 : offset, hasEventFilters ? 0 + 1999 : offset + limit - 1);
   if (error) throw new Error(`listTriggered failed: ${error.message}`);
   let companies = (data ?? []).map((r: any) => {
-    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger);
+    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter((trigger) => isPublishableTriggerForCompany(trigger, r));
     // ALL triggers, strongest (decayed) first — the row shows every one. When a
     // signal-type filter is active, matching types sort ahead of the rest so the
     // Why column leads with what you filtered for.
@@ -569,7 +697,7 @@ export async function listTal(opts: { q?: string; state?: string; subindustry?: 
     .limit(1000); // the TAL is ~250-300 by design; no paging needed
   if (error) throw new Error(`listTal failed: ${error.message}`);
   const companies = (data ?? []).map((r: any) => {
-    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger);
+    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter((trigger) => isPublishableTriggerForCompany(trigger, r));
     const rankedTriggers = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v);
     const top = rankedTriggers[0]?.t;
     const { triggers, ...rest } = r; void triggers;
@@ -604,7 +732,7 @@ export async function getLeadDetail(id: string): Promise<{ company: Company; tri
   const { signals, triggers, lead_insights, ...rest } = data as any;
   const company = mapBasic(rest);
   company.signals = Array.isArray(signals) ? signals.map(mapSignal) : [];
-  const trigs: LeadTrigger[] = ((triggers ?? []) as TriggerRow[]).filter(isPublishableTrigger)
+  const trigs: LeadTrigger[] = ((triggers ?? []) as TriggerRow[]).filter((trigger) => isPublishableTriggerForCompany(trigger, company))
     .map((t) => ({ ...t, live: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) }))
     .sort((a, b) => b.live - a.live);
   const insights: InsightBadge[] = Array.isArray(lead_insights) ? lead_insights : [];

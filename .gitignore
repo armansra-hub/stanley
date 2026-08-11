@@ -31,6 +31,10 @@ yarn-error.log*
 /supabase/.temp
 .env*
 
+# Local foundation receipts may include production environment exports. They are
+# operational evidence, never deployable or committable source.
+/.foundation-run/
+
 # Background art ships IN the repo — Vercel's GitHub integration auto-deploys from
 # the git tree, so anything outside git silently vanishes from production builds.
 tsconfig.tsbuildinfo

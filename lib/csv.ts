@@ -123,6 +123,40 @@ export function rowsToBaseRows(rows: string[][]): BaseRow[] {
   return out;
 }
 
+export interface TalMembershipUploadRow {
+  name: string;
+  website: string;
+  internal_id: string;
+}
+
+/**
+ * Parse a complete TAL replacement without dropping malformed authoritative
+ * rows. NetSuite Internal ID is the only identity; name/domain are context.
+ * Blank-name and missing-ID rows must reach the server validator so the whole
+ * replacement fails closed instead of silently shrinking membership.
+ */
+export function rowsToTalRows(rows: string[][]): TalMembershipUploadRow[] {
+  if (rows.length === 0) return [];
+  const header = rows[0].map((value) => value.trim().toLowerCase());
+  const nameIndex = findCol(header, "company name", "organization name", "account name", "company", "name");
+  const websiteIndex = findCol(header, "web address", "website", "company domain", "domain", "url", "web");
+  const internalIdIndex = findCol(header, "internal id", "internalid", "netsuite id", "entity id");
+  if (internalIdIndex < 0) throw new Error("TAL file is missing a NetSuite Internal ID column");
+  const at = (cells: string[], index: number) => index >= 0 ? String(cells[index] ?? "").trim() : "";
+
+  const out: TalMembershipUploadRow[] = [];
+  for (let index = 1; index < rows.length; index++) {
+    const cells = rows[index] ?? [];
+    if (cells.every((value) => String(value ?? "").trim() === "")) continue;
+    out.push({
+      name: at(cells, nameIndex),
+      website: at(cells, websiteIndex),
+      internal_id: at(cells, internalIdIndex),
+    });
+  }
+  return out;
+}
+
 /** Map parsed rows to {name, website}, detecting columns tolerantly. */
 export function rowsToImportRows(rows: string[][]): ImportRow[] {
   if (rows.length === 0) return [];

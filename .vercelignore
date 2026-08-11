@@ -1,9 +1,7 @@
-# Vercel CLI upload filter. When this file exists it REPLACES .gitignore for
-# deploy uploads — which is the point: .gitignore excludes public/art/* (personal
-# art, deliberately not in the repo), and that silently kept the background
-# images out of every deployment (pictures 404'd in prod). This list mirrors
-# .gitignore EXCEPT the art block, so the images ship with the deploy while
-# secrets and build junk stay out.
+# Vercel deployment filter. Keep this as a denylist: Git-sourced deployments
+# also honor .vercelignore, so an ignore-all allowlist can omit the application
+# itself. This mirrors the repository's ordinary secret/build exclusions while
+# deliberately leaving committed public/art assets available to the build.
 node_modules
 .pnp
 .pnp.*

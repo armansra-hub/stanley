@@ -1,5 +1,5 @@
 import "server-only";
-import { pickCarriersForRotation, markSignalsChecked, recordTrigger, recomputePriority } from "@/lib/db/triggers";
+import { pickCarriersForRotation, markFmcsaChecked, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
 import { isGenericName } from "@/lib/triggers/sweep";
 import { fetchCarrierByName } from "@/lib/sources/fmcsa";
@@ -59,7 +59,7 @@ export async function sweepFmcsaTam(limit = 150, opts: { offset?: number } = {})
         await upsertFmcsaSnapshot(m.dot, c.name, m.units, m.drivers).catch(() => {});
       } catch { /* per-company isolated */ }
     }));
-    await markSignalsChecked(slice.map((c) => c.id)); // commit progress batch-by-batch
+    await markFmcsaChecked(slice.map((c) => c.id)); // commit source-specific progress batch-by-batch
     stats.checked += slice.length;
   }
 
