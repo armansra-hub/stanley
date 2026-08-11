@@ -4,6 +4,7 @@ import { normalizeCompanyName } from "@/lib/db/companies";
 import { isGenericName } from "@/lib/triggers/sweep";
 import { fetchGovAwards } from "@/lib/sources/gov";
 import { fetchEdgarFunding } from "@/lib/sources/edgarFts";
+import { strictEntityIdentityMatches } from "@/lib/triggers/signalIntegrity";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -39,8 +40,8 @@ export async function sweepSignals(limit = 150, opts: { offset?: number } = {}):
           if (await recordTrigger(c.id, { type: "gov_contract", summary, source_name: "USAspending", source_url: a.id ? `https://www.usaspending.gov/award/${encodeURIComponent(a.id)}` : "https://www.usaspending.gov", signal_date: a.date })) { stats.gov++; touched.add(c.id); }
         }
         for (const e of await fetchEdgarFunding(c.name)) {
-          if (!nameMatches(c.name, e.name)) continue;
-          if (await recordTrigger(c.id, { type: "funding", summary: `Filed SEC Form D (private capital raise) — ${e.name}`.slice(0, 280), source_name: "SEC EDGAR", source_url: `https://www.sec.gov/cgi-bin/srqsb?text=${encodeURIComponent(c.name)}`, signal_date: e.date })) { stats.funding++; touched.add(c.id); }
+          if (!strictEntityIdentityMatches(c.name, e.name) || !e.url) continue;
+          if (await recordTrigger(c.id, { type: "funding", summary: `Filed SEC Form D (private capital raise) — ${e.name}`.slice(0, 280), source_name: "SEC EDGAR", source_url: e.url, signal_date: e.date })) { stats.funding++; touched.add(c.id); }
         }
       } catch { /* per-company isolated */ }
     }));

@@ -116,11 +116,16 @@ npm run dev                     # http://localhost:3000
 npm test                        # vitest — 66 passing, no secrets needed
 ```
 
-Deploying (Vercel): add the env vars from `.env.example`, set `APP_PASSWORD` +
-`APP_SESSION_TOKEN` for the login gate, and the daily cron in `vercel.json`
-drives all monitoring. Note `.vercelignore` intentionally ships `public/art/`
-(background images) even though git ignores it — drop your own wide images
-there (a gradient shows until you do; see `public/art/README.md`).
+Deploying (Vercel): production has one source — GitHub
+`armansra-hub/stanley`, branch `main`, through the linked Git integration. Push
+`main`; never upload a local directory or prebuilt output to production. Set the
+Production-only `STANLEY_PRODUCTION_SOURCE_POLICY=github-main-only-v1`. The
+prebuild source check and `.vercelignore` contain ordinary mistakes, but Vercel
+permissions plus exact post-deploy `src=git`/repository/branch/commit readback are
+the release authority. The committed `public/art/` files therefore ship with the
+same reviewed source as the app. Add the env vars from `.env.example`, set
+`APP_PASSWORD` + `APP_SESSION_TOKEN` for the login gate, and the cron in
+`vercel.json` drives monitoring.
 
 Data lands via the UI: **+ Base CSV** (vendor picker + list name) for TAM
 uploads, **+ TAL CSV** for the claimed-accounts sync. The NetSuite export's

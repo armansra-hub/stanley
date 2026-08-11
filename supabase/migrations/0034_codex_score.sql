@@ -1,6 +1,7 @@
 -- 0034: codex close-probability scoring becomes the TAM score (2026-07-14).
--- tam_score now holds the ADJUSTED close-probability (codex baseline ± Stanley's
--- outside signals, capped ±15, hard 0-guardrails). codex_score preserves the raw
--- codex number for side-by-side reading; score_adjust_note documents any delta.
+-- Current invariant (normalized 2026-08-10): codex_score preserves the raw grade;
+-- tam_score equals it except for record-derived hard zeros. Public signals rank
+-- Triggered separately and never change either grade. score_adjust_note preserves
+-- write provenance and any hard-zero reason.
 alter table companies add column if not exists codex_score numeric;
 alter table companies add column if not exists score_adjust_note text;

@@ -59,12 +59,15 @@ export function decayFactor(t: TriggerRow, today = new Date()): number {
  * Preserve the raw NetSuite-derived score exactly. Record-dead and confirmed
  * NetSuite-incumbent flags are themselves record facts, so their existing hard
  * zeros remain authoritative. Everything else belongs only in Triggered.
+ *
+ * This is the function the grade write path calls. It intentionally cannot
+ * accept trigger rows.
  */
-export function adjustScore(rawScore: number, company: AdjustInput, _triggers: TriggerRow[], _today = new Date()): Adjustment {
+export function applyRecordScoreRules(rawScore: number, company: AdjustInput): Adjustment {
   if (company.record_dead) {
     return { score: 0, bump: 0, penalty: 0, hardZeroReason: "record dead", reasons: [], note: "hard 0 - record dead" };
   }
-  if (company.erp_incumbent === "netsuite") {
+  if (String(company.erp_incumbent ?? "").trim().toLowerCase() === "netsuite") {
     return { score: 0, bump: 0, penalty: 0, hardZeroReason: "already on NetSuite", reasons: [], note: "hard 0 - already on NetSuite" };
   }
   if (rawScore <= 0) {
@@ -80,4 +83,13 @@ export function adjustScore(rawScore: number, company: AdjustInput, _triggers: T
     note: "",
     verdict: readVerdict(rawScore, company.record_digest, company.verdict),
   };
+}
+
+/**
+ * Compatibility wrapper for older Triggered-ranking tests and callers. Trigger
+ * arguments are deliberately discarded; new grade-write code must call
+ * applyRecordScoreRules so signals cannot cross the boundary by accident.
+ */
+export function adjustScore(rawScore: number, company: AdjustInput, _triggers: TriggerRow[] = [], _today = new Date()): Adjustment {
+  return applyRecordScoreRules(rawScore, company);
 }

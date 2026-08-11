@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url("https://fonts.googleapis.com/css2?family=Special+Elite&display=swap");
+@import "tailwindcss";
 
 /* Chinese Rocks (Ray Larabie, freeware) — the display face for all headers. */
 @font-face {

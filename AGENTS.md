@@ -100,22 +100,24 @@ value received, and its neighbours still write.
 1. **`tam_score` is a 0-100 close probability, honestly calibrated.** The median
    real grade is single digits and ≥60 is rare. Never rescale, never curve, never
    assume a low number is a bug.
-2. **`oldgold_score` is derived, never copied.** It equals `tam_score` only when the
-   row has *both* a qual note and a last SQL date; otherwise `null`. The bridge
-   enforces this.
+2. **Old Gold artifacts and live storage have different jobs.** Every current
+   assessment artifact includes `old_gold_score`, `old_gold_class`,
+   `intro_call_exists`, and `opportunity_exists`, including a supported
+   `old_gold_score: 0` for a non-member. Live `companies.oldgold_score` is a
+   worklist-membership value: it is `null` when that exact company row lacks the
+   required qual-note/prior-SQL pair or an audited dated opportunity. A qualifying
+   row stores the independently graded revival score (falling back to its TAM grade
+   only when no independent revival score was supplied). The bridge enforces this.
 3. **Hard zeros stand.** `record_dead` rows and NetSuite incumbents score 0 no
    matter what a grade says. The bridge enforces this too.
 4. **Duplicate NetSuite internal IDs exist** (~20). Anything whose value depends on
    the row must be written per company row, not per internal ID.
-5. **Push the RAW grade. Stanley's signal layer is applied for you, on every write.**
-   Division of labour: **Codex owns the grade** (TAM + Old Gold, read from the
-   record). **Stanley owns the signals** — triggers from the daily sweeps, DOL-5500
-   headcount growth, PE ownership, competitor-ERP detection. `/api/agent/scores`
-   stores your number in `codex_score` and re-derives `tam_score = your grade ±
-   live signals (capped ±15)` at write time, so a regrade can no longer erase that
-   layer (it did on 7/15). Don't fold Stanley's signals into your own number.
-   Each signal *type* counts once, at its strongest — repeated reports of one event
-   don't compound; stacking happens across different types.
+5. **Push the RAW record grade; signals never alter it.** `/api/agent/scores`
+   stores the raw number in `codex_score`. `tam_score` equals that number except
+   for the record-derived hard zeros in rule 3. Public intelligence — trigger
+   sweeps, headcount growth, PE ownership, and other scraped facts — ranks only
+   the separate Triggered worklist. Never fold it into TAM or Old Gold, and never
+   run a backfill that adds a public-signal delta to either score.
 6. **Omit what you don't mean to change.** A field you leave out is left alone —
    notably `recordDead`. Sending nothing is how you say "unchanged"; sending `false`
    is how you say "bring this lead back".
@@ -141,8 +143,10 @@ value received, and its neighbours still write.
   the Codex machine — not Stanley's base, which came from the 2026-07-01 export and is
   historical context only. Stanley holds 7,402 distinct IDs; the live header is ~7,631.
   Reconcile before treating any list as current membership.
-- **That import overwrote Stanley's signal adjustments** (`tam_score` was set equal
-  to `codex_score`). Re-running `system/codex_rescore.py` restores them.
+- **The former outside-signal score layer was retired on 2026-08-10.** Current
+  non-dead grades were normalized so `tam_score = codex_score`; record-dead rows
+  and confirmed NetSuite incumbents retain their hard zero. Signals belong only
+  in Triggered. Do not restore or recreate a signal delta on TAM or Old Gold.
 - **Why the old import broke:** an omitted `revisitOn` is `undefined`, not `null`, so
   a strict `/^\d{4}-\d{2}-\d{2}$/` test rejected entire 250-row batches with no row
   index. Fixed here — dates are tolerant and errors are per-row.
@@ -164,7 +168,8 @@ value received, and its neighbours still write.
 - Server-only DB access goes through `serviceClient()` in `lib/supabase/server.ts`.
 - Log anything notable to `app_events` via `logEvent()` — it's the shared timeline
   both agents and Arman read to understand what happened.
-- One branch, `main`, deployed by Vercel on push. Both agents write to it, so keep
+- One canonical production source: GitHub `armansra-hub/stanley`, branch `main`,
+  deployed by Vercel's Git integration on push. Both agents write to it, so keep
   changes small and don't refactor across the other's work in flight.
 - **Never run `vercel --prod` (or any CLI deploy).** Ship by pushing to `main`; the
   git integration deploys in under a minute. A CLI deploy uploads whatever files sit
@@ -173,5 +178,10 @@ value received, and its neighbours still write.
   2026-08-03 and 2026-08-10 kept the July 29 news name-match guard and the
   queue-for-review gate off in production for ~2 weeks, and 245 mis-attributed news
   triggers reached the Triggered tab as a result. If you think you need a CLI deploy,
-  ask Arman first. Check what production is actually serving with:
-  `vercel inspect <deployment-url>` — or list deploys and confirm `src=git`.
+  ask Arman first. The repository's prebuild guard and `.vercelignore` are
+  defense-in-depth, not the authority: Vercel can deploy prebuilt output outside
+  the repository build. Keep `STANLEY_PRODUCTION_SOURCE_POLICY=github-main-only-v1`
+  scoped to Production, restrict production deploy/promotion authority in Vercel,
+  and block release unless the served deployment readback shows exact commit,
+  GitHub repository, `main` branch, and `src=git`. Check with
+  `vercel inspect <deployment-url>` or the equivalent Vercel deployment API.

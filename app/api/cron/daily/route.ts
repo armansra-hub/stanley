@@ -33,8 +33,7 @@ async function run(req: NextRequest) {
     const controller = new AbortController();
     controllers.add(controller);
     try {
-      const sep = path.includes("?") ? "&" : "?";
-      const response = await fetch(`${base}${path}${sep}secret=${cronSecret}`, {
+      const response = await fetch(`${base}${path}`, {
         headers: { "x-cron-secret": cronSecret! },
         cache: "no-store",
         signal: controller.signal,
@@ -51,7 +50,11 @@ async function run(req: NextRequest) {
 
   // Creating these promises dispatches the fixed manifest once. There is no retry,
   // recursion, pagination loop, or follow-on self-scheduling.
-  const waves = wavePaths.map(hit);
+  const completed: Array<{ path: string; status?: number; error?: string }> = [];
+  const waves = wavePaths.map((path) => hit(path).then((result) => {
+    completed.push(result);
+    return result;
+  }));
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const settled = await Promise.race([
     Promise.allSettled(waves),
@@ -66,17 +69,35 @@ async function run(req: NextRequest) {
     await logEvent("headhunter", "daily.done", {
       summary: `Daily sweep — ${ok}/${wavePaths.length} waves OK`,
       entity_type: "cron",
-      meta: { ok, total: wavePaths.length },
+      meta: { status: "complete", ok, failed: wavePaths.length - ok, completed: wavePaths.length, total: wavePaths.length },
     }).catch(() => {});
     return NextResponse.json({ ran: settled.length, ok });
   }
 
-  // Release the parent invocation's open sockets at its deadline. Child functions
-  // are independently time-boxed and checkpoint their own progress.
+  // Release the parent invocation's open sockets at its deadline, but still emit an
+  // honest terminal receipt. Previously this branch omitted daily.done entirely.
+  const activeAtDeadline = controllers.size;
   for (const controller of controllers) controller.abort();
+  const ok = completed.filter((result) => result.status === 200).length;
+  const failed = completed.length - ok;
+  await logEvent("headhunter", "daily.done", {
+    summary: `Daily sweep deadline: ${ok}/${completed.length} completed waves OK; ${activeAtDeadline} still active`,
+    entity_type: "cron",
+    meta: {
+      status: "deadline",
+      ok,
+      failed,
+      completed: completed.length,
+      active_at_deadline: activeAtDeadline,
+      total: wavePaths.length,
+    },
+  }).catch(() => {});
   return NextResponse.json({
     dispatched: wavePaths.length,
-    note: "unfinished parent requests aborted at 50s — see per-sweep events",
+    completed: completed.length,
+    ok,
+    activeAtDeadline,
+    note: "parent observation ended at 50s; see per-sweep events for child completion",
   });
 }
 

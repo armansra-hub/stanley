@@ -1,10 +1,11 @@
 import "server-only";
-import { pickSitesForRotation, setSiteChecked, setParent, recordTrigger, recomputePriority } from "@/lib/db/triggers";
+import { markSiteAttempted, pickSitesForRotation, setSiteChecked, setParent, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { setCompaniesStatus } from "@/lib/db/companies";
 import { getAppConfig } from "@/lib/db/settings";
 import { fetchSiteSignals } from "@/lib/sources/website";
 import { fetchFeed } from "@/lib/sources/googleNews";
 import { classifyAndRecordHeadline } from "@/lib/triggers/sweep";
+import { isFinanceHireEligible, isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
 
 const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now() - new Date(d).getTime()) / 86_400_000; return a >= 0 && a < 180; };
 
@@ -56,6 +57,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         }
 
         for (const hit of scan.financeRoles) {
+          if (!isFinanceHireEligible(c) || !isCareerEvidenceUrl(hit.url)) continue;
           if (await recordTrigger(c.id, {
             type: "finance_hire",
             summary: `Hiring ${hit.role} — “${hit.snippet.slice(0, 150)}”`,
@@ -65,6 +67,10 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
 
         if (touched) await recomputePriority(c.id);
       } catch { /* per-company isolated */ }
+      finally {
+        // A permanently broken domain must not monopolize the oldest-first cursor.
+        await markSiteAttempted(c.id).catch(() => {});
+      }
     }));
   }
   return stats;

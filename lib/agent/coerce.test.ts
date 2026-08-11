@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { coerceBool, coerceDate, coerceList, coerceScore, pick } from "./coerce";
 import { assessDigest, deriveOldGold, normalizeScoreBatch, normalizeScoreRow } from "./scores";
-import { adjustScore, readVerdict } from "./adjust";
+import { adjustScore, applyRecordScoreRules, readVerdict } from "./adjust";
 
 describe("coerceDate — the field that broke the 2026-07-15 import", () => {
   it("accepts the format the old validator wanted", () => {
@@ -84,8 +84,45 @@ describe("normalizeScoreRow", () => {
       expect(r.row.internalId).toBe("92847818");
       expect(r.row.tamScore).toBe(12);
       expect(r.row.revisitOn).toBeNull();
+      expect(r.row.revisitOnProvided).toBe(false);
+      expect(r.row.recordDeadReasonProvided).toBe(false);
+      expect(r.row.oldGoldClassProvided).toBe(false);
+      expect(r.row.oldGoldReasonsProvided).toBe(false);
       // null, NOT false — an unmentioned field must not un-kill a dead lead.
       expect(r.row.recordDead).toBeNull();
+    }
+  });
+
+  it("distinguishes explicit Old Gold clears from omitted fields", () => {
+    const r = normalizeScoreRow({
+      internalId: "92847818",
+      tamScore: 12,
+      oldGoldClass: null,
+      oldGoldReasons: [],
+    }, 0);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.row.oldGoldClass).toBeNull();
+      expect(r.row.oldGoldClassProvided).toBe(true);
+      expect(r.row.oldGoldReasons).toEqual([]);
+      expect(r.row.oldGoldReasonsProvided).toBe(true);
+    }
+  });
+
+  it("distinguishes explicit nulls from omitted fields so stale live values can be cleared", () => {
+    const r = normalizeScoreRow({
+      internalId: "92847818",
+      tamScore: 12,
+      recordDead: false,
+      recordDeadReason: null,
+      revisitOn: null,
+    }, 0);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.row.recordDeadReason).toBeNull();
+      expect(r.row.recordDeadReasonProvided).toBe(true);
+      expect(r.row.revisitOn).toBeNull();
+      expect(r.row.revisitOnProvided).toBe(true);
     }
   });
 
@@ -166,9 +203,13 @@ describe("adjustScore — external intelligence stays out of TAM and Old Gold", 
   });
 
   it("preserves an ordinary raw grade exactly", () => {
-    const r = adjustScore(9, {}, [], today);
+    const r = applyRecordScoreRules(9, {});
     expect(r.score).toBe(9);
     expect(r.bump).toBe(0);
+  });
+
+  it("treats NetSuite incumbent values case-insensitively", () => {
+    expect(applyRecordScoreRules(80, { erp_incumbent: " NetSuite " }).score).toBe(0);
   });
 });
 

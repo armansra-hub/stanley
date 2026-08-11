@@ -9,7 +9,7 @@ import { buildNetsuiteSqlExport, type SqlExportConfig } from "@/lib/export/sql";
 import { buildCsvExport, buildFullCsvExport } from "@/lib/export/csv";
 import { scoreBand } from "@/lib/scoring";
 import { SUBINDUSTRIES } from "@/config/territory";
-import { parseCsv, rowsToBaseRows } from "@/lib/csv";
+import { parseCsv, rowsToBaseRows, rowsToTalRows } from "@/lib/csv";
 import { ACTORS } from "@/config/actors";
 import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongestSignal } from "./badges";
 import ChatPanel from "./ChatPanel";
@@ -157,23 +157,23 @@ export default function Dashboard({
     }
   }
 
-  // ARS Target Account List: parse the CSV and re-sync the red "ARS TAL CLAIMED"
-  // flag across all leads (matches by domain / exact name). Re-upload = full re-sync.
+  // ARS Target Account List: exact NetSuite Internal IDs are the sole identity.
+  // The server validates the complete file before changing any membership flag.
   async function handleTalFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     setTalImporting(true);
     try {
-      const rows = rowsToBaseRows(await fileToGrid(file)).map((r) => ({ name: r.name, website: r.website, internal_id: r.internal_id ?? null }));
-      if (rows.length === 0) { alert("No company rows found in the TAL (need a name column)."); return; }
+      const rows = rowsToTalRows(await fileToGrid(file));
+      if (rows.length === 0) { alert("No company rows found in the TAL (need company name and Internal ID columns)."); return; }
       const res = await fetch("/api/headhunter/tal/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rows }) });
-      const r: { matched?: number; tal_count?: number; newly_dq?: number; error?: string } = await res.json();
+      const r: { matched?: number; tal_count?: number; newly_dq?: number; verified_claimed?: number; membership_sha256?: string; error?: string } = await res.json();
       if (!res.ok) { alert(`TAL sync failed: ${r.error ?? res.status}`); return; }
-      alert(`TAL synced: ${r.matched ?? 0} leads flagged ARS TAL CLAIMED${r.newly_dq ? `, ${r.newly_dq} newly marked PREVIOUSLY DQ'd` : ""} (from ${r.tal_count ?? rows.length} target accounts).`);
+      alert(`TAL exact-ID sync verified: ${r.verified_claimed ?? r.matched ?? 0} claimed rows${r.newly_dq ? `, ${r.newly_dq} newly marked PREVIOUSLY DQ'd` : ""} (from ${r.tal_count ?? rows.length} unique NetSuite IDs).`);
       location.reload();
-    } catch {
-      alert("TAL sync failed.");
+    } catch (error) {
+      alert(`TAL sync failed: ${error instanceof Error ? error.message : "unexpected error"}`);
     } finally {
       setTalImporting(false);
     }
@@ -684,7 +684,7 @@ export default function Dashboard({
           </span>
           <input ref={baseRef} type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleBaseFile} className="hidden" />
           {/* ARS Target Account List sync — flags matching leads red */}
-          <button onClick={() => talRef.current?.click()} disabled={talImporting} className="rounded-md border px-3 py-1.5 text-xs font-medium" style={{ borderColor: "rgba(220,38,38,0.55)", color: "#ef4444" }} title="Upload your Target Account List (CSV) — matching leads get a red ARS TAL CLAIMED badge. Re-upload to re-sync.">
+          <button onClick={() => talRef.current?.click()} disabled={talImporting} className="rounded-md border px-3 py-1.5 text-xs font-medium" style={{ borderColor: "rgba(220,38,38,0.55)", color: "#ef4444" }} title="Upload the full Target Account List CSV with NetSuite Internal IDs. The exact-ID set is validated and read back before membership changes are accepted.">
             {talImporting ? "Syncing…" : "+ TAL CSV"}
           </button>
           <input ref={talRef} type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleTalFile} className="hidden" />
@@ -1104,7 +1104,7 @@ export default function Dashboard({
         )}
         {isTal && (
           <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
-            <span>{talTotal ? `Your Target Account List — ${talTotal.toLocaleString()} claimed accounts (alerts first, then TAM score; never removed by exports)` : "No TAL uploaded yet — use the red “+ TAL CSV” button (internal-ID matching supported)."}</span>
+            <span>{talTotal ? `Your Target Account List — ${talTotal.toLocaleString()} claimed accounts (alerts first, then TAM score; never removed by exports)` : "No TAL uploaded yet — use the red “+ TAL CSV” button (NetSuite Internal ID required)."}</span>
             {talRows.some((c) => c.tal_alert) && (
               <button onClick={() => { patchRows(talRows.filter((c) => c.tal_alert).map((c) => c.id), { tal_alert: false }); clearTalAlerts(); }} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
                 Mark all alerts seen

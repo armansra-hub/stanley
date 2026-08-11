@@ -4,7 +4,7 @@ import { recomputePriority } from "@/lib/db/triggers";
 import { decideIdentityMatch, normalizeName } from "./identity";
 import { compactSamEntity, sbaProfileUrl, searchSamEntities } from "./sam";
 import { recordPublicGrowthTriggersBulk, saveCompanyGovernmentMatch, saveGovernmentEntity, stableHash } from "./storage";
-import { loadTamBatch } from "./usaspendingSweep";
+import { loadRecurringTamBatch, loadTamBatch, type PublicGrowthCompanyScope } from "./usaspendingSweep";
 import type { DerivedGrowthEvent, TamIdentity } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -132,8 +132,15 @@ export async function sweepSamCompany(company: TamIdentity) {
   }
 }
 
-export async function sweepSamTamBatch(limit: number, offset: number) {
-  const companies = await loadTamBatch(limit, offset), receipts = [];
+export async function sweepSamTamBatch(
+  limit: number,
+  offset: number,
+  scope: PublicGrowthCompanyScope = "tam",
+) {
+  const companies = scope === "verified"
+    ? await loadRecurringTamBatch("sam-entity", limit, offset)
+    : await loadTamBatch(limit, offset);
+  const receipts = [];
   for (const company of companies) receipts.push(await sweepSamCompany(company));
   return { source: "sam-entity", offset, checked: companies.length, nextOffset: offset + companies.length, done: companies.length < limit, matched: receipts.filter((r) => r.status === "matched").length, ambiguous: receipts.filter((r) => r.status === "ambiguous").length, errors: receipts.filter((r) => r.status === "error").length, entities: receipts.reduce((s, r) => s + r.entities, 0), naics: receipts.reduce((s, r) => s + r.naics, 0), triggers: receipts.reduce((s, r) => s + r.triggers, 0), receipts };
 }

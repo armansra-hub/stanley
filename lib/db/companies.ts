@@ -1,9 +1,15 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import { markPoolExported } from "@/lib/db/leadPool";
 import { normalizeDomain } from "@/lib/domain";
+import {
+  resolveExactTalMembership,
+  type TalMembershipRow,
+} from "@/lib/tal/membership";
 import { importBlockReason } from "@/config/territory";
 import { decayFactor } from "@/lib/triggers/config";
+import { isPublishableTriggerForCompany } from "@/lib/triggers/signalIntegrity";
 import { VENDOR_WEIGHT, fitWeightFor, parseTechnologies, isErpReady, parseEmployees, employeeBand, type LeadVendor } from "@/lib/baseImport";
 import type { BaseRow } from "@/lib/csv";
 import type { Company, Signal, CompanySource, ScoreTier, SignalType, SignalStrength } from "@/lib/types";
@@ -131,7 +137,7 @@ function usDateToIso(raw: string | null | undefined): string | null {
  * removed_from_tam = pulled out of the territory by the weekly TAM update; the record,
  * grade, and digest are KEPT and the lead is restored automatically if it returns. */
 /** A trigger as a tab row previews it. */
-export interface TriggerPreview { type: string; summary: string; source_name?: string | null; source_url?: string | null; signal_date: string | null; detected_at: string }
+export interface TriggerPreview { type: string; summary: string; source_name?: string | null; source_url?: string | null; signal_date: string | null; detected_at: string; metadata?: Record<string, unknown> | null }
 
 /** Attach a lead's live events, strongest (freshness-decayed) first.
  * Arman 2026-07-29: signals must be visible on EVERY tab where a lead appears, not
@@ -142,9 +148,9 @@ export function withTriggers<T extends Record<string, unknown>>(
 ): { rest: Omit<T, "triggers">; top_trigger: TriggerPreview | null; all_triggers: TriggerPreview[]; trigger_count: number } {
   const { triggers, ...rest } = row as Record<string, unknown> & { triggers?: unknown };
   const list = ((Array.isArray(triggers) ? triggers : []) as (TriggerPreview & { strength: number; half_life_days: number | null })[])
-    // Preserve fabricated homepage-anchor rows in storage for auditability, but
-    // never display them as M&A/expansion events on any Stanley tab.
-    .filter((t) => !(new Set(["ma", "press", "new_entity"]).has(String(t.type)) && /\/#/.test(String(t.source_url ?? ""))));
+    // Preserve quarantined/legacy rows in storage for auditability, but never
+    // display them as events on any Stanley tab.
+    .filter((trigger) => isPublishableTriggerForCompany(trigger, row as any));
   const ranked = list
     .map((t) => ({ t, live: Number(t.strength) * decayFactor(t.signal_date, t.detected_at, Number(t.half_life_days) || 30) }))
     .sort((a, b) => b.live - a.live)
@@ -705,53 +711,132 @@ export async function crossTagByName(
   return tagged;
 }
 
-/**
- * Sync the ARS Target Account List as a DIFF against the prior upload:
- *   • a lead whose domain/name is on the NEW TAL  → tal_claimed=true,  tal_dq=false
- *     (red "ARS TAL CLAIMED"; reclaiming clears any prior DQ);
- *   • a lead that was tal_claimed but is MISSING from the new TAL → tal_claimed=false,
- *     tal_dq=true ("PREVIOUSLY DQ'd" — the AE dropped it);
- *   • everyone else is left untouched (prior DQ flags persist).
- * Match is exact (normalized domain / name equality) → precise, no fuzzy positives.
- */
-export async function syncTalClaimed(rows: { name: string; website?: string | null; internal_id?: string | null }[]): Promise<{ tal_count: number; matched: number; newly_dq: number }> {
-  const db = serviceClient();
-  const talNames = new Set<string>();
-  const talDomains = new Set<string>();
-  const talIds = new Set<string>(); // NetSuite internal ids — the exact match, tried first
-  for (const r of rows) {
-    const nn = normalizeCompanyName(r.name);
-    if (nn) talNames.add(nn);
-    const d = normalizeDomain(r.website || "");
-    if (d) talDomains.add(d);
-    const iid = (r.internal_id || "").trim();
-    if (iid) talIds.add(iid);
-  }
-  if (talNames.size === 0 && talDomains.size === 0 && talIds.size === 0) return { tal_count: rows.length, matched: 0, newly_dq: 0 };
+export interface TalSyncReport {
+  tal_count: number;
+  matched: number;
+  newly_claimed: number;
+  newly_dq: number;
+  duplicate_input_ids: string[];
+  membership_sha256: string;
+  verified_claimed: number;
+}
 
-  // Scan every company; classify against the new TAL + its current claimed state.
-  const claimedIds: string[] = []; // on the new TAL → claimed
-  const dqIds: string[] = [];      // was claimed, now missing → previously DQ'd
+export class TalMembershipValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly details: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "TalMembershipValidationError";
+  }
+}
+
+/**
+ * Replace the ARS Target Account List by exact NetSuite Internal ID.
+ *
+ * Resolution is completed and validated before the first write. Names and
+ * domains are receipt context only: they can never claim an alias. One
+ * serialized database transaction replaces the entire exact set, and a final
+ * external readback is mandatory before success is returned.
+ */
+export async function syncTalClaimed(rows: TalMembershipRow[]): Promise<TalSyncReport> {
+  const db = serviceClient();
+  const companies: {
+    id: string;
+    name: string;
+    netsuite_internal_id: string | null;
+    tal_claimed: boolean;
+    tal_dq: boolean;
+    lists: string[] | null;
+  }[] = [];
   for (let from = 0; ; from += 1000) {
-    const { data } = await db.from("companies").select("id, domain, name, tal_claimed, netsuite_internal_id").range(from, from + 999);
-    const batch = (data ?? []) as { id: string; domain: string | null; name: string; tal_claimed: boolean; netsuite_internal_id: string | null }[];
-    for (const c of batch) {
-      const d = c.domain ? normalizeDomain(c.domain) : "";
-      const nn = normalizeCompanyName(c.name);
-      const onTal = (c.netsuite_internal_id && talIds.has(c.netsuite_internal_id)) || (d && talDomains.has(d)) || (nn && talNames.has(nn));
-      if (onTal) claimedIds.push(c.id);
-      else if (c.tal_claimed) dqIds.push(c.id); // fell off the list → DQ
-    }
+    const { data, error } = await db
+      .from("companies")
+      .select("id,name,netsuite_internal_id,tal_claimed,tal_dq,lists")
+      .order("id", { ascending: true })
+      .range(from, from + 999);
+    if (error) throw new Error(`TAL membership read failed: ${error.message}`);
+    const batch = (data ?? []) as typeof companies;
+    companies.push(...batch);
     if (batch.length < 1000) break;
   }
-  // Apply (chunked — a single .in() with thousands of ids overflows the URL).
-  for (let i = 0; i < claimedIds.length; i += 200) {
-    await db.from("companies").update({ tal_claimed: true, tal_dq: false }).in("id", claimedIds.slice(i, i + 200));
+
+  const resolved = resolveExactTalMembership(rows, companies);
+  if (resolved.invalidRows.length > 0) {
+    throw new TalMembershipValidationError(
+      "every TAL row must contain a numeric NetSuite Internal ID",
+      { invalid_rows: resolved.invalidRows },
+    );
   }
-  for (let i = 0; i < dqIds.length; i += 200) {
-    await db.from("companies").update({ tal_claimed: false, tal_dq: true }).in("id", dqIds.slice(i, i + 200));
+  if (resolved.uniqueRows.length === 0) {
+    throw new TalMembershipValidationError("the TAL contains no exact Internal IDs", {});
   }
-  return { tal_count: rows.length, matched: claimedIds.length, newly_dq: dqIds.length };
+  if (resolved.unmatched.length > 0 || resolved.ambiguous.length > 0) {
+    throw new TalMembershipValidationError(
+      "TAL exact-ID resolution failed; no membership flags were changed",
+      {
+        unmatched_internal_ids: resolved.unmatched.map((row) => row.internal_id),
+        ambiguous_internal_ids: resolved.ambiguous.map(({ row, company_ids }) => ({
+          internal_id: row.internal_id,
+          company_ids,
+        })),
+      },
+    );
+  }
+
+  const claimedIds = resolved.assignments.map(({ company }) => company.id);
+  const claimedSet = new Set(claimedIds);
+  const exactIds = resolved.uniqueRows.map((row) => row.internal_id).sort();
+  const { data: replacement, error: replacementError } = await db.rpc(
+    "sync_tal_exact_membership",
+    {
+      p_company_ids: claimedIds,
+      p_internal_ids: resolved.assignments.map(({ row }) => row.internal_id),
+    },
+  );
+  if (replacementError) {
+    throw new Error(`atomic TAL exact-ID replacement failed: ${replacementError.message}`);
+  }
+  const replacementResult = replacement as {
+    claimed?: number;
+    newly_claimed?: number;
+    newly_dq?: number;
+  } | null;
+  if (Number(replacementResult?.claimed) !== claimedIds.length) {
+    throw new Error("atomic TAL replacement returned an invalid claimed count");
+  }
+
+  const verifiedIds: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("companies")
+      .select("id")
+      .eq("tal_claimed", true)
+      .order("id", { ascending: true })
+      .range(from, from + 999);
+    if (error) throw new Error(`TAL readback failed (safe to retry): ${error.message}`);
+    const batch = (data ?? []) as { id: string }[];
+    verifiedIds.push(...batch.map((row) => row.id));
+    if (batch.length < 1000) break;
+  }
+  const verifiedSet = new Set(verifiedIds);
+  const missing = claimedIds.filter((id) => !verifiedSet.has(id));
+  const extra = verifiedIds.filter((id) => !claimedSet.has(id));
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `TAL exact readback mismatch (safe to retry): ${missing.length} missing, ${extra.length} extra`,
+    );
+  }
+
+  return {
+    tal_count: exactIds.length,
+    matched: claimedIds.length,
+    newly_claimed: Number(replacementResult?.newly_claimed ?? 0),
+    newly_dq: Number(replacementResult?.newly_dq ?? 0),
+    duplicate_input_ids: resolved.duplicateInputIds,
+    membership_sha256: createHash("sha256").update(exactIds.join("\n")).digest("hex"),
+    verified_claimed: verifiedIds.length,
+  };
 }
 
 /** Create an import batch row; returns its id. */

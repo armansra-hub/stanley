@@ -1,0 +1,29 @@
+{
+  "receipt_version": 1,
+  "action": "retire_outside_signal_score_layer_and_normalize_current_tam",
+  "action_date": "2026-08-10",
+  "scope": {
+    "current_tam_rows": 6949,
+    "labeled_normalization_cohort": 418,
+    "fractional_inflated_rows_corrected": 312,
+    "whole_number_inflated_rows_corrected": 70,
+    "pre_equal_record_dead_rows_hard_zeroed": 36
+  },
+  "post_state_readback": {
+    "current_nondead_tam_codex_mismatches": 0,
+    "current_record_dead_nonzero_tam_rows": 0,
+    "current_signal_layer_score_notes": 0,
+    "current_record_dead_rows_with_nonzero_raw_codex_score": 2801
+  },
+  "example": {
+    "company": "Ad Fontes Media",
+    "before_tam_score": 52.3,
+    "after_tam_score": 42,
+    "raw_codex_score": 42
+  },
+  "invariant": "For current TAM rows, non-dead tam_score equals codex_score; record-dead tam_score is 0 while codex_score preserves the independent raw grade.",
+  "provenance": {
+    "kind": "out_of_band_production_action_with_independent_exact_readback",
+    "note": "This receipt makes the already-completed production normalization durable in source control. It is not a replayable data migration and must not be used to overwrite later grades."
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCsv, rowsToBaseRows } from "./csv";
+import { parseCsv, rowsToBaseRows, rowsToTalRows } from "./csv";
 
 // Real ZoomInfo export header shape (Location = "City, State", compound Industry).
 const ZOOMINFO = `Company Name,Location,Industry,Employees,Revenue,Website,Last Touch
@@ -25,5 +25,25 @@ describe("rowsToBaseRows — NetSuite", () => {
   it("maps WEB ADDRESS + BILLING STATE and skips the 'Duplicate' placeholder", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ name: "SIMC LLC", website: "http://simcllc.com", state: "TX" });
+  });
+});
+
+describe("rowsToTalRows — exact membership replacement", () => {
+  it("preserves every nonempty authoritative row for server-side ID validation", () => {
+    const rows = rowsToTalRows(parseCsv(`Company Name,Internal ID,Website
+,100,one.example
+Missing ID,,two.example
+Duplicate,101,duplicate.example
+,,`));
+    expect(rows).toEqual([
+      { name: "", internal_id: "100", website: "one.example" },
+      { name: "Missing ID", internal_id: "", website: "two.example" },
+      { name: "Duplicate", internal_id: "101", website: "duplicate.example" },
+    ]);
+  });
+
+  it("fails before upload when no Internal ID column exists", () => {
+    expect(() => rowsToTalRows(parseCsv("Company Name,Website\nAcme,acme.example")))
+      .toThrow("NetSuite Internal ID");
   });
 });

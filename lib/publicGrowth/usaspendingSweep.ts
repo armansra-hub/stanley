@@ -179,8 +179,39 @@ export async function loadTamBatch(limit: number, offset: number): Promise<TamId
   return (data ?? []) as TamIdentity[];
 }
 
-export async function sweepUsaspendingTamBatch(limit: number, offset: number, options: { awardOffset?: number; awardLimit?: number } = {}) {
-  const companies = await loadTamBatch(limit, offset), receipts: CompanySweepReceipt[] = [];
+export type RecurringPublicGrowthCompanySource = "usaspending" | "usaspending-subawards" | "sam-entity";
+export type PublicGrowthCompanyScope = "tam" | "verified";
+
+/**
+ * Recurring source checks operate on the exact identities established by the
+ * foundation ingest. The service-role RPC owns the stable eligible-set query;
+ * explicit-offset recovery calls can still use the complete TAM via loadTamBatch.
+ */
+export async function loadRecurringTamBatch(
+  source: RecurringPublicGrowthCompanySource,
+  limit: number,
+  offset: number,
+): Promise<TamIdentity[]> {
+  const { data, error } = await serviceClient().rpc("list_public_growth_recurring_tam_batch", {
+    p_source: source,
+    p_limit: limit,
+    p_offset: offset,
+  });
+  if (error) throw new Error(`recurring ${source} TAM batch load failed: ${error.message}`);
+  return (data ?? []) as TamIdentity[];
+}
+
+export interface UsaspendingBatchOptions {
+  awardOffset?: number;
+  awardLimit?: number;
+  scope?: PublicGrowthCompanyScope;
+}
+
+export async function sweepUsaspendingTamBatch(limit: number, offset: number, options: UsaspendingBatchOptions = {}) {
+  const companies = options.scope === "verified"
+    ? await loadRecurringTamBatch("usaspending", limit, offset)
+    : await loadTamBatch(limit, offset);
+  const receipts: CompanySweepReceipt[] = [];
   // Deliberately serial: each company can fan out to award and transaction calls;
   // bounded execution and clean checkpointing are more valuable than burst speed.
   for (const company of companies) receipts.push(await sweepUsaspendingCompany(company, options));
@@ -188,8 +219,15 @@ export async function sweepUsaspendingTamBatch(limit: number, offset: number, op
   return { source: "usaspending", offset, checked: companies.length, nextOffset: offset + companies.length, done: companies.length < limit, ...totals, receipts };
 }
 
-export async function sweepUsaspendingSubawardsTamBatch(limit: number, offset: number) {
-  const companies = await loadTamBatch(limit, offset), receipts = [];
+export async function sweepUsaspendingSubawardsTamBatch(
+  limit: number,
+  offset: number,
+  scope: PublicGrowthCompanyScope = "tam",
+) {
+  const companies = scope === "verified"
+    ? await loadRecurringTamBatch("usaspending-subawards", limit, offset)
+    : await loadTamBatch(limit, offset);
+  const receipts = [];
   // Most TAM companies have no verified federal identity. Resolve the whole
   // batch in one query so empty companies do not each pay a database round trip.
   const companyIds = companies.map((company) => company.id);

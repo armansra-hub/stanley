@@ -2,15 +2,17 @@ import { NextResponse } from "next/server";
 import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
 import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
-import { assessDigest, deriveOldGold, normalizeScoreBatch } from "@/lib/agent/scores";
-import { adjustScore, type TriggerRow } from "@/lib/agent/adjust";
+import { assessDigest, normalizeScoreBatch } from "@/lib/agent/scores";
+import { deriveStoredScores, effectiveRecordDeadReason, isRetiredTamDuplicate } from "@/lib/agent/scoreWrite";
+import { ASSESSMENT_ARTIFACT_RULES, SCORE_STORAGE_RULES } from "@/lib/agent/scoreContract";
 
 /**
  * Grade ingest — the replacement for the endpoint Codex built and deleted on
  * 2026-07-15 after its strict date rule rejected whole batches opaquely.
  *
  * What changed: auth (the original was a public write to every TAM score), per-row
- * errors instead of all-or-nothing rejection, loose input formats, an undo snapshot,
+ * errors instead of all-or-nothing rejection, loose input formats, a complete
+ * reviewed-recovery before-image,
  * and Stanley's hard-zero + derived-old-gold rules enforced at write time.
  *
  * POST { rows: [...], dryRun?: boolean, label?: string, note?: string }
@@ -73,7 +75,7 @@ export async function POST(req: Request) {
   for (let i = 0; i < ids.length; i += 300) {
     const { data, error } = await db
       .from("companies")
-      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent, record_dead, pe_owned, headcount_growth_pct, record_digest, status, lists, claimable")
+      .select("id, name, netsuite_internal_id, tam_score, codex_score, oldgold_score, score_adjust_note, qual_note, last_sql_date, erp_incumbent, record_dead, record_dead_reason, record_digest, oldgold_class, oldgold_reasons, revisit_on, tam_provisional, status, lists, claimable")
       .in("netsuite_internal_id", ids.slice(i, i + 300));
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     found.push(...(data ?? []));
@@ -83,52 +85,37 @@ export async function POST(req: Request) {
   // duplicate NetSuite IDs). The grade belongs to all of them, but each row's
   // Old Gold status is its own — hence the per-row scoring pass below.
   const byNsid = new Map<string, Record<string, unknown>[]>();
+  let retiredDuplicateRowsSkipped = 0;
   for (const c of found) {
+    if (isRetiredTamDuplicate(c)) {
+      retiredDuplicateRowsSkipped++;
+      continue;
+    }
     const key = String(c.netsuite_internal_id);
     byNsid.set(key, [...(byNsid.get(key) ?? []), c]);
   }
   const missing = ids.filter((id) => !byNsid.has(id));
-
-  // Stanley's live signals for exactly these companies. Fetched per import so the
-  // ±15 layer is re-derived on every push — a grade write can no longer erase it.
-  const companyIds = [...new Set(found.map((c) => String(c.id)))];
-  const triggersByCompany = new Map<string, TriggerRow[]>();
-  for (let i = 0; i < companyIds.length; i += 300) {
-    const { data } = await db
-      .from("triggers")
-      .select("company_id, type, signal_date, detected_at, half_life_days")
-      .in("company_id", companyIds.slice(i, i + 300));
-    for (const t of data ?? []) {
-      const key = String((t as { company_id: string }).company_id);
-      triggersByCompany.set(key, [...(triggersByCompany.get(key) ?? []), t as TriggerRow]);
-    }
-  }
+  const ambiguousInternalIds = ids.filter((id) => (byNsid.get(id)?.length ?? 0) > 1);
 
   const writes: Record<string, unknown>[] = [];
   const snapshots: Record<string, unknown>[] = [];
   const hardZeroed: { name: string; reason: string }[] = [];
-  const adjusted: { name: string; raw: number; final: number; note: string }[] = [];
+  const deadReasonFailures: { internalId: string; companyId: string }[] = [];
   const resurfaced: { id: string; internalId: string; priorStatus: string }[] = [];
   // Automated regrades may refresh exported leads, but a human review/dismissal
   // is a durable worklist decision and must never be undone here.
   const hiddenStatuses = new Set(["exported_csv", "exported_sql"]);
 
   for (const row of rows) {
+    if (ambiguousInternalIds.includes(row.internalId)) continue;
     for (const company of byNsid.get(row.internalId) ?? []) {
-      // A push that doesn't mention record_dead must not un-kill the lead.
-      const isDead = row.recordDead ?? Boolean(company.record_dead);
-      // The pushed digest is the grader's current verdict; the stored one is its last.
-      const signals = adjustScore(row.tamScore, { ...company, record_dead: isDead, record_digest: row.recordDigest ?? company.record_digest } as never, triggersByCompany.get(String(company.id)) ?? []);
-      const law = {
-        tamScore: signals.score,
-        oldGoldScore: deriveOldGold(
-          isDead ? 0 : (row.oldGoldScore ?? signals.score),
-          company as never,
-          row.lastSqlDate,
-          [row.recordDigest ?? "", ...row.oldGoldReasons].join(" "),
-        ),
-        hardZeroReason: signals.hardZeroReason,
-      };
+      // Public signals are structurally absent from this pure write decision.
+      const law = deriveStoredScores(row, company);
+      const recordDeadReason = effectiveRecordDeadReason(row, company, law.recordDead);
+      if (law.recordDead && !recordDeadReason) {
+        deadReasonFailures.push({ internalId: row.internalId, companyId: String(company.id) });
+        continue;
+      }
       const companyLists = Array.isArray(company.lists) ? company.lists.map(String) : [];
       const priorStatus = String(company.status ?? "new");
       const shouldResurface = resurfaceCurrentTam
@@ -143,7 +130,6 @@ export async function POST(req: Request) {
         });
       }
       if (law.hardZeroReason) hardZeroed.push({ name: String(company.name), reason: law.hardZeroReason });
-      else if (signals.note) adjusted.push({ name: String(company.name), raw: row.tamScore, final: signals.score, note: signals.note });
       snapshots.push({
         label,
         company_id: company.id,
@@ -152,6 +138,20 @@ export async function POST(req: Request) {
         codex_score: company.codex_score ?? null,
         oldgold_score: company.oldgold_score ?? null,
         score_adjust_note: company.score_adjust_note ?? null,
+        prior_values: {
+          tam_score: company.tam_score ?? null,
+          codex_score: company.codex_score ?? null,
+          oldgold_score: company.oldgold_score ?? null,
+          score_adjust_note: company.score_adjust_note ?? null,
+          tam_provisional: company.tam_provisional ?? null,
+          status: company.status ?? null,
+          record_dead: company.record_dead ?? null,
+          record_dead_reason: company.record_dead_reason ?? null,
+          record_digest: company.record_digest ?? null,
+          oldgold_class: company.oldgold_class ?? null,
+          oldgold_reasons: company.oldgold_reasons ?? null,
+          revisit_on: company.revisit_on ?? null,
+        },
       });
       writes.push({
         id: company.id,
@@ -160,18 +160,18 @@ export async function POST(req: Request) {
         // through unchanged or the whole batch fails. It is the only such column.
         name: company.name,
         tam_score: law.tamScore,
-        codex_score: row.tamScore, // the grader's raw number, preserved for side-by-side reading
+        codex_score: law.codexScore,
         oldgold_score: law.oldGoldScore,
         tam_provisional: false,
         status: shouldResurface ? "new" : priorStatus,
-        ...(row.recordDead === null ? {} : { record_dead: row.recordDead }),
-        ...(row.recordDeadReason ? { record_dead_reason: row.recordDeadReason } : {}),
+        record_dead: law.recordDead,
+        record_dead_reason: recordDeadReason,
         ...(row.recordDigest ? { record_digest: row.recordDigest } : {}),
-        ...(row.oldGoldClass ? { oldgold_class: row.oldGoldClass } : {}),
-        ...(row.oldGoldReasons.length ? { oldgold_reasons: row.oldGoldReasons } : {}),
-        ...(row.revisitOn ? { revisit_on: row.revisitOn } : {}),
-        // Provenance + exactly which signals moved the number, so the score is readable later.
-        score_adjust_note: [String(body.note ?? label), signals.note || (law.hardZeroReason ? `hard 0 — ${law.hardZeroReason}` : "no active outside signals")]
+        ...(row.oldGoldClassProvided ? { oldgold_class: row.oldGoldClass } : {}),
+        ...(row.oldGoldReasonsProvided ? { oldgold_reasons: row.oldGoldReasons } : {}),
+        ...(row.revisitOnProvided ? { revisit_on: row.revisitOn } : {}),
+        // Provenance plus the immutable raw-grade/hard-zero invariant.
+        score_adjust_note: [String(body.note ?? label), law.scoreNote]
           .filter(Boolean).join("; ").slice(0, 400),
       });
     }
@@ -189,13 +189,16 @@ export async function POST(req: Request) {
     matchedCompanies: writes.length,
     missingInternalIds: missing.slice(0, 50),
     missingCount: missing.length,
+    ambiguousInternalIds,
+    ambiguousCount: ambiguousInternalIds.length,
+    retiredDuplicateRowsSkipped,
+    deadReasonFailures: deadReasonFailures.slice(0, 50),
+    deadReasonFailureCount: deadReasonFailures.length,
     duplicateInternalIds: duplicates,
     rowErrors: errors.slice(0, 50),
     errorCount: errors.length,
     hardZeroed: hardZeroed.slice(0, 20),
     hardZeroedCount: hardZeroed.length,
-    signalAdjusted: adjusted.slice(0, 20),
-    signalAdjustedCount: adjusted.length,
     resurfaceCurrentTam,
     resurfacedCount: resurfaced.length,
     resurfaced: resurfaced.slice(0, 200),
@@ -217,8 +220,19 @@ export async function POST(req: Request) {
 
   if (dryRun) return NextResponse.json({ dryRun: true, wouldWrite: writes.length, ...summary });
 
+  if (writes.length === 0 && (ambiguousInternalIds.length > 0 || deadReasonFailures.length > 0)) {
+    return NextResponse.json({ error: "no safe score targets", label, ...summary }, { status: 422 });
+  }
+
   for (let i = 0; i < snapshots.length; i += 500) {
-    await db.from("score_snapshots").insert(snapshots.slice(i, i + 500));
+    const { error } = await db.from("score_snapshots").insert(snapshots.slice(i, i + 500));
+    if (error) {
+      return NextResponse.json({
+        error: `score snapshot failed before any company write: ${error.message}`,
+        label,
+        snapshottedBeforeFailure: i,
+      }, { status: 500 });
+    }
   }
   for (let i = 0; i < writes.length; i += 500) {
     const { error } = await db.from("companies").upsert(writes.slice(i, i + 500), { onConflict: "id" });
@@ -227,13 +241,20 @@ export async function POST(req: Request) {
     }
   }
 
+  let timelineLogged = true;
   await logEvent("headhunter", "agent.scores_imported", {
     summary: `${agent} imported ${writes.length} grades (${rows.length} leads, ${errors.length} bad rows, ${missing.length} unmatched, ${unauditable.length + noDigest.length} without auditable rationale) — label ${label}`,
     entity_type: "agent_bridge",
     meta: { agent, label, ...summary },
-  });
+  }).catch(() => { timelineLogged = false; });
 
-  return NextResponse.json({ written: writes.length, label, undo: `score_snapshots where label='${label}'`, ...summary });
+  return NextResponse.json({
+    written: writes.length,
+    label,
+    snapshot: `score_snapshots where label='${label}' (complete prior_values; restoration requires explicit review)`,
+    timelineLogged,
+    ...summary,
+  });
 }
 
 /** GET — what a caller needs to know before posting, so the contract is discoverable. */
@@ -243,7 +264,7 @@ export async function GET(req: Request) {
     post: {
       rows: "array (max 1000) of grade rows",
       dryRun: "boolean - always try this first",
-      label: "string used for the undo snapshot",
+      label: "string used to group the reviewed-recovery before-images",
       note: "score_adjust_note text",
       resurfaceCurrentTam: "optional boolean; restores current netsuite_tam rows from exported statuses only; reviewed/dismissed decisions remain hidden",
     },
@@ -252,16 +273,12 @@ export async function GET(req: Request) {
       tamScore: "required — 0-100 close probability (aliases: score, grade)",
       recordDigest: "optional — the grading rationale (aliases: digest, rationale)",
       recordDead: "optional boolean — true/false, yes/no, 1/0",
-      recordDeadReason: "optional text",
-      revisitOn: "optional date — YYYY-MM-DD, M/D/YYYY, ISO, Excel serial, or blank",
-      oldGoldClass: "optional text", oldGoldReasons: "optional array or delimited string",
+      recordDeadReason: "specific text required for an effective dead row; omit to preserve an existing dead reason; making the row live clears it",
+      revisitOn: "optional date — YYYY-MM-DD, M/D/YYYY, ISO, Excel serial, or blank; omit to preserve, send null/blank to clear",
+      oldGoldClass: "optional text; omit to preserve, send null/blank to clear",
+      oldGoldReasons: "optional array or delimited string; omit to preserve, send []/null/blank to clear",
     },
-    rules: [
-      "record_dead rows and NetSuite incumbents are forced to 0 regardless of the pushed score",
-      "oldgold_score is derived per row: membership requires a qual note plus last SQL date, or an exact audited 'Opportunity created/confirmed: YYYY-MM-DD' sentence; the pushed independent revival score is used when supplied",
-      "codex_score keeps the raw pushed number; tam_score is what the UI ranks on",
-      "Stanley's ±15 outside-signal adjustment is a separate pass (system/codex_rescore.py) — it is not applied here",
-      "duplicate NetSuite internal IDs exist; every company row sharing an ID receives the grade, scored per row",
-    ],
+    rules: SCORE_STORAGE_RULES,
+    assessmentArtifactRules: ASSESSMENT_ARTIFACT_RULES,
   });
 }
