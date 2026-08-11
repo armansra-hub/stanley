@@ -144,6 +144,7 @@ describe("0049 TAM checkpoint seed", () => {
     expect(sql).toContain("TAM run cannot complete until every exact current checkpoint record is published and unleased");
     expect(sql).toContain("TAM run completion checkpoint hashes drifted");
     expect(sql).toContain("invalid seeded TAM run status transition");
+    expect(sql).toContain("c.oldgold_score is distinct from (\n          case");
   });
 
   it("exposes board/cohort readback without the seed token", () => {

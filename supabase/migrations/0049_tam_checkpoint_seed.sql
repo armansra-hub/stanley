@@ -1321,7 +1321,8 @@ begin
         or tam_canonical_company_id(r.netsuite_internal_id) is distinct from r.company_id
         or c.codex_score is distinct from r.final_score
         or c.tam_score is distinct from r.tam_score
-        or c.oldgold_score is distinct from case
+        or c.oldgold_score is distinct from (
+          case
           when not (
             (nullif(btrim(c.qual_note), '') is not null and c.last_sql_date is not null)
             or (r.record_digest || ' ' || coalesce((
@@ -1330,7 +1331,8 @@ begin
           ) then null
           when r.record_dead or lower(btrim(coalesce(c.erp_incumbent, ''))) = 'netsuite' then 0
           else r.assessment_old_gold_score
-        end
+          end
+        )
         or c.oldgold_class is distinct from r.old_gold_class
         or c.oldgold_reasons is distinct from r.old_gold_reasons
         or c.revisit_on is distinct from r.revisit_on

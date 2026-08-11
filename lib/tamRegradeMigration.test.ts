@@ -67,6 +67,7 @@ describe("0043 TAM coordination migration", () => {
     expect(sql).toContain("already has a different published final");
     expect(sql).toContain("exact company readback drifted");
     expect(publishSql).toContain("v_company.oldgold_score is distinct from v_live_old_gold_score");
+    expect(publishSql).toContain("v_company.record_dead_reason is distinct from (\n           case");
     expect(publishSql).toContain("v_company.record_digest is distinct from p_record_digest");
   });
 

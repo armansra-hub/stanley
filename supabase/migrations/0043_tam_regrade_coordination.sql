@@ -1257,8 +1257,9 @@ begin
          or v_company.oldgold_reasons is distinct from p_old_gold_reasons
          or v_company.revisit_on is distinct from p_revisit_on
          or v_company.record_dead is distinct from p_record_dead
-         or v_company.record_dead_reason is distinct from case
-           when p_record_dead then p_record_dead_reason else null end
+         or v_company.record_dead_reason is distinct from (
+           case when p_record_dead then p_record_dead_reason else null end
+         )
          or v_company.record_digest is distinct from p_record_digest
          or v_company.score_adjust_note is distinct from v_score_note
          or v_company.tam_provisional is distinct from false then
