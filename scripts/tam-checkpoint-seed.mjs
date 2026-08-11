@@ -444,14 +444,16 @@ export function validateCompletedEvidenceGate({
     inventoryFileSha256: pdfInventoryArtifact.sha256,
     exactIdsSha256,
     corpusSha256,
-    evidenceReadbackSha256,
   };
   for (const [key, expected] of Object.entries(agreement)) {
     if (state[key] !== expected || receipt[key] !== expected) {
       throw new Error(`local-evidence state/receipt ${key} differs from the exact checkpoint rows`);
     }
   }
-  if (receipt.result.evidenceReadbackSha256 !== evidenceReadbackSha256) {
+  if (
+    state.evidenceReadbackSha256 !== evidenceReadbackSha256
+    || receipt.result.evidenceReadbackSha256 !== evidenceReadbackSha256
+  ) {
     throw new Error("local-evidence apply result readback hash differs from the full exact binding");
   }
   if (Number(receipt.totalPdfPages) !== totalPdfPages || Number(receipt.totalPdfBytes) !== totalPdfBytes) {
@@ -466,6 +468,7 @@ export function validateCompletedEvidenceGate({
   }
   return {
     ...agreement,
+    evidenceReadbackSha256,
     stateSha256: stateArtifact.sha256,
     receiptSha256: receiptArtifact.sha256,
   };

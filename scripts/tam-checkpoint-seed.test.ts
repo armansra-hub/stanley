@@ -237,12 +237,12 @@ async function makeCheckpointFixture() {
     inventoryFileSha256: sha256(inventoryText),
     exactIdsSha256,
     corpusSha256,
-    evidenceReadbackSha256,
   };
   await writeJson(evidenceStatePath, {
     schema: "tam-local-evidence-sync",
     version: 1,
     ...sharedEvidence,
+    evidenceReadbackSha256,
     status: "complete",
     confirmedPrefix: ids.length,
     finalCounts: { current: ids.length, pdfVerified: ids.length },
@@ -328,6 +328,7 @@ describe("TAM checkpoint seed builder", () => {
     expect(bundle.cohortHashes.current).toBe(orderedIdHash(fixture.ids));
     expect(bundle.cohortHashes.removed).toBe(orderedIdHash(["606"]));
     expect(bundle.sourceHashes.localEvidenceState).toMatch(/^[0-9a-f]{64}$/);
+    expect(bundle.sourceHashes.evidence_readback_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(bundle.sourceHashes.coordination_removed_ids_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(bundle.rows.every((row: any) => /^[0-9a-f]{64}$/.test(row.tableRowsSha256))).toBe(true);
     expect(bundle.manifest.removedMembership).toMatchObject({ count: 1, orderedIdSha256: orderedIdHash(["606"]) });
