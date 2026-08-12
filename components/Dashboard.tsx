@@ -432,6 +432,7 @@ export default function Dashboard({
     return () => clearTimeout(t);
   }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll, selectedSignals, signalMatchAll, signalDateFrom, signalDateTo, minimumEmployees, minimumParticipants]); // eslint-disable-line react-hooks/exhaustive-deps
   const TRIGGER_LABELS: Record<string, string> = {
+    "2026_inc_5000": "🏅 2026 Inc. 5000",
     erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A (acquirer)", finance_hire: "🧮 Finance hire",
     new_entity: "🏛 New entity", gov_contract: "📜 Gov contract", fleet_expansion: "🚚 Fleet growth",
     hiring_velocity: "🚛 Driver surge", headcount_50: "🏥 Crossed 50 emp (ACA)", ucc_financing: "🏦 Growth loan (UCC-1)",
@@ -1476,6 +1477,7 @@ function CappedList<T>({ items, renderItem }: { items: T[]; renderItem: (item: T
 const SIGNAL_CATEGORY_ORDER = ["Federal contracts", "Employee growth", "Revenue & company size", "Financing", "Hiring", "Expansion", "Technology", "News & press", "Other"];
 
 function signalCategory(type: string): string {
+  if (type === "2026_inc_5000") return "Revenue & company size";
   if (/^(federal_|sam_award|sam_incumbent|gov_contract)/.test(type)) return "Federal contracts";
   if (/^(employee_|headcount_|hiring_velocity)/.test(type)) return "Employee growth";
   if (/^(revenue_|sba_other_than_small|sba_size_changed)/.test(type)) return "Revenue & company size";
