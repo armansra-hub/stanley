@@ -6,6 +6,7 @@
 export interface TriggerSpec { strength: number; half_life_days: number }
 
 export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
+  "2026_inc_5000": { strength: 90, half_life_days: 730 }, // verified appearance on the 2026 Inc. 5000 growth list
   erp_tech: { strength: 95, half_life_days: 120 }, // runs QuickBooks, no ERP — the strongest, slowest-decaying
   funding: { strength: 90, half_life_days: 90 },   // raised money → ERP budget + growth
   new_entity: { strength: 88, half_life_days: 120 }, // new subsidiary/division → multi-entity consolidation (classic QB killer)
@@ -40,6 +41,7 @@ export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
 };
 
 export const TRIGGER_LABEL: Record<string, string> = {
+  "2026_inc_5000": "2026 Inc. 5000",
   erp_tech: "ERP-ready (QuickBooks, no ERP)",
   funding: "Funding",
   new_entity: "New entity / subsidiary",
