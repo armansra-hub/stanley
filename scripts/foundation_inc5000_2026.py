@@ -117,6 +117,10 @@ def fetch_profile(url: str):
             req = urllib.request.Request(url, headers={"user-agent": "Mozilla/5.0 (compatible; StanleyGrowthResearch/1.0)"})
             with urllib.request.urlopen(req, timeout=45) as response:
                 return {"ok": True, **parse_profile(response.read().decode("utf-8", "replace"))}
+        except urllib.error.HTTPError as error:
+            if error.code in (403, 404): return {"ok": False, "error": f"HTTPError: HTTP Error {error.code}"}
+            if attempt == 3: return {"ok": False, "error": f"HTTPError: {str(error)[:160]}"}
+            time.sleep(2 ** attempt)
         except Exception as error:
             if attempt == 3: return {"ok": False, "error": f"{type(error).__name__}: {str(error)[:160]}"}
             time.sleep(2 ** attempt)
@@ -134,7 +138,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True)
     parser.add_argument("--app", default=os.getenv("APP_BASE_URL") or env_file("APP_BASE_URL") or "https://jarvis-sable-eta.vercel.app")
-    parser.add_argument("--secret", default=os.getenv("CRON_SECRET") or env_file("CRON_SECRET"))
+    parser.add_argument("--secret", default=os.getenv("TAM_GROWTH_SWEEP_SECRET") or env_file("TAM_GROWTH_SWEEP_SECRET") or os.getenv("CRON_SECRET") or env_file("CRON_SECRET"))
     parser.add_argument("--state-dir", default=os.path.join(root, ".foundation-run", "inc5000-2026"))
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--dry-run", action="store_true")
@@ -197,6 +201,10 @@ def main():
                  "incCount": len(inc_rows), "candidateProfiles": len(candidate_rows), "profilesFetched": len(cached), "profileFailures": sum(not p.get("ok") for p in cached.values()),
                  "proposals": len(proposals), "ambiguous": ambiguous, "inserted": 0, "duplicates": 0, "rejected": 0,
                  "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        matches_path = os.path.join(args.state_dir, "proposed-matches.jsonl")
+        with open(matches_path + ".tmp", "w", encoding="utf-8") as handle:
+            for proposal in proposals: handle.write(json.dumps(proposal, sort_keys=True, separators=(",", ":")) + "\n")
+        os.replace(matches_path + ".tmp", matches_path)
         if not args.dry_run:
             for offset in range(0, len(proposals), 100):
                 receipt = request_json(f"{app}/api/cron/public-growth/inc5000", args.secret, {"matches": proposals[offset:offset + 100]})
