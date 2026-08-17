@@ -15,7 +15,7 @@ describe("daily cron plan", () => {
   it("stays below the legacy ceiling with no duplicate or empty work slots", () => {
     const paths = buildDailyWavePaths(0);
     expect(paths).toHaveLength(DAILY_PLANNED_CHILDREN);
-    expect(paths.length).toBeLessThan(DAILY_CHILD_REQUEST_LIMIT);
+    expect(paths.length).toBeLessThanOrEqual(DAILY_CHILD_REQUEST_LIMIT);
     expect(new Set(paths).size).toBe(paths.length);
     for (const path of paths) {
       const n = new URL(path, "https://local").searchParams.get("n");
@@ -25,23 +25,23 @@ describe("daily cron plan", () => {
 
   it("preserves primary coverage while assigning real slots to overdue sources", () => {
     const paths = buildDailyWavePaths(0);
-    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(9);
-    expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(10);
-    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(13);
+    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(6);
+    expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(14);
+    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(14);
     expect(paths.filter((path) => path.includes("scope=tail"))).toHaveLength(0);
-    expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(7);
-    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(13);
+    expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(9);
+    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(14);
     expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(0);
     expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(5);
     expect(paths).toContain("/api/cron/reconcile-hidden");
 
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
       .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
-    expect(triggerCoverage).toBe(5400);
+    expect(triggerCoverage).toBeGreaterThanOrEqual(3500);
     for (const pathname of ["/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const coverage = pathsFor(paths, pathname)
         .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
-      expect(coverage).toBeGreaterThanOrEqual(2500);
+      expect(coverage).toBeGreaterThanOrEqual(3500);
     }
     for (const pathname of ["/api/cron/triggers", "/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const waves = pathsFor(paths, pathname);

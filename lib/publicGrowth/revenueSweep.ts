@@ -5,6 +5,8 @@ import { deriveRevenueEvents } from "./metrics";
 import { recordPublicGrowthTriggersBulk, stableHash } from "./storage";
 
 const PRIORITY_RECOMPUTE_CONCURRENCY = 10;
+const DATABASE_PAGE_SIZE = 1000;
+const WRITE_BATCH_SIZE = 500;
 
 export function parseRevenueEstimate(value: string | null | undefined): number | null {
   if (!value) return null;
@@ -19,11 +21,19 @@ export function parseRevenueEstimate(value: string | null | undefined): number |
 
 export async function sweepRevenueTamBatch(limit: number, offset: number) {
   const db = serviceClient(), observedOn = new Date().toISOString().slice(0, 10);
-  const { data, error } = await db.from("companies").select("id,name,revenue_band").contains("lists", ["netsuite_tam"]).neq("status", "removed_from_tam").order("id").range(offset, offset + limit - 1);
-  if (error) throw new Error(`revenue TAM load failed: ${error.message}`);
+  const data: Array<{ id: string; name: string; revenue_band: string | null }> = [];
+  while (data.length < limit) {
+    const pageSize = Math.min(DATABASE_PAGE_SIZE, limit - data.length);
+    const start = offset + data.length;
+    const page = await db.from("companies").select("id,name,revenue_band").contains("lists", ["netsuite_tam"]).neq("status", "removed_from_tam").order("id").range(start, start + pageSize - 1);
+    if (page.error) throw new Error(`revenue TAM load failed: ${page.error.message}`);
+    const rows = (page.data ?? []) as Array<{ id: string; name: string; revenue_band: string | null }>;
+    data.push(...rows);
+    if (rows.length < pageSize) break;
+  }
   const observations = [];
   const triggerRows: Parameters<typeof recordPublicGrowthTriggersBulk>[0] = [];
-  for (const company of data ?? []) {
+  for (const company of data) {
     const estimated = parseRevenueEstimate(company.revenue_band);
     if (estimated == null) continue;
     // NetSuite's revenue band is a standing snapshot, not a new growth event every
@@ -33,14 +43,27 @@ export async function sweepRevenueTamBatch(limit: number, offset: number) {
     observations.push({ company_id: company.id, source: "NetSuite TAM revenue band", observed_on: observedOn, estimated_revenue: estimated, revenue_band: company.revenue_band, source_url: null, payload_hash: stableHash({ band: company.revenue_band, estimated }), evidence: { estimateMethod: "revenue_band_lower_bound" } });
     for (const event of deriveRevenueEvents({ source: "NetSuite TAM revenue band", observationId, priorRevenue: null, currentRevenue: estimated, signalDate: observedOn })) triggerRows.push({ companyId: company.id, event, sourceName: "NetSuite TAM revenue estimate", sourceUrl: `https://system.netsuite.com/app/common/entity/custjob.nl?id=${encodeURIComponent(company.id)}&signal=${encodeURIComponent(event.type)}&threshold=${event.metadata.threshold}`, confidence: 0.7 });
   }
-  if (observations.length) {
-    const { error: upsertError } = await db.from("company_revenue_observations").upsert(observations, { onConflict: "company_id,source,observed_on" });
+  for (let start = 0; start < observations.length; start += WRITE_BATCH_SIZE) {
+    const { error: upsertError } = await db.from("company_revenue_observations").upsert(observations.slice(start, start + WRITE_BATCH_SIZE), { onConflict: "company_id,source,observed_on" });
     if (upsertError) throw new Error(`revenue observation bulk upsert failed: ${upsertError.message}`);
   }
-  const triggers = await recordPublicGrowthTriggersBulk(triggerRows);
-  const affectedCompanyIds = [...new Set(triggerRows.map((row) => row.companyId))];
-  // Recompute even when every candidate trigger already exists. That makes a
-  // retry repair a prior partial recompute instead of advancing with stale cache.
+  // The full 48-hour rotation revisits thousands of unchanged bands. Prefetch
+  // their stable milestone keys in bounded company batches so the common daily
+  // path does not issue one dedupe query and one priority write per company.
+  const existing = new Set<string>();
+  const candidateCompanyIds = [...new Set(triggerRows.map((row) => row.companyId))];
+  for (let start = 0; start < candidateCompanyIds.length; start += 100) {
+    const ids = candidateCompanyIds.slice(start, start + 100);
+    const { data: prior, error: priorError } = await db.from("triggers").select("company_id,dedupe_key")
+      .in("company_id", ids).eq("type", "revenue_milestone");
+    if (priorError) throw new Error(`revenue milestone prefetch failed: ${priorError.message}`);
+    for (const row of prior ?? []) existing.add(`${row.company_id}:${row.dedupe_key}`);
+  }
+  const pendingTriggerRows = triggerRows.filter((row) => !existing.has(`${row.companyId}:${row.event.dedupeKey}`));
+  const triggers = await recordPublicGrowthTriggersBulk(pendingTriggerRows);
+  const affectedCompanyIds = [...new Set(pendingTriggerRows.map((row) => row.companyId))];
+  // Only new milestones need a priority refresh; unchanged daily observations
+  // retain the priority computed when their trigger was first recorded.
   for (let start = 0; start < affectedCompanyIds.length; start += PRIORITY_RECOMPUTE_CONCURRENCY) {
     await Promise.all(affectedCompanyIds.slice(start, start + PRIORITY_RECOMPUTE_CONCURRENCY)
       .map((companyId) => recomputePriority(companyId)));
@@ -48,9 +71,9 @@ export async function sweepRevenueTamBatch(limit: number, offset: number) {
   return {
     source: "revenue",
     offset,
-    checked: data?.length ?? 0,
-    nextOffset: offset + (data?.length ?? 0),
-    done: (data?.length ?? 0) < limit,
+    checked: data.length,
+    nextOffset: offset + data.length,
+    done: data.length < limit,
     observed: observations.length,
     triggers,
     prioritiesRecomputed: affectedCompanyIds.length,

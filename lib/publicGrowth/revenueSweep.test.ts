@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   companyRows: [] as Array<{ id: string; name: string; revenue_band: string | null }>,
   range: vi.fn(),
   observationUpsert: vi.fn(),
+  priorTriggers: [] as Array<{ company_id: string; dedupe_key: string }>,
   recordBulk: vi.fn(),
   recomputePriority: vi.fn(),
 }));
@@ -13,6 +14,13 @@ vi.mock("@/lib/supabase/server", () => ({
     from: (table: string) => {
       if (table === "company_revenue_observations") {
         return { upsert: mocks.observationUpsert };
+      }
+      if (table === "triggers") {
+        const query: Record<string, unknown> = {};
+        query.select = vi.fn(() => query);
+        query.in = vi.fn(() => query);
+        query.eq = vi.fn(async () => ({ data: mocks.priorTriggers, error: null }));
+        return query;
       }
       if (table !== "companies") throw new Error(`unexpected table ${table}`);
       const query: Record<string, unknown> = {};
@@ -42,6 +50,7 @@ describe("revenue TAM sweep", () => {
     ];
     mocks.range.mockReset().mockImplementation(async () => ({ data: mocks.companyRows, error: null }));
     mocks.observationUpsert.mockReset().mockResolvedValue({ error: null });
+    mocks.priorTriggers = [];
     mocks.recordBulk.mockReset().mockResolvedValue(7);
     mocks.recomputePriority.mockReset().mockResolvedValue(42);
   });
@@ -82,5 +91,21 @@ describe("revenue TAM sweep", () => {
       return 42;
     });
     await expect(sweepRevenueTamBatch(250, 0)).rejects.toThrow("priority write failed");
+  });
+
+  it("loads a 3,500-company daily allocation in bounded database pages", async () => {
+    const rows = (start: number, count: number) => Array.from({ length: count }, (_, index) => ({
+      id: `company-${start + index}`,
+      name: `Company ${start + index}`,
+      revenue_band: null,
+    }));
+    mocks.range.mockReset()
+      .mockResolvedValueOnce({ data: rows(0, 1000), error: null })
+      .mockResolvedValueOnce({ data: rows(1000, 1000), error: null })
+      .mockResolvedValueOnce({ data: rows(2000, 1000), error: null })
+      .mockResolvedValueOnce({ data: rows(3000, 500), error: null });
+    const result = await sweepRevenueTamBatch(3500, 0);
+    expect(mocks.range).toHaveBeenCalledTimes(4);
+    expect(result).toEqual(expect.objectContaining({ checked: 3500, nextOffset: 3500, done: false }));
   });
 });
