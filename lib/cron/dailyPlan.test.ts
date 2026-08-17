@@ -25,18 +25,24 @@ describe("daily cron plan", () => {
 
   it("preserves primary coverage while assigning real slots to overdue sources", () => {
     const paths = buildDailyWavePaths(0);
-    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(20);
-    expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(3);
-    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(17);
-    expect(paths.filter((path) => path.includes("scope=tail"))).toHaveLength(4);
-    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(1);
+    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(9);
+    expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(10);
+    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(13);
+    expect(paths.filter((path) => path.includes("scope=tail"))).toHaveLength(0);
+    expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(7);
+    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(13);
     expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(0);
     expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(5);
     expect(paths).toContain("/api/cron/reconcile-hidden");
 
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
       .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
-    expect(triggerCoverage).toBe(5000);
+    expect(triggerCoverage).toBe(5400);
+    for (const pathname of ["/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
+      const coverage = pathsFor(paths, pathname)
+        .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
+      expect(coverage).toBeGreaterThanOrEqual(2500);
+    }
     for (const pathname of ["/api/cron/triggers", "/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const waves = pathsFor(paths, pathname);
       expect(waves.every((path) => !new URL(path, "https://local").searchParams.has("offset"))).toBe(true);
@@ -78,7 +84,9 @@ describe("daily cron plan", () => {
       expect(Math.ceil(target.foundationEligibleBaseline / target.batchSize)).toBe(target.targetCycleDays);
     }
     expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending")?.targetCycleDays)
-      .toBe(250);
+      .toBeLessThan(100);
+    expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending-subawards")?.targetCycleDays)
+      .toBeLessThanOrEqual(7);
     expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "sam-entity")?.targetCycleDays)
       .toBeLessThanOrEqual(366);
   });

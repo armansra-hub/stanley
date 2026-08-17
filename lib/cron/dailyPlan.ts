@@ -1,6 +1,6 @@
 /** Vercel parent-cron safety ceiling. The active plan intentionally stays below it. */
 export const DAILY_CHILD_REQUEST_LIMIT = 65;
-export const DAILY_PLANNED_CHILDREN = 51;
+export const DAILY_PLANNED_CHILDREN = 60;
 
 /**
  * Foundation receipts measured ordinary SAM/subaward batches at ten companies.
@@ -10,8 +10,11 @@ export const DAILY_PLANNED_CHILDREN = 51;
  * usaspending-subawards-foundation-0.jsonl reported 222 matches, and
  * sam-extract-foundation.json reported 3,560 matched UEI-linked companies.
  * The rounded 250 USA baseline is deliberately conservative. One bounded request
- * per day therefore targets a roughly 250-day federal-award baseline cycle, a
- * 25-day subaward cycle, and a 356-day SAM-registration cycle.
+ * Federal award detail is the slow exception: one recipient can fan out across
+ * hundreds of awards and transaction pages. Raise it conservatively to three
+ * verified recipients/day. Subawards are lighter and now cover the verified
+ * baseline inside one week. SAM entity lookups remain capped by SAM API access;
+ * the monthly bulk extract is the high-volume path.
  *
  * This recurrence does not discover a newly linked company. Full-TAM discovery
  * and foundation refresh remain a separate, explicit-offset operation with their
@@ -20,17 +23,17 @@ export const DAILY_PLANNED_CHILDREN = 51;
 export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
   {
     source: "usaspending",
-    path: "/api/cron/public-growth?source=usaspending&scope=verified&n=1",
+    path: "/api/cron/public-growth?source=usaspending&scope=verified&n=3",
     foundationEligibleBaseline: 250,
-    batchSize: 1,
-    targetCycleDays: 250,
+    batchSize: 3,
+    targetCycleDays: 84,
   },
   {
     source: "usaspending-subawards",
-    path: "/api/cron/public-growth?source=usaspending-subawards&scope=verified&n=10",
+    path: "/api/cron/public-growth?source=usaspending-subawards&scope=verified&n=50",
     foundationEligibleBaseline: 250,
-    batchSize: 10,
-    targetCycleDays: 25,
+    batchSize: 50,
+    targetCycleDays: 5,
   },
   {
     source: "sam-entity",
@@ -43,8 +46,8 @@ export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
 
 const PUBLIC_GROWTH_PATHS = [
   ...PUBLIC_GROWTH_RECURRING_COVERAGE.map((target) => target.path),
-  "/api/cron/public-growth?source=sam-opportunities&days=31&limit=500",
-  "/api/cron/public-growth?source=revenue&n=10&limit=250",
+  "/api/cron/public-growth?source=sam-opportunities&days=31&limit=1000",
+  "/api/cron/public-growth?source=revenue&n=10&limit=1000",
 ] as const;
 
 /**
@@ -71,9 +74,11 @@ export function isGetCompatibleDailyPath(path: string): boolean {
 
 /** Pure, deterministic manifest for the one Vercel daily cron. */
 export function buildDailyWavePaths(_dayIndex?: number): string[] {
-  const TRIGGER_WAVES = 20, TRIGGER_N = 250;
-  const FMCSA_WAVES = 3, FMCSA_N = 200;
-  const SITE_N = 30;
+  const TRIGGER_WAVES = 9, TRIGGER_N = 600;
+  const FMCSA_WAVES = 10, FMCSA_N = 250;
+  const SITE_WAVES = 13, SITE_N = 200;
+  const SOS_WAVES = 7, SOS_N = 400;
+  const ATS_WAVES = 13, ATS_N = 200;
 
   // Every public-growth cursor advances once per day. The lease fence rejects an
   // overlapping invocation instead of allowing parallel waves to share a cursor.
@@ -83,10 +88,9 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
     ...Array.from({ length: FMCSA_WAVES }, (_, k) => `/api/cron/fmcsa?n=${FMCSA_N}&wave=${k}`),
     // Capacity tradeoff against the deployed 24-wave plan: website claimable
     // volume is 720 -> 390/day, funding recurring public-growth and ATS work.
-    ...Array.from({ length: 13 }, (_, k) => `/api/cron/website?n=${SITE_N}&wave=${k}`),
-    ...Array.from({ length: 4 }, (_, k) => `/api/cron/website?n=${SITE_N}&scope=tail&wave=${k}`),
-    ...Array.from({ length: 2 }, (_, k) => `/api/cron/cosos?n=200&wave=${k}`),
-    "/api/cron/ats?n=200",
+    ...Array.from({ length: SITE_WAVES }, (_, k) => `/api/cron/website?n=${SITE_N}&wave=${k}`),
+    ...Array.from({ length: SOS_WAVES }, (_, k) => `/api/cron/cosos?n=${SOS_N}&wave=${k}`),
+    ...Array.from({ length: ATS_WAVES }, (_, k) => `/api/cron/ats?n=${ATS_N}&wave=${k}`),
     ...PUBLIC_GROWTH_PATHS,
     "/api/cron/reconcile-hidden",
     "/api/cron/recompute",

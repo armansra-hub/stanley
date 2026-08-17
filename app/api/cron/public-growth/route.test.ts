@@ -158,7 +158,7 @@ describe("public-growth managed sweep route", () => {
     const response = await GET(request("source=usaspending&scope=verified&n=10"));
     expect(response.status).toBe(200);
     expect(mocks.begin).toHaveBeenCalledWith("usaspending", 10, null);
-    expect(mocks.usaspending).toHaveBeenCalledWith(1, 0, { scope: "verified", afterCompanyId: null });
+    expect(mocks.usaspending).toHaveBeenCalledWith(3, 0, { scope: "verified", afterCompanyId: null });
     expect(mocks.complete).toHaveBeenCalledWith(lease, expect.objectContaining({ checked: 10 }));
     expect(await response.json()).toEqual(expect.objectContaining({ nextCursor: 10 }));
   });

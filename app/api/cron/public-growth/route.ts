@@ -100,7 +100,7 @@ async function runCompanyRetryBatch(
 async function run(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const url = new URL(req.url), source = url.searchParams.get("source") ?? "usaspending";
-  const n = Math.min(Math.max(Number(url.searchParams.get("n") ?? 2) || 2, 1), 10);
+  const n = Math.min(Math.max(Number(url.searchParams.get("n") ?? 2) || 2, 1), 50);
   const explicitOffset = url.searchParams.has("offset")
     ? Math.max(Number(url.searchParams.get("offset")) || 0, 0)
     : null;
@@ -122,7 +122,7 @@ async function run(req: NextRequest) {
   }
   const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days") ?? 31) || 31));
   const opportunityLimit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 500) || 500));
-  const revenueLimit = Math.min(500, Math.max(n, Number(url.searchParams.get("limit") ?? 250) || 250));
+  const revenueLimit = Math.min(1000, Math.max(n, Number(url.searchParams.get("limit") ?? 250) || 250));
   const batchSize = source === "sam-opportunities" ? opportunityLimit : source === "revenue" ? revenueLimit : n;
   const durableUsaspendingRecovery = source === "usaspending" && explicitOffset != null;
   let lease: Awaited<ReturnType<typeof beginPublicGrowthSweep>>;
@@ -154,8 +154,8 @@ async function run(req: NextRequest) {
     afterCompanyId = companyScopedSource ? publicGrowthAfterCompanyId(lease.cursor) : null;
     // A bounded USAspending company step still includes identity, award detail,
     // transaction-page, and persistence calls. Run one exact company per request.
-    const retryLimit = source === "usaspending" ? 1 : n;
-    const usaspendingCompanyLimit = lease.managed && source === "usaspending" ? 1 : n;
+    const retryLimit = source === "usaspending" ? 1 : Math.min(10, n);
+    const usaspendingCompanyLimit = lease.managed && source === "usaspending" ? Math.min(3, n) : n;
     const retryPlan = lease.managed && companyScopedSource
       ? pendingPublicGrowthRetries(lease.cursor, retryLimit)
       : [];

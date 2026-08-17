@@ -18,12 +18,19 @@ import { isCareerEvidenceUrl, isFinanceHireEligible } from "@/lib/triggers/signa
  */
 export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Promise<{ checked: number; detected: number; with_board: number; finance_triggers: number; erp_triggers: number; already_on_erp: number }> {
   const companies = await pickAtsForRotation(limit, opts.offset ?? 0);
-  const stats = { checked: companies.length, detected: 0, with_board: 0, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0 };
+  const stats = { checked: 0, detected: 0, with_board: 0, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0 };
   const touched = new Set<string>();
 
+  // The parent cron closes its observation window at 50 seconds. Return a clean,
+  // checkpointed partial batch before then; the unprocessed reservation remains
+  // oldest and is selected again on the next daily epoch.
+  const deadline = Date.now() + 48_000;
   const BATCH = 12;
   for (let i = 0; i < companies.length; i += BATCH) {
-    await Promise.all(companies.slice(i, i + BATCH).map(async (c) => {
+    if (Date.now() > deadline) break;
+    const slice = companies.slice(i, i + BATCH);
+    stats.checked += slice.length;
+    await Promise.all(slice.map(async (c) => {
       try {
         let type = c.ats_type as AtsType | "none" | null;
         let token = c.ats_token as string | null;
