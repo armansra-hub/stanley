@@ -19,7 +19,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   if (!agentAuthOk(req)) return unauthorized();
-  let body: { decisions?: Array<{ id?: unknown; verdict?: unknown; reason?: unknown }>; agent?: unknown } = {};
+  let body: { decisions?: Array<{ id?: unknown; verdict?: unknown; reason?: unknown; sourceUrl?: unknown }>; agent?: unknown } = {};
   try { body = await req.json(); } catch { return NextResponse.json({ error: "invalid JSON" }, { status: 400 }); }
   const decisions = Array.isArray(body.decisions) ? body.decisions.slice(0, 100) : [];
   if (!decisions.length) return NextResponse.json({ error: "decisions required" }, { status: 400 });
@@ -30,9 +30,19 @@ export async function POST(req: Request) {
     const id = String(decision.id ?? "").trim();
     const verdict = decision.verdict === "keep" || decision.verdict === "reject" ? decision.verdict : null;
     const reason = String(decision.reason ?? "").trim();
+    const sourceUrl = String(decision.sourceUrl ?? "").trim();
+    let verifiedSourceUrl: string | null = null;
+    if (sourceUrl) {
+      try { const parsed = new URL(sourceUrl); if (parsed.protocol === "https:") verifiedSourceUrl = parsed.toString(); } catch { /* invalid */ }
+      if (!verifiedSourceUrl) { skipped++; continue; }
+    }
     if (!id || !verdict || reason.length < 12) { skipped++; continue; }
+    const patch: Record<string, unknown> = {
+      verdict, verdict_reason: reason.slice(0, 1000), verdict_by: reviewer, decided_at: new Date().toISOString(),
+    };
+    if (verdict === "keep" && verifiedSourceUrl) patch.source_url = verifiedSourceUrl;
     const { data, error } = await db.from("trigger_candidates")
-      .update({ verdict, verdict_reason: reason.slice(0, 1000), verdict_by: reviewer, decided_at: new Date().toISOString() })
+      .update(patch)
       .eq("id", id).is("verdict", null).select("id").maybeSingle();
     if (error || !data) { skipped++; continue; }
     if (verdict === "keep") {
