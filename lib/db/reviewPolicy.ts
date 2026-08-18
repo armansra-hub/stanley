@@ -6,7 +6,7 @@ import { setCompaniesStatus } from "@/lib/db/companies";
 type StatusDecision = "new" | "reviewed" | "dismissed";
 export interface StatusEventLike { ts: string; meta?: Record<string, unknown> | null }
 
-/** Reconstruct each company's latest explicit human worklist decision. */
+/** Reconstruct each company's latest explicit human decision or signal reheat. */
 export function latestHumanStatusByCompany(events: StatusEventLike[]): Map<string, StatusDecision> {
   const latest = new Map<string, StatusDecision>();
   const ordered = [...events].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
@@ -29,7 +29,7 @@ export async function reconcileHumanHiddenStatuses(opts: { dryRun?: boolean } = 
     const { data, error } = await db.from("app_events")
       .select("ts,meta")
       .eq("module", "headhunter")
-      .eq("kind", "lead.status_changed")
+      .in("kind", ["lead.status_changed", "lead.signal_reheated"])
       .order("ts", { ascending: false })
       .range(offset, offset + 999);
     if (error) throw new Error(`status log read failed: ${error.message}`);

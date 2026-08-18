@@ -1,5 +1,6 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
+import { logEvent } from "@/lib/db/events";
 import { getPublicGrowthDetail, type PublicGrowthDetail } from "@/lib/publicGrowth/detail";
 import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
 import { mapSignal, withTriggers, withInsights, type InsightBadge } from "@/lib/db/companies";
@@ -26,8 +27,9 @@ export function isPublishableTrigger(t: TriggerEvidence): boolean {
 }
 
 /** Insert a trigger (deduped by company + source_url). Returns true if a NEW one landed.
- * Human review is durable: reviewed and dismissed leads stay hidden even when a new
- * public signal lands. Only exported leads may re-enter after the 14-day grace. */
+ * A genuinely new accepted signal reheats a reviewed/dismissed account. The reheat
+ * is logged so the hidden-status reconciler will not undo it; a later human decision
+ * remains authoritative and can hide the account again. */
 export async function recordTrigger(companyId: string, t: TriggerInput): Promise<boolean> {
   const spec = TRIGGER_SPEC[t.type] ?? TRIGGER_SPEC.news;
   const db = serviceClient();
@@ -50,9 +52,22 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
   try {
     const { data: c } = await db.from("companies").select("status, exported_at").eq("id", companyId).maybeSingle();
     const s = (c as any)?.status as string | undefined;
-    // Human review is durable. New signals may resurface exported leads after the
-    // grace period, but must never reopen reviewed or dismissed accounts.
-    if (s === "exported_csv" || s === "exported_sql") {
+    if (s === "reviewed" || s === "dismissed") {
+      const { data: reheated } = await db.from("companies")
+        .update({ status: "new", has_new_signal: true })
+        .eq("id", companyId)
+        .eq("status", s)
+        .select("id")
+        .maybeSingle();
+      if (reheated) {
+        await logEvent("headhunter", "lead.signal_reheated", {
+          summary: `Fresh ${t.type} signal reheated a ${s} lead`,
+          entity_type: "companies",
+          entity_id: companyId,
+          meta: { status: "new", ids: [companyId], prior_status: s, trigger_type: t.type, source_url: t.source_url ?? null },
+        }).catch(() => {});
+      }
+    } else if (s === "exported_csv" || s === "exported_sql") {
       const exp = (c as any)?.exported_at ? new Date((c as any).exported_at).getTime() : 0;
       if (Date.now() - exp > 14 * 86_400_000) {
         await db.from("companies").update({ status: "new", has_new_signal: true }).eq("id", companyId);
