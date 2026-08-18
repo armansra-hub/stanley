@@ -1,14 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { buildDailyWavePaths, DAILY_STAGE_SIZE } from "@/lib/cron/dailyPlan";
-import { scheduleAfter } from "@/lib/cron/scheduleAfter";
 import { logEvent } from "@/lib/db/events";
 
 /**
- * The one Vercel daily cron runs five child sweeps, records their exact receipt,
- * then calls a lightweight kick route for the next stage. The kick returns 202
- * immediately and uses `after()` only to start the next normal stage request.
- * Completed work and chain handoff therefore do not depend on post-response work.
+ * Vercel invokes this route hourly. Each independent root invocation rotates to
+ * the next five-worker stage, so all 65 workers run every 13 hours without a
+ * concurrency burst or a recursive function chain (which Vercel rejects at a
+ * bounded recursion depth). Explicit stage/run parameters support exact audits.
  */
 export const dynamic = "force-dynamic";
 // Public-growth workers already use the production plan's 300-second ceiling.
@@ -32,7 +30,9 @@ async function run(req: NextRequest) {
   const url = new URL(req.url);
   const paths = buildDailyWavePaths();
   const stageCount = Math.ceil(paths.length / DAILY_STAGE_SIZE);
-  const stage = Number(url.searchParams.get("stage") ?? 0);
+  const hourSlot = Math.floor(Date.now() / 3_600_000);
+  const explicitStage = url.searchParams.get("stage");
+  const stage = explicitStage == null ? hourSlot % stageCount : Number(explicitStage);
   if (!Number.isInteger(stage) || stage < 0 || stage >= stageCount) {
     return NextResponse.json({ error: "invalid_stage", stageCount }, { status: 400 });
   }
@@ -40,31 +40,14 @@ async function run(req: NextRequest) {
   const suppliedRunId = url.searchParams.get("run")?.trim();
   const runId = suppliedRunId && /^[a-zA-Z0-9-]{8,80}$/.test(suppliedRunId)
     ? suppliedRunId
-    : randomUUID();
+    : `hourly-${Math.floor(hourSlot / stageCount)}`;
   const stagePaths = paths.slice(stage * DAILY_STAGE_SIZE, (stage + 1) * DAILY_STAGE_SIZE);
   const base = process.env.APP_BASE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : url.origin);
   const cronSecret = process.env.CRON_SECRET!;
 
-  const kick = url.searchParams.get("kick") === "1";
-  if (kick) {
-    scheduleAfter(async () => {
-      try {
-        const worker = new URL("/api/cron/daily", base);
-        worker.searchParams.set("stage", String(stage));
-        worker.searchParams.set("run", runId);
-        const response = await fetch(worker, {
-          headers: { "x-cron-secret": cronSecret },
-          cache: "no-store",
-        });
-        void response.body?.cancel().catch(() => {});
-      } catch { /* the normal worker records its own terminal state once started */ }
-    });
-    return NextResponse.json({ accepted: true, mode: "kick", runId, stage, stageCount }, { status: 202 });
-  }
-
   if (stage === 0) {
     await logEvent("headhunter", "daily.fired", {
-      summary: `Daily cron fired — ${paths.length} sweeps across ${stageCount} durable stages`,
+      summary: `Hourly sweep rotation started — ${paths.length} sweeps across ${stageCount} independent stages`,
       entity_type: "cron",
       meta: { runId, total: paths.length, stageCount, stageSize: DAILY_STAGE_SIZE },
     }).catch(() => {});
@@ -90,30 +73,11 @@ async function run(req: NextRequest) {
     meta: { runId, stage, stageCount, ok, failed, results },
   }).catch(() => {});
 
-  if (stage + 1 < stageCount) {
-    try {
-      const next = new URL("/api/cron/daily", base);
-      next.searchParams.set("stage", String(stage + 1));
-      next.searchParams.set("run", runId);
-      next.searchParams.set("kick", "1");
-      const response = await fetch(next, {
-        headers: { "x-cron-secret": cronSecret },
-        cache: "no-store",
-      });
-      void response.body?.cancel().catch(() => {});
-      if (!response.ok) throw new Error(`next stage kick returned ${response.status}`);
-    } catch (error) {
-      await logEvent("headhunter", "daily.chain_failed", {
-        summary: `Daily stage chain stopped after ${stage + 1}/${stageCount}`,
-        entity_type: "cron",
-        meta: { runId, stage, error: error instanceof Error ? error.message : String(error) },
-      }).catch(() => {});
-    }
-  } else {
+  if (stage + 1 === stageCount) {
     await logEvent("headhunter", "daily.done", {
-      summary: `Daily staged sweep finished all ${paths.length} planned workers`,
+      summary: `Hourly sweep rotation reached stage ${stageCount}/${stageCount}`,
       entity_type: "cron",
-      meta: { runId, status: "complete", total: paths.length, stageCount },
+      meta: { runId, status: "rotation_complete", total: paths.length, stageCount },
     }).catch(() => {});
   }
 
