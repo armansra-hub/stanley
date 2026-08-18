@@ -47,7 +47,7 @@ export async function fetchSamOpportunityBulk(days = 31) {
     scanned++;
     const raw = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
     if (!raw.NoticeId || String(raw.PostedDate ?? "").slice(0, 10) < cutoff) continue;
-    rows.push(compactSamOpportunity({
+    const compact = compactSamOpportunity({
       noticeId: raw.NoticeId,
       title: raw.Title,
       solicitationNumber: raw["Sol#"] || null,
@@ -65,8 +65,12 @@ export async function fetchSamOpportunityBulk(days = 31) {
       placeOfPerformance: { street: raw.PopStreetAddress || null, city: raw.PopCity || null, state: raw.PopState || null, zip: raw.PopZip || null, country: raw.PopCountry || null },
       award: { number: raw.AwardNumber || null, amount: raw["Award$"] || null, awardee: { name: raw.Awardee || null } },
       uiLink: raw.Link || `https://sam.gov/opp/${encodeURIComponent(raw.NoticeId)}/view`,
-      description: raw.Description || null,
-    }));
+      // Do not retain the often multi-page description for 30k+ unmatched rows.
+      // The exact SAM link remains the evidence source for matched TAM records.
+      description: null,
+    });
+    compact.evidence = { source: "SAM public Contract Opportunities bulk CSV", noticeId: raw.NoticeId, lastModified: response.headers.get("last-modified") };
+    rows.push(compact);
   }
   return {
     rows,
@@ -76,4 +80,3 @@ export async function fetchSamOpportunityBulk(days = 31) {
     lastModified: response.headers.get("last-modified"),
   };
 }
-
