@@ -11,7 +11,10 @@ import { logEvent } from "@/lib/db/events";
  * 65-request burst, which saturated the parent and left most workers unstarted.
  */
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Public-growth workers already use the production plan's 300-second ceiling.
+// The dispatcher needs enough headroom to observe five 48-60 second workers,
+// persist their receipt, and hand off the next stage.
+export const maxDuration = 300;
 
 function authorized(req: NextRequest): boolean {
   const auth = req.headers.get("authorization");
