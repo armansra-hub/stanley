@@ -26,29 +26,44 @@ describe("daily staged cron", () => {
     else process.env.CRON_SECRET = priorSecret;
   });
 
-  it("accepts immediately and chains the next five-worker stage", async () => {
+  it("completes the first five-worker stage before kicking the next stage", async () => {
     const response = await GET(new NextRequest("https://stanley.local/api/cron/daily", {
       headers: { "x-cron-secret": "test-cron-secret" },
     }));
-    expect(response.status).toBe(202);
-    expect(await response.json()).toMatchObject({ accepted: true, stage: 0, stageCount: 13, children: 5 });
-    expect(tasks).toHaveLength(1);
-
-    await tasks[0]();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ completed: true, stage: 0, stageCount: 13, children: 5, ok: 5, failed: 0 });
+    expect(tasks).toHaveLength(0);
     const calls = vi.mocked(fetch).mock.calls;
     expect(calls).toHaveLength(6);
     expect(calls.slice(0, 5).every(([target]) => !String(target).includes("/api/cron/daily?"))).toBe(true);
     expect(String(calls[5][0])).toContain("stage=1");
+    expect(String(calls[5][0])).toContain("kick=1");
     expect(calls.every(([, init]) => (init?.headers as Record<string, string>)["x-cron-secret"] === "test-cron-secret")).toBe(true);
     expect(calls.every(([target]) => !String(target).includes("test-cron-secret"))).toBe(true);
+  });
+
+  it("uses a lightweight kick to start the requested normal stage", async () => {
+    const response = await GET(new NextRequest("https://stanley.local/api/cron/daily?stage=1&run=run-12345678&kick=1", {
+      headers: { "x-cron-secret": "test-cron-secret" },
+    }));
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ accepted: true, mode: "kick", stage: 1, runId: "run-12345678" });
+    expect(tasks).toHaveLength(1);
+
+    await tasks[0]();
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0][0])).toContain("stage=1");
+    expect(String(calls[0][0])).toContain("run=run-12345678");
+    expect(String(calls[0][0])).not.toContain("kick=1");
   });
 
   it("finishes the final stage without another dispatch", async () => {
     const response = await GET(new NextRequest("https://stanley.local/api/cron/daily?stage=12&run=run-12345678", {
       headers: { "x-cron-secret": "test-cron-secret" },
     }));
-    expect(response.status).toBe(202);
-    await tasks[0]();
+    expect(response.status).toBe(200);
+    expect(tasks).toHaveLength(0);
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(5);
     expect(logEvent).toHaveBeenCalledWith("headhunter", "daily.done", expect.objectContaining({
       meta: expect.objectContaining({ status: "complete", total: 65, stageCount: 13 }),
@@ -69,8 +84,8 @@ describe("daily staged cron", () => {
       const response = await GET(new NextRequest("https://stanley.local/api/cron/daily", {
         headers: { "x-cron-secret": "test-tam-sweep-secret" },
       }));
-      expect(response.status).toBe(202);
-      expect(tasks).toHaveLength(1);
+      expect(response.status).toBe(200);
+      expect(tasks).toHaveLength(0);
     } finally {
       delete process.env.TAM_GROWTH_SWEEP_SECRET;
     }
