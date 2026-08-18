@@ -56,7 +56,7 @@ async function run(req: NextRequest) {
           headers: { "x-cron-secret": cronSecret },
           cache: "no-store",
         });
-        await response.body?.cancel().catch(() => {});
+        void response.body?.cancel().catch(() => {});
       } catch { /* the normal worker records its own terminal state once started */ }
     });
     return NextResponse.json({ accepted: true, mode: "kick", runId, stage, stageCount }, { status: 202 });
@@ -76,7 +76,7 @@ async function run(req: NextRequest) {
         headers: { "x-cron-secret": cronSecret },
         cache: "no-store",
       });
-      await response.body?.cancel().catch(() => {});
+      void response.body?.cancel().catch(() => {});
       return { path, status: response.status };
     } catch (error) {
       return { path, error: error instanceof Error ? error.message : String(error) };
@@ -100,7 +100,7 @@ async function run(req: NextRequest) {
         headers: { "x-cron-secret": cronSecret },
         cache: "no-store",
       });
-      await response.body?.cancel().catch(() => {});
+      void response.body?.cancel().catch(() => {});
       if (!response.ok) throw new Error(`next stage kick returned ${response.status}`);
     } catch (error) {
       await logEvent("headhunter", "daily.chain_failed", {
