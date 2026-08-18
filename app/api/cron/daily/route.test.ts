@@ -62,4 +62,17 @@ describe("daily staged cron", () => {
     expect(response.status).toBe(400);
     expect(tasks).toHaveLength(0);
   });
+
+  it("accepts the separately scoped TAM sweep credential", async () => {
+    process.env.TAM_GROWTH_SWEEP_SECRET = "test-tam-sweep-secret";
+    try {
+      const response = await GET(new NextRequest("https://stanley.local/api/cron/daily", {
+        headers: { "x-cron-secret": "test-tam-sweep-secret" },
+      }));
+      expect(response.status).toBe(202);
+      expect(tasks).toHaveLength(1);
+    } finally {
+      delete process.env.TAM_GROWTH_SWEEP_SECRET;
+    }
+  });
 });

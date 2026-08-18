@@ -17,7 +17,10 @@ function authorized(req: NextRequest): boolean {
   const auth = req.headers.get("authorization");
   const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
   const secret = req.headers.get("x-cron-secret") ?? bearer;
-  return Boolean(process.env.CRON_SECRET && secret === process.env.CRON_SECRET);
+  return Boolean(secret && (
+    (process.env.CRON_SECRET && secret === process.env.CRON_SECRET)
+    || (process.env.TAM_GROWTH_SWEEP_SECRET && secret === process.env.TAM_GROWTH_SWEEP_SECRET)
+  ));
 }
 
 async function run(req: NextRequest) {
