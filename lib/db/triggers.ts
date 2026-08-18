@@ -1,6 +1,7 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
+import { reheatCompanyForFreshSignal } from "@/lib/db/reheat";
 import { getPublicGrowthDetail, type PublicGrowthDetail } from "@/lib/publicGrowth/detail";
 import { TRIGGER_SPEC, decayFactor } from "@/lib/triggers/config";
 import { mapSignal, withTriggers, withInsights, type InsightBadge } from "@/lib/db/companies";
@@ -49,31 +50,7 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
     summary: t.summary.slice(0, 280), source_name: t.source_name ?? null, source_url: t.source_url ?? null, signal_date: t.signal_date ?? null,
   });
   if (error) return false; // unique-index violation on a dupe
-  try {
-    const { data: c } = await db.from("companies").select("status, exported_at").eq("id", companyId).maybeSingle();
-    const s = (c as any)?.status as string | undefined;
-    if (s === "reviewed" || s === "dismissed") {
-      const { data: reheated } = await db.from("companies")
-        .update({ status: "new", has_new_signal: true })
-        .eq("id", companyId)
-        .eq("status", s)
-        .select("id")
-        .maybeSingle();
-      if (reheated) {
-        await logEvent("headhunter", "lead.signal_reheated", {
-          summary: `Fresh ${t.type} signal reheated a ${s} lead`,
-          entity_type: "companies",
-          entity_id: companyId,
-          meta: { status: "new", ids: [companyId], prior_status: s, trigger_type: t.type, source_url: t.source_url ?? null },
-        }).catch(() => {});
-      }
-    } else if (s === "exported_csv" || s === "exported_sql") {
-      const exp = (c as any)?.exported_at ? new Date((c as any).exported_at).getTime() : 0;
-      if (Date.now() - exp > 14 * 86_400_000) {
-        await db.from("companies").update({ status: "new", has_new_signal: true }).eq("id", companyId);
-      }
-    }
-  } catch { /* resurfacing is best-effort */ }
+  await reheatCompanyForFreshSignal(companyId, t.type, t.source_url ?? null).catch(() => {});
   return true;
 }
 

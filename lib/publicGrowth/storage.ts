@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
+import { reheatCompanyForFreshSignal } from "@/lib/db/reheat";
 import type { DerivedGrowthEvent } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -89,6 +90,7 @@ export async function recordPublicGrowthTrigger(companyId: string, event: Derive
     if (error.code === "23505") return false;
     throw new Error(`public growth trigger insert failed: ${error.message}`);
   }
+  await reheatCompanyForFreshSignal(companyId, event.type, uniqueSourceUrl).catch(() => {});
   return true;
 }
 
@@ -128,8 +130,13 @@ export async function recordPublicGrowthTriggersBulk(rows: Array<{
   }
   const pending = payload.filter((row) => !existing.has(`${row.company_id}:${row.dedupe_key}`));
   if (!pending.length) return 0;
-  const { data, error } = await db.from("triggers").insert(pending).select("id");
-  if (!error) return data?.length ?? 0;
+  const { data, error } = await db.from("triggers").insert(pending).select("id,company_id,type,source_url");
+  if (!error) {
+    await Promise.all((data ?? []).map((row) => reheatCompanyForFreshSignal(
+      String(row.company_id), String(row.type), row.source_url ? String(row.source_url) : null,
+    ).catch(() => false)));
+    return data?.length ?? 0;
+  }
   if (error.code !== "23505") throw new Error(`public growth trigger bulk insert failed: ${error.message}`);
 
   // A concurrent batch may win after the preflight read. Resolve that rare
@@ -137,7 +144,10 @@ export async function recordPublicGrowthTriggersBulk(rows: Array<{
   let inserted = 0;
   for (const row of pending) {
     const { error: rowError } = await db.from("triggers").insert(row);
-    if (!rowError) inserted++;
+    if (!rowError) {
+      inserted++;
+      await reheatCompanyForFreshSignal(row.company_id, row.type, row.source_url).catch(() => {});
+    }
     else if (rowError.code !== "23505") throw new Error(`public growth trigger insert recovery failed: ${rowError.message}`);
   }
   return inserted;
