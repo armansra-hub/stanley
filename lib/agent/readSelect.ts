@@ -22,6 +22,11 @@ export const READABLE_SCALAR_COLUMNS = Object.freeze({
     id company_id type strength half_life_days summary source_name source_url
     signal_date detected_at family confidence dedupe_key metadata
   `),
+  trigger_candidates: columns(`
+    id company_id netsuite_internal_id company_name type summary source_name source_url
+    signal_date strength half_life_days verdict verdict_reason verdict_by
+    promoted_trigger_id created_at decided_at
+  `),
   signals: columns(`
     id company_id type strength weight source_name source_url raw_excerpt
     signal_summary subindustry_relevant detected_at signal_date
