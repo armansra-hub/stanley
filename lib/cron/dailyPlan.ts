@@ -1,6 +1,7 @@
 /** Vercel parent-cron safety ceiling. The active 48-hour plan uses it exactly. */
 export const DAILY_CHILD_REQUEST_LIMIT = 65;
 export const DAILY_PLANNED_CHILDREN = 65;
+export const DAILY_STAGE_SIZE = 5;
 
 /**
  * Foundation receipts measured ordinary SAM/subaward batches at ten companies.
