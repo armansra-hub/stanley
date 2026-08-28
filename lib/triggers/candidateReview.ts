@@ -12,6 +12,7 @@ type CandidateRow = {
   company_name: string;
   type: string;
   summary: string;
+  source_name: string | null;
   source_url: string | null;
 };
 
@@ -69,7 +70,7 @@ export async function reviewPendingCandidates(limit = 25): Promise<{
 }> {
   const db = serviceClient();
   const { data, error } = await db.from("trigger_candidates")
-    .select("id,company_id,company_name,type,summary,source_url")
+    .select("id,company_id,company_name,type,summary,source_name,source_url")
     .is("verdict", null)
     .order("created_at", { ascending: true })
     .limit(Math.min(Math.max(limit, 1), 50));
@@ -113,7 +114,16 @@ export async function reviewPendingCandidates(limit = 25): Promise<{
         stats.deferred_fetch++;
         continue;
       }
-      const evidenceText = evidenceTextFromHtml(evidence.body);
+      const extractedText = evidenceTextFromHtml(evidence.body);
+      const isGoogleNewsGateway = candidate.source_name === "Google News"
+        && new URL(evidence.finalUrl).hostname.toLowerCase() === "news.google.com";
+      // Google News article gateways keep the RSS headline in executable page
+      // state, which the HTML safety extractor intentionally removes. Preserve
+      // the public RSS headline as evidence only for that exact article gateway;
+      // ordinary homepages and generic source URLs remain invalid.
+      const evidenceText = isGoogleNewsGateway
+        ? `Google News RSS article headline: ${candidate.summary}\n${extractedText}`
+        : extractedText;
       if (evidenceText.length < 80) {
         stats.deferred++;
         stats.deferred_evidence++;
