@@ -25,23 +25,24 @@ describe("daily cron plan", () => {
 
   it("preserves primary coverage while assigning real slots to overdue sources", () => {
     const paths = buildDailyWavePaths(0);
-    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(6);
-    expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(14);
-    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(14);
+    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(7);
+    expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(4);
+    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(15);
     expect(paths.filter((path) => path.includes("scope=tail"))).toHaveLength(0);
-    expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(9);
-    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(14);
+    expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(1);
+    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(15);
     expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(0);
-    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(5);
+    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(15);
     expect(paths).toContain("/api/cron/reconcile-hidden");
 
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
       .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
     expect(triggerCoverage).toBeGreaterThanOrEqual(3500);
+    const eligibleCoverage = new Map([["/api/cron/fmcsa", 813], ["/api/cron/website", 6868], ["/api/cron/cosos", 365], ["/api/cron/ats", 6868]]);
     for (const pathname of ["/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const coverage = pathsFor(paths, pathname)
         .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
-      expect(coverage).toBeGreaterThanOrEqual(3500);
+      expect(coverage * 2).toBeGreaterThanOrEqual(eligibleCoverage.get(pathname)!);
     }
     for (const pathname of ["/api/cron/triggers", "/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const waves = pathsFor(paths, pathname);
@@ -61,18 +62,23 @@ describe("daily cron plan", () => {
     expect(paths.some((path) => path.includes("/sba-loans"))).toBe(false);
   });
 
-  it("advances every public-growth source exactly once each day", () => {
+  it("gives every recurring source a real 48-hour-or-faster cadence", () => {
     for (let day = 0; day < 5; day++) {
       const publicPaths = pathsFor(buildDailyWavePaths(day), "/api/cron/public-growth");
       const sources = publicPaths.map((path) => new URL(path, "https://local").searchParams.get("source"));
-      expect(new Set(sources)).toEqual(new Set([
-        "usaspending",
-        "usaspending-subawards",
-        "sam-entity",
-        "sam-opportunities",
-        "revenue",
-      ]));
-      expect(sources).toHaveLength(5);
+      expect(new Set(sources)).toEqual(new Set(["usaspending", "usaspending-subawards", "sam-opportunities", "revenue"]));
+      expect(sources.filter((source) => source === "usaspending")).toHaveLength(12);
+      expect(sources).toHaveLength(15);
+    }
+  });
+
+  it("runs exactly one prime-award worker in every hourly stage", () => {
+    const paths = buildDailyWavePaths(0);
+    for (let offset = 0; offset < paths.length; offset += 5) {
+      const stage = paths.slice(offset, offset + 5);
+      const prime = stage.filter((path) => new URL(path, "https://local").searchParams.get("source") === "usaspending");
+      expect(prime).toHaveLength(1);
+      expect(stage[0]).toBe(prime[0]);
     }
   });
 
@@ -81,13 +87,10 @@ describe("daily cron plan", () => {
       const url = new URL(target.path, "https://local");
       expect(url.searchParams.get("scope")).toBe("verified");
       expect(Number(url.searchParams.get("n"))).toBe(target.batchSize);
-      expect(Math.ceil(target.foundationEligibleBaseline / target.batchSize)).toBe(target.targetCycleDays);
+      const rotations = Math.ceil(target.foundationEligibleBaseline / (target.batchSize * target.invocationsPerRotation));
+      expect(rotations * target.rotationHours).toBeLessThanOrEqual(target.targetCycleHours);
+      expect(target.targetCycleHours).toBeLessThanOrEqual(48);
     }
-    expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending")?.targetCycleDays)
-      .toBeLessThan(100);
-    expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending-subawards")?.targetCycleDays)
-      .toBeLessThanOrEqual(7);
-    expect(PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "sam-entity")?.targetCycleDays)
-      .toBeLessThanOrEqual(366);
+    expect(PUBLIC_GROWTH_RECURRING_COVERAGE.map((target) => String(target.source))).not.toContain("sam-entity");
   });
 });

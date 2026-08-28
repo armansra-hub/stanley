@@ -1,6 +1,6 @@
-/** Vercel parent-cron safety ceiling. The active 48-hour plan uses it exactly. */
+/** Vercel parent-cron safety ceiling. */
 export const DAILY_CHILD_REQUEST_LIMIT = 65;
-export const DAILY_PLANNED_CHILDREN = 65;
+export const DAILY_PLANNED_CHILDREN = 60;
 export const DAILY_STAGE_SIZE = 5;
 
 /**
@@ -12,10 +12,12 @@ export const DAILY_STAGE_SIZE = 5;
  * sam-extract-foundation.json reported 3,560 matched UEI-linked companies.
  * The rounded 250 USA baseline is deliberately conservative. One bounded request
  * Federal award detail is the slow exception: one recipient can fan out across
- * hundreds of awards and transaction pages. Raise it conservatively to three
- * verified recipients/day. Subawards are lighter and now cover the verified
- * baseline inside one week. SAM entity lookups remain capped by SAM API access;
- * the monthly bulk extract is the high-volume path.
+ * hundreds of awards and transaction pages. Prime-award history now receives
+ * one bounded invocation in every hourly stage. Six verified recipients per
+ * stage covers the conservative 250-recipient foundation population inside 48
+ * hours. Subawards cover their verified population inside 24 hours. SAM entity
+ * API lookups are not scheduled because they cannot succeed without a key; the
+ * official monthly public extract remains the keyless high-volume source.
  *
  * This recurrence does not discover a newly linked company. Full-TAM discovery
  * and foundation refresh remain a separate, explicit-offset operation with their
@@ -24,29 +26,26 @@ export const DAILY_STAGE_SIZE = 5;
 export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
   {
     source: "usaspending",
-    path: "/api/cron/public-growth?source=usaspending&scope=verified&n=3",
+    path: "/api/cron/public-growth?source=usaspending&scope=verified&n=6",
     foundationEligibleBaseline: 250,
-    batchSize: 3,
-    targetCycleDays: 84,
+    batchSize: 6,
+    invocationsPerRotation: 12,
+    rotationHours: 12,
+    targetCycleHours: 48,
   },
   {
     source: "usaspending-subawards",
     path: "/api/cron/public-growth?source=usaspending-subawards&scope=verified&n=125",
     foundationEligibleBaseline: 250,
     batchSize: 125,
-    targetCycleDays: 2,
-  },
-  {
-    source: "sam-entity",
-    path: "/api/cron/public-growth?source=sam-entity&scope=verified&n=10",
-    foundationEligibleBaseline: 3_560,
-    batchSize: 10,
-    targetCycleDays: 356,
+    invocationsPerRotation: 1,
+    rotationHours: 12,
+    targetCycleHours: 24,
   },
 ] as const;
 
 const PUBLIC_GROWTH_PATHS = [
-  ...PUBLIC_GROWTH_RECURRING_COVERAGE.map((target) => target.path),
+  PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending-subawards")!.path,
   "/api/cron/public-growth?source=sam-opportunities&days=31&limit=1000",
   "/api/cron/public-growth?source=revenue&n=10&limit=3500",
 ] as const;
@@ -75,15 +74,13 @@ export function isGetCompatibleDailyPath(path: string): boolean {
 
 /** Pure, deterministic manifest for the one Vercel daily cron. */
 export function buildDailyWavePaths(_dayIndex?: number): string[] {
-  const TRIGGER_WAVES = 6, TRIGGER_N = 600;
-  const FMCSA_WAVES = 14, FMCSA_N = 250;
-  const SITE_WAVES = 14, SITE_N = 250;
-  const SOS_WAVES = 9, SOS_N = 400;
-  const ATS_WAVES = 14, ATS_N = 250;
+  const TRIGGER_WAVES = 7, TRIGGER_N = 600;
+  const FMCSA_WAVES = 4, FMCSA_N = 250;
+  const SITE_WAVES = 15, SITE_N = 250;
+  const SOS_WAVES = 1, SOS_N = 400;
+  const ATS_WAVES = 15, ATS_N = 250;
 
-  // Every public-growth cursor advances once per day. The lease fence rejects an
-  // overlapping invocation instead of allowing parallel waves to share a cursor.
-  const paths = [
+  const ordinaryPaths = [
     "/api/cron/tal-news",
     ...Array.from({ length: TRIGGER_WAVES }, (_, k) => `/api/cron/triggers?n=${TRIGGER_N}&wave=${k}`),
     ...Array.from({ length: FMCSA_WAVES }, (_, k) => `/api/cron/fmcsa?n=${FMCSA_N}&wave=${k}`),
@@ -96,6 +93,16 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
     "/api/cron/reconcile-hidden",
     "/api/cron/recompute",
   ];
+  if (ordinaryPaths.length !== 48) throw new Error(`daily cron expected 48 ordinary paths, received ${ordinaryPaths.length}`);
+
+  // Exactly one prime-award worker leads each five-request hourly stage. This
+  // prevents same-source lease collisions while giving prime awards a real
+  // hourly cadence. The remaining four slots carry the broad-source rotation.
+  const prime = PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending")!;
+  const paths = Array.from({ length: 12 }, (_, stage) => [
+    `${prime.path}&wave=${stage}`,
+    ...ordinaryPaths.slice(stage * 4, stage * 4 + 4),
+  ]).flat();
   const unique = [...new Set(paths)];
   if (unique.length !== paths.length) throw new Error("daily cron plan contains duplicate child requests");
   if (unique.length !== DAILY_PLANNED_CHILDREN) {

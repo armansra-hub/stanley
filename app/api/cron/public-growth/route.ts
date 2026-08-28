@@ -153,9 +153,10 @@ async function run(req: NextRequest) {
   try {
     afterCompanyId = companyScopedSource ? publicGrowthAfterCompanyId(lease.cursor) : null;
     // A bounded USAspending company step still includes identity, award detail,
-    // transaction-page, and persistence calls. Run one exact company per request.
+    // transaction-page, and persistence calls. Retry one exact continuation per
+    // request while the main freshness page advances independently below.
     const retryLimit = source === "usaspending" ? 1 : Math.min(10, n);
-    const usaspendingCompanyLimit = lease.managed && source === "usaspending" ? Math.min(3, n) : n;
+    const usaspendingCompanyLimit = lease.managed && source === "usaspending" ? Math.min(6, n) : n;
     const retryPlan = lease.managed && companyScopedSource
       ? pendingPublicGrowthRetries(lease.cursor, retryLimit)
       : [];
@@ -163,7 +164,44 @@ async function run(req: NextRequest) {
     const recoveryAlreadyBlocked = durableUsaspendingRecovery && lease.cursor.recoveryBlocked === true;
     const servicingRetry = retryPlan.length > 0
       && (durableUsaspendingRecovery || shouldServicePublicGrowthRetry(lease.cursor));
-    let result = (recoveryAlreadyComplete
+    const combinedRecurringUsaspending = lease.managed
+      && source === "usaspending"
+      && !durableUsaspendingRecovery
+      && !recoveryAlreadyComplete
+      && !recoveryAlreadyBlocked;
+    let result = (combinedRecurringUsaspending
+      ? await (async () => {
+        // A recurring invocation always advances fresh-company coverage. It also
+        // services one exact continuation so deep award histories keep moving
+        // without cutting the 48-hour main-population cycle in half.
+        const retryResult = retryPlan.length > 0
+          ? await runCompanyRetryBatch("usaspending", lease, retryPlan)
+          : null;
+        const mainResult = await sweepUsaspendingTamBatch(usaspendingCompanyLimit, offset, {
+          scope: companyScope,
+          afterCompanyId,
+        });
+        const mainReceipts = Array.isArray(mainResult.receipts) ? mainResult.receipts as unknown as RetryReceipt[] : [];
+        const retryCursor = retryResult?.cursorPatch ?? lease.cursor;
+        const queued = queuePublicGrowthMainFailures(retryCursor, mainReceipts, Number(mainResult.errors ?? 0));
+        return {
+          ...mainResult,
+          checked: mainResult.checked + Number(retryResult?.checked ?? 0),
+          mainChecked: mainResult.checked,
+          retryChecked: Number(retryResult?.checked ?? 0),
+          matched: mainResult.matched + Number(retryResult?.matched ?? 0),
+          errors: mainResult.errors + Number(retryResult?.errors ?? 0),
+          triggers: mainResult.triggers + Number(retryResult?.triggers ?? 0),
+          receipts: [...mainReceipts, ...(Array.isArray(retryResult?.receipts) ? retryResult.receipts : [])],
+          retryQueued: queued.queued,
+          retryRemaining: queued.cursorPatch.retryQueue.length,
+          awardContinuationsQueued: queued.continuations,
+          advanceCursor: false,
+          cursorPatch: { ...(mainResult.cursorPatch ?? {}), ...queued.cursorPatch },
+          mode: "main+retry" as const,
+        };
+      })()
+      : recoveryAlreadyComplete
       ? {
         source, offset, checked: 1, nextOffset: offset, done: true,
         matched: 0, errors: 0, triggers: 0, receipts: [], retryRemaining: 0,
@@ -188,7 +226,7 @@ async function run(req: NextRequest) {
           scope: companyScope,
           afterCompanyId,
         })) as PublicGrowthSweepResult & Record<string, unknown>;
-    if (!recoveryAlreadyComplete && !recoveryAlreadyBlocked && !servicingRetry && lease.managed && companyScopedSource) {
+    if (!combinedRecurringUsaspending && !recoveryAlreadyComplete && !recoveryAlreadyBlocked && !servicingRetry && lease.managed && companyScopedSource) {
       const rawReceipts = "receipts" in result && Array.isArray(result.receipts)
         ? result.receipts as RetryReceipt[]
         : [];

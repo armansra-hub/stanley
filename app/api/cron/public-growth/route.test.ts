@@ -158,7 +158,7 @@ describe("public-growth managed sweep route", () => {
     const response = await GET(request("source=usaspending&scope=verified&n=10"));
     expect(response.status).toBe(200);
     expect(mocks.begin).toHaveBeenCalledWith("usaspending", 10, null);
-    expect(mocks.usaspending).toHaveBeenCalledWith(3, 0, { scope: "verified", afterCompanyId: null });
+    expect(mocks.usaspending).toHaveBeenCalledWith(6, 0, { scope: "verified", afterCompanyId: null });
     expect(mocks.complete).toHaveBeenCalledWith(lease, expect.objectContaining({ checked: 10 }));
     expect(await response.json()).toEqual(expect.objectContaining({ nextCursor: 10 }));
   });
@@ -193,13 +193,13 @@ describe("public-growth managed sweep route", () => {
     expect(mocks.complete).toHaveBeenCalledWith(lease, expect.objectContaining({
       retryQueued: 1,
       retryRemaining: 1,
-      mode: "main",
+      mode: "main+retry",
     }));
     expect(mocks.fail).not.toHaveBeenCalled();
     expect(await response.json()).toEqual(expect.objectContaining({ retryQueued: 1, retryRemaining: 1 }));
   });
 
-  it("services the durable retry queue before starting another main page", async () => {
+  it("services the durable retry queue while still advancing the fresh main page", async () => {
     const entry = {
       companyId: "11111111-1111-4111-8111-111111111112",
       failureAttempts: 1,
@@ -222,7 +222,7 @@ describe("public-growth managed sweep route", () => {
     });
     const response = await GET(request("source=usaspending&scope=verified&n=10"));
     expect(response.status).toBe(200);
-    expect(mocks.usaspending).not.toHaveBeenCalled();
+    expect(mocks.usaspending).toHaveBeenCalledWith(6, 0, { scope: "verified", afterCompanyId: null });
     expect(mocks.usaspendingCompany).toHaveBeenCalledTimes(1);
     expect(mocks.applyRetry).toHaveBeenCalledWith(
       lease.cursor,
@@ -231,7 +231,9 @@ describe("public-growth managed sweep route", () => {
     );
     expect(mocks.complete).toHaveBeenCalledWith(lease, expect.objectContaining({
       advanceCursor: false,
-      mode: "retry",
+      mode: "main+retry",
+      mainChecked: 10,
+      retryChecked: 1,
     }));
   });
 
