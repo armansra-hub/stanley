@@ -280,6 +280,8 @@ export default function Dashboard({
   // The subindustry labels the claimable TAM ACTUALLY uses (coarse buckets), so the
   // filter dropdown matches the data instead of the granular config list.
   const [baseSubs, setBaseSubs] = useState<string[]>([]);
+  const [oldGoldClasses, setOldGoldClasses] = useState<string[]>([]);
+  const [whyClass, setWhyClass] = useState("");
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const [tagMatchAll, setTagMatchAll] = useState(false);
   const [claimableOnly, setClaimableOnly] = useState(true);
@@ -296,6 +298,7 @@ export default function Dashboard({
   const baseFilterBody = (extra: Record<string, unknown>) => ({
     tags: [...selectedTags], matchAll: tagMatchAll, claimable: claimableOnly, erp: erpOnly,
     state: stateFilter, q: search, includeHidden: showClosed, currentTam: true,
+    whyClass: whyClass || undefined,
     scoreMin: scoreMin ?? undefined, scoreMax: scoreMax ?? undefined, ...extra,
   });
 
@@ -325,14 +328,14 @@ export default function Dashboard({
   }
   // Load the tag list once the TAM Base tab is first opened.
   useEffect(() => {
-    if ((isBase || tab === "triggered" || tab === "oldgold") && baseTags.length === 0) fetch("/api/headhunter/base").then((x) => (x.ok ? x.json() : null)).then((d) => { if (d?.tags) setBaseTags(d.tags); if (d?.subindustries) setBaseSubs(d.subindustries); });
+    if ((isBase || tab === "triggered" || tab === "oldgold") && baseTags.length === 0) fetch("/api/headhunter/base").then((x) => (x.ok ? x.json() : null)).then((d) => { if (d?.tags) setBaseTags(d.tags); if (d?.subindustries) setBaseSubs(d.subindustries); if (d?.oldgoldClasses) setOldGoldClasses(d.oldgoldClasses); });
   }, [isBase, tab]); // eslint-disable-line react-hooks/exhaustive-deps
   // Refetch page 0 whenever a base filter changes (debounced for typing).
   useEffect(() => {
     if (!isBase) return;
     const t = setTimeout(() => fetchBase(0), 250);
     return () => clearTimeout(t);
-  }, [isBase, selectedTags, tagMatchAll, claimableOnly, erpOnly, stateFilter, search, showClosed, scoreMin, scoreMax]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isBase, selectedTags, tagMatchAll, claimableOnly, erpOnly, stateFilter, search, showClosed, scoreMin, scoreMax, whyClass]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggleTag = (t: string) => setSelectedTags((prev) => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
 
   // ── Old Gold: qual-note leads ranked by revival score (dead at the bottom) ──
@@ -341,9 +344,13 @@ export default function Dashboard({
   const [oldGoldTotal, setOldGoldTotal] = useState(0);
   const [oldGoldOffset, setOldGoldOffset] = useState(0);
   const [oldGoldLoading, setOldGoldLoading] = useState(false);
+  const whyClassOptions = useMemo(
+    () => [...new Set([...Object.keys(OLDGOLD_CLASS), ...oldGoldClasses])],
+    [oldGoldClasses],
+  );
   async function fetchOldGold(offset = 0) {
     setOldGoldLoading(true);
-    const res = await fetch("/api/headhunter/oldgold", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 250, offset, q: search, state: stateFilter, subindustry, scoreMin: scoreMin ?? undefined, scoreMax: scoreMax ?? undefined }) });
+    const res = await fetch("/api/headhunter/oldgold", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 250, offset, q: search, state: stateFilter, subindustry, scoreMin: scoreMin ?? undefined, scoreMax: scoreMax ?? undefined, whyClass: whyClass || undefined, includeHidden: showClosed }) });
     const r: { companies?: Company[]; total?: number } | null = res.ok ? await res.json() : null;
     setOldGoldLoading(false);
     if (!r) return;
@@ -355,7 +362,7 @@ export default function Dashboard({
     if (!isOldGold) return;
     const t = setTimeout(() => fetchOldGold(0), 250);
     return () => clearTimeout(t);
-  }, [isOldGold, search, stateFilter, subindustry, scoreMin, scoreMax]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOldGold, search, stateFilter, subindustry, scoreMin, scoreMax, whyClass, showClosed]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── Target Account List: the AE's claimed accounts. STAGNANT by design — exports
   // never remove a row; membership changes only via a fresh TAL CSV upload. ──
   const isTal = tab === "tal";
@@ -471,10 +478,10 @@ export default function Dashboard({
   // "Mark reviewed" hides a lead (reviewed/dismissed/exported) until "Show hidden" is on.
   const isHiddenStatus = (s: string) => s === "reviewed" || s === "dismissed" || s === "removed_from_tam" || s.startsWith("exported");
   const serverOrderedRows = isTal ? talRows // stagnant claimed list — alerts first, NEVER hidden by status
-    : isOldGold ? oldGoldRows // mining tab — shows exported/reviewed too (dead sorted last)
+    : isOldGold ? oldGoldRows.filter((c) => !c.tal_claimed && (showClosed || !isHiddenStatus(c.status)))
     : isStarred ? starredVisible
     : isTriggered ? triggeredRows.filter((c) => showClosed || !isHiddenStatus(c.status))
-    : isBase ? baseRows.filter((c) => showClosed || !isHiddenStatus(c.status)) : [];
+    : isBase ? baseRows.filter((c) => !c.tal_claimed && (showClosed || !isHiddenStatus(c.status))) : [];
   // Header clicks re-rank client-side (dead always sinks); otherwise the server's ranking stands.
   const tableRows = userSorted
     ? [...serverOrderedRows].sort((a, b) => {
@@ -485,7 +492,7 @@ export default function Dashboard({
         return sort.dir === "asc" ? cmp : -cmp;
       })
     : serverOrderedRows;
-  const idsInView = isTal ? talRows.map((c) => c.id) : isOldGold ? oldGoldRows.map((c) => c.id) : isStarred ? starredVisible.map((c) => c.id) : isTriggered ? triggeredRows.map((c) => c.id) : isBase ? baseRows.map((c) => c.id) : [];
+  const idsInView = serverOrderedRows.map((c) => c.id);
   const selectedInViewCount = idsInView.filter((id) => selected.has(id)).length;
   const allSelected = idsInView.length > 0 && selectedInViewCount === idsInView.length;
 
@@ -524,9 +531,23 @@ export default function Dashboard({
     setSelected(new Set());
   }
 
-  function changeStatus(ids: string[], status: "new" | "reviewed" | "dismissed") {
-    applyStatusLocal(ids, status);
-    void postJSON("/api/companies/status", { ids, status });
+  async function changeStatus(ids: string[], status: "new" | "reviewed" | "dismissed"): Promise<boolean> {
+    try {
+      const response = await fetch("/api/companies/status", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids, status }),
+      });
+      if (!response.ok) throw new Error(`status ${response.status}`);
+      // One company.status drives TAM Base and Old Gold. Patch every loaded list
+      // only after the production write succeeds so the two tabs cannot diverge.
+      applyStatusLocal(ids, status);
+      return true;
+    } catch (error) {
+      console.error("status update failed", error);
+      alert("Stanley could not save that review decision. Nothing was changed.");
+      return false;
+    }
   }
 
   function toggleStar(id: string, value: boolean) {
@@ -778,6 +799,9 @@ export default function Dashboard({
                 onChange={(lo, hi) => { setScoreMin(lo); setScoreMax(hi); }}
               />
             )}
+            {(isBase || isOldGold) && (
+              <WhyClassSelect value={whyClass} onChange={setWhyClass} options={whyClassOptions} />
+            )}
             {(isBase || isTriggered) ? (
               <div className="relative">
                 <button onClick={() => setTagsOpen((o) => !o)} className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm" style={{ borderColor: selectedTags.size || claimableOnly || erpOnly ? "var(--gold)" : "var(--border)" }}>
@@ -989,11 +1013,11 @@ export default function Dashboard({
                   <Td className="max-w-[220px] text-[var(--text-muted)]">{c.description}</Td>
                   <Td className="max-w-[260px]">
                     {isTal && c.tal_alert ? <div className="mb-0.5 text-[11px] font-bold" style={{ color: "#ef4444" }}>🔔 NEW SIGNAL</div> : null}
-                    {isOldGold && (c.oldgold_class || c.qual_note) ? (
+                    {(((isOldGold || isBase) && c.oldgold_class) || (isOldGold && c.qual_note)) ? (
                       <>
                         {c.oldgold_class && <div className="text-xs font-semibold" style={{ color: OLDGOLD_CLASS[c.oldgold_class]?.color ?? "var(--gold)" }}>{OLDGOLD_CLASS[c.oldgold_class]?.label ?? c.oldgold_class}{c.last_sql_date ? ` · last SQL ${c.last_sql_date}` : ""}</div>}
-                        {(c.oldgold_reasons ?? []).slice(0, 2).map((r, i) => <div key={i} className="text-xs text-[var(--text-muted)]">• {r}</div>)}
-                        {!c.oldgold_class && <div className="truncate text-xs italic text-[var(--text-muted)]" title={c.qual_note ?? ""}>Note pending analysis: &quot;{(c.qual_note ?? "").slice(0, 90)}…&quot;</div>}
+                        {isOldGold && (c.oldgold_reasons ?? []).slice(0, 2).map((r, i) => <div key={i} className="text-xs text-[var(--text-muted)]">• {r}</div>)}
+                        {isOldGold && !c.oldgold_class && <div className="truncate text-xs italic text-[var(--text-muted)]" title={c.qual_note ?? ""}>Note pending analysis: &quot;{(c.qual_note ?? "").slice(0, 90)}…&quot;</div>}
                         {c.revisit_on && <div className="text-[10px]" style={{ color: "var(--tier-a)" }}>⏰ revisit {c.revisit_on}</div>}
                         {/* Live events matter on Old Gold too — a stalled lead that just
                             raised money or hired finance is the one to call back first. */}
@@ -1128,7 +1152,7 @@ export default function Dashboard({
 
       {drawer && <DetailDrawer company={drawer} onClose={() => setDrawerId(null)} onSaveNote={saveNote} onRate={rateCompany}
         onStar={(id, v) => toggleStar(id, v)}
-        onStatus={(id, status) => { changeStatus([id], status); setDrawerId(null); }} />}
+        onStatus={(id, status) => { void changeStatus([id], status).then((saved) => { if (saved) setDrawerId(null); }); }} />}
       {sqlModal && <SqlModal text={sqlModal} onClose={() => setSqlModal(null)} />}
       <ChatPanel />
     </div>
@@ -1209,6 +1233,17 @@ function Select({ value, onChange, options, placeholder }: { value: string; onCh
     <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-md border bg-[var(--surface)] px-2 py-1.5 text-sm" style={{ borderColor: "var(--border)" }}>
       <option value="">{placeholder}</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+}
+
+function WhyClassSelect({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
+  return (
+    <select aria-label="Why it's here" value={value} onChange={(e) => onChange(e.target.value)} className="rounded-md border bg-[var(--surface)] px-2 py-1.5 text-sm" style={{ borderColor: value ? "var(--gold)" : "var(--border)" }}>
+      <option value="">Why it&apos;s here: all</option>
+      {options.map((key) => (
+        <option key={key} value={key}>{OLDGOLD_CLASS[key]?.label ?? key.replaceAll("_", " ")}</option>
+      ))}
     </select>
   );
 }

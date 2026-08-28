@@ -618,9 +618,9 @@ function mapBasic(r: any): Company {
 /** Old Gold worklist: TRUE old-gold leads only — a qual note AND an SQL date (a past
  * sales-qualified moment worth reviving), ranked by revival score. Dead leads
  * (record_dead) sink to the bottom with their reason — visible, never hidden.
- * Shows leads regardless of exported/reviewed status (it's a mining tab, not a
- * fresh-leads queue); only dismissed leads are excluded. */
-export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number } = {}): Promise<{ companies: Company[]; total: number }> {
+ * Reviewed/dismissed decisions are shared with TAM Base and hidden by default.
+ * Claimed accounts belong only in ARS TAL. */
+export async function listOldGold(opts: { limit?: number; offset?: number; q?: string; state?: string; subindustry?: string; scoreMin?: number; scoreMax?: number; whyClass?: string; includeHidden?: boolean } = {}): Promise<{ companies: Company[]; total: number }> {
   const db = serviceClient();
   const limit = Math.min(opts.limit ?? 100, 1000), offset = opts.offset ?? 0;
   const known = "(timing_arrived,contract_clock,stalled_warm,lost_to_competitor,insufficient,dead)";
@@ -634,10 +634,12 @@ export async function listOldGold(opts: { limit?: number; offset?: number; q?: s
   const base = (columns: string, options?: { count: "exact"; head: true }) => {
     let query: any = db.from("companies").select(columns, options)
       .eq("is_base", true)
-      .or("and(qual_note.not.is.null,last_sql_date.not.is.null),record_digest.ilike.*Opportunity confirmed:*,record_digest.ilike.*Opportunity created:*")
-      .not("status", "in", "(dismissed,removed_from_tam)");
+      .eq("tal_claimed", false)
+      .or("and(qual_note.not.is.null,last_sql_date.not.is.null),record_digest.ilike.*Opportunity confirmed:*,record_digest.ilike.*Opportunity created:*");
+    if (!opts.includeHidden) query = query.not("status", "in", "(reviewed,dismissed,removed_from_tam)");
     if (opts.state) query = query.eq("state", opts.state);
     if (opts.subindustry) query = query.eq("subindustry", opts.subindustry);
+    if (opts.whyClass && /^[a-z0-9_:-]+$/i.test(opts.whyClass)) query = query.eq("oldgold_class", opts.whyClass);
     if (opts.scoreMin != null) query = query.gte("oldgold_score", opts.scoreMin);
     if (opts.scoreMax != null) query = query.lte("oldgold_score", opts.scoreMax);
     if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) query = query.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }

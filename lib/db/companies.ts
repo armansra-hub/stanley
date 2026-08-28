@@ -116,6 +116,8 @@ export async function getCompanies(): Promise<Company[]> {
 export interface BaseFilter {
   tags?: string[]; matchAll?: boolean; claimable?: boolean; erp?: boolean; state?: string; q?: string;
   limit?: number; offset?: number; includeHidden?: boolean;
+  /** NetSuite record-review classification shown in the Why it's here column. */
+  whyClass?: string;
   /** Restrict TAM Base to the exact current NetSuite saved-search membership. */
   currentTam?: boolean;
   /** Inclusive tam_score range (0-100). When either bound is set, ungraded (null-score) rows are excluded. */
@@ -189,11 +191,15 @@ export async function listBaseCompanies(f: BaseFilter): Promise<{ companies: Com
   // claimable/fit as tiebreaks. Builders mutate, so each attempt is built fresh;
   // falls back to oldgold_score ordering pre-migration.
   const build = (withTam: boolean) => {
-    let q = db.from("companies").select(`*, signals(*), triggers(*), lead_insights(*)`, { count: "exact" }).eq("is_base", true);
+    let q = db.from("companies").select(`*, signals(*), triggers(*), lead_insights(*)`, { count: "exact" })
+      .eq("is_base", true)
+      // Claimed accounts belong only in the ARS TAL tab.
+      .eq("tal_claimed", false);
     if (f.currentTam) q = q.contains("lists", ["netsuite_tam"]);
     if (f.claimable) q = q.eq("claimable", true);
     if (f.erp) q = q.eq("erp_ready", true);
     if (f.state) q = q.eq("state", f.state);
+    if (f.whyClass && /^[a-z0-9_:-]+$/i.test(f.whyClass)) q = q.eq("oldgold_class", f.whyClass);
     if (!f.includeHidden) q = q.not("status", "in", HIDDEN_STATUSES);
     if (f.tags?.length) q = f.matchAll ? q.contains("lists", f.tags) : q.overlaps("lists", f.tags);
     if (f.q) { const s = f.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
@@ -233,24 +239,27 @@ export async function listStarred(): Promise<Company[]> {
  * Subindustries come back as the labels the data ACTUALLY uses (the TAM upload uses a
  * few coarse buckets like "Advertising, Media & Publishing"), so the dropdown matches
  * reality instead of the granular config list. */
-export async function listBaseTags(): Promise<{ tags: { tag: string; count: number }[]; subindustries: string[] }> {
+export async function listBaseTags(): Promise<{ tags: { tag: string; count: number }[]; subindustries: string[]; oldgoldClasses: string[] }> {
   const db = serviceClient();
   const tagCounts = new Map<string, number>();
   const subs = new Map<string, number>();
+  const oldgoldClasses = new Set<string>();
   for (let from = 0; ; from += 1000) {
-    const { data } = await db.from("companies").select("lists, subindustry, claimable").eq("is_base", true).range(from, from + 999);
-    const batch = (data ?? []) as { lists?: string[]; subindustry?: string | null; claimable?: boolean }[];
+    const { data } = await db.from("companies").select("lists, subindustry, claimable, tal_claimed, oldgold_class").eq("is_base", true).range(from, from + 999);
+    const batch = (data ?? []) as { lists?: string[]; subindustry?: string | null; claimable?: boolean; tal_claimed?: boolean; oldgold_class?: string | null }[];
     for (const c of batch) {
       for (const l of c.lists ?? []) tagCounts.set(l, (tagCounts.get(l) ?? 0) + 1);
       // Subindustry facet is for the claimable worklists (Triggered/Starred), so only
       // count claimable rows → a short, relevant list (no off-territory base noise).
       if (c.claimable && c.subindustry) subs.set(c.subindustry, (subs.get(c.subindustry) ?? 0) + 1);
+      if (!c.tal_claimed && c.oldgold_class) oldgoldClasses.add(c.oldgold_class);
     }
     if (batch.length < 1000) break;
   }
   return {
     tags: [...tagCounts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count),
     subindustries: [...subs.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s),
+    oldgoldClasses: [...oldgoldClasses].sort(),
   };
 }
 
