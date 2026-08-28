@@ -75,7 +75,7 @@ export function isGetCompatibleDailyPath(path: string): boolean {
 
 /** Pure, deterministic manifest for the one Vercel daily cron. */
 export function buildDailyWavePaths(_dayIndex?: number): string[] {
-  const TRIGGER_WAVES = 7, TRIGGER_N = 600;
+  const TRIGGER_WAVES = 7, TRIGGER_N = 400;
   const FMCSA_WAVES = 4, FMCSA_N = 250;
   const SITE_WAVES = 15, SITE_N = 250;
   const SOS_WAVES = 1, SOS_N = 400;

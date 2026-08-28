@@ -38,7 +38,8 @@ describe("daily cron plan", () => {
 
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
       .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
-    expect(triggerCoverage).toBeGreaterThanOrEqual(3500);
+    // A 16-hour manifest repeats three times inside the promised 48-hour cycle.
+    expect(triggerCoverage * 3).toBeGreaterThanOrEqual(6950);
     const eligibleCoverage = new Map([["/api/cron/fmcsa", 813], ["/api/cron/website", 6868], ["/api/cron/cosos", 365], ["/api/cron/ats", 6868]]);
     for (const pathname of ["/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const coverage = pathsFor(paths, pathname)

@@ -63,6 +63,9 @@ export async function reviewPendingCandidates(limit = 25): Promise<{
   rejected: number;
   promoted: number;
   deferred: number;
+  deferred_fetch: number;
+  deferred_evidence: number;
+  deferred_verifier: number;
 }> {
   const db = serviceClient();
   const { data, error } = await db.from("trigger_candidates")
@@ -78,7 +81,10 @@ export async function reviewPendingCandidates(limit = 25): Promise<{
     : { data: [], error: null };
   if (companyError) throw new Error(`candidate company load failed: ${companyError.message}`);
   const companyById = new Map((companies ?? []).map((company) => [String(company.id), company]));
-  const stats = { checked: 0, kept: 0, rejected: 0, promoted: 0, deferred: 0 };
+  const stats = {
+    checked: 0, kept: 0, rejected: 0, promoted: 0, deferred: 0,
+    deferred_fetch: 0, deferred_evidence: 0, deferred_verifier: 0,
+  };
 
   // Serial on purpose: each decision performs one bounded evidence fetch and one
   // independent verifier call, and every completed decision is checkpointed.
@@ -104,11 +110,13 @@ export async function reviewPendingCandidates(limit = 25): Promise<{
       });
       if (evidence.status < 200 || evidence.status >= 300 || !isEvidencePage(evidence.finalUrl)) {
         stats.deferred++;
+        stats.deferred_fetch++;
         continue;
       }
       const evidenceText = evidenceTextFromHtml(evidence.body);
       if (evidenceText.length < 80) {
         stats.deferred++;
+        stats.deferred_evidence++;
         continue;
       }
       const verdict = await verifyCandidateEvidenceLLM({
@@ -122,6 +130,7 @@ export async function reviewPendingCandidates(limit = 25): Promise<{
       });
       if (!verdict) {
         stats.deferred++;
+        stats.deferred_verifier++;
         continue;
       }
       const keep = candidateVerdictIsPublishable(candidate.type, verdict);
@@ -142,6 +151,7 @@ export async function reviewPendingCandidates(limit = 25): Promise<{
       // Network/model failures are transient. Keep the candidate pending so the
       // next hourly reviewer can retry; never convert uncertainty into a signal.
       stats.deferred++;
+      stats.deferred_fetch++;
     }
   }
   return stats;

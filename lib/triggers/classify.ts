@@ -55,6 +55,25 @@ export interface CandidateEvidenceVerdict {
   reason: string;
 }
 
+function parseCandidateEvidenceVerdict(raw: string | undefined): CandidateEvidenceVerdict | null {
+  if (!raw) return null;
+  try {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const value = JSON.parse(match[0]) as Partial<CandidateEvidenceVerdict>;
+    const events = new Set<EventVerdict["event"]>(["funding", "ma", "new_entity", "finance_hire", "gov_contract", "press", "none"]);
+    if (typeof value.exact_company !== "boolean"
+      || typeof value.concrete_event !== "boolean"
+      || !events.has(value.event as EventVerdict["event"])
+      || typeof value.is_acquirer !== "boolean"
+      || !new Set(["high", "medium", "low"]).has(String(value.confidence))
+      || typeof value.reason !== "string") return null;
+    return value as CandidateEvidenceVerdict;
+  } catch {
+    return null;
+  }
+}
+
 export async function classifyEventLLM(companyName: string, headline: string): Promise<EventVerdict | null> {
   try {
     const msg = await classifierClient().messages.create({
@@ -84,27 +103,42 @@ export async function verifyCandidateEvidenceLLM(input: {
   evidenceUrl: string;
   evidenceText: string;
 }): Promise<CandidateEvidenceVerdict | null> {
+  const system = "You are the final evidence verifier for a private-company growth monitor. Verify exact company identity and whether the supplied SOURCE PAGE itself reports the claimed concrete event. Reject same-name entities, publishers, products, generic mentions, predictions, directory pages, homepages, and unsupported claims. For M&A, reject the company when it is the target/seller. Use high confidence only when both identity and event are explicit in the evidence. Return only structured JSON.";
+  const content = [
+    `Company: ${input.companyName}`,
+    `Company domain: ${input.companyDomain ?? "unknown"}`,
+    `Company location: ${input.companyLocation ?? "unknown"}`,
+    `Expected event: ${input.expectedEvent}`,
+    `Candidate headline: ${input.headline}`,
+    `Evidence URL: ${input.evidenceUrl}`,
+    `Evidence text:\n${input.evidenceText.slice(0, 12_000)}`,
+  ].join("\n");
   try {
     const msg = await classifierClient().messages.create({
       model: MODEL,
       max_tokens: 256,
       thinking: { type: "disabled" },
-      system: "You are the final evidence verifier for a private-company growth monitor. Verify exact company identity and whether the supplied SOURCE PAGE itself reports the claimed concrete event. Reject same-name entities, publishers, products, generic mentions, predictions, directory pages, homepages, and unsupported claims. For M&A, reject the company when it is the target/seller. Use high confidence only when both identity and event are explicit in the evidence. Return only structured JSON.",
-      messages: [{ role: "user", content: [
-        `Company: ${input.companyName}`,
-        `Company domain: ${input.companyDomain ?? "unknown"}`,
-        `Company location: ${input.companyLocation ?? "unknown"}`,
-        `Expected event: ${input.expectedEvent}`,
-        `Candidate headline: ${input.headline}`,
-        `Evidence URL: ${input.evidenceUrl}`,
-        `Evidence text:\n${input.evidenceText.slice(0, 12_000)}`,
-      ].join("\n") }],
+      system,
+      messages: [{ role: "user", content }],
       output_config: { format: { type: "json_schema", schema: EVIDENCE_SCHEMA } },
     } as Anthropic.MessageCreateParamsNonStreaming);
     const text = msg.content.find((block): block is Anthropic.TextBlock => block.type === "text")?.text;
-    if (!text) return null;
-    return JSON.parse(text) as CandidateEvidenceVerdict;
+    return parseCandidateEvidenceVerdict(text);
   } catch {
-    return null;
+    // Some configured Anthropic models do not support output_config. Retry once
+    // with the same strict contract expressed in the prompt, then validate every
+    // returned field locally before allowing a publish decision.
+    try {
+      const msg = await classifierClient().messages.create({
+        model: MODEL,
+        max_tokens: 256,
+        thinking: { type: "disabled" },
+        system: `${system} Required keys: exact_company (boolean), concrete_event (boolean), event (funding|ma|new_entity|finance_hire|gov_contract|press|none), is_acquirer (boolean), confidence (high|medium|low), reason (string).`,
+        messages: [{ role: "user", content }],
+      } as Anthropic.MessageCreateParamsNonStreaming);
+      return parseCandidateEvidenceVerdict(msg.content.find((block): block is Anthropic.TextBlock => block.type === "text")?.text);
+    } catch {
+      return null;
+    }
   }
 }
