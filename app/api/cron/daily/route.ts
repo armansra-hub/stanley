@@ -4,7 +4,7 @@ import { logEvent } from "@/lib/db/events";
 
 /**
  * Vercel invokes this route hourly. Each independent root invocation rotates to
- * the next five-worker stage, so all 65 workers run every 13 hours without a
+ * the next five-worker stage, so the full manifest rotates without a
  * concurrency burst or a recursive function chain (which Vercel rejects at a
  * bounded recursion depth). Explicit stage/run parameters support exact audits.
  */

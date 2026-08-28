@@ -32,6 +32,29 @@ const SCHEMA = {
 
 export interface EventVerdict { about_company: boolean; event: "funding" | "ma" | "new_entity" | "finance_hire" | "gov_contract" | "press" | "none"; is_acquirer: boolean }
 
+const EVIDENCE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    exact_company: { type: "boolean", description: "true only when the evidence is about the supplied operating company, not a same-name organization, product, publisher, person, or generic phrase" },
+    concrete_event: { type: "boolean", description: "true only when the evidence page itself reports a dated concrete positive growth event" },
+    event: { type: "string", enum: ["funding", "ma", "new_entity", "finance_hire", "gov_contract", "press", "none"] },
+    is_acquirer: { type: "boolean", description: "for M&A, true only when the supplied company is the buyer/acquirer" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    reason: { type: "string", description: "short factual reason grounded in the supplied evidence" },
+  },
+  required: ["exact_company", "concrete_event", "event", "is_acquirer", "confidence", "reason"],
+};
+
+export interface CandidateEvidenceVerdict {
+  exact_company: boolean;
+  concrete_event: boolean;
+  event: EventVerdict["event"];
+  is_acquirer: boolean;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+}
+
 export async function classifyEventLLM(companyName: string, headline: string): Promise<EventVerdict | null> {
   try {
     const msg = await classifierClient().messages.create({
@@ -47,5 +70,41 @@ export async function classifyEventLLM(companyName: string, headline: string): P
     return JSON.parse(text) as EventVerdict;
   } catch {
     return null; // any failure → caller falls back to the regex verdict
+  }
+}
+
+/** Independent final verifier for queued news candidates. Unlike the cheap
+ * headline classifier, this receives the fetched evidence page and fails closed. */
+export async function verifyCandidateEvidenceLLM(input: {
+  companyName: string;
+  companyDomain: string | null;
+  companyLocation: string | null;
+  expectedEvent: string;
+  headline: string;
+  evidenceUrl: string;
+  evidenceText: string;
+}): Promise<CandidateEvidenceVerdict | null> {
+  try {
+    const msg = await classifierClient().messages.create({
+      model: MODEL,
+      max_tokens: 256,
+      thinking: { type: "disabled" },
+      system: "You are the final evidence verifier for a private-company growth monitor. Verify exact company identity and whether the supplied SOURCE PAGE itself reports the claimed concrete event. Reject same-name entities, publishers, products, generic mentions, predictions, directory pages, homepages, and unsupported claims. For M&A, reject the company when it is the target/seller. Use high confidence only when both identity and event are explicit in the evidence. Return only structured JSON.",
+      messages: [{ role: "user", content: [
+        `Company: ${input.companyName}`,
+        `Company domain: ${input.companyDomain ?? "unknown"}`,
+        `Company location: ${input.companyLocation ?? "unknown"}`,
+        `Expected event: ${input.expectedEvent}`,
+        `Candidate headline: ${input.headline}`,
+        `Evidence URL: ${input.evidenceUrl}`,
+        `Evidence text:\n${input.evidenceText.slice(0, 12_000)}`,
+      ].join("\n") }],
+      output_config: { format: { type: "json_schema", schema: EVIDENCE_SCHEMA } },
+    } as Anthropic.MessageCreateParamsNonStreaming);
+    const text = msg.content.find((block): block is Anthropic.TextBlock => block.type === "text")?.text;
+    if (!text) return null;
+    return JSON.parse(text) as CandidateEvidenceVerdict;
+  } catch {
+    return null;
   }
 }

@@ -37,6 +37,7 @@ import {
   pickSosCompaniesForRotation,
   reservePriorityRecompute,
   utcDailyRotationEpoch,
+  utcHourlyRotationEpoch,
 } from "./triggers";
 
 describe("durable source rotation pickers", () => {
@@ -50,17 +51,18 @@ describe("durable source rotation pickers", () => {
   it("atomically reserves default waves instead of paging a mutable ordering", async () => {
     await pickForRotation(10);
     expect(state.calls).toContainEqual(["rpc", "reserve_company_rotation", {
-      p_source: "trigger", p_limit: 10, p_scope: null, p_epoch: "2026-08-10T00:00:00.000Z",
+      p_source: "trigger", p_limit: 10, p_scope: null, p_epoch: "2026-08-10T01:00:00.000Z",
     }]);
     state.calls.length = 0;
     await pickSitesForRotation(30, 0, "tail");
     expect(state.calls).toContainEqual(["rpc", "reserve_company_rotation", {
-      p_source: "site", p_limit: 30, p_scope: "tail", p_epoch: "2026-08-10T00:00:00.000Z",
+      p_source: "site", p_limit: 30, p_scope: "tail", p_epoch: "2026-08-10T01:00:00.000Z",
     }]);
   });
 
-  it("shares one UTC-day cutoff across waves and safe same-day retries", async () => {
+  it("shares an hourly cutoff while advancing continuously across the day", async () => {
     expect(utcDailyRotationEpoch()).toBe("2026-08-10T00:00:00.000Z");
+    expect(utcHourlyRotationEpoch()).toBe("2026-08-10T01:00:00.000Z");
     await pickForRotation(10);
     vi.setSystemTime(new Date("2026-08-10T23:59:59.999Z"));
     await pickCarriersForRotation(10);
@@ -68,8 +70,8 @@ describe("durable source rotation pickers", () => {
       .filter((call) => call[0] === "rpc")
       .map((call) => (call[2] as { p_epoch: string }).p_epoch);
     expect(epochs).toEqual([
-      "2026-08-10T00:00:00.000Z",
-      "2026-08-10T00:00:00.000Z",
+      "2026-08-10T01:00:00.000Z",
+      "2026-08-10T23:00:00.000Z",
     ]);
   });
 

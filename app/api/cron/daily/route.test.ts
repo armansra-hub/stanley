@@ -26,7 +26,7 @@ describe("daily staged cron", () => {
       headers: { "x-cron-secret": "test-cron-secret" },
     }));
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ completed: true, stage: 0, stageCount: 12, children: 5, ok: 5, failed: 0 });
+    expect(await response.json()).toMatchObject({ completed: true, stage: 0, stageCount: 16, children: 5, ok: 5, failed: 0 });
     const calls = vi.mocked(fetch).mock.calls;
     expect(calls).toHaveLength(5);
     expect(calls.every(([target]) => !String(target).includes("/api/cron/daily"))).toBe(true);
@@ -49,18 +49,18 @@ describe("daily staged cron", () => {
   });
 
   it("finishes the final stage without another dispatch", async () => {
-    const response = await GET(new NextRequest("https://stanley.local/api/cron/daily?stage=11&run=run-12345678", {
+    const response = await GET(new NextRequest("https://stanley.local/api/cron/daily?stage=15&run=run-12345678", {
       headers: { "x-cron-secret": "test-cron-secret" },
     }));
     expect(response.status).toBe(200);
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(5);
     expect(logEvent).toHaveBeenCalledWith("headhunter", "daily.done", expect.objectContaining({
-      meta: expect.objectContaining({ status: "rotation_complete", total: 60, stageCount: 12 }),
+      meta: expect.objectContaining({ status: "rotation_complete", total: 80, stageCount: 16 }),
     }));
   });
 
   it("rejects invalid stages", async () => {
-    const response = await GET(new NextRequest("https://stanley.local/api/cron/daily?stage=12", {
+    const response = await GET(new NextRequest("https://stanley.local/api/cron/daily?stage=16", {
       headers: { "x-cron-secret": "test-cron-secret" },
     }));
     expect(response.status).toBe(400);

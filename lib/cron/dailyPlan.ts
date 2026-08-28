@@ -1,6 +1,6 @@
 /** Vercel parent-cron safety ceiling. */
-export const DAILY_CHILD_REQUEST_LIMIT = 65;
-export const DAILY_PLANNED_CHILDREN = 60;
+export const DAILY_CHILD_REQUEST_LIMIT = 80;
+export const DAILY_PLANNED_CHILDREN = 80;
 export const DAILY_STAGE_SIZE = 5;
 
 /**
@@ -29,8 +29,8 @@ export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
     path: "/api/cron/public-growth?source=usaspending&scope=verified&n=6",
     foundationEligibleBaseline: 250,
     batchSize: 6,
-    invocationsPerRotation: 12,
-    rotationHours: 12,
+    invocationsPerRotation: 16,
+    rotationHours: 16,
     targetCycleHours: 48,
   },
   {
@@ -39,8 +39,8 @@ export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
     foundationEligibleBaseline: 250,
     batchSize: 125,
     invocationsPerRotation: 1,
-    rotationHours: 12,
-    targetCycleHours: 24,
+    rotationHours: 16,
+    targetCycleHours: 32,
   },
 ] as const;
 
@@ -63,6 +63,7 @@ export const DAILY_GET_ROUTE_PREFIXES = [
   "/api/cron/cosos",
   "/api/cron/ats",
   "/api/cron/public-growth",
+  "/api/cron/review-candidates",
   "/api/cron/reconcile-hidden",
   "/api/cron/recompute",
 ] as const;
@@ -95,13 +96,14 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
   ];
   if (ordinaryPaths.length !== 48) throw new Error(`daily cron expected 48 ordinary paths, received ${ordinaryPaths.length}`);
 
-  // Exactly one prime-award worker leads each five-request hourly stage. This
-  // prevents same-source lease collisions while giving prime awards a real
-  // hourly cadence. The remaining four slots carry the broad-source rotation.
+  // Prime awards and candidate verification run in every hourly stage. This
+  // prevents same-source lease collisions, removes the manual review backlog,
+  // and leaves three slots for continuous broad-source rotation.
   const prime = PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending")!;
-  const paths = Array.from({ length: 12 }, (_, stage) => [
+  const paths = Array.from({ length: 16 }, (_, stage) => [
     `${prime.path}&wave=${stage}`,
-    ...ordinaryPaths.slice(stage * 4, stage * 4 + 4),
+    `/api/cron/review-candidates?n=25&wave=${stage}`,
+    ...ordinaryPaths.slice(stage * 3, stage * 3 + 3),
   ]).flat();
   const unique = [...new Set(paths)];
   if (unique.length !== paths.length) throw new Error("daily cron plan contains duplicate child requests");

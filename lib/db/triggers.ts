@@ -151,8 +151,9 @@ export async function reconcilePublishableSignalFlags(companyId: string): Promis
  *
  * Attributing a headline to a company by name is unreliable for the 40% of the TAM
  * whose name is one ordinary word (Access, Weekday, Aerofly, Encore, Circle). Rather
- * than guess, candidates land in trigger_candidates and Claude Code reads each one
- * locally before it can become a trigger — so nothing unverified reaches the tab.
+ * than guess, candidates land in trigger_candidates and the independent evidence
+ * reviewer verifies each one before it can become a trigger, so nothing unverified
+ * reaches the tab.
  * Idempotent on (company_id, type, summary): re-running a sweep won't pile up dupes.
  */
 export async function queueCandidate(
@@ -233,11 +234,19 @@ export interface RotationSignalContext {
   ns_industry: string | null;
 }
 
-/** All default cron waves in one UTC day share this immutable reservation cutoff. */
+/** Daily epoch retained for low-frequency priority-cache maintenance. */
 export function utcDailyRotationEpoch(now = new Date()): string {
   const timestamp = now.getTime();
   if (!Number.isFinite(timestamp)) throw new Error("rotation epoch requires a valid date");
   return new Date(Math.floor(timestamp / 86_400_000) * 86_400_000).toISOString();
+}
+
+/** Concurrent source waves share one hourly cutoff. The next hour immediately
+ * resumes oldest-first monitoring instead of stopping after one pass per day. */
+export function utcHourlyRotationEpoch(now = new Date()): string {
+  const timestamp = now.getTime();
+  if (!Number.isFinite(timestamp)) throw new Error("rotation epoch requires a valid date");
+  return new Date(Math.floor(timestamp / 3_600_000) * 3_600_000).toISOString();
 }
 
 async function reserveRotation<T>(source: string, limit: number, scope: string | null = null): Promise<T[]> {
@@ -245,7 +254,7 @@ async function reserveRotation<T>(source: string, limit: number, scope: string |
     p_source: source,
     p_limit: limit,
     p_scope: scope,
-    p_epoch: utcDailyRotationEpoch(),
+    p_epoch: utcHourlyRotationEpoch(),
   });
   if (error) throw new Error(`${source} rotation reservation failed: ${error.message}`);
   return (data ?? []) as T[];

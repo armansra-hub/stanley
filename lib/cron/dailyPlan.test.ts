@@ -32,7 +32,8 @@ describe("daily cron plan", () => {
     expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(1);
     expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(15);
     expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(0);
-    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(15);
+    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(19);
+    expect(pathsFor(paths, "/api/cron/review-candidates")).toHaveLength(16);
     expect(paths).toContain("/api/cron/reconcile-hidden");
 
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
@@ -67,18 +68,20 @@ describe("daily cron plan", () => {
       const publicPaths = pathsFor(buildDailyWavePaths(day), "/api/cron/public-growth");
       const sources = publicPaths.map((path) => new URL(path, "https://local").searchParams.get("source"));
       expect(new Set(sources)).toEqual(new Set(["usaspending", "usaspending-subawards", "sam-opportunities", "revenue"]));
-      expect(sources.filter((source) => source === "usaspending")).toHaveLength(12);
-      expect(sources).toHaveLength(15);
+      expect(sources.filter((source) => source === "usaspending")).toHaveLength(16);
+      expect(sources).toHaveLength(19);
     }
   });
 
-  it("runs exactly one prime-award worker in every hourly stage", () => {
+  it("runs exactly one prime-award worker and one reviewer in every hourly stage", () => {
     const paths = buildDailyWavePaths(0);
     for (let offset = 0; offset < paths.length; offset += 5) {
       const stage = paths.slice(offset, offset + 5);
       const prime = stage.filter((path) => new URL(path, "https://local").searchParams.get("source") === "usaspending");
       expect(prime).toHaveLength(1);
       expect(stage[0]).toBe(prime[0]);
+      expect(pathsFor(stage, "/api/cron/review-candidates")).toHaveLength(1);
+      expect(stage[1]).toBe(pathsFor(stage, "/api/cron/review-candidates")[0]);
     }
   });
 
