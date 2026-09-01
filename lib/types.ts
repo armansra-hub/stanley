@@ -78,6 +78,8 @@ export interface Company {
   first_seen_at: string;
   last_updated_at: string;
   exported_at: string | null;
+  /** Latest review/dismissal boundary for Triggered-tab freshness. */
+  trigger_reviewed_through?: string | null;
   // TAM Base (vendor-imported) fields — migration 0015
   is_base?: boolean;
   lead_vendor?: string | null;

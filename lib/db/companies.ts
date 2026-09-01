@@ -9,6 +9,7 @@ import {
 } from "@/lib/tal/membership";
 import { importBlockReason } from "@/config/territory";
 import { decayFactor } from "@/lib/triggers/config";
+import { triggerIsAfterReviewBoundary } from "@/lib/triggers/freshness";
 import { isPublishableTriggerForCompany } from "@/lib/triggers/signalIntegrity";
 import { VENDOR_WEIGHT, fitWeightFor, parseTechnologies, isErpReady, parseEmployees, employeeBand, type LeadVendor } from "@/lib/baseImport";
 import type { BaseRow } from "@/lib/csv";
@@ -152,7 +153,9 @@ export function withTriggers<T extends Record<string, unknown>>(
   const list = ((Array.isArray(triggers) ? triggers : []) as (TriggerPreview & { strength: number; half_life_days: number | null })[])
     // Preserve quarantined/legacy rows in storage for auditability, but never
     // display them as events on any Stanley tab.
-    .filter((trigger) => isPublishableTriggerForCompany(trigger, row as any));
+    .filter((trigger) => isPublishableTriggerForCompany(trigger, row as any))
+    .filter((trigger) => String(row.status ?? "new") !== "new"
+      || triggerIsAfterReviewBoundary(trigger, row.trigger_reviewed_through as string | null | undefined));
   const ranked = list
     .map((t) => ({ t, live: Number(t.strength) * decayFactor(t.signal_date, t.detected_at, Number(t.half_life_days) || 30) }))
     .sort((a, b) => b.live - a.live)
@@ -447,13 +450,23 @@ export async function setRating(id: string, rating: number | null, comment?: str
 }
 
 /** Set status on companies. Stamps exported_at when moving to an exported status. */
-export async function setCompaniesStatus(ids: string[], status: Company["status"]): Promise<void> {
+export async function setCompaniesStatus(
+  ids: string[],
+  status: Company["status"],
+  opts: { preserveTriggerReviewBoundary?: boolean } = {},
+): Promise<void> {
   if (ids.length === 0) return;
   const db = serviceClient();
   const now = new Date().toISOString();
   const patch: Record<string, unknown> = { status, last_updated_at: now };
   if (status === "exported_sql" || status === "exported_csv") patch.exported_at = now;
-  else if (status === "new") patch.exported_at = null; // restore/un-export clears the stamp
+  else if (status === "new") {
+    patch.exported_at = null; // restore/un-export clears the stamp
+    if (!opts.preserveTriggerReviewBoundary) patch.trigger_reviewed_through = null;
+  }
+  if (!opts.preserveTriggerReviewBoundary && (status === "reviewed" || status === "dismissed")) {
+    patch.trigger_reviewed_through = now;
+  }
   // Chunk the id set — a single .in() with thousands of UUIDs overflows the request
   // URL (bulk TAM exports can mark 7k+ rows at once).
   for (let i = 0; i < ids.length; i += 200) {

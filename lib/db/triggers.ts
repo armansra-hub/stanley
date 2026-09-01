@@ -14,6 +14,7 @@ import {
   isPublishableTriggerForCompany,
   type TriggerEvidence,
 } from "@/lib/triggers/signalIntegrity";
+import { triggerIsAfterReviewBoundary } from "@/lib/triggers/freshness";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -50,7 +51,7 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
     summary: t.summary.slice(0, 280), source_name: t.source_name ?? null, source_url: t.source_url ?? null, signal_date: t.signal_date ?? null,
   });
   if (error) return false; // unique-index violation on a dupe
-  await reheatCompanyForFreshSignal(companyId, t.type, t.source_url ?? null).catch(() => {});
+  await reheatCompanyForFreshSignal(companyId, t.type, t.source_url ?? null, t.signal_date ?? null).catch(() => {});
   return true;
 }
 
@@ -85,7 +86,10 @@ export async function recomputePriority(companyId: string): Promise<number> {
   const listBonus = 1 + 0.1 * Math.max(0, ((c as any)?.lists?.length ?? 1) - 1);
   let best = 0;
   const activeTypes = new Set<string>();
-  for (const t of ((trigs ?? []) as any[]).filter((trigger) => isPublishableTriggerForCompany(trigger, c as any))) {
+  for (const t of ((trigs ?? []) as any[])
+    .filter((trigger) => isPublishableTriggerForCompany(trigger, c as any))
+    .filter((trigger) => String((c as any).status ?? "new") !== "new"
+      || triggerIsAfterReviewBoundary(trigger, (c as any).trigger_reviewed_through))) {
     const decay = decayFactor(t.signal_date, t.detected_at, t.half_life_days);
     const v = Number(t.strength) * decay;
     if (v > best) best = v;
@@ -94,7 +98,12 @@ export async function recomputePriority(companyId: string): Promise<number> {
   // DOL 5500 headcount growth ≥25% acts as a standing (synthetic) signal so high-growth
   // claimable leads rank even with no current news trigger. Scales 25%→~60, 100%+→~95.
   const hcPct = Number((c as any)?.headcount_growth_pct ?? 0);
-  if (hcPct >= 25) { best = Math.max(best, Math.min(95, 55 + (hcPct - 25) * 0.5)); activeTypes.add("headcount_growth"); }
+  const reviewedBoundaryIsActive = String((c as any).status ?? "new") === "new"
+    && Boolean((c as any).trigger_reviewed_through);
+  if (hcPct >= 25 && !reviewedBoundaryIsActive) {
+    best = Math.max(best, Math.min(95, 55 + (hcPct - 25) * 0.5));
+    activeTypes.add("headcount_growth");
+  }
   const multiBonus = 1 + 0.15 * Math.max(0, activeTypes.size - 1);
   const incumbent = ((c as any)?.erp_incumbent as string | null) ?? null;
   const incumbentFactor = incumbent === "erp" || incumbent === "netsuite" || incumbent === "intacct"
@@ -389,7 +398,10 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
     .order("priority", { ascending: false }).order("name", { ascending: true }).limit(200);
   if (error) return [];
   return (data ?? []).map((r: any) => {
-    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter((trigger) => isPublishableTriggerForCompany(trigger, r));
+    const trigs = ((r.triggers ?? []) as TriggerRow[])
+      .filter((trigger) => isPublishableTriggerForCompany(trigger, r))
+      .filter((trigger) => String(r.status ?? "new") !== "new"
+        || triggerIsAfterReviewBoundary(trigger, r.trigger_reviewed_through));
     const rankedTriggers = trigs.map((t) => ({ t, v: t.strength * decayFactor(t.signal_date, t.detected_at, t.half_life_days) })).sort((a, b) => b.v - a.v);
     const top = rankedTriggers[0]?.t;
     const { triggers, ...rest } = r; void triggers;
@@ -527,13 +539,18 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
   // With a signal-type filter we fetch the whole matching set (bounded) and paginate
   // in memory, so totals stay correct after filtering. Without one: normal DB paging.
-  const { data, count, error } = await q
+  const { data, error } = await q
     .order("record_dead", { ascending: true }) // dead sinks even when its cached priority is stale
     .order("priority", { ascending: false }).order("name", { ascending: true })
-    .range(hasEventFilters ? 0 : offset, hasEventFilters ? 0 + 1999 : offset + limit - 1);
+    // A review boundary is applied after the trigger join, so load the bounded
+    // active set and paginate only after stale pre-review evidence is removed.
+    .range(0, 1999);
   if (error) throw new Error(`listTriggered failed: ${error.message}`);
   let companies = (data ?? []).map((r: any) => {
-    const trigs = ((r.triggers ?? []) as TriggerRow[]).filter((trigger) => isPublishableTriggerForCompany(trigger, r));
+    const trigs = ((r.triggers ?? []) as TriggerRow[])
+      .filter((trigger) => isPublishableTriggerForCompany(trigger, r))
+      .filter((trigger) => String(r.status ?? "new") !== "new"
+        || triggerIsAfterReviewBoundary(trigger, r.trigger_reviewed_through));
     // ALL triggers, strongest (decayed) first — the row shows every one. When a
     // signal-type filter is active, matching types sort ahead of the rest so the
     // Why column leads with what you filtered for.
@@ -550,6 +567,12 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
     const trigger_types = [...new Set(trigs.map((t) => t.type))];
     const { rest: rest2, insights } = withInsights(rest);
     return { ...mapBasic(rest2), priority: r.priority != null ? Number(r.priority) : 0, top_trigger: all_triggers[0] ?? null, all_triggers, trigger_count: trigs.length, trigger_types, insights } as TriggeredCompany;
+  });
+  companies = companies.filter((company) => {
+    const hasFreshTrigger = (company.all_triggers?.length ?? 0) > 0;
+    const syntheticHeadcountIsUnreviewed = !company.trigger_reviewed_through
+      && (company.headcount_growth_pct ?? 0) >= 25;
+    return hasFreshTrigger || syntheticHeadcountIsUnreviewed;
   });
   if (hasEventFilters) {
     const inSignalDateRange = (t: TriggerPreview) => {
@@ -574,7 +597,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
     });
     return { companies: companies.slice(offset, offset + limit), total: companies.length };
   }
-  return { companies, total: count ?? 0 };
+  return { companies: companies.slice(offset, offset + limit), total: companies.length };
 }
 
 // Light mapper (mirrors mapCompany's relevant fields; triggers join handled above).
@@ -590,6 +613,7 @@ function mapBasic(r: any): Company {
     rating: r.rating != null ? Number(r.rating) : null, rating_comment: r.rating_comment ?? null,
     sources: Array.isArray(r.sources) ? r.sources : [], notes: r.notes ?? null,
     first_seen_at: String(r.first_seen_at ?? ""), last_updated_at: String(r.last_updated_at ?? ""), exported_at: r.exported_at ?? null,
+    trigger_reviewed_through: r.trigger_reviewed_through ?? null,
     is_base: Boolean(r.is_base), lead_vendor: r.lead_vendor ?? null, fit_weight: r.fit_weight != null ? Number(r.fit_weight) : 1,
     technologies: Array.isArray(r.technologies) ? r.technologies : [], erp_ready: Boolean(r.erp_ready),
     employee_count: r.employee_count != null ? Number(r.employee_count) : null,

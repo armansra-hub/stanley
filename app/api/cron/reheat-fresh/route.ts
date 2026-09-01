@@ -20,17 +20,17 @@ export async function POST(req: NextRequest) {
   }
   const db = serviceClient();
   const { data: triggers, error } = await db.from("triggers")
-    .select("company_id,type,source_url,detected_at")
+    .select("company_id,type,source_url,signal_date,detected_at")
     .gte("detected_at", since)
     .order("detected_at", { ascending: false })
     .limit(2000);
   if (error) throw new Error(`fresh trigger read failed: ${error.message}`);
 
-  const newest = new Map<string, { type: string; sourceUrl: string | null; detectedAt: string }>();
+  const newest = new Map<string, { type: string; sourceUrl: string | null; signalDate: string | null; detectedAt: string }>();
   for (const row of triggers ?? []) {
     const id = String(row.company_id);
     if (!newest.has(id)) newest.set(id, {
-      type: String(row.type), sourceUrl: row.source_url, detectedAt: String(row.detected_at),
+      type: String(row.type), sourceUrl: row.source_url, signalDate: row.signal_date, detectedAt: String(row.detected_at),
     });
   }
 
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
       continue;
     }
     eligible++;
-    if (await reheatCompanyForFreshSignal(companyId, trigger.type, trigger.sourceUrl)) reheated++;
+    if (await reheatCompanyForFreshSignal(companyId, trigger.type, trigger.sourceUrl, trigger.signalDate)) reheated++;
   }
   return NextResponse.json({ since, triggers: triggers?.length ?? 0, companies: newest.size, eligible, reheated, preserved });
 }

@@ -90,7 +90,7 @@ export async function recordPublicGrowthTrigger(companyId: string, event: Derive
     if (error.code === "23505") return false;
     throw new Error(`public growth trigger insert failed: ${error.message}`);
   }
-  await reheatCompanyForFreshSignal(companyId, event.type, uniqueSourceUrl).catch(() => {});
+  await reheatCompanyForFreshSignal(companyId, event.type, uniqueSourceUrl, event.signalDate).catch(() => {});
   return true;
 }
 
@@ -130,10 +130,11 @@ export async function recordPublicGrowthTriggersBulk(rows: Array<{
   }
   const pending = payload.filter((row) => !existing.has(`${row.company_id}:${row.dedupe_key}`));
   if (!pending.length) return 0;
-  const { data, error } = await db.from("triggers").insert(pending).select("id,company_id,type,source_url");
+  const { data, error } = await db.from("triggers").insert(pending).select("id,company_id,type,source_url,signal_date");
   if (!error) {
     await Promise.all((data ?? []).map((row) => reheatCompanyForFreshSignal(
       String(row.company_id), String(row.type), row.source_url ? String(row.source_url) : null,
+      row.signal_date ? String(row.signal_date) : null,
     ).catch(() => false)));
     return data?.length ?? 0;
   }
@@ -146,7 +147,7 @@ export async function recordPublicGrowthTriggersBulk(rows: Array<{
     const { error: rowError } = await db.from("triggers").insert(row);
     if (!rowError) {
       inserted++;
-      await reheatCompanyForFreshSignal(row.company_id, row.type, row.source_url).catch(() => {});
+      await reheatCompanyForFreshSignal(row.company_id, row.type, row.source_url, row.signal_date).catch(() => {});
     }
     else if (rowError.code !== "23505") throw new Error(`public growth trigger insert recovery failed: ${rowError.message}`);
   }

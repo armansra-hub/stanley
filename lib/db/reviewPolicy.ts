@@ -56,8 +56,10 @@ export async function reconcileHumanHiddenStatuses(opts: { dryRun?: boolean } = 
     else restoreDismissed.push(id);
   }
   if (!opts.dryRun) {
-    await setCompaniesStatus(restoreReviewed, "reviewed");
-    await setCompaniesStatus(restoreDismissed, "dismissed");
+    // Reconciliation restores the canonical decision; it must not move the
+    // original review boundary forward and accidentally hide later evidence.
+    await setCompaniesStatus(restoreReviewed, "reviewed", { preserveTriggerReviewBoundary: true });
+    await setCompaniesStatus(restoreDismissed, "dismissed", { preserveTriggerReviewBoundary: true });
   }
   const restoredIds = new Set([...restoreReviewed, ...restoreDismissed]);
   const candidates = current.filter((row) => restoredIds.has(row.id)).map((row) => ({

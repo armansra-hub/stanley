@@ -17,6 +17,7 @@ export const READABLE_SCALAR_COLUMNS = Object.freeze({
     revisit_on tam_score tam_provisional claim_bullets active_participant_count
     codex_score score_adjust_note linkedin_url linkedin_checked_at linkedin_phase
     fmcsa_checked_at sos_checked_at priority_recompute_reserved_at
+    trigger_reviewed_through
   `),
   triggers: columns(`
     id company_id type strength half_life_days summary source_name source_url
