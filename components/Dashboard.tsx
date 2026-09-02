@@ -1464,6 +1464,26 @@ const OLDGOLD_CLASS: Record<string, { label: string; color: string }> = {
   insufficient: { label: "❔ Thin note", color: "var(--text-muted)" },
 };
 
+/** Conservative display-only extraction. Graders emit this exact sentence only
+ * after verifying a real opportunity/conversion; negative keyword mentions do
+ * not match and therefore cannot create a false badge. */
+function oldGoldOpportunity(c: Company): { label: string; date: string; status: string } | null {
+  const text = [c.record_digest ?? "", ...(c.oldgold_reasons ?? [])].join(" ");
+  const created = text.match(/Opportunity created:\s*(\d{4}-\d{2}-\d{2})(?:\s*[—-]\s*([^.;]+))?/i);
+  if (created) return { label: "Opportunity created", date: created[1], status: (created[2] ?? "").trim() };
+  const confirmed = text.match(/Opportunity confirmed:\s*(\d{4}-\d{2}-\d{2})(?:\s*[—-]\s*([^.;]+))?/i);
+  if (confirmed) return { label: "Opportunity confirmed", date: confirmed[1], status: (confirmed[2] ?? "creation date not exposed").trim() };
+  const audited = text.match(/(\d{4}-\d{2}-\d{2})(?:\s+through\s+\d{4}-\d{2}-\d{2})?:[^.]{0,100}\b(?:verified opportunity conversion|states that[^.]{0,30}turned into an opportunity)\b/i);
+  return audited ? { label: "Opportunity confirmed", date: audited[1], status: "creation date not exposed" } : null;
+}
+
+/** Exact grader sentence emitted only after an activity's Touch Type column is
+ * verified as `Intro Call`; generic prose mentioning an intro does not match. */
+function oldGoldIntroCall(c: Company): string | null {
+  const text = [c.record_digest ?? "", ...(c.oldgold_reasons ?? [])].join(" ");
+  return text.match(/Previous intro occurred:\s*(\d{4}-\d{2}-\d{2})\s*[—-]/i)?.[1] ?? null;
+}
+
 /** A trigger event as the detail API returns it (decayed `live` score precomputed). */
 type DrawerTrigger = {
   id: string; type: string; strength: number; half_life_days: number; summary: string;
@@ -1559,6 +1579,8 @@ function DetailDrawer({
   const triggers = detail?.triggers ?? [];
   const insights = detail?.insights ?? [];
   const publicGrowth = detail?.publicGrowth;
+  const opportunitySummary = oldGoldOpportunity(c);
+  const introCallDate = oldGoldIntroCall(c);
   const fmt = (iso: string | null | undefined) => (iso ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "");
   const dollars = (value: unknown) => Number(value ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
   const obligatedDollars = (value: unknown) => dollars(Math.max(0, Number(value ?? 0)));
@@ -1704,7 +1726,7 @@ function DetailDrawer({
           {c.netsuite_internal_id && <Pill title="NetSuite internal ID">NS #{c.netsuite_internal_id}</Pill>}
           {c.record_dead && <Pill title={c.record_dead_reason ?? "NetSuite record marks this lead dead"} color="#ef4444">⛔ DEAD{c.record_dead_reason ? ` — ${c.record_dead_reason.slice(0, 50)}` : ""}</Pill>}
           {!c.record_dead && c.tam_score != null && <Pill title={c.tam_provisional ? "Provisional TAM grade (formula floor — deep read pending)" : "TAM grade — holistic 0-100 from the full lead record (activities + notes + qual note)"} color={c.tam_provisional ? "var(--text-muted)" : "#6ea8e6"}>📊 TAM {Math.round(c.tam_score)}{c.tam_provisional ? "±" : ""}</Pill>}
-          {!c.record_dead && c.oldgold_score != null && <Pill title="Old Gold revival score — this lead has a qual note + SQL date (a past sales-qualified moment worth reviving)" color="var(--gold)">🪙 Old Gold {Math.round(c.oldgold_score)}</Pill>}
+          {!c.record_dead && c.oldgold_score != null && <Pill title="Old Gold revival score — this lead has a past SQL qualification or a verified opportunity worth re-reading" color="var(--gold)">🪙 Old Gold {Math.round(c.oldgold_score)}</Pill>}
         </div>
 
         {/* OLD GOLD / RECORD HISTORY — ubiquitous: the qual-note + NetSuite-record
@@ -1717,13 +1739,15 @@ function DetailDrawer({
             </div>
             {c.oldgold_class && (
               <div className="mb-1 text-xs font-semibold" style={{ color: OLDGOLD_CLASS[c.oldgold_class]?.color ?? "var(--gold)" }}>
-                {OLDGOLD_CLASS[c.oldgold_class]?.label ?? c.oldgold_class}{c.oldgold_score != null ? ` · ${Math.round(c.oldgold_score)}/100` : ""}
+                {OLDGOLD_CLASS[c.oldgold_class]?.label ?? c.oldgold_class}
               </div>
             )}
             {(c.oldgold_reasons ?? []).map((r, i) => (
               <div key={i} className="text-xs text-[var(--text-muted)]">• {r}{r.startsWith("⚠") ? "" : ""}</div>
             ))}
             {c.revisit_on && <div className="mt-1 text-xs font-medium" style={{ color: "var(--tier-a)" }}>⏰ Their stated timing arrives: {c.revisit_on}</div>}
+            {opportunitySummary && <div className="mt-1 text-xs font-bold" style={{ color: "var(--tier-a)" }}>{opportunitySummary.label} · {opportunitySummary.date}{opportunitySummary.status ? ` · ${opportunitySummary.status}` : ""}</div>}
+            {introCallDate && <div className="mt-1 text-xs font-bold" style={{ color: "#6ea8e6" }}>Previous intro occurred · {introCallDate}</div>}
             {c.record_digest && (
               <p className="mt-2 border-t pt-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{c.record_digest}</p>
             )}
