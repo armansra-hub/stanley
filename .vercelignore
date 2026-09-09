@@ -23,3 +23,11 @@ supabase/.temp
 tsconfig.tsbuildinfo
 .git
 .foundation-run
+
+# Reviewed local-workflow source is for colleagues, not hosted execution.
+operations
+work
+outputs
+automation-state
+automation-receipts
+**/__pycache__

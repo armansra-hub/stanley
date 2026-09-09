@@ -1,0 +1,14 @@
+# Keep SQL text assertions and Node shebang parsing consistent on Windows/macOS/Linux.
+* text=auto eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.mjs text eol=lf
+*.sql text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary

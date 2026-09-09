@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "exact_id",
+    "company_name",
+    "candidate_score",
+    "disposition",
+    "newest_human_interaction_date",
+    "newest_human_interaction_summary",
+    "chronological_digest",
+    "positive_evidence",
+    "negative_evidence",
+    "dq_status",
+    "dq_reason",
+    "child_company",
+    "budget_status",
+    "timeline_status",
+    "need_pain_status",
+    "current_or_competing_software",
+    "follow_up_signal",
+    "opportunity_exists",
+    "opportunity_created_date",
+    "opportunity_status",
+    "opportunity_summary",
+    "intro_call_exists",
+    "intro_call_summary",
+    "old_gold_score",
+    "old_gold_class",
+    "old_gold_reasons",
+    "revisit_on",
+    "ambiguity_notes",
+    "confidence",
+    "full_record_text_read",
+    "full_pdf_read",
+    "pdf_pages_read",
+    "every_dq_occurrence_reviewed",
+    "every_status_change_contextualized",
+    "opportunity_records_reviewed",
+    "intro_call_records_reviewed",
+    "budget_threshold_applied",
+    "dead_reason_specific",
+    "dead_reason_source"
+  ],
+  "properties": {
+    "exact_id": { "type": "string", "pattern": "^[0-9]+$" },
+    "company_name": { "type": "string", "minLength": 1 },
+    "candidate_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "disposition": { "type": "string", "minLength": 1 },
+    "newest_human_interaction_date": { "type": "string" },
+    "newest_human_interaction_summary": { "type": "string", "minLength": 1 },
+    "chronological_digest": { "type": "string", "minLength": 80 },
+    "positive_evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "negative_evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "dq_status": {
+      "type": "string",
+      "enum": ["none", "explicit", "inferred", "ambiguous"]
+    },
+    "dq_reason": { "type": "string" },
+    "child_company": { "type": "boolean" },
+    "budget_status": { "type": "string", "minLength": 1 },
+    "timeline_status": { "type": "string", "minLength": 1 },
+    "need_pain_status": { "type": "string", "minLength": 1 },
+    "current_or_competing_software": { "type": "string", "minLength": 1 },
+    "follow_up_signal": { "type": "string", "minLength": 1 },
+    "opportunity_exists": { "type": "boolean" },
+    "opportunity_created_date": { "type": "string" },
+    "opportunity_status": { "type": "string" },
+    "opportunity_summary": { "type": "string" },
+    "intro_call_exists": { "type": "boolean" },
+    "intro_call_summary": { "type": "string" },
+    "old_gold_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "old_gold_class": {
+      "type": "string",
+      "enum": ["timing_arrived", "contract_clock", "stalled_warm", "lost_to_competitor", "dead", "insufficient"]
+    },
+    "old_gold_reasons": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "revisit_on": {
+      "type": ["string", "null"],
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "ambiguity_notes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "medium-high", "high"]
+    },
+    "full_record_text_read": { "type": "boolean" },
+    "full_pdf_read": { "type": "boolean" },
+    "pdf_pages_read": { "type": "integer", "minimum": 1 },
+    "every_dq_occurrence_reviewed": { "type": "boolean" },
+    "every_status_change_contextualized": { "type": "boolean" },
+    "opportunity_records_reviewed": { "type": "boolean" },
+    "intro_call_records_reviewed": { "type": "boolean" },
+    "budget_threshold_applied": { "type": "boolean" },
+    "dead_reason_specific": { "type": "boolean" },
+    "dead_reason_source": { "type": "string" }
+  }
+}

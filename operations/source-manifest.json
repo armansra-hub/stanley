@@ -1,0 +1,97 @@
+{
+  "captured_on": "2026-09-09",
+  "purpose": "Selected canonical local workflow source for review; private operational state is not included.",
+  "transformations": "None. SHA-256 is calculated over source bytes; Git checkout may normalize line endings. normalized_sha256 uses LF line endings.",
+  "files": [
+    {
+      "workspace_relative_source": "browser-automation-lock.ps1",
+      "repository_path": "operations/reference/browser-automation-lock.ps1",
+      "sha256": "a8bf70ec47f974b489f697bb767c295c1a92c3c2ce03eb1642f6644acc37d8f8",
+      "normalized_sha256": "a8bf70ec47f974b489f697bb767c295c1a92c3c2ce03eb1642f6644acc37d8f8"
+    },
+    {
+      "workspace_relative_source": "linkedin-cadence-lock.ps1",
+      "repository_path": "operations/reference/linkedin-cadence-lock.ps1",
+      "sha256": "d68d1ed58028a4062f3a9938dd5fd25f96e3de26b6862d109697000910bfb095",
+      "normalized_sha256": "d68d1ed58028a4062f3a9938dd5fd25f96e3de26b6862d109697000910bfb095"
+    },
+    {
+      "workspace_relative_source": "linkedin_followup_state_fast.py",
+      "repository_path": "operations/reference/linkedin_followup_state_fast.py",
+      "sha256": "1af3eb310887239944ef98897689fe59f7407fdf71f8d294a1490599e4d9f0db",
+      "normalized_sha256": "1af3eb310887239944ef98897689fe59f7407fdf71f8d294a1490599e4d9f0db"
+    },
+    {
+      "workspace_relative_source": "tools/outlook_cadence_state_fast.py",
+      "repository_path": "operations/reference/tools/outlook_cadence_state_fast.py",
+      "sha256": "3e4e6a671c5a3fbf56b7a9e34e2e377ce1530e10a32a2e44b048614f34884742",
+      "normalized_sha256": "3e4e6a671c5a3fbf56b7a9e34e2e377ce1530e10a32a2e44b048614f34884742"
+    },
+    {
+      "workspace_relative_source": "tools/outlook_initial_render_guard.py",
+      "repository_path": "operations/reference/tools/outlook_initial_render_guard.py",
+      "sha256": "5568f65ce9a343bf7263d618d610ea068357173026dabc488bef0bb0e5b650da",
+      "normalized_sha256": "5568f65ce9a343bf7263d618d610ea068357173026dabc488bef0bb0e5b650da"
+    },
+    {
+      "workspace_relative_source": "tools/outlook_reply_render_guard.py",
+      "repository_path": "operations/reference/tools/outlook_reply_render_guard.py",
+      "sha256": "675d8b37d0991a7b512e1026ed0886b37a2d055083324a75b1b4cfb6230a0e2d",
+      "normalized_sha256": "675d8b37d0991a7b512e1026ed0886b37a2d055083324a75b1b4cfb6230a0e2d"
+    },
+    {
+      "workspace_relative_source": "tools/mmtt_state_fast.py",
+      "repository_path": "operations/reference/tools/mmtt_state_fast.py",
+      "sha256": "9151b483ab8e737b6be5c3359a3e1c0a11228525699e512a5ce5e921884f87c6",
+      "normalized_sha256": "9151b483ab8e737b6be5c3359a3e1c0a11228525699e512a5ce5e921884f87c6"
+    },
+    {
+      "workspace_relative_source": "tools/run_tam_single_record.py",
+      "repository_path": "operations/reference/tools/run_tam_single_record.py",
+      "sha256": "0a8d4c83e7755a9d3b1a5e90e739f9c9512d569c1c5299a210ab9cb5445f686b",
+      "normalized_sha256": "0a8d4c83e7755a9d3b1a5e90e739f9c9512d569c1c5299a210ab9cb5445f686b"
+    },
+    {
+      "workspace_relative_source": "tools/tam_record_core.py",
+      "repository_path": "operations/reference/tools/tam_record_core.py",
+      "sha256": "9a77d5169205c54d1831e0a29f944e2c50fe872fb93e0d21f91e06748f5ba95b",
+      "normalized_sha256": "9a77d5169205c54d1831e0a29f944e2c50fe872fb93e0d21f91e06748f5ba95b"
+    },
+    {
+      "workspace_relative_source": "tools/stage_tam_final_grades.py",
+      "repository_path": "operations/reference/tools/stage_tam_final_grades.py",
+      "sha256": "fad605282d2320103e1160fafcbc46aa7dfe78878200b866da7a85510cac0476",
+      "normalized_sha256": "fad605282d2320103e1160fafcbc46aa7dfe78878200b866da7a85510cac0476"
+    },
+    {
+      "workspace_relative_source": "tools/tam_v9_reader_schema.json",
+      "repository_path": "operations/reference/tools/tam_v9_reader_schema.json",
+      "sha256": "7208cd8067c6de032db27184958cb34c4adc6bbac917f5646f3704b5d161b068",
+      "normalized_sha256": "7208cd8067c6de032db27184958cb34c4adc6bbac917f5646f3704b5d161b068"
+    },
+    {
+      "workspace_relative_source": "tools/tam_v9_validator_schema.json",
+      "repository_path": "operations/reference/tools/tam_v9_validator_schema.json",
+      "sha256": "fc279c6d28c31a3228450beca8b19a47397aeda4723398ccbfdc8d025d69e550",
+      "normalized_sha256": "fc279c6d28c31a3228450beca8b19a47397aeda4723398ccbfdc8d025d69e550"
+    },
+    {
+      "workspace_relative_source": "tools/tam_v9_chunk_reader_schema.json",
+      "repository_path": "operations/reference/tools/tam_v9_chunk_reader_schema.json",
+      "sha256": "a4427cc63e7dd64eea246e3c792e16bf4ec73577405d92bce2f70df10254e631",
+      "normalized_sha256": "a4427cc63e7dd64eea246e3c792e16bf4ec73577405d92bce2f70df10254e631"
+    },
+    {
+      "workspace_relative_source": "tests/test_outlook_initial_render_guard.py",
+      "repository_path": "operations/reference/tests/test_outlook_initial_render_guard.py",
+      "sha256": "0dea071a766a77080cad657a898359c9e3d41c061aebf6accbf6413943eea4d3",
+      "normalized_sha256": "0dea071a766a77080cad657a898359c9e3d41c061aebf6accbf6413943eea4d3"
+    },
+    {
+      "workspace_relative_source": "tests/test_outlook_reply_render_guard.py",
+      "repository_path": "operations/reference/tests/test_outlook_reply_render_guard.py",
+      "sha256": "81d5226a2094510fbbcc024e66c274845f7012d52d74162720fb252ca5b04834",
+      "normalized_sha256": "81d5226a2094510fbbcc024e66c274845f7012d52d74162720fb252ca5b04834"
+    }
+  ]
+}

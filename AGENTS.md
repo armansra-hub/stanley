@@ -1,15 +1,21 @@
 # Stanley — instructions for agents
 
-Stanley is Arman's prospecting suite for a solo NetSuite AE working the Business
-Services territory. Two agents work on it, and this file is the contract between
-them. Read it before changing anything.
+Stanley is a single-user NetSuite prospecting application plus local supervised
+workflows. Start with `README.md`, `docs/ARCHITECTURE.md`, `docs/SETUP.md`, and
+`operations/README.md` for the 2026-09-09 implementation handoff.
 
-- **Codex** (OpenAI, cloud, with its own browser) — drives NetSuite, ZoomInfo,
-  LinkedIn and Sales Navigator; grades leads from the record; claims leads.
-- **Claude Code** (Anthropic, local on the Mac) — owns this repo, the Supabase
-  migrations, the python pipeline in the dataset dir, monitoring, and grading passes.
+Codex and Claude Code can collaborate through the authenticated bridge below.
+Do not infer a fixed cloud browser, operating system, or active owner from an
+agent name. NetSuite, Outlook, and LinkedIn operational work uses the user's
+existing authenticated Chrome session and the canonical private workflow rules.
+The source in `operations/reference/` is a dated review snapshot, not a second
+live coordinator or a replacement for private state.
 
-Neither agent can see the other's session. **The bridge below is how you talk.**
+For current TAM grading, use the canonical exact-ID coordination checkpoint:
+one explicit record, a complete reader pass, an independent complete validator
+reread, publication, exact record/event readback, and durable receipt. Never
+restore the retired concurrent worker pool. Current counts and cohort order
+come from authenticated current state, not the historical section below.
 
 ---
 
@@ -137,30 +143,34 @@ row locks and rolls the whole atomic batch back if locked state has changed.
 
 ---
 
-## What already happened (read before regrading anything)
+## Historical checkpoints and retired behavior
 
-- **The current membership checkpoint is exact and immutable.** NetSuite saved
+These are dated recovery/bootstrap observations retained for provenance. They
+are not a claim about current membership, completion, holds, or workload. Verify
+the current canonical contract and live coordination state before assigning work.
+
+- **The recorded membership checkpoint was exact and immutable.** NetSuite saved
   search `1327786` (`ARS BS TAM`) produced 7,618 saved-search rows, 6,949 distinct
   current Internal IDs, and 669 preserved duplicate row occurrences. The canonical
   membership SHA-256 is
   `61708344dd9527141401c1b61dd36cc08c185d0efd418426f982364ed118bbfa`; the source
   snapshot SHA-256 is
   `1a539c7e3ffe8af9b44aa4e7d120449e6e7aed9f6932137caa7268da6993156e`.
-  Do not substitute a Stanley table count, an older export, or a newly scraped list.
-- **The current exact-ID PDF corpus is complete.** It covers all 6,949 current IDs,
+  Do not substitute a table count or unverified list for canonical membership.
+- **The recorded exact-ID PDF corpus was complete.** It covers all 6,949 current IDs,
   90,857 pages, and 1,728,918,143 bytes. The ordered current exact-ID set
   SHA-256 (`Internal ID + LF` in canonical numeric order) is
   `2294caa9c38d2302437a8fda18c54316c3416695d21871fd4b3ea9c6e58c7de9`.
   Register only locally reverified evidence through the trusted importer.
-- **There are 4,936 staged current finals, but only 2,696 satisfy the complete
-  current schema.** The aggregate SHA-256 is
+- **At that checkpoint, 4,936 finals were staged and 2,696 satisfied the then-current
+  complete schema.** The aggregate SHA-256 is
   `50586b401e3c455260bb90436b6bbcf43d049e8272750c14d83c1dd39344c0c1`.
-  The mandatory recovery order is 2,240 legacy incomplete finals, then three
+  The recorded recovery order was 2,240 legacy incomplete finals, then three
   lost-staging current IDs (`192808358`, `192911789`, `192919485`), then 49 active
   holds, then 1,961 genuinely unrepresented current IDs. Never skip ahead while an
   earlier cohort remains claimable.
 - **Seed and verify the coordination checkpoint before either agent claims work.**
-  Expected current state is 6,949 records: 2,696 published, 4,204 pending, 49 hold,
+  The recorded bootstrap expected 6,949 records: 2,696 published, 4,204 pending, 49 hold,
   and zero reading/final/expired. Including 34 historical removed records, the run
   contains 6,983 records. A count, cohort hash, or exact-ID mismatch is a release
   stop, not permission to repair ad hoc.
@@ -192,7 +202,9 @@ row locks and rolls the whole atomic batch back if locked state has changed.
 
 - Next.js App Router + Supabase. `npx vitest run` and `npx tsc --noEmit` must pass.
 - Migrations live in `supabase/migrations/NNNN_name.sql`, applied in order by
-  `system/apply_migrations.py` (Claude runs these; don't apply DDL by hand).
+  authorized migration tooling. The historical `system/apply_migrations.py` is
+  external to this repository; do not assume this checkout contains it. Track
+  the full migration basename, including duplicate numeric prefixes.
 - Server-only DB access goes through `serviceClient()` in `lib/supabase/server.ts`.
 - Log anything notable to `app_events` via `logEvent()` — it's the shared timeline
   both agents and Arman read to understand what happened.
@@ -200,7 +212,7 @@ row locks and rolls the whole atomic batch back if locked state has changed.
   deployed by Vercel's Git integration on push. Both agents write to it, so keep
   changes small and don't refactor across the other's work in flight.
 - **Never run `vercel --prod` (or any CLI deploy).** Ship by pushing to `main`; the
-  git integration deploys in under a minute. A CLI deploy uploads whatever files sit
+  Git integration deploys asynchronously and requires completion readback. A CLI deploy uploads whatever files sit
   in a local folder and takes over the production alias, so `main` stops describing
   what production runs. That is not hypothetical: repeated `src=cli` deploys between
   2026-08-03 and 2026-08-10 kept the July 29 news name-match guard and the

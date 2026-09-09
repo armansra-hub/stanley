@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "exact_id",
+    "audit_role",
+    "segment_index",
+    "segment_count",
+    "segment_kind",
+    "segment_label",
+    "segment_sha256",
+    "segment_fully_read",
+    "chronology_events",
+    "human_interactions",
+    "dq_occurrences",
+    "budget_timeline_need_signals",
+    "competitor_signals",
+    "opportunity_signals",
+    "intro_call_signals",
+    "child_parent_signals",
+    "follow_up_signals",
+    "ambiguity_signals",
+    "other_material_facts",
+    "complete_segment_digest"
+  ],
+  "properties": {
+    "exact_id": { "type": "string", "pattern": "^[0-9]+$" },
+    "audit_role": { "type": "string", "enum": ["reader", "validator"] },
+    "segment_index": { "type": "integer", "minimum": 1 },
+    "segment_count": { "type": "integer", "minimum": 1 },
+    "segment_kind": {
+      "type": "string",
+      "enum": ["record_text", "pdf_pages"]
+    },
+    "segment_label": { "type": "string", "minLength": 1 },
+    "segment_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "segment_fully_read": { "type": "boolean" },
+    "chronology_events": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "human_interactions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "dq_occurrences": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "budget_timeline_need_signals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "competitor_signals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "opportunity_signals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "intro_call_signals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "child_parent_signals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "follow_up_signals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "ambiguity_signals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "other_material_facts": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "complete_segment_digest": { "type": "string", "minLength": 80 }
+  }
+}

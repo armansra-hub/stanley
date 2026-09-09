@@ -30,6 +30,25 @@ yarn-error.log*
 /supabase/.branches
 /supabase/.temp
 .env*
+!.env.example
+
+# Private operator state and generated evidence are never public source.
+/work/
+/outputs/
+/automation-state/
+/automation-receipts/
+**/__pycache__/
+*.pyc
+/.pytest_cache/
+/operations/reference/.pytest_cache/
+/operations/reference/*-state.json
+/operations/reference/*-state.json.*
+/operations/reference/*.lock.json
+/operations/reference/mmtt-event-cadence-batch-*.json
+/operations/reference/automation-control.json
+/operations/reference/outputs/
+/operations/reference/work/
+/operations/reference/.env*
 
 # Local foundation receipts may include production environment exports. They are
 # operational evidence, never deployable or committable source.

@@ -1,168 +1,72 @@
-# Stanley (codebase: `jarvis`)
+# Stanley
 
-All-in-one assistant for a solo NetSuite account executive. Three **live** modules
-sharing one Next.js app + Supabase DB, reached from a main menu at `/`:
+Stanley is a single-user prospecting and workflow assistant for a NetSuite account executive. It combines a hosted application with local, supervised sales workflows. The package name remains `jarvis`; the product is Stanley.
 
-| Module | Route | What it does |
+**Sharing this with a colleague?** Start with the [architecture and logic guide](docs/ARCHITECTURE.md), then [setup and infrastructure](docs/SETUP.md) and the [local workflow guide](operations/README.md).
+
+This documentation was reconciled with GitHub `main` and the local Stanley workspace on **2026-09-09**. See the [reconciliation report](docs/SOURCE_RECONCILIATION.md) for scope and provenance. Repository configuration describes intended behavior; live database counts, configured models, scheduler status, and deployment state require authenticated readback.
+
+## What Stanley does
+
+| Surface | Purpose | Main implementation |
 |---|---|---|
-| **Headhunter** | `/headhunter` | Watches the AE's TAM like a hawk for ERP-readiness trigger events and ranks the "call these now" worklist |
-| **Missions** | `/missions` | Tasks/reminders + Outlook-calendar agent — talk to Stanley, it schedules |
-| **Kill List** | `/kill-list` | Manual pipeline Kanban (Stanley never invents data here) with a task↔Missions bridge |
+| Headhunter (`/headhunter`) | Import and monitor the TAM, manage the claimed TAL, review public signals, and prioritize TAM / Old Gold worklists | `components/Dashboard.tsx`, `lib/db/companies.ts`, `app/api/headhunter/` |
+| Missions (`/missions`) | Tasks, reminders, recurring work, time placement around Outlook busy blocks, and conversational actions | `lib/missions/`, `lib/db/missions.ts` |
+| Kill List (`/kill-list`) | Manually maintained pipeline, activity history, and dated tasks linked to Missions | `lib/killlist/`, `lib/db/killlist.ts` |
+| Ask Stanley | Chat and voice-assisted access to application tools | `lib/chat/`, `app/api/chat/` |
+| Local workflows | NetSuite evidence review, Outlook cadence, LinkedIn outreach, event invitations, and verified CRM touch logging | [operations/](operations/README.md) |
 
-Shared across the app: an **"Ask Stanley" chat panel** (Opus 4.8 agent — reads run
-free, writes are guarded), **voice input** (Web Speech API, best in Chrome,
-continuous with a ~4s silence grace), a **Settings** page (models, scoring
-weights, cross-tag + parent-auto-dismiss toggles, paid-actor switches), a 🔔
-in-app alert bell (new signals on claimed accounts), and a rotating background
-from `public/art`. Single-user password gate (middleware) when `APP_PASSWORD`
-is set; open in local dev.
+The hosted app does not replace the operator's authenticated Chrome session. Outbound prospecting runs locally under workflow rules, exact identity checks, durable state, and external verification.
 
-> Externally branded **Stanley**; the codebase/dirs stay `jarvis`.
+## Three different kinds of prioritization
 
-## Headhunter — the model
+- **TAM:** `codex_score` is the raw 0–100 close-probability judgment from the NetSuite record. `tam_score` preserves it except for record-dead and confirmed NetSuite-incumbent hard zeros. Low scores are valid; do not curve them.
+- **Old Gold:** historical revival potential with its own evidence-based score. Membership requires qualifying note/prior-SQL evidence or an audited dated opportunity. A non-member has `oldgold_score = null` in live storage; a full assessment can still explicitly record `old_gold_score: 0`.
+- **Triggered:** public evidence of growth and operational change, ranked with signal strength, decay, and fit. Public signals never alter TAM or Old Gold grades.
 
-**Pure TAM monitoring, no discovery.** The AE uploads his TAM as CSVs — the
-NetSuite export (the *claimable* universe + source of truth) plus ZoomInfo lists —
-into a silo/**list** model (`lists[]` on each company; additive re-uploads +
-deliberate prune; hard industry blocks enforced at import). The engine then
-monitors the whole base for trigger events and ranks them.
+TAL replacement uses exact NetSuite Internal IDs, rejects unresolved or ambiguous membership before writing, commits atomically, and verifies the result. Names and domains are context, not TAL identity keys.
 
-**Tabs:** 🔥 **Triggered** (live events, ranked by decayed trigger strength ×
-fit × multi-signal/QuickBooks/PE bonuses) · 🪙 **Old Gold** (mines the NetSuite
-qualification notes + lead records for revival timing — "has their stated future
-arrived?") · **TAM Base** (the full server-paged base with tag/claimable/ERP
-filters) · ★ **Starred** · **Export History**. Exports: full CSV or the NetSuite
-saved-search SQL formula (copy-paste only — Stanley never calls a NetSuite API).
+## Runtime and infrastructure
 
-### Signal roster (all verified against this base; failures were killed)
+Next.js 15 App Router, React 19, TypeScript, and Tailwind run on Vercel. Supabase Postgres stores business state, trigger evidence, tasks, and audit records; database service credentials remain server-only. Anthropic powers classification and conversational tools. Models are configurable; different components have different code defaults.
 
-| Signal | Source | Cadence |
-|---|---|---|
-| News events (funding / acquirer-M&A / new entity / expansion) | Google News per company; regex prefilter + **Opus 4.8 verifier** on claimable (budget-gated, ≤$10/wk) | daily |
-| Finance-leader hire announced | targeted Google News (CFO/Controller/VP Finance) | daily |
-| Finance role posted (own careers page; staffing client-boards filtered out) | website watch | daily rotation |
-| Website growth phrases + newsroom/blog RSS | company site diffing | daily rotation |
-| Parent-company detection (auto-dismiss high-confidence subsidiaries; toggle) | company site | daily rotation |
-| Fleet + driver growth (transportation) | FMCSA census snapshots | daily |
-| New subsidiary/entity + UCC-1 financing (CO pilot) | CO Secretary of State open data | daily |
-| SBA 7(a)/504 growth loans (all states) | SBA FOIA files → `scripts/ingest_sba.py` | quarterly |
-| Headcount growth % + crossed-50-employees (ACA ALE threshold) | DOL Form 5500 (SF + full) → `scripts/refresh_headcount.sh` | monthly |
-| TAL (claimed-accounts) news → 🔔 in-app alerts | Google News, highest priority | daily |
+`vercel.json` invokes `/api/cron/daily` **hourly**, despite its historical name. Each invocation runs one five-request stage from an 80-request manifest, giving a 16-stage rotation. Prime-award checks and candidate review appear in every stage. Data foundation imports are separate jobs. Coverage targets are plans, not guarantees that a provider succeeded.
 
-Reliability: one consolidated Vercel cron (16:00 UTC) fans out ~75 isolated
-waves; every sweep is time-boxed and stamps progress incrementally (a timeout
-never loses work); a daily recompute drops decayed "ghost" leads and rescues
-"zombie" ones; exported leads **resurface automatically** when a genuinely new
-trigger lands >14 days after export (dismissed never does).
+Production source is **GitHub `armansra-hub/stanley`, branch `main`**, through the existing Vercel Git integration. The source guard, platform permissions, and exact post-deploy source readback are the release controls. Do not deploy a local directory or prebuilt upload to production.
 
-### Hard rules
-- **Never fabricate a signal** — every trigger/signal row carries a real `source_url`.
-- **NetSuite export = source of truth**; it overrides firmographics on merge.
-- **Blocked**: accounting/tax, law/legal, pure 3PLs, call centers, government entities.
-- **Growth-positive only**: layoffs and office *moves* are excluded; getting
-  *acquired* is not a signal (only *acquiring* is).
-- No auto-actions on signals (no Missions creation, no email — in-app only).
-- Company-level only; no contact reveal. Budget ≤$10/week.
+## Local development
 
-## Missions — tasks + calendar agent
-
-Day / Week / Month views over the AE's tasks, reminders, and his **Outlook
-calendar** (read-only via a published ICS feed, synced every 15 min by pg_cron).
-The **Stanley agent** (Opus 4.8, `lib/missions/agent.ts`) does the work
-conversationally — by text or voice:
-
-- **Read tools** (list missions, find free slots) run freely; **write tools**
-  (create / complete / reschedule / snooze / edit / plan-day / cadences) apply
-  immediately; only *delete* asks for confirmation.
-- Created tasks **auto-place into the earliest free slot** clear of Outlook busy
-  time and other tasks; reminders keep their exact time. "Organize my day"
-  re-flows the whole day non-overlapping around meetings. All scheduling is
-  timezone-correct (`APP_TIMEZONE`).
-- Missions is deliberately **siloed from Headhunter** — a task is a task; the
-  agent only links to a company when explicitly asked. Nothing in Headhunter
-  ever auto-creates a Mission.
-- Every agent turn is logged to `stanley_logs` for debugging (not shown in UI).
-
-## Kill List — manual pipeline Kanban
-
-The opposite philosophy of Headhunter: **the AE (or the chatbot, on his words)
-types everything — Stanley never discovers, enriches, or invents data here.**
-
-- Drag cards across user-editable stage columns (seeded: Hot Leads → Post Intro
-  → Opportunities → Nurture; no Won/Lost).
-- Card drawer: what-they-do description, **append-only activity log** (auto
-  system notes on stage moves + task completions), tasks, NetSuite-record URL.
-- **Task ↔ Missions bridge:** a dated task on a lead becomes a real Mission
-  (deterministic, no LLM) — either a pinned reminder or a time block that
-  auto-fits around meetings; reschedule/dismiss/delete syncs both ways.
-- **Log-a-call voice macro:** dictate a call debrief; Opus turns it into one
-  clean note plus any dated follow-up tasks.
-- Card search + overdue filter.
-
-## Quick start (fork & run)
-
-Prereqs: **Node ≥ 20**, a free **Supabase** project, an **Anthropic** API key.
+Use Node.js 20 or later and npm. The committed `package-lock.json` is the dependency lockfile.
 
 ```bash
-npm install
-cp .env.example .env.local      # fill in values (comments in the file)
+npm ci
+cp .env.example .env.local
+# Configure your own development Supabase project and credentials.
+# Apply the reviewed migration set described in docs/SETUP.md.
+npm run dev
 ```
 
-Apply every SQL file in `supabase/migrations/` in exact full-basename order,
-through `0051_agent_bridge_rls.sql`. Record and compare the full filename in
-`schema_migrations`; numeric prefixes alone are unsafe because both `0034` and
-`0038` have two distinct migrations. Production releases must stop if the live
-ledger, catalog readback, or PostgREST schema-cache checks do not match the
-reviewed migration set.
+PowerShell users can use `Copy-Item .env.example .env.local` instead of `cp`.
 
 ```bash
-npm run dev                     # http://localhost:3000
-npm test                        # vitest — 427 passing, 1 skipped at the 2026-08-11 release gate
+npm test
+npx tsc --noEmit
+npm run check:production-source
 ```
 
-Deploying (Vercel): production has one source — GitHub
-`armansra-hub/stanley`, branch `main`, through the linked Git integration. Push
-`main`; never upload a local directory or prebuilt output to production. Set the
-Production-only `STANLEY_PRODUCTION_SOURCE_POLICY=github-main-only-v1`. The
-prebuild source check is defense in depth; Vercel permissions plus exact
-post-deploy `src=git`/repository/branch/commit readback are the release authority.
-The denylist-only `.vercelignore` excludes secrets and build junk without omitting
-the Git-sourced application. The committed `public/art/` files therefore ship with
-the same reviewed source as the app. Copy the env vars from `.env.example`, set
-`APP_PASSWORD` + `APP_SESSION_TOKEN` for the login gate, and the cron in
-`vercel.json` drives monitoring.
+`npm run build` generates art and builds the application. A complete production release also requires migration and deployed-source verification.
 
-Data lands via the UI: **+ Base CSV** (vendor picker + list name) for TAM
-uploads, **+ TAL CSV** for the claimed-accounts sync. The NetSuite export's
-`Qualification Note` + `Last BDR SQL Date` columns feed Old Gold.
+## Repository map
 
-### Offline data scripts (`scripts/`)
+| Directory | Contents |
+|---|---|
+| `app/`, `components/` | Pages, UI, and server route handlers |
+| `lib/` | Domain logic, database access, ingestion, agent tools, and tests |
+| `config/` | Territory, sources, signals, and dated baseline receipts |
+| `supabase/migrations/` | Ordered SQL schema and transactional guards |
+| `scripts/`, `tools/` | Application foundation, evidence registration, and verification utilities |
+| `operations/` | Local workflow specification and reviewed source snapshots; not hosted automation |
+| `docs/` | Architecture, setup, reconciliation, and signal quarantine runbook |
+| `public/art/` | Versioned assets shipped with Git-sourced builds |
 
-| Script | What | Re-run |
-|---|---|---|
-| `refresh_headcount.sh [years…]` | DOL 5500 download + both ingests (headcount % merge-max + ACA-50 triggers) | monthly |
-| `ingest_sba.py` | SBA 7(a)/504 loan triggers (name+state matched) | quarterly |
-| `ingest_dol5500.py` / `_full.py` | the two 5500 ingests (called by the refresh script) | — |
-| `backfillInternalId.ts` | re-run a NetSuite CSV to backfill internal IDs | as needed |
-
-All are deduped and safe to re-run; they read creds from `.env.local` and call
-the deployed `/api/cron/recompute` so new triggers rank immediately.
-
-## Stack & thesis
-
-Next.js (App Router) + TypeScript + Tailwind · Supabase Postgres (service-role,
-server-only) · Anthropic SDK (**Opus 4.8**: news verifier, Old Gold analysis,
-chat) · Web Speech API voice · Vercel (single daily cron; every sweep its own
-60s function).
-
-**The thesis:** NetSuite wins when operational/financial complexity outgrows
-QuickBooks — multi-entity, multi-location, project costing, rev-rec,
-audit/compliance. Every signal is a proxy for a complexity spike; every kill
-(ATS 0/60, federal contracts 0/150, H-1B 0.6%, USPTO, FCC ~3%)
-was an empirical dry-match against this specific small-private-company base.
-Form D is separately retired because name-only issuer matching cannot safely
-distinguish same-named entities; it may return only with a second stable issuer
-identifier or location. The older name-only USAspending writer is also retired:
-federal-award signals now come only from verified government-entity bindings in
-the public-growth path, and legacy `gov_contract` rows are hidden/quarantined.
-Show-me-the-match-rate before building is the house rule.
+This repository is public. Credentials, CRM exports, contact lists, mailbox threads, browser sessions, PDF evidence, live ledgers, and access grants remain outside it. Cloning the code does not grant access to the existing app, database, accounts, or customer records.
