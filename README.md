@@ -4,6 +4,8 @@ Stanley is a single-user prospecting and workflow assistant for a NetSuite accou
 
 **Sharing this with a colleague?** Start with the [architecture and logic guide](docs/ARCHITECTURE.md), then [setup and infrastructure](docs/SETUP.md) and the [local workflow guide](operations/README.md).
 
+**Explore the broader work library:** [Codex Automations](codex-automations/README.md) catalogs the systems, skills, dashboards, research tools, deal-memory workflows, and historical experiments found across 12 local Codex projects. Reviewed September 11, 2026, with explicit status, evidence, infrastructure, schedules, and coverage limits.
+
 This documentation was reconciled with GitHub `main` and the local Stanley workspace on **2026-09-09**. See the [reconciliation report](docs/SOURCE_RECONCILIATION.md) for scope and provenance. Repository configuration describes intended behavior; live database counts, configured models, scheduler status, and deployment state require authenticated readback.
 
 ## What Stanley does
@@ -67,6 +69,7 @@ npm run check:production-source
 | `scripts/`, `tools/` | Application foundation, evidence registration, and verification utilities |
 | `operations/` | Local workflow specification and reviewed source snapshots; not hosted automation |
 | `docs/` | Architecture, setup, reconciliation, and signal quarantine runbook |
+| `codex-automations/` | Cross-project automation and work-product catalog, schedules, evidence, and coverage |
 | `public/art/` | Versioned assets shipped with Git-sourced builds |
 
 This repository is public. Credentials, CRM exports, contact lists, mailbox threads, browser sessions, PDF evidence, live ledgers, and access grants remain outside it. Cloning the code does not grant access to the existing app, database, accounts, or customer records.
