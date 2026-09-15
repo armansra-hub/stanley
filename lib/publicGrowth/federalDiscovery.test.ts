@@ -60,6 +60,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("bounded federal discovery", () => {
   it("enrolls an exact current identity and one award, without any history or signal writes", async () => {
     const start = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(start);
     const result = await discoverFederalCompany(ID);
     expect(result).toMatchObject({ status: "matched", verified: true, historyComplete: false, exhaustive: false,
       sourceRequests: 2, entityId: ENTITY, awardId: "stored-award", mayHaveWritten: true });
@@ -92,6 +93,19 @@ describe("bounded federal discovery", () => {
     mocks.search.mockResolvedValue({ results: [], page_metadata: { hasNext: false } });
     expect(await discoverFederalCompany(ID)).toMatchObject({ status: "no_candidate", exhaustive: false, historyComplete: false, sourceRequests: 1 });
     expect(mocks.detail).not.toHaveBeenCalled(); expect(writes).toEqual([]);
+  });
+  it("includes the requested sort field, as required by the observed USAspending400 response", async () => {
+    mocks.search.mockImplementation(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      // The actual provider rejects this request before searching when its sort
+      // field is omitted, even though all requested recipient fields are valid.
+      if (!body.fields.includes(body.sort)) throw new Error("400 Bad Request: Sort value 'Start Date' not found in requested fields");
+      expect(body.sort).toBe("Start Date");
+      return { results: [], page_metadata: { hasNext: false } };
+    });
+    expect(await discoverFederalCompany(ID)).toMatchObject({ status: "no_candidate", sourceRequests: 1 });
+    expect(mocks.search).toHaveBeenCalledTimes(1);
+    expect(writes).toEqual([]);
   });
   it.each(["truncated", "different recipients", "missing UEI"])("retains ambiguity for %s rather than selecting first identity", async (kind) => {
     const rows = kind === "different recipients" ? [sourceRow, { ...sourceRow, generated_internal_id: "A2", "Recipient UEI": "ZZZZZZZZZZZZ" }]

@@ -58,7 +58,7 @@ async function searchPage(name: string, deadlineMs: number) {
     method: "POST", redirect: "error", headers: { "content-type": "application/json" },
     body: JSON.stringify({ filters: { recipient_search_text: [name], award_type_codes: ["A", "B", "C", "D"],
       time_period: [{ start_date: "2007-10-01", end_date: new Date().toISOString().slice(0, 10) }] },
-    fields: ["Award ID", "Recipient Name", "Recipient UEI"], limit: 100, page: 1, sort: "Start Date", order: "desc" }),
+    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page: 1, sort: "Start Date", order: "desc" }),
   }, 20_000, 1, deadlineMs);
   if (!data || !Array.isArray(data.results) || data.results.length > 100 || typeof data.page_metadata?.hasNext !== "boolean") {
     fail("invalid_search_response");
