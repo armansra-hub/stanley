@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   begin: vi.fn(),
   beginRecovery: vi.fn(),
+  beginCompanyRecovery: vi.fn(),
+  inspectCompanyRecovery: vi.fn(),
   complete: vi.fn(),
   fail: vi.fn(),
   pending: vi.fn(),
@@ -39,6 +41,8 @@ vi.mock("@/lib/publicGrowth/sweepState", () => {
   return {
     beginPublicGrowthSweep: mocks.begin,
     beginPublicGrowthRecoverySweep: mocks.beginRecovery,
+    beginPublicGrowthCompanyRecoverySweep: mocks.beginCompanyRecovery,
+    inspectPublicGrowthCompanyRecovery: mocks.inspectCompanyRecovery,
     completePublicGrowthSweep: mocks.complete,
     failPublicGrowthSweep: mocks.fail,
     pendingPublicGrowthRetries: mocks.pending,
@@ -92,6 +96,10 @@ describe("public-growth managed sweep route", () => {
       offset: 50,
       cursor: { offset: 50, recoveryBaseOffset: 50 },
     });
+    mocks.beginCompanyRecovery.mockImplementation(async (source, companyId) => ({
+      ...lease, source: `${source}-company-${companyId}`,
+      cursor: { offset: 0, recoveryCompanyId: companyId, recoverySource: source },
+    }));
     mocks.complete.mockResolvedValue(10);
     mocks.fail.mockResolvedValue(true);
     mocks.pending.mockReturnValue([]);
@@ -158,7 +166,7 @@ describe("public-growth managed sweep route", () => {
     const response = await GET(request("source=usaspending&scope=verified&n=10"));
     expect(response.status).toBe(200);
     expect(mocks.begin).toHaveBeenCalledWith("usaspending", 10, null);
-    expect(mocks.usaspending).toHaveBeenCalledWith(6, 0, { scope: "verified", afterCompanyId: null });
+    expect(mocks.usaspending).toHaveBeenCalledWith(6, 0, { scope: "verified", afterCompanyId: null, deadlineMs: expect.any(Number) });
     expect(mocks.complete).toHaveBeenCalledWith(lease, expect.objectContaining({ checked: 10 }));
     expect(await response.json()).toEqual(expect.objectContaining({ nextCursor: 10 }));
   });
@@ -222,7 +230,7 @@ describe("public-growth managed sweep route", () => {
     });
     const response = await GET(request("source=usaspending&scope=verified&n=10"));
     expect(response.status).toBe(200);
-    expect(mocks.usaspending).toHaveBeenCalledWith(6, 0, { scope: "verified", afterCompanyId: null });
+    expect(mocks.usaspending).toHaveBeenCalledWith(6, 0, { scope: "verified", afterCompanyId: null, deadlineMs: expect.any(Number) });
     expect(mocks.usaspendingCompany).toHaveBeenCalledTimes(1);
     expect(mocks.applyRetry).toHaveBeenCalledWith(
       lease.cursor,
@@ -328,6 +336,111 @@ describe("public-growth managed sweep route", () => {
     ));
     expect(response.status).toBe(401);
     expect(mocks.begin).not.toHaveBeenCalled();
+  });
+
+  it("keeps subaward main coverage advancing when an exact retry remains queued", async () => {
+    const retryId = "11111111-1111-4111-8111-111111111112";
+    const nextId = "11111111-1111-4111-8111-111111111113";
+    const retryEntry = { companyId: retryId, failureAttempts: 1 };
+    const subawardLease = { ...lease, source: "usaspending-subawards", cursor: { retryQueue: [retryEntry], retryServedLast: false } };
+    mocks.begin.mockResolvedValueOnce(subawardLease);
+    mocks.pending.mockReturnValueOnce([retryEntry]);
+    mocks.shouldRetry.mockReturnValueOnce(true);
+    mocks.loadExact.mockResolvedValueOnce([{ id: retryId, name: "Retry Co" }]);
+    mocks.subawardsCompany.mockResolvedValueOnce({ companyId: retryId, status: "error", triggers: 0, stored: 2 });
+    mocks.applyRetry.mockReturnValueOnce({
+      cursorPatch: { retryQueue: [{ ...retryEntry, failureAttempts: 2 }], deadLetters: [], retryServedLast: true },
+      deadLettered: [], errors: 1,
+    });
+    mocks.subawards.mockResolvedValueOnce({
+      source: "usaspending-subawards", offset: 0, checked: 125, nextOffset: 125, done: false,
+      matched: 123, errors: 0, stored: 3, triggers: 1, receipts: [],
+      advanceCursor: false, cursorPatch: { afterCompanyId: nextId },
+    });
+    mocks.queueMain.mockImplementationOnce((cursor) => ({ cursorPatch: cursor, queued: 0, continuations: 0 }));
+    const response = await GET(request("source=usaspending-subawards&scope=verified&n=125"));
+    expect(response.status).toBe(200);
+    expect(mocks.pending).toHaveBeenCalledWith(subawardLease.cursor, 10);
+    expect(mocks.subawards).toHaveBeenCalledWith(125, 0, "verified", null, { deadlineMs: expect.any(Number) });
+    expect(mocks.complete).toHaveBeenCalledWith(subawardLease, expect.objectContaining({
+      mode: "main+retry", mainChecked: 125, retryChecked: 1, checked: 126, stored: 5,
+      cursorPatch: expect.objectContaining({ afterCompanyId: nextId, retryQueue: [{ ...retryEntry, failureAttempts: 2 }] }),
+    }));
+  });
+
+  it("allows a 4,000-row revenue page but clamps larger requested budgets", async () => {
+    mocks.revenue.mockResolvedValue({ source: "revenue", offset: 0, checked: 4000, nextOffset: 4000, done: false, observed: 4000, triggers: 0 });
+    const response = await GET(request("source=revenue&limit=9000"));
+    expect(response.status).toBe(200);
+    expect(mocks.begin).toHaveBeenCalledWith("revenue", 4000, null);
+    expect(mocks.revenue).toHaveBeenCalledWith(4000, 0);
+  });
+
+  it("checkpoints only the attempted retry prefix when its time budget expires", async () => {
+    const ids = ["11111111-1111-4111-8111-111111111112", "11111111-1111-4111-8111-111111111113"];
+    const entries = ids.map((companyId) => ({ companyId, failureAttempts: 1 }));
+    const clock = vi.spyOn(Date, "now").mockReturnValue(0);
+    try {
+      mocks.pending.mockReturnValueOnce(entries);
+      mocks.loadExact.mockResolvedValueOnce(ids.map((id) => ({ id, name: id })));
+      mocks.subawardsCompany.mockImplementationOnce(async () => {
+        clock.mockReturnValue(61_000);
+        return { companyId: ids[0], status: "linked", subawardDone: true, triggers: 0, stored: 0 };
+      });
+      mocks.applyRetry.mockReturnValueOnce({ cursorPatch: { retryQueue: [entries[1]], deadLetters: [] }, deadLettered: [], errors: 0 });
+      mocks.queueMain.mockImplementationOnce((cursor) => ({ cursorPatch: cursor, queued: 0, continuations: 0 }));
+      mocks.subawards.mockResolvedValueOnce({ source: "usaspending-subawards", checked: 125, matched: 125, errors: 0, triggers: 0, stored: 0, receipts: [] });
+      const response = await GET(request("source=usaspending-subawards&scope=verified&n=125"));
+      expect(response.status).toBe(200);
+      expect(mocks.subawardsCompany).toHaveBeenCalledTimes(1);
+      expect(mocks.applyRetry).toHaveBeenCalledWith(expect.anything(), [entries[0]], [expect.objectContaining({ companyId: ids[0] })]);
+      expect(mocks.subawards).toHaveBeenCalledWith(125, 0, "verified", null, { deadlineMs: 240_000 });
+      expect(await response.json()).toEqual(expect.objectContaining({ mainChecked: 125, retryChecked: 1, retryRemaining: 1 }));
+    } finally { clock.mockRestore(); }
+  });
+
+  it("starts an exact current company foundation without touching historical offset recovery", async () => {
+    const companyId = "11111111-1111-4111-8111-111111111112";
+    const company = { id: companyId, name: "New TAM Co" };
+    mocks.loadExact.mockResolvedValueOnce([company]);
+    mocks.usaspendingCompany.mockResolvedValueOnce({ companyId, status: "no_awards", awards: 0, transactions: 0, triggers: 0, awardDone: true });
+    const response = await GET(request(`source=usaspending&companyId=${companyId}`));
+    expect(response.status).toBe(200);
+    expect(mocks.beginCompanyRecovery).toHaveBeenCalledWith("usaspending", companyId);
+    expect(mocks.beginRecovery).not.toHaveBeenCalled();
+    expect(mocks.usaspending).not.toHaveBeenCalled();
+    expect(mocks.usaspendingCompany).toHaveBeenCalledWith(company, { deadlineMs: expect.any(Number) }, 3);
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({
+      source: `usaspending-company-${companyId}`,
+      cursor: expect.objectContaining({ recoveryCompanyId: companyId }),
+    }), expect.objectContaining({ recoveryComplete: true, checked: 1, advanceCursor: false }));
+  });
+
+  it("rejects removed exact foundation companies before acquiring or trusting completion state", async () => {
+    const response = await GET(request("source=usaspending&companyId=11111111-1111-4111-8111-111111111112"));
+    expect(response.status).toBe(404);
+    expect(mocks.beginCompanyRecovery).not.toHaveBeenCalled();
+    expect(mocks.usaspendingCompany).not.toHaveBeenCalled();
+  });
+
+  it("does not allow an exact company foundation to mix numeric offsets or multi-company batches", async () => {
+    for (const extra of ["offset=0", "n=2", "scope=verified"]) {
+      const response = await GET(request(`source=usaspending&companyId=11111111-1111-4111-8111-111111111112&${extra}`));
+      expect(response.status).toBe(400);
+    }
+    expect(mocks.loadExact).not.toHaveBeenCalled();
+    expect(mocks.beginCompanyRecovery).not.toHaveBeenCalled();
+  });
+
+  it("reads uncertain exact foundation state without a lease or source invocation", async () => {
+    const companyId = "11111111-1111-4111-8111-111111111112";
+    mocks.loadExact.mockResolvedValueOnce([{ id: companyId, name: "New TAM Co" }]);
+    mocks.inspectCompanyRecovery.mockResolvedValueOnce({ readOnly: true, found: true, recoveryComplete: true, companyId });
+    const response = await GET(request(`source=usaspending&companyId=${companyId}&inspect=1`));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(expect.objectContaining({ readOnly: true, recoveryComplete: true }));
+    expect(mocks.beginCompanyRecovery).not.toHaveBeenCalled();
+    expect(mocks.usaspendingCompany).not.toHaveBeenCalled();
   });
 
   it("does not return raw sweep exception details", async () => {

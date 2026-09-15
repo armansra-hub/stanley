@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html.parser import HTMLParser
+from foundation_app_http import open_app_request
 
 STATE_VERSION = 1
 LEGAL_SUFFIX = re.compile(r"\b(the|and|co|company|corp|corporation|inc|incorporated|llc|ltd|limited|lp|llp|pllc|pc|group|holdings?)\b")
@@ -47,7 +48,7 @@ def request_json(url: str, secret: str, body=None):
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
     req = urllib.request.Request(url, data=data, headers={"x-cron-secret": secret, "content-type": "application/json", "user-agent": "Stanley-Inc5000-Foundation/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=240) as response: return json.load(response)
+        with open_app_request(req, timeout=240) as response: return json.load(response)
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"{error.code} {error.read().decode('utf-8', 'replace')[:1000]}") from error
 
@@ -133,6 +134,15 @@ def sha256(path: str) -> str:
     return digest.hexdigest()
 
 
+def pending_profile_urls(candidate_rows, cached, refresh_failed=False):
+    """Retry failed evidence only when requested; preserve successful cache rows."""
+    return list(dict.fromkeys(
+        row["inc_profile_url"] for row in candidate_rows
+        if row["inc_profile_url"] not in cached
+        or (refresh_failed and not cached[row["inc_profile_url"]].get("ok"))
+    ))
+
+
 def main():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     parser = argparse.ArgumentParser()
@@ -142,6 +152,7 @@ def main():
     parser.add_argument("--state-dir", default=os.path.join(root, ".foundation-run", "inc5000-2026"))
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--refresh-failed-profiles", action="store_true", help="retry failed cached profile reads once in this run; successful evidence is retained")
     args = parser.parse_args()
     if not args.secret: raise SystemExit("CRON_SECRET is required")
     os.makedirs(args.state_dir, exist_ok=True)
@@ -167,7 +178,7 @@ def main():
         cache_path = os.path.join(args.state_dir, "profiles.sqlite")
         db = sqlite3.connect(cache_path); db.execute("create table if not exists profiles(url text primary key, payload text not null, fetched_at text not null)")
         cached = {url: json.loads(payload) for url, payload in db.execute("select url,payload from profiles")}
-        pending = [row["inc_profile_url"] for row in candidate_rows if row["inc_profile_url"] not in cached]
+        pending = pending_profile_urls(candidate_rows, cached, args.refresh_failed_profiles)
         write_lock = threading.Lock()
         with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 12))) as pool:
             futures = {pool.submit(fetch_profile, url): url for url in pending}

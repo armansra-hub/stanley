@@ -14,6 +14,11 @@ export interface PublicGrowthSweepLease {
 
 export interface PublicGrowthSweepResult {
   checked: number;
+  mainChecked?: number;
+  retryChecked?: number;
+  stored?: number;
+  historiesCompleted?: number;
+  historiesIncomplete?: number;
   nextOffset?: number;
   done?: boolean;
   triggers?: number;
@@ -25,7 +30,7 @@ export interface PublicGrowthSweepResult {
   advanceCursor?: boolean;
   /** Fenced JSON fields merged into the source cursor by the completion RPC. */
   cursorPatch?: Record<string, unknown>;
-  mode?: "main" | "retry";
+  mode?: "main" | "retry" | "main+retry";
   retryQueued?: number;
   retryRemaining?: number;
   retryDeadLettered?: string[];
@@ -105,6 +110,18 @@ export interface PublicGrowthAwardContinuation {
   seenTransactionIds: string[];
 }
 
+export interface PublicGrowthSubawardContinuation {
+  version: 1;
+  companyId: string;
+  entityId: string;
+  names: string[];
+  nameIndex: number;
+  searchEndDate: string;
+  searchPage: number;
+  searchPassFoundNew: boolean;
+  seenSubawardIds: string[];
+}
+
 export interface PublicGrowthRetryEntry {
   companyId: string;
   failureAttempts: number;
@@ -114,6 +131,7 @@ export interface PublicGrowthRetryEntry {
   lastError: string | null;
   /** Exact frozen-search and per-award transaction checkpoint. */
   awardContinuation: PublicGrowthAwardContinuation | null;
+  subawardContinuation?: PublicGrowthSubawardContinuation;
 }
 
 export interface PublicGrowthDeadLetter {
@@ -126,6 +144,7 @@ export interface PublicGrowthDeadLetter {
   resolvedAt: string | null;
   occurrences: number;
   awardContinuation: PublicGrowthAwardContinuation | null;
+  subawardContinuation?: PublicGrowthSubawardContinuation;
 }
 
 export interface PublicGrowthRetryState extends Record<string, unknown> {
@@ -140,6 +159,8 @@ export interface PublicGrowthCompanyOutcome {
   error?: string;
   awardContinuation?: PublicGrowthAwardContinuation;
   awardDone?: boolean;
+  subawardContinuation?: PublicGrowthSubawardContinuation;
+  subawardDone?: boolean;
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -225,6 +246,43 @@ function optionalAwardContinuation(value: unknown, label: string): PublicGrowthA
   };
 }
 
+export function parsePublicGrowthSubawardContinuation(value: unknown, label = "subawardContinuation"): PublicGrowthSubawardContinuation {
+  const row = objectRecord(value);
+  if (!row || row.version !== 1) throw new Error(`${label} must be a version 1 continuation`);
+  const names = uniqueStringArray(row.names, `${label}.names`);
+  if (!names.length || names.length > 32) throw new Error(`${label}.names must contain 1-32 verified names`);
+  const nameIndex = Number(row.nameIndex);
+  if (!Number.isInteger(nameIndex) || nameIndex < 0 || nameIndex > names.length) throw new Error(`${label}.nameIndex is outside the frozen names`);
+  const searchEndDate = boundedString(row.searchEndDate, `${label}.searchEndDate`, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(searchEndDate) || !Number.isFinite(Date.parse(`${searchEndDate}T00:00:00.000Z`))) throw new Error(`${label}.searchEndDate must be an ISO date`);
+  if (typeof row.searchPassFoundNew !== "boolean") throw new Error(`${label}.searchPassFoundNew must be boolean`);
+  return {
+    version: 1,
+    companyId: exactCompanyId(row.companyId, `${label}.companyId`),
+    entityId: exactCompanyId(row.entityId, `${label}.entityId`),
+    names, nameIndex, searchEndDate,
+    searchPage: positiveInteger(row.searchPage, `${label}.searchPage`),
+    searchPassFoundNew: row.searchPassFoundNew,
+    seenSubawardIds: uniqueStringArray(row.seenSubawardIds, `${label}.seenSubawardIds`),
+  };
+}
+
+function subawardContinuationField(row: { companyId: unknown; subawardContinuation?: unknown }, label: string) {
+  if (row.subawardContinuation == null) return {};
+  const continuation = parsePublicGrowthSubawardContinuation(row.subawardContinuation, `${label}.subawardContinuation`);
+  if (continuation.companyId !== row.companyId) throw new Error(`${label} continuation belongs to another company`);
+  return { subawardContinuation: continuation };
+}
+
+function hasPendingHistory(row: PublicGrowthCompanyOutcome): boolean {
+  return row.awardDone === false || row.subawardDone === false;
+}
+
+function requireHistoryContinuation(row: PublicGrowthCompanyOutcome) {
+  if (row.awardDone === false && row.awardContinuation === undefined) throw new Error(`partial award receipt lacks a durable continuation for ${row.companyId}`);
+  if (row.subawardDone === false && row.subawardContinuation === undefined) throw new Error(`partial subaward receipt lacks a durable continuation for ${row.companyId}`);
+}
+
 function parseRetryEntry(value: unknown, label: string): PublicGrowthRetryEntry {
   const row = objectRecord(value);
   if (!row) throw new Error(`${label} must be an object`);
@@ -245,6 +303,7 @@ function parseRetryEntry(value: unknown, label: string): PublicGrowthRetryEntry 
     firstFailedAt,
     lastError,
     awardContinuation: optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) ?? null,
+    ...subawardContinuationField(row as { companyId: unknown; subawardContinuation?: unknown }, label),
   };
 }
 
@@ -269,6 +328,7 @@ function parseDeadLetter(value: unknown, label: string): PublicGrowthDeadLetter 
     resolvedAt: row.resolvedAt == null ? null : exactTimestamp(row.resolvedAt, `${label}.resolvedAt`),
     occurrences,
     awardContinuation: optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) ?? null,
+    ...subawardContinuationField(row as { companyId: unknown; subawardContinuation?: unknown }, label),
   };
 }
 
@@ -319,11 +379,15 @@ function normalizedOutcome(row: PublicGrowthCompanyOutcome, label: string): Publ
   if (row.awardDone !== undefined && typeof row.awardDone !== "boolean") {
     throw new Error(`${label}.awardDone must be boolean when present`);
   }
+  if (row.subawardDone !== undefined && typeof row.subawardDone !== "boolean") throw new Error(`${label}.subawardDone must be boolean when present`);
+  if (row.awardContinuation != null && row.subawardContinuation != null) throw new Error(`${label} cannot mix prime and subaward continuations`);
   return {
     companyId,
     status,
     ...(status === "error" ? { error: exactFailure(row.error, `${label}.error`) } : {}),
     ...(row.awardDone !== undefined ? { awardDone: row.awardDone } : {}),
+    ...(row.subawardDone !== undefined ? { subawardDone: row.subawardDone } : {}),
+    ...subawardContinuationField(row, label),
     ...(optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) !== undefined
       ? { awardContinuation: optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) }
       : {}),
@@ -375,12 +439,13 @@ export function queuePublicGrowthMainFailures(
         firstFailedAt: timestamp,
         lastError: row.error as string,
         awardContinuation: row.awardContinuation ?? null,
+        ...subawardContinuationField(row, "main failure"),
       });
       queued++;
       continue;
     }
-    if (row.status !== "error" && row.awardDone === false) {
-      if (row.awardContinuation === undefined) throw new Error(`partial award receipt lacks a durable continuation for ${row.companyId}`);
+    if (row.status !== "error" && hasPendingHistory(row)) {
+      requireHistoryContinuation(row);
       if (existingIndex >= 0) continue;
       retryQueue.push({
         companyId: row.companyId,
@@ -389,7 +454,8 @@ export function queuePublicGrowthMainFailures(
         lastAttemptedAt: timestamp,
         firstFailedAt: null,
         lastError: null,
-        awardContinuation: row.awardContinuation,
+        awardContinuation: row.awardContinuation ?? null,
+        ...subawardContinuationField(row, "main continuation"),
       });
       queued++;
       continuations++;
@@ -397,7 +463,7 @@ export function queuePublicGrowthMainFailures(
   }
   const deadLetters = state.deadLetters.map((row) => ({ ...row }));
   for (const row of normalized) {
-    if (row.status !== "error" && row.awardDone !== false) {
+    if (row.status !== "error" && !hasPendingHistory(row)) {
       const existingIndex = retryQueue.findIndex((entry) => entry.companyId === row.companyId);
       if (existingIndex >= 0) retryQueue.splice(existingIndex, 1);
       resolveDeadLetter(deadLetters, row.companyId, timestamp);
@@ -436,7 +502,8 @@ export function applyPublicGrowthRetryOutcomes(
         || current.lastAttemptedAt !== row.lastAttemptedAt
         || current.firstFailedAt !== row.firstFailedAt
         || current.lastError !== row.lastError
-        || JSON.stringify(current.awardContinuation) !== JSON.stringify(row.awardContinuation)) {
+        || JSON.stringify(current.awardContinuation) !== JSON.stringify(row.awardContinuation)
+        || JSON.stringify(current.subawardContinuation) !== JSON.stringify(row.subawardContinuation)) {
       throw new Error(`planned retry no longer matches durable state for ${row.companyId}`);
     }
   }
@@ -445,15 +512,16 @@ export function applyPublicGrowthRetryOutcomes(
   let errors = 0;
   for (const outcome of normalized) {
     const current = queueById.get(outcome.companyId) as PublicGrowthRetryEntry;
-    if (outcome.status !== "error" && outcome.awardDone === false) {
-      if (outcome.awardContinuation === undefined) throw new Error(`partial award retry lacks a durable continuation for ${outcome.companyId}`);
+    if (outcome.status !== "error" && hasPendingHistory(outcome)) {
+      requireHistoryContinuation(outcome);
       queueById.set(outcome.companyId, {
         ...current,
         failureAttempts: 0,
         lastAttemptedAt: timestamp,
         firstFailedAt: null,
         lastError: null,
-        awardContinuation: outcome.awardContinuation,
+        awardContinuation: outcome.awardContinuation ?? null,
+        ...subawardContinuationField(outcome, "retry continuation"),
       });
       continue;
     }
@@ -472,6 +540,7 @@ export function applyPublicGrowthRetryOutcomes(
         firstFailedAt: current.firstFailedAt ?? timestamp,
         lastError: outcome.error as string,
         awardContinuation: outcome.awardContinuation ?? current.awardContinuation,
+        ...subawardContinuationField({ companyId: outcome.companyId, subawardContinuation: outcome.subawardContinuation ?? current.subawardContinuation }, "retry failure"),
       });
       continue;
     }
@@ -488,6 +557,7 @@ export function applyPublicGrowthRetryOutcomes(
       resolvedAt: null,
       occurrences: (prior?.occurrences ?? 0) + 1,
       awardContinuation: outcome.awardContinuation ?? current.awardContinuation,
+      ...subawardContinuationField({ companyId: outcome.companyId, subawardContinuation: outcome.subawardContinuation ?? current.subawardContinuation }, "dead letter"),
     };
     if (priorIndex >= 0) deadLetters[priorIndex] = deadLetter;
     else deadLetters.push(deadLetter);
@@ -600,6 +670,67 @@ export async function beginPublicGrowthRecoverySweep(
   return lease;
 }
 
+/** Exact-ID foundations never reuse the historical numeric-offset state keys. */
+export async function beginPublicGrowthCompanyRecoverySweep(
+  source: "usaspending" | "usaspending-subawards",
+  companyId: string,
+): Promise<PublicGrowthSweepLease> {
+  const exactId = exactCompanyId(companyId, "recovery companyId").toLowerCase();
+  const stateSource = `${source}-company-${exactId}`;
+  const lease = await beginPublicGrowthSweep(stateSource, 1, null);
+  const marker = lease.cursor.recoveryCompanyId;
+  const retries = readPublicGrowthRetryState(lease.cursor);
+  if ((marker != null && marker !== exactId)
+      || (lease.cursor.recoverySource != null && lease.cursor.recoverySource !== source)
+      || retries.retryQueue.some((row) => row.companyId !== exactId)
+      || retries.deadLetters.some((row) => row.companyId !== exactId)
+      || (lease.cursor.recoveryComplete === true && (lease.cursor.recoveryBlocked === true || retries.retryQueue.length > 0 || retries.deadLetters.some((row) => row.resolvedAt == null)))
+      || (marker == null && (lease.offset !== 0 || lease.cursor.recoveryComplete != null
+        || lease.cursor.recoveryBlocked != null || retries.retryQueue.length > 0 || retries.deadLetters.length > 0))) {
+    await failPublicGrowthSweep(lease, new Error("exact recovery scope mismatch"));
+    throw new Error("exact public-growth recovery state belongs to another scope");
+  }
+  return { ...lease, cursor: { ...lease.cursor, recoveryCompanyId: exactId, recoverySource: source } };
+}
+
+/** Read uncertain exact work without acquiring a lease or starting another step. */
+export async function inspectPublicGrowthCompanyRecovery(
+  source: "usaspending" | "usaspending-subawards",
+  companyId: string,
+) {
+  const exactId = exactCompanyId(companyId, "inspection companyId").toLowerCase();
+  const stateSource = `${source}-company-${exactId}`;
+  const { data, error } = await serviceClient().from("public_growth_sweep_state")
+    .select("cursor,last_started_at,last_succeeded_at,last_receipt,lease_until")
+    .eq("source", stateSource).maybeSingle();
+  if (error) throw new Error("exact recovery state read failed");
+  if (!data) return { readOnly: true, found: false, companyId: exactId, recoveryStateKey: stateSource };
+  const cursor = objectRecord(data.cursor) ?? {};
+  const state = readPublicGrowthRetryState(cursor);
+  if ((cursor.recoveryCompanyId != null && cursor.recoveryCompanyId !== exactId)
+      || (cursor.recoverySource != null && cursor.recoverySource !== source)
+      || state.retryQueue.some((row) => row.companyId !== exactId)
+      || state.deadLetters.some((row) => row.companyId !== exactId)
+      || (cursor.recoveryComplete === true && (cursor.recoveryBlocked === true || state.retryQueue.length > 0 || state.deadLetters.some((row) => row.resolvedAt == null)))
+      || (cursor.recoveryCompanyId == null && (cursor.recoveryComplete != null || cursor.recoveryBlocked != null || state.retryQueue.length > 0 || state.deadLetters.length > 0))) {
+    throw new Error("exact recovery state scope mismatch");
+  }
+  const receipt = objectRecord(data.last_receipt) ?? {};
+  const safeReceipt = Object.fromEntries([
+    "checked", "mainChecked", "retryChecked", "stored", "done", "errors", "completedAt",
+    "retryQueued", "retryRemaining", "awardContinuationsQueued", "mode", "triggers", "matched", "historiesCompleted", "historiesIncomplete",
+  ].filter((key) => receipt[key] !== undefined).map((key) => [key, receipt[key]]));
+  return {
+    readOnly: true, found: true, companyId: exactId, recoveryStateKey: stateSource,
+    recoveryComplete: cursor.recoveryComplete === true,
+    recoveryBlocked: cursor.recoveryBlocked === true,
+    retryRemaining: state.retryQueue.length,
+    unresolvedDeadLetters: state.deadLetters.filter((row) => row.resolvedAt == null).length,
+    leaseUntil: data.lease_until, lastStartedAt: data.last_started_at,
+    lastSucceededAt: data.last_succeeded_at, receipt: safeReceipt,
+  };
+}
+
 export async function completePublicGrowthSweep(
   lease: PublicGrowthSweepLease,
   result: PublicGrowthSweepResult,
@@ -619,6 +750,10 @@ export async function completePublicGrowthSweep(
   const nextCursor = { ...lease.cursor, ...(result.cursorPatch ?? {}), offset: nextOffset };
   const receipt = {
     checked: result.checked,
+    mainChecked: result.mainChecked ?? (result.mode === "retry" ? 0 : result.checked),
+    retryChecked: result.retryChecked ?? (result.mode === "retry" ? result.checked : 0),
+    ...(result.stored !== undefined ? { stored: result.stored } : {}),
+    ...(result.historiesCompleted !== undefined ? { historiesCompleted: result.historiesCompleted, historiesIncomplete: result.historiesIncomplete ?? 0 } : {}),
     nextOffset,
     done: result.done === true,
     triggers: result.triggers ?? 0,

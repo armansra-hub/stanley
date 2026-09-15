@@ -8,6 +8,7 @@ safe because the server upserts observations and deduplicates derived triggers.
 """
 import argparse, csv, hashlib, json, os, re, time, urllib.error, urllib.request, zipfile
 from collections import defaultdict
+from foundation_app_http import open_app_request
 
 DATASET_PAGE = "https://www.dol.gov/agencies/ebsa/about-ebsa/our-activities/public-disclosure/foia/form-5500-datasets"
 NOISE = re.compile(r"\b(llc|inc|incorporated|corp|corporation|co|company|ltd|limited|lp|llp|plc|pllc|group|holdings|holding|the)\b")
@@ -35,7 +36,7 @@ def request_json(url, secret, payload=None, attempts=4):
     last = None
     for attempt in range(attempts):
         try:
-            with urllib.request.urlopen(req, timeout=120) as response:
+            with open_app_request(req, timeout=120) as response:
                 return json.load(response)
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as error:
             last = error

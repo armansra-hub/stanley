@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), stateRead: vi.fn() }));
 
 vi.mock("@/lib/supabase/server", () => ({
-  serviceClient: () => ({ rpc: mocks.rpc }),
+  serviceClient: () => ({ rpc: mocks.rpc, from: () => ({ select: () => ({ eq: () => ({ maybeSingle: mocks.stateRead }) }) }) }),
 }));
 
 import {
   applyPublicGrowthRetryOutcomes,
   beginPublicGrowthSweep,
   beginPublicGrowthRecoverySweep,
+  beginPublicGrowthCompanyRecoverySweep,
+  inspectPublicGrowthCompanyRecovery,
   collectPublicGrowthKeysetPages,
   completePublicGrowthSweep,
   failPublicGrowthSweep,
@@ -21,12 +23,18 @@ import {
   PublicGrowthSweepLeaseLostError,
   queuePublicGrowthMainFailures,
   readPublicGrowthRetryState,
+  parsePublicGrowthSubawardContinuation,
   stableIdPageDecision,
   shouldServicePublicGrowthRetry,
   takeRecurringBatch,
 } from "./sweepState";
 
 const token = "11111111-1111-4111-8111-111111111111";
+const subawardContinuation = () => ({
+  version: 1 as const, companyId: token, entityId: "11111111-1111-4111-8111-111111111119",
+  names: ["Example Company"], nameIndex: 0, searchEndDate: "2026-09-15",
+  searchPage: 1, searchPassFoundNew: false, seenSubawardIds: [],
+});
 const awardContinuation = (overrides: Record<string, unknown> = {}) => ({
   version: 1 as const,
   recipientName: "Example Company",
@@ -47,6 +55,7 @@ const awardContinuation = (overrides: Record<string, unknown> = {}) => ({
 describe("public-growth sweep lease", () => {
   beforeEach(() => {
     mocks.rpc.mockReset();
+    mocks.stateRead.mockReset();
   });
 
   it("atomically acquires the cursor and opaque fencing token", async () => {
@@ -118,6 +127,84 @@ describe("public-growth sweep lease", () => {
       token,
       leaseUntil: null,
     }, { checked: 250, nextOffset: 500 })).rejects.toBeInstanceOf(PublicGrowthSweepLeaseLostError);
+  });
+
+  it("persists separate fresh/retry counts and exhausted retries in the fenced receipt", async () => {
+    mocks.rpc.mockResolvedValue({ data: true, error: null });
+    await completePublicGrowthSweep({
+      source: "usaspending-subawards", offset: 0, batchSize: 125, managed: true,
+      cursor: { offset: 0 }, token, leaseUntil: null,
+    }, {
+      checked: 126, mainChecked: 125, retryChecked: 1, stored: 5,
+      mode: "main+retry", advanceCursor: false, retryDeadLettered: [token], errors: 1,
+      cursorPatch: { afterCompanyId: token },
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith("complete_public_growth_sweep_lease", expect.objectContaining({
+      p_receipt: expect.objectContaining({
+        checked: 126, mainChecked: 125, retryChecked: 1, stored: 5,
+        retryDeadLettered: [token], mode: "main+retry", errors: 1,
+      }),
+    }));
+  });
+
+  it("keys foundation recovery by source and exact company rather than a reused offset", async () => {
+    mocks.rpc.mockResolvedValue({ data: { acquired: true, lease_token: token, cursor: {} }, error: null });
+    const exact = await beginPublicGrowthCompanyRecoverySweep("usaspending", token);
+    expect(mocks.rpc).toHaveBeenCalledWith("acquire_public_growth_sweep_lease", expect.objectContaining({ p_source: `usaspending-company-${token}` }));
+    expect(exact.cursor).toEqual(expect.objectContaining({ recoveryCompanyId: token, recoverySource: "usaspending" }));
+    expect(exact.batchSize).toBe(1);
+    expect(mocks.rpc.mock.calls.some(([, params]) => String(params.p_source).includes("-recovery-"))).toBe(false);
+  });
+
+  it("fails closed and releases an exact recovery whose marker belongs to another company", async () => {
+    mocks.rpc.mockResolvedValueOnce({
+      data: { acquired: true, lease_token: token, cursor: { recoveryCompanyId: "11111111-1111-4111-8111-111111111112", recoveryComplete: true } }, error: null,
+    }).mockResolvedValueOnce({ data: true, error: null });
+    await expect(beginPublicGrowthCompanyRecoverySweep("usaspending", token)).rejects.toThrow("another scope");
+    expect(mocks.rpc).toHaveBeenLastCalledWith("fail_public_growth_sweep_lease", expect.objectContaining({ p_source: `usaspending-company-${token}` }));
+  });
+
+  it("keeps incomplete subaward history queued without counting continuation work as a failure", () => {
+    const initial = queuePublicGrowthMainFailures({}, [{ companyId: token, status: "linked", subawardDone: false, subawardContinuation: subawardContinuation() }], 0);
+    expect(initial.continuations).toBe(1);
+    expect(initial.cursorPatch.retryQueue[0].failureAttempts).toBe(0);
+    const next = { ...subawardContinuation(), searchPage: 2, seenSubawardIds: ["subaward-1"] };
+    const advanced = applyPublicGrowthRetryOutcomes(initial.cursorPatch, initial.cursorPatch.retryQueue, [{ companyId: token, status: "linked", subawardDone: false, subawardContinuation: next }]);
+    expect(advanced.cursorPatch.retryQueue[0].subawardContinuation).toEqual(next);
+    expect(advanced.errors).toBe(0);
+    expect(advanced.cursorPatch.retryQueue[0].failureAttempts).toBe(0);
+    const finished = applyPublicGrowthRetryOutcomes(advanced.cursorPatch, advanced.cursorPatch.retryQueue, [{ companyId: token, status: "linked", subawardDone: true }]);
+    expect(finished.cursorPatch.retryQueue).toEqual([]);
+  });
+
+  it("preserves the exact subaward checkpoint on provider failure and on dead-lettering", () => {
+    let state = queuePublicGrowthMainFailures({}, [{ companyId: token, status: "linked", subawardDone: false, subawardContinuation: subawardContinuation() }], 0).cursorPatch;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      state = applyPublicGrowthRetryOutcomes(state, state.retryQueue, [{ companyId: token, status: "error", error: "source unavailable" }]).cursorPatch;
+    }
+    expect(state.retryQueue).toEqual([]);
+    expect(state.deadLetters[0].subawardContinuation).toEqual(subawardContinuation());
+    expect(state.deadLetters[0].resolvedAt).toBeNull();
+  });
+
+  it("rejects missing, cross-company, and malformed subaward continuation state", () => {
+    expect(() => queuePublicGrowthMainFailures({}, [{ companyId: token, status: "linked", subawardDone: false }], 0)).toThrow("durable continuation");
+    expect(() => queuePublicGrowthMainFailures({}, [{ companyId: "11111111-1111-4111-8111-111111111112", status: "linked", subawardDone: false, subawardContinuation: subawardContinuation() }], 0)).toThrow("another company");
+    expect(() => parsePublicGrowthSubawardContinuation({ ...subawardContinuation(), nameIndex: 2 })).toThrow("outside");
+    expect(() => parsePublicGrowthSubawardContinuation({ ...subawardContinuation(), seenSubawardIds: ["same", "same"] })).toThrow("duplicates");
+  });
+
+  it("inspects committed exact state without writes or exposing internal errors/lease tokens", async () => {
+    mocks.stateRead.mockResolvedValue({ data: {
+      cursor: { recoveryCompanyId: token, recoverySource: "usaspending", recoveryComplete: true },
+      last_receipt: { checked: 1, mainChecked: 1, errors: 0, internalError: "private detail", lease_token: "do-not-return" },
+      lease_until: null, last_succeeded_at: "2026-09-15T05:00:00Z",
+    }, error: null });
+    const result = await inspectPublicGrowthCompanyRecovery("usaspending", token);
+    expect(result).toEqual(expect.objectContaining({ readOnly: true, recoveryComplete: true, retryRemaining: 0 }));
+    expect(JSON.stringify(result)).not.toContain("private detail");
+    expect(JSON.stringify(result)).not.toContain("do-not-return");
+    expect(mocks.rpc).not.toHaveBeenCalled();
   });
 
   it("records failures only for the matching token", async () => {

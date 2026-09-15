@@ -39,12 +39,14 @@ describe("daily cron plan", () => {
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
       .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
     // A 16-hour manifest repeats three times inside the promised 48-hour cycle.
-    expect(triggerCoverage * 3).toBeGreaterThanOrEqual(6950);
-    const eligibleCoverage = new Map([["/api/cron/fmcsa", 813], ["/api/cron/website", 6868], ["/api/cron/cosos", 365], ["/api/cron/ats", 6868]]);
+    // Preserve at least one whole missed wave's capacity at the refreshed TAM.
+    expect(triggerCoverage * 3 - 500).toBeGreaterThanOrEqual(7441);
+    const eligibleCoverage = new Map([["/api/cron/fmcsa", 889], ["/api/cron/website", 7441], ["/api/cron/cosos", 384], ["/api/cron/ats", 7441]]);
     for (const pathname of ["/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const coverage = pathsFor(paths, pathname)
         .reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
-      expect(coverage * 2).toBeGreaterThanOrEqual(eligibleCoverage.get(pathname)!);
+      const largestWave = Math.max(...pathsFor(paths, pathname).map((path) => Number(new URL(path, "https://local").searchParams.get("n"))));
+      expect(coverage * 3 - largestWave).toBeGreaterThanOrEqual(eligibleCoverage.get(pathname)!);
     }
     for (const pathname of ["/api/cron/triggers", "/api/cron/fmcsa", "/api/cron/website", "/api/cron/cosos", "/api/cron/ats"]) {
       const waves = pathsFor(paths, pathname);
@@ -62,6 +64,17 @@ describe("daily cron plan", () => {
     expect(paths.some((path) => path.includes("/form5500"))).toBe(false);
     expect(paths.some((path) => path.includes("/sam-extract"))).toBe(false);
     expect(paths.some((path) => path.includes("/sba-loans"))).toBe(false);
+  });
+
+  it("finishes the 7,441-row revenue cursor in two calls with one missed call in 48 hours", () => {
+    const paths = buildDailyWavePaths().map((path) => new URL(path, "https://local"));
+    const revenue = paths.filter((url) => url.searchParams.get("source") === "revenue");
+    expect(revenue).toHaveLength(1);
+    const limit = Number(revenue[0].searchParams.get("limit"));
+    // Revenue wraps only on the next invocation after its tail page. Sum-of-n
+    // arithmetic would overstate capacity if the page still capped at 3,500.
+    expect(Math.ceil(7441 / limit)).toBeLessThanOrEqual(revenue.length * 3 - 1);
+    expect(limit).toBeLessThanOrEqual(4000);
   });
 
   it("gives every recurring source a real 48-hour-or-faster cadence", () => {

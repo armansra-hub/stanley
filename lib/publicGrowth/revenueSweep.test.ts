@@ -108,4 +108,17 @@ describe("revenue TAM sweep", () => {
     expect(mocks.range).toHaveBeenCalledTimes(4);
     expect(result).toEqual(expect.objectContaining({ checked: 3500, nextOffset: 3500, done: false }));
   });
+
+  it("covers all 7,441 current companies in two bounded 4,000-row invocations", async () => {
+    mocks.range.mockImplementation(async (start: number, end: number) => ({
+      data: Array.from({ length: Math.max(0, Math.min(7441, end + 1) - start) }, (_, index) => ({
+        id: `company-${start + index}`, name: `Company ${start + index}`, revenue_band: null,
+      })), error: null,
+    }));
+    const first = await sweepRevenueTamBatch(4000, 0);
+    const second = await sweepRevenueTamBatch(4000, first.nextOffset);
+    expect(first).toEqual(expect.objectContaining({ checked: 4000, nextOffset: 4000, done: false }));
+    expect(second).toEqual(expect.objectContaining({ checked: 3441, nextOffset: 7441, done: true }));
+    expect(mocks.range.mock.calls.every(([start, end]) => end - start + 1 <= 1000)).toBe(true);
+  });
 });

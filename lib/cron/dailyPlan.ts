@@ -10,12 +10,18 @@ export const DAILY_STAGE_SIZE = 5;
  * usaspending-foundation-0.jsonl reported 244 matched checks,
  * usaspending-subawards-foundation-0.jsonl reported 222 matches, and
  * sam-extract-foundation.json reported 3,560 matched UEI-linked companies.
- * The rounded 250 USA baseline is deliberately conservative. One bounded request
+ * The rounded 250 USA baseline describes that historical measured scope. A TAM
+ * refresh must recount eligible identities after its foundation ingest.
  * Federal award detail is the slow exception: one recipient can fan out across
  * hundreds of awards and transaction pages. Prime-award history now receives
  * one bounded invocation in every hourly stage. Six verified recipients per
- * stage covers the conservative 250-recipient foundation population inside 48
- * hours. Subawards cover their verified population inside 24 hours. SAM entity
+ * stage covers that 250-recipient foundation population inside 48
+ * hours. Subawards allocate that baseline in two 16-hour invocations. Prime awards
+ * additionally service one retry; subawards service up to ten within a separate
+ * 60-second retry budget. Main pages continue within the remaining request budget.
+ * These are explicit eligible-set budgets, not full-TAM discovery or proof that
+ * every deep history completed; source receipts retain continuation debt.
+ * SAM entity
  * API lookups are not scheduled because they cannot succeed without a key; the
  * official monthly public extract remains the keyless high-volume source.
  *
@@ -47,7 +53,7 @@ export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
 const PUBLIC_GROWTH_PATHS = [
   PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending-subawards")!.path,
   "/api/cron/public-growth?source=sam-opportunities&days=31&limit=1000",
-  "/api/cron/public-growth?source=revenue&n=10&limit=3500",
+  "/api/cron/public-growth?source=revenue&n=10&limit=4000",
 ] as const;
 
 /**
@@ -75,7 +81,7 @@ export function isGetCompatibleDailyPath(path: string): boolean {
 
 /** Pure, deterministic manifest for the one Vercel daily cron. */
 export function buildDailyWavePaths(_dayIndex?: number): string[] {
-  const TRIGGER_WAVES = 7, TRIGGER_N = 400;
+  const TRIGGER_WAVES = 7, TRIGGER_N = 500;
   const FMCSA_WAVES = 4, FMCSA_N = 250;
   const SITE_WAVES = 15, SITE_N = 250;
   const SOS_WAVES = 1, SOS_N = 400;
@@ -85,8 +91,10 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
     "/api/cron/tal-news",
     ...Array.from({ length: TRIGGER_WAVES }, (_, k) => `/api/cron/triggers?n=${TRIGGER_N}&wave=${k}`),
     ...Array.from({ length: FMCSA_WAVES }, (_, k) => `/api/cron/fmcsa?n=${FMCSA_N}&wave=${k}`),
-    // All broad company-scoped sources reserve at least 3,500 current-TAM rows
-    // per day, putting the 6,950-company TAM inside a 48-hour planned cycle.
+    // The 16-hour manifest repeats three times in 48 hours. News plans 10,500
+    // checks and website/ATS each plan 11,250, leaving missed-wave margin above
+    // the current 7,441-company TAM. Actual completed checks remain bounded by
+    // each worker's time budget and must be read from its receipts.
     ...Array.from({ length: SITE_WAVES }, (_, k) => `/api/cron/website?n=${SITE_N}&wave=${k}`),
     ...Array.from({ length: SOS_WAVES }, (_, k) => `/api/cron/cosos?n=${SOS_N}&wave=${k}`),
     ...Array.from({ length: ATS_WAVES }, (_, k) => `/api/cron/ats?n=${ATS_N}&wave=${k}`),

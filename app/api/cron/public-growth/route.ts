@@ -12,10 +12,12 @@ import { sweepRevenueTamBatch } from "@/lib/publicGrowth/revenueSweep";
 import { sweepSamOpportunities } from "@/lib/publicGrowth/opportunitySweep";
 import {
   applyPublicGrowthRetryOutcomes,
+  beginPublicGrowthCompanyRecoverySweep,
   beginPublicGrowthRecoverySweep,
   beginPublicGrowthSweep,
   completePublicGrowthSweep,
   failPublicGrowthSweep,
+  inspectPublicGrowthCompanyRecovery,
   pendingPublicGrowthRetries,
   publicGrowthAfterCompanyId,
   PublicGrowthSweepBusyError,
@@ -27,6 +29,7 @@ import {
   type PublicGrowthSweepLease,
   type PublicGrowthSweepResult,
 } from "@/lib/publicGrowth/sweepState";
+import type { TamIdentity } from "@/lib/publicGrowth/types";
 
 export const dynamic = "force-dynamic";
 // Award-heavy incumbents can have hundreds of awards and thousands of
@@ -50,11 +53,15 @@ async function runCompanyRetryBatch(
   source: CompanyScopedSource,
   lease: PublicGrowthSweepLease,
   planned: PublicGrowthRetryEntry[],
+  deadlineMs?: number,
 ) {
   const companies = await loadTamCompaniesByIds(planned.map((entry) => entry.companyId));
   const byId = new Map(companies.map((company) => [company.id, company]));
   const receipts: RetryReceipt[] = [];
+  const attempted: PublicGrowthRetryEntry[] = [];
   for (const entry of planned) {
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) break;
+    attempted.push(entry);
     const company = byId.get(entry.companyId);
     if (!company) {
       receipts.push({ companyId: entry.companyId, status: "no_longer_current", triggers: 0 });
@@ -64,10 +71,11 @@ async function runCompanyRetryBatch(
       const receipt = source === "sam-entity"
         ? await sweepSamCompany(company)
         : source === "usaspending-subawards"
-          ? await sweepUsaspendingSubawardsCompany(company)
-          : await sweepUsaspendingCompanySteps(company, entry.awardContinuation == null
-            ? {}
-            : { awardContinuation: entry.awardContinuation }, 3);
+          ? await sweepUsaspendingSubawardsCompany(company, { subawardContinuation: entry.subawardContinuation, deadlineMs })
+          : await sweepUsaspendingCompanySteps(company, {
+            ...(entry.awardContinuation == null ? {} : { awardContinuation: entry.awardContinuation }),
+            deadlineMs,
+          }, 3);
       receipts.push(receipt as RetryReceipt);
     } catch (error) {
       receipts.push({
@@ -78,11 +86,11 @@ async function runCompanyRetryBatch(
       });
     }
   }
-  const retry = applyPublicGrowthRetryOutcomes(lease.cursor, planned, receipts);
+  const retry = applyPublicGrowthRetryOutcomes(lease.cursor, attempted, receipts);
   return {
     source,
     offset: lease.offset,
-    checked: planned.length,
+    checked: attempted.length,
     nextOffset: lease.offset,
     done: false,
     matched: receipts.filter((receipt) => receipt.status === "matched" || receipt.status === "linked").length,
@@ -104,10 +112,20 @@ async function run(req: NextRequest) {
   const explicitOffset = url.searchParams.has("offset")
     ? Math.max(Number(url.searchParams.get("offset")) || 0, 0)
     : null;
+  const exactRecoveryId = url.searchParams.get("companyId")?.toLowerCase() ?? null;
+  const inspectOnly = url.searchParams.get("inspect") === "1";
+  if (url.searchParams.has("inspect") && (!inspectOnly || exactRecoveryId == null)) {
+    return NextResponse.json({ error: "inspect=1 requires an exact companyId" }, { status: 400 });
+  }
   if (url.searchParams.has("awardOffset") || url.searchParams.has("awardLimit")) {
     return NextResponse.json({ error: "numeric award continuation is no longer supported" }, { status: 400 });
   }
   if (!new Set(["usaspending", "usaspending-subawards", "sam-entity", "sam-opportunities", "revenue"]).has(source)) return NextResponse.json({ error: `unsupported source ${source}` }, { status: 400 });
+  if (exactRecoveryId != null && (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(exactRecoveryId)
+    || !["usaspending", "usaspending-subawards"].includes(source)
+    || explicitOffset != null || (url.searchParams.has("n") && n !== 1))) {
+    return NextResponse.json({ error: "exact foundation requires one valid companyId, an award source, and no offset" }, { status: 400 });
+  }
   const companyScopedSource = new Set(["usaspending", "usaspending-subawards", "sam-entity"]).has(source);
   const requestedScope = url.searchParams.get("scope");
   if (requestedScope != null && requestedScope !== "verified" && requestedScope !== "tam") {
@@ -116,18 +134,33 @@ async function run(req: NextRequest) {
   if (!companyScopedSource && requestedScope != null) {
     return NextResponse.json({ error: `scope is not supported for ${source}` }, { status: 400 });
   }
-  const companyScope = (requestedScope ?? (explicitOffset == null ? "verified" : "tam")) as "verified" | "tam";
-  if (companyScopedSource && companyScope === "tam" && explicitOffset == null) {
+  const companyScope = (requestedScope ?? (explicitOffset == null && exactRecoveryId == null ? "verified" : "tam")) as "verified" | "tam";
+  if (exactRecoveryId != null && companyScope !== "tam") return NextResponse.json({ error: "exact foundation requires scope=tam" }, { status: 400 });
+  if (companyScopedSource && companyScope === "tam" && explicitOffset == null && exactRecoveryId == null) {
     return NextResponse.json({ error: "full-TAM public-growth sweeps require an explicit offset" }, { status: 400 });
   }
   const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days") ?? 31) || 31));
   const opportunityLimit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 500) || 500));
-  const revenueLimit = Math.min(3500, Math.max(n, Number(url.searchParams.get("limit") ?? 250) || 250));
-  const batchSize = source === "sam-opportunities" ? opportunityLimit : source === "revenue" ? revenueLimit : n;
+  const revenueLimit = Math.min(4000, Math.max(n, Number(url.searchParams.get("limit") ?? 250) || 250));
+  const batchSize = exactRecoveryId != null ? 1 : source === "sam-opportunities" ? opportunityLimit : source === "revenue" ? revenueLimit : n;
   const durableUsaspendingRecovery = source === "usaspending" && explicitOffset != null;
+  const durableRecovery = durableUsaspendingRecovery || exactRecoveryId != null;
+  let exactCompany: TamIdentity | null = null;
+  if (exactRecoveryId != null) {
+    try {
+      const rows = await loadTamCompaniesByIds([exactRecoveryId]);
+      exactCompany = rows.find((row) => row.id === exactRecoveryId) ?? null;
+      if (!exactCompany) return NextResponse.json({ error: "company_not_current_tam", companyId: exactRecoveryId }, { status: 404 });
+      if (inspectOnly) return NextResponse.json(await inspectPublicGrowthCompanyRecovery(source as "usaspending" | "usaspending-subawards", exactRecoveryId));
+    } catch {
+      return NextResponse.json({ error: "exact_company_load_failed" }, { status: 500 });
+    }
+  }
   let lease: Awaited<ReturnType<typeof beginPublicGrowthSweep>>;
   try {
-    lease = durableUsaspendingRecovery
+    lease = exactRecoveryId != null
+      ? await beginPublicGrowthCompanyRecoverySweep(source as "usaspending" | "usaspending-subawards", exactRecoveryId)
+      : durableUsaspendingRecovery
       ? await beginPublicGrowthRecoverySweep(source, batchSize, explicitOffset)
       : await beginPublicGrowthSweep(source, batchSize, explicitOffset);
   } catch (error) {
@@ -149,38 +182,43 @@ async function run(req: NextRequest) {
     }, { status: 500 });
   }
   const offset = lease.offset;
+  const sourceDeadlineMs = Date.now() + 240_000;
   let afterCompanyId: string | null;
   try {
     afterCompanyId = companyScopedSource ? publicGrowthAfterCompanyId(lease.cursor) : null;
     // A bounded USAspending company step still includes identity, award detail,
     // transaction-page, and persistence calls. Retry one exact continuation per
     // request while the main freshness page advances independently below.
-    const retryLimit = source === "usaspending" ? 1 : Math.min(10, n);
+    const retryLimit = source === "usaspending" || durableRecovery ? 1 : Math.min(10, n);
     const usaspendingCompanyLimit = lease.managed && source === "usaspending" ? Math.min(6, n) : n;
     const retryPlan = lease.managed && companyScopedSource
       ? pendingPublicGrowthRetries(lease.cursor, retryLimit)
       : [];
-    const recoveryAlreadyComplete = durableUsaspendingRecovery && lease.cursor.recoveryComplete === true;
-    const recoveryAlreadyBlocked = durableUsaspendingRecovery && lease.cursor.recoveryBlocked === true;
+    const recoveryAlreadyComplete = durableRecovery && lease.cursor.recoveryComplete === true;
+    const recoveryAlreadyBlocked = durableRecovery && lease.cursor.recoveryBlocked === true;
     const servicingRetry = retryPlan.length > 0
-      && (durableUsaspendingRecovery || shouldServicePublicGrowthRetry(lease.cursor));
-    const combinedRecurringUsaspending = lease.managed
-      && source === "usaspending"
-      && !durableUsaspendingRecovery
+      && (durableRecovery || shouldServicePublicGrowthRetry(lease.cursor));
+    const combinedRecurringAwards = lease.managed
+      && (source === "usaspending" || source === "usaspending-subawards")
+      && !durableRecovery
       && !recoveryAlreadyComplete
       && !recoveryAlreadyBlocked;
-    let result = (combinedRecurringUsaspending
+    let result = (combinedRecurringAwards
       ? await (async () => {
         // A recurring invocation always advances fresh-company coverage. It also
         // services one exact continuation so deep award histories keep moving
         // without cutting the 48-hour main-population cycle in half.
+        const deadlineMs = sourceDeadlineMs;
         const retryResult = retryPlan.length > 0
-          ? await runCompanyRetryBatch("usaspending", lease, retryPlan)
+          ? await runCompanyRetryBatch(source as CompanyScopedSource, lease, retryPlan, Math.min(deadlineMs, Date.now() + 60_000))
           : null;
-        const mainResult = await sweepUsaspendingTamBatch(usaspendingCompanyLimit, offset, {
-          scope: companyScope,
-          afterCompanyId,
-        });
+        const mainResult = source === "usaspending-subawards"
+          ? await sweepUsaspendingSubawardsTamBatch(n, offset, companyScope, afterCompanyId, { deadlineMs })
+          : await sweepUsaspendingTamBatch(usaspendingCompanyLimit, offset, {
+            scope: companyScope,
+            afterCompanyId,
+            deadlineMs,
+          });
         const mainReceipts = Array.isArray(mainResult.receipts) ? mainResult.receipts as unknown as RetryReceipt[] : [];
         const retryCursor = retryResult?.cursorPatch ?? lease.cursor;
         const queued = queuePublicGrowthMainFailures(retryCursor, mainReceipts, Number(mainResult.errors ?? 0));
@@ -192,9 +230,11 @@ async function run(req: NextRequest) {
           matched: mainResult.matched + Number(retryResult?.matched ?? 0),
           errors: mainResult.errors + Number(retryResult?.errors ?? 0),
           triggers: mainResult.triggers + Number(retryResult?.triggers ?? 0),
+          ...("stored" in mainResult ? { stored: Number(mainResult.stored) + Number(retryResult?.receipts.reduce((sum, receipt) => sum + Number(receipt.stored ?? 0), 0) ?? 0) } : {}),
           receipts: [...mainReceipts, ...(Array.isArray(retryResult?.receipts) ? retryResult.receipts : [])],
           retryQueued: queued.queued,
           retryRemaining: queued.cursorPatch.retryQueue.length,
+          retryDeadLettered: retryResult?.retryDeadLettered ?? [],
           awardContinuationsQueued: queued.continuations,
           advanceCursor: false,
           cursorPatch: { ...(mainResult.cursorPatch ?? {}), ...queued.cursorPatch },
@@ -203,21 +243,34 @@ async function run(req: NextRequest) {
       })()
       : recoveryAlreadyComplete
       ? {
-        source, offset, checked: 1, nextOffset: offset, done: true,
+        source, offset, checked: exactRecoveryId == null ? 1 : 0, nextOffset: offset, done: true,
         matched: 0, errors: 0, triggers: 0, receipts: [], retryRemaining: 0,
         recoveryComplete: true, advanceCursor: false, mode: "retry" as const,
         cursorPatch: { recoveryComplete: true },
       }
       : recoveryAlreadyBlocked
         ? {
-          source, offset, checked: 1, nextOffset: offset, done: false,
+          source, offset, checked: exactRecoveryId == null ? 1 : 0, nextOffset: offset, done: false,
           matched: 0, errors: 1, triggers: 0, receipts: [], retryRemaining: 0,
           retryDeadLettered: Array.isArray(lease.cursor.recoveryDeadLettered) ? lease.cursor.recoveryDeadLettered : [],
           recoveryBlocked: true, advanceCursor: false, mode: "retry" as const,
           cursorPatch: { recoveryBlocked: true, recoveryDeadLettered: lease.cursor.recoveryDeadLettered ?? [] },
         }
       : servicingRetry
-      ? await runCompanyRetryBatch(source as CompanyScopedSource, lease, retryPlan)
+      ? await runCompanyRetryBatch(source as CompanyScopedSource, lease, retryPlan, sourceDeadlineMs)
+      : exactCompany
+      ? await (async (company: TamIdentity) => {
+        const receipt = source === "usaspending-subawards"
+          ? await sweepUsaspendingSubawardsCompany(company, { deadlineMs: sourceDeadlineMs })
+          : await sweepUsaspendingCompanySteps(company, { deadlineMs: sourceDeadlineMs }, 3);
+        return {
+          source, companyId: company.id, offset: 0, checked: 1, nextOffset: 0,
+          done: false, matched: ["matched", "linked"].includes(receipt.status) ? 1 : 0,
+          errors: receipt.status === "error" ? 1 : 0, triggers: receipt.triggers,
+          ...("stored" in receipt ? { stored: receipt.stored } : {}),
+          receipts: [receipt], advanceCursor: false,
+        };
+      })(exactCompany)
       : source === "sam-entity" ? await sweepSamTamBatch(n, offset, companyScope, afterCompanyId)
         : source === "sam-opportunities" ? await sweepSamOpportunities(days, offset, opportunityLimit)
         : source === "revenue" ? await sweepRevenueTamBatch(revenueLimit, offset)
@@ -225,8 +278,9 @@ async function run(req: NextRequest) {
         : await sweepUsaspendingTamBatch(usaspendingCompanyLimit, offset, {
           scope: companyScope,
           afterCompanyId,
+          deadlineMs: sourceDeadlineMs,
         })) as PublicGrowthSweepResult & Record<string, unknown>;
-    if (!combinedRecurringUsaspending && !recoveryAlreadyComplete && !recoveryAlreadyBlocked && !servicingRetry && lease.managed && companyScopedSource) {
+    if (!combinedRecurringAwards && !recoveryAlreadyComplete && !recoveryAlreadyBlocked && !servicingRetry && lease.managed && companyScopedSource) {
       const rawReceipts = "receipts" in result && Array.isArray(result.receipts)
         ? result.receipts as RetryReceipt[]
         : [];
@@ -241,7 +295,7 @@ async function run(req: NextRequest) {
         mode: "main" as const,
       };
     }
-    if (!recoveryAlreadyComplete && !recoveryAlreadyBlocked && durableUsaspendingRecovery && Number(result.retryRemaining ?? 0) === 0) {
+    if (!recoveryAlreadyComplete && !recoveryAlreadyBlocked && durableRecovery && Number(result.retryRemaining ?? 0) === 0) {
       const deadLettered = Array.isArray(result.retryDeadLettered) ? result.retryDeadLettered : [];
       const failed = Number(result.errors ?? 0) > 0 || deadLettered.length > 0;
       result = failed
@@ -257,6 +311,17 @@ async function run(req: NextRequest) {
           recoveryComplete: true,
           cursorPatch: { ...(result.cursorPatch ?? {}), recoveryComplete: true },
         };
+    }
+    if (exactRecoveryId != null) {
+      result = { ...result, foundationCompanyId: exactRecoveryId, recoveryStateKey: lease.source };
+    }
+    if (source === "usaspending" || source === "usaspending-subawards") {
+      const receipts = Array.isArray(result.receipts) ? result.receipts as RetryReceipt[] : [];
+      result = {
+        ...result,
+        historiesCompleted: receipts.filter((row) => row.status !== "error" && (row.awardDone === true || row.subawardDone === true)).length,
+        historiesIncomplete: receipts.filter((row) => row.awardDone === false || row.subawardDone === false).length,
+      };
     }
     const nextCursor = await completePublicGrowthSweep(lease, result);
     const { cursorPatch: _cursorPatch, advanceCursor: _advanceCursor, ...publicResult } = result;

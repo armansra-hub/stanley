@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from collections import defaultdict
+from foundation_app_http import open_app_request
 
 STATE_VERSION = 1
 SUFFIX = re.compile(r"\b(the|and|co|company|corp|corporation|inc|incorporated|llc|ltd|limited|lp|llp|pllc|pc|group|holdings?)\b")
@@ -37,7 +38,7 @@ def request_json(url: str, secret: str, body=None):
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
     req = urllib.request.Request(url, data=data, headers={"x-cron-secret": secret, "content-type": "application/json", "user-agent": "Stanley-SAM-Foundation/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=240) as response:
+        with open_app_request(req, timeout=240) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"{error.code} {error.read().decode('utf-8', 'replace')[:1000]}") from error

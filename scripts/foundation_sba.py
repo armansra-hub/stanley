@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Checkpointed NetSuite-TAM sweep over the official SBA 7(a)/504 bulk files."""
 import argparse, csv, datetime, hashlib, json, os, re, ssl, tempfile, urllib.request
+from foundation_app_http import open_app_request
 
 CTX = ssl.create_default_context()
 NOISE = re.compile(r"\b(llc|inc|incorporated|corp|corporation|co|company|ltd|limited|lp|llp|plc|pllc|group|holdings|holding|the|and)\b")
@@ -24,7 +25,7 @@ def request_json(url, secret, body=None):
     data = None if body is None else json.dumps(body).encode()
     headers = {"x-cron-secret": secret, "content-type": "application/json"}
     req = urllib.request.Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
-    with urllib.request.urlopen(req, context=CTX, timeout=180) as response:
+    with open_app_request(req, context=CTX, timeout=180) as response:
         return json.load(response)
 
 def atomic_write(path, value):

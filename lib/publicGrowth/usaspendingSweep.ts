@@ -3,9 +3,10 @@ import { serviceClient } from "@/lib/supabase/server";
 import { recomputePriority } from "@/lib/db/triggers";
 import { decideIdentityMatch, normalizeName } from "./identity";
 import { calculateContractMetrics, deriveContractEvents } from "./metrics";
-import { awardUrl, autocompleteRecipients, compactAward, fetchAwardDetail, fetchAwardTransactionsPage, recipientProfileUrl, searchContractAwardsPage, searchReceivedContractSubawards } from "./usaspending";
+import { awardUrl, autocompleteRecipients, compactAward, fetchAwardDetail, fetchAwardTransactionsPage, recipientProfileUrl, searchContractAwardsPage, searchReceivedContractSubawardsPage } from "./usaspending";
+import { PublicGrowthDeadlineError, requirePublicGrowthTime } from "./http";
 import { recordPublicGrowthTrigger, saveCompanyGovernmentMatch, saveFederalAward, saveFederalSubaward, saveFederalTransactions, saveGovernmentEntity, stableHash } from "./storage";
-import { collectPublicGrowthKeysetPages, matchesFrozenPublicGrowthRecipient, stableIdPageDecision, takeRecurringBatch, type PublicGrowthAwardContinuation } from "./sweepState";
+import { collectPublicGrowthKeysetPages, matchesFrozenPublicGrowthRecipient, parsePublicGrowthSubawardContinuation, stableIdPageDecision, takeRecurringBatch, type PublicGrowthAwardContinuation, type PublicGrowthSubawardContinuation } from "./sweepState";
 import type { AwardFact, TamIdentity, TransactionFact } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -27,9 +28,10 @@ export interface CompanySweepReceipt {
 const STORED_METRIC_PAGE_SIZE = 1000;
 const STORED_METRIC_MAX_ROWS = 100_000;
 
-export async function loadStoredContractFacts(entityId: string): Promise<{ awards: AwardFact[]; transactions: TransactionFact[]; agencies: string[] }> {
+export async function loadStoredContractFacts(entityId: string, deadlineMs?: number): Promise<{ awards: AwardFact[]; transactions: TransactionFact[]; agencies: string[] }> {
   const db = serviceClient();
   const storedAwards = await collectPublicGrowthKeysetPages<any>(async (afterId, limit) => {
+    requirePublicGrowthTime(deadlineMs);
     let query = db.from("federal_awards")
       .select("id,generated_award_id,start_date,end_date,award_ceiling,current_award_amount,total_obligations,awarding_agency")
       .eq("government_entity_id", entityId)
@@ -47,6 +49,7 @@ export async function loadStoredContractFacts(entityId: string): Promise<{ award
   for (let start = 0; start < ids.length; start += 100) {
     const awardIds = ids.slice(start, start + 100);
     const rows = await collectPublicGrowthKeysetPages<any>(async (afterId, limit) => {
+      requirePublicGrowthTime(deadlineMs);
       let query = db.from("federal_award_transactions")
         .select("id,external_transaction_id,action_date,federal_action_obligation,modification_number,federal_award_id")
         .in("federal_award_id", awardIds)
@@ -101,19 +104,19 @@ function transactionId(row: any): string {
 /** One bounded search page and one bounded transaction page per invocation. */
 export async function sweepUsaspendingCompany(
   company: TamIdentity,
-  options: { awardContinuation?: PublicGrowthAwardContinuation } = {},
+  options: { awardContinuation?: PublicGrowthAwardContinuation; deadlineMs?: number } = {},
 ): Promise<CompanySweepReceipt> {
   const receipt: CompanySweepReceipt = { companyId: company.id, companyName: company.name, status: "no_awards", awards: 0, transactions: 0, triggers: 0 };
   try {
     let state = options.awardContinuation ? structuredClone(options.awardContinuation) : null;
     let currentSearchPage: Awaited<ReturnType<typeof searchContractAwardsPage>> | null = null;
     if (!state) {
-      const suggestions = await autocompleteRecipients(company.name, 1);
+      const suggestions = await autocompleteRecipients(company.name, 1, options.deadlineMs);
       const exactNames = [...new Set(suggestions.map((x) => x.recipient_name).filter((name) => normalizeName(name) === normalizeName(company.name)))];
       if (!exactNames.includes(company.name)) exactNames.push(company.name);
       for (const recipientName of exactNames.slice(0, 4)) {
         const candidate = initialAwardContinuation(recipientName);
-        const page = await searchContractAwardsPage(recipientName, 1, candidate.searchEndDate, AWARD_SEARCH_PAGE_SIZE);
+        const page = await searchContractAwardsPage(recipientName, 1, candidate.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs);
         if (page.rows.some((row) => normalizeName(row.recipientName) === normalizeName(recipientName))) {
           state = candidate; currentSearchPage = page; break;
         }
@@ -123,7 +126,7 @@ export async function sweepUsaspendingCompany(
     receipt.awardContinuation = state;
 
     if (!state.pendingAwardId) {
-      const page = currentSearchPage ?? await searchContractAwardsPage(state.recipientName, state.searchPage, state.searchEndDate, AWARD_SEARCH_PAGE_SIZE);
+      const page = currentSearchPage ?? await searchContractAwardsPage(state.recipientName, state.searchPage, state.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs);
       const exactRows = page.rows.filter((row) => normalizeName(row.recipientName) === normalizeName(state.recipientName));
       const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew, seenIds: state.seenAwardIds, pageIds: exactRows.map((row) => row.generatedId), hasNext: page.hasNext });
       const nextAward = decision.nextId ? exactRows.find((row) => row.generatedId === decision.nextId) : null;
@@ -131,12 +134,13 @@ export async function sweepUsaspendingCompany(
         state.searchPage = decision.page;
         state.searchPassFoundNew = decision.passFoundNew;
         if (decision.done) {
-          receipt.awardDone = true; delete receipt.awardContinuation;
           if (state.entityId) {
-            const stored = await loadStoredContractFacts(state.entityId);
+            const stored = await loadStoredContractFacts(state.entityId, options.deadlineMs);
             const metrics = calculateContractMetrics(stored.awards, stored.transactions);
+            requirePublicGrowthTime(options.deadlineMs);
             await saveMetrics(company.id, metrics, stored.agencies);
             for (const event of deriveContractEvents(metrics)) {
+              requirePublicGrowthTime(options.deadlineMs);
               const profile = recipientProfileUrl({ recipientId: state.recipientId, uei: state.uei, name: state.recipientName });
               const eventUrl = `${profile}?signal=${encodeURIComponent(event.type)}&asof=${encodeURIComponent(event.signalDate ?? "unknown")}`;
               if (await recordPublicGrowthTrigger(company.id, event, "USAspending", eventUrl, 1)) receipt.triggers++;
@@ -144,6 +148,7 @@ export async function sweepUsaspendingCompany(
             if (receipt.triggers) await recomputePriority(company.id);
             receipt.status = "matched";
           }
+          receipt.awardDone = true; delete receipt.awardContinuation;
           return receipt;
         }
         receipt.status = state.entityId ? "matched" : "no_awards";
@@ -156,7 +161,7 @@ export async function sweepUsaspendingCompany(
 
     const pendingAwardId = state.pendingAwardId;
     if (!pendingAwardId) throw new Error("USAspending continuation omitted its pending award");
-    const seed = compactAward(await fetchAwardDetail(pendingAwardId, 1));
+    const seed = compactAward(await fetchAwardDetail(pendingAwardId, 1, options.deadlineMs));
     if (state.entityId && !matchesFrozenPublicGrowthRecipient(
       { uei: state.uei, recipientId: state.recipientId },
       { uei: seed.recipient.uei, recipientId: seed.recipient.recipientId },
@@ -194,7 +199,7 @@ export async function sweepUsaspendingCompany(
       }
     }
 
-    const transactionPage = await fetchAwardTransactionsPage(seed.generatedAwardId, state.transactionPage);
+    const transactionPage = await fetchAwardTransactionsPage(seed.generatedAwardId, state.transactionPage, options.deadlineMs);
     const seenTransactions = new Set(state.seenTransactionIds);
     const unseenTransactions = transactionPage.rows.filter((row) => !seenTransactions.has(transactionId(row)));
     receipt.transactions += await saveFederalTransactions(storedAwardId, sourceUrl, unseenTransactions);
@@ -221,20 +226,24 @@ export async function sweepUsaspendingCompany(
     if (receipt.triggers) await recomputePriority(company.id);
     receipt.awardDone = false; receipt.awardContinuation = state; return receipt;
   } catch (error) {
+    if (error instanceof PublicGrowthDeadlineError && receipt.awardContinuation) {
+      return { ...receipt, awardDone: false };
+    }
     return { ...receipt, status: "error", error: error instanceof Error ? error.message : String(error) };
   }
 }
 
 export async function sweepUsaspendingCompanySteps(
   company: TamIdentity,
-  options: { awardContinuation?: PublicGrowthAwardContinuation } = {},
+  options: { awardContinuation?: PublicGrowthAwardContinuation; deadlineMs?: number } = {},
   maxSteps = 3,
 ): Promise<CompanySweepReceipt> {
   if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 3) throw new Error("USAspending step limit must be between 1 and 3");
   let continuation = options.awardContinuation;
   let aggregate: CompanySweepReceipt | null = null;
   for (let step = 0; step < maxSteps; step++) {
-    const current = await sweepUsaspendingCompany(company, continuation ? { awardContinuation: continuation } : {});
+    if (aggregate && options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) break;
+    const current = await sweepUsaspendingCompany(company, { ...(continuation ? { awardContinuation: continuation } : {}), deadlineMs: options.deadlineMs });
     aggregate = aggregate
       ? { ...current, awards: aggregate.awards + current.awards, transactions: aggregate.transactions + current.transactions, triggers: aggregate.triggers + current.triggers }
       : current;
@@ -245,40 +254,128 @@ export async function sweepUsaspendingCompanySteps(
   return aggregate;
 }
 
-export async function sweepUsaspendingSubawardsCompany(company: TamIdentity) {
-  const receipt = { companyId: company.id, checked: 0, stored: 0, triggers: 0, status: "not_linked", error: undefined as string | undefined };
+export interface SubawardCompanyReceipt {
+  companyId: string;
+  checked: number;
+  stored: number;
+  triggers: number;
+  status: "not_linked" | "linked" | "error";
+  subawardDone: boolean;
+  subawardContinuation?: PublicGrowthSubawardContinuation;
+  error?: string;
+}
+
+const SUBAWARD_ROWS_PER_STEP = 20;
+
+function subawardFields(row: any) {
+  const recipientName = String(row["Sub-Awardee Name"] ?? row["Recipient Name"] ?? row.subawardee_name ?? "");
+  const primeName = String(row["Prime Recipient Name"] ?? "");
+  const actionDate = String(row["Sub-Award Date"] ?? row["Action Date"] ?? row.action_date ?? "").slice(0, 10);
+  const amount = Number(row["Sub-Award Amount"] ?? row.Amount ?? row["Award Amount"] ?? row.subaward_amount ?? 0);
+  const description = row["Sub-Award Description"] ?? row.Description ?? row.description ?? null;
+  const externalId = String(row["Sub-Award ID"] ?? row.subaward_number ?? row.id ?? stableHash({ recipientName, actionDate, amount, description, prime: row.primeAwardId }).slice(0, 32));
+  return { recipientName, primeName, actionDate, amount, description, externalId };
+}
+
+/** At most3 source pages and20 persisted subawards, with a frozen identity. */
+export async function sweepUsaspendingSubawardsCompany(
+  company: TamIdentity,
+  options: { subawardContinuation?: PublicGrowthSubawardContinuation; deadlineMs?: number } = {},
+): Promise<SubawardCompanyReceipt> {
+  const receipt: SubawardCompanyReceipt = { companyId: company.id, checked: 0, stored: 0, triggers: 0, status: "not_linked", subawardDone: false };
+  let state: PublicGrowthSubawardContinuation | undefined;
   try {
-    const db = serviceClient();
-    const { data: links, error: linksError } = await db.from("company_government_matches").select("government_entity_id,government_entities!inner(legal_name,dba_name)").eq("company_id", company.id).eq("match_status", "verified");
-    if (linksError) throw new Error(`subaward verified-link load failed: ${linksError.message}`);
-    if (!links?.length) return receipt;
-    const entityId = String(links[0].government_entity_id), names = new Set([company.name, ...(links ?? []).flatMap((x: any) => [x.government_entities?.legal_name, x.government_entities?.dba_name])].filter(Boolean).map(String));
-    receipt.status = "linked";
-    const seen = new Set<string>();
-    for (const name of names) for (const row of await searchReceivedContractSubawards(name)) {
-      const recipientName = String(row["Sub-Awardee Name"] ?? row["Recipient Name"] ?? row.subawardee_name ?? ""), primeName = String(row["Prime Recipient Name"] ?? "");
-      const receivedMatch = normalizeName(recipientName) === normalizeName(name), primeMatch = normalizeName(primeName) === normalizeName(name);
-      if (!receivedMatch && !primeMatch) continue;
-      const actionDate = String(row["Sub-Award Date"] ?? row["Action Date"] ?? row.action_date ?? "").slice(0, 10), amount = Number(row["Sub-Award Amount"] ?? row.Amount ?? row["Award Amount"] ?? row.subaward_amount ?? 0);
-      const description = row["Sub-Award Description"] ?? row.Description ?? row.description ?? null;
-      const externalId = String(row["Sub-Award ID"] ?? row.subaward_number ?? row.id ?? stableHash({ recipientName, actionDate, amount, description, prime: row.primeAwardId }).slice(0, 32));
-      if (seen.has(externalId)) continue; seen.add(externalId); receipt.checked++;
-      const sourceUrl = `https://www.usaspending.gov/search/?hash=contract-subaward&subaward=${encodeURIComponent(externalId)}`;
-      await saveFederalSubaward({ externalSubawardId: externalId, primeAwardGeneratedId: row.primeAwardGeneratedId ?? row.primeAwardId, primeGovernmentEntityId: primeMatch ? entityId : null, subawardGovernmentEntityId: receivedMatch ? entityId : null, subawardeeName: recipientName, amount, actionDate: actionDate || null, description, awardingAgency: row.awardingAgency, sourceUrl, evidence: row });
-      receipt.stored++;
-      const event = { family: "federal_contract", type: receivedMatch ? "federal_subaward" : "federal_prime_subaward_activity", dedupeKey: `usaspending:subaward:${externalId}:${receivedMatch ? "received" : "issued"}`, strength: amount >= 1_000_000 ? 86 : 74, summary: receivedMatch ? `${actionDate ? `${actionDate}: ` : ""}${Math.round(amount).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} federal subcontract obligated to the company${row.awardingAgency ? ` under ${row.awardingAgency}` : ""}.` : `${actionDate ? `${actionDate}: ` : ""}Prime contract issued a ${Math.round(amount).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} subcontract to ${recipientName}, indicating active contract delivery scale.`, signalDate: actionDate || null, metadata: { externalSubawardId: externalId, amount, valueKind: receivedMatch ? "subaward_obligation_received" : "prime_subaward_issued", primeAwardId: row.primeAwardId, agency: row.awardingAgency, actionDate: actionDate || null } };
-      if (await recordPublicGrowthTrigger(company.id, event, "USAspending Subawards", sourceUrl, 0.95)) receipt.triggers++;
+    if (options.subawardContinuation) {
+      state = parsePublicGrowthSubawardContinuation(options.subawardContinuation);
+      receipt.subawardContinuation = state;
+      if (state.companyId !== company.id) throw new Error("subaward continuation company identity differs from exact company");
     }
-    const cutoff = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
-    const { data: subRows, error: subRowsError } = await db.from("federal_subawards").select("prime_government_entity_id,subaward_government_entity_id,subaward_amount").or(`prime_government_entity_id.eq.${entityId},subaward_government_entity_id.eq.${entityId}`).gte("action_date", cutoff);
-    if (subRowsError) throw new Error(`subaward metric load failed: ${subRowsError.message}`);
-    const primeDollars = (subRows ?? []).filter((x) => x.prime_government_entity_id === entityId).reduce((s, x) => s + Number(x.subaward_amount ?? 0), 0);
-    const receivedDollars = (subRows ?? []).filter((x) => x.subaward_government_entity_id === entityId).reduce((s, x) => s + Number(x.subaward_amount ?? 0), 0);
-    const { error: metricError } = await db.from("company_contract_metric_snapshots").upsert({ company_id: company.id, as_of_date: new Date().toISOString().slice(0, 10), prime_subaward_dollars_365d: primeDollars, received_subaward_dollars_365d: receivedDollars }, { onConflict: "company_id,as_of_date" });
+    requirePublicGrowthTime(options.deadlineMs);
+    const db = serviceClient();
+    const { data: links, error: linksError } = await db.from("company_government_matches")
+      .select("government_entity_id,government_entities!inner(legal_name,dba_name)")
+      .eq("company_id", company.id).eq("match_status", "verified");
+    if (linksError) throw new Error(`subaward verified-link load failed: ${linksError.message}`);
+    const entityIds = [...new Set((links ?? []).map((link: any) => String(link.government_entity_id)))];
+    if (!entityIds.length && !state) { receipt.subawardDone = true; return receipt; }
+    if (entityIds.length !== 1 || (state && state.entityId !== entityIds[0])) {
+      throw new Error("subaward frozen verified government identity is absent, ambiguous, or changed");
+    }
+    if (!state) {
+      const names = [...new Set([company.name, ...(links ?? []).flatMap((link: any) => [link.government_entities?.legal_name, link.government_entities?.dba_name])]
+        .filter(Boolean).map((value) => String(value).trim()).filter(Boolean))];
+      state = parsePublicGrowthSubawardContinuation({ version: 1, companyId: company.id, entityId: entityIds[0], names,
+        nameIndex: 0, searchEndDate: new Date().toISOString().slice(0, 10), searchPage: 1,
+        searchPassFoundNew: false, seenSubawardIds: [] });
+      receipt.subawardContinuation = state;
+    }
+    receipt.status = "linked";
+    const entityId = state.entityId;
+    for (let sourceStep = 0; sourceStep < 3 && state.nameIndex < state.names.length && receipt.stored < SUBAWARD_ROWS_PER_STEP; sourceStep++) {
+      const name = state.names[state.nameIndex];
+      const page = await searchReceivedContractSubawardsPage(name, state.searchPage, state.searchEndDate, options.deadlineMs);
+      const exactRows = page.rows.filter((row) => {
+        const fields = subawardFields(row);
+        return normalizeName(fields.recipientName) === normalizeName(name) || normalizeName(fields.primeName) === normalizeName(name);
+      });
+      const seen = new Set(state.seenSubawardIds);
+      for (const row of exactRows) {
+        const { recipientName, primeName, actionDate, amount, description, externalId } = subawardFields(row);
+        if (seen.has(externalId)) continue;
+        if (receipt.stored >= SUBAWARD_ROWS_PER_STEP) break;
+        if (seen.size >= 25_000) throw new Error("subaward continuation reached its supported25000 stable-ID bound");
+        requirePublicGrowthTime(options.deadlineMs);
+        const receivedMatch = normalizeName(recipientName) === normalizeName(name), primeMatch = normalizeName(primeName) === normalizeName(name);
+        receipt.checked++;
+        const sourceUrl = `https://www.usaspending.gov/search/?hash=contract-subaward&subaward=${encodeURIComponent(externalId)}`;
+        await saveFederalSubaward({ externalSubawardId: externalId, primeAwardGeneratedId: row.primeAwardGeneratedId ?? row.primeAwardId,
+          primeGovernmentEntityId: primeMatch ? entityId : null, subawardGovernmentEntityId: receivedMatch ? entityId : null,
+          subawardeeName: recipientName, amount, actionDate: actionDate || null, description, awardingAgency: row.awardingAgency, sourceUrl, evidence: row });
+        const event = { family: "federal_contract", type: receivedMatch ? "federal_subaward" : "federal_prime_subaward_activity",
+          dedupeKey: `usaspending:subaward:${externalId}:${receivedMatch ? "received" : "issued"}`, strength: amount >= 1_000_000 ? 86 : 74,
+          summary: receivedMatch ? `${actionDate ? `${actionDate}: ` : ""}${Math.round(amount).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} federal subcontract obligated to the company${row.awardingAgency ? ` under ${row.awardingAgency}` : ""}.`
+            : `${actionDate ? `${actionDate}: ` : ""}Prime contract issued a ${Math.round(amount).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} subcontract to ${recipientName}, indicating active contract delivery scale.`,
+          signalDate: actionDate || null, metadata: { externalSubawardId: externalId, amount, valueKind: receivedMatch ? "subaward_obligation_received" : "prime_subaward_issued", primeAwardId: row.primeAwardId, agency: row.awardingAgency, actionDate: actionDate || null } };
+        if (await recordPublicGrowthTrigger(company.id, event, "USAspending Subawards", sourceUrl, 0.95)) receipt.triggers++;
+        // A failed persistence/trigger step leaves this ID unseen for safe replay.
+        seen.add(externalId); state.seenSubawardIds = [...seen]; state.searchPassFoundNew = true; receipt.stored++;
+      }
+      const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew,
+        seenIds: state.seenSubawardIds, pageIds: exactRows.map((row) => subawardFields(row).externalId), hasNext: page.hasNext });
+      state.searchPage = decision.page; state.searchPassFoundNew = decision.passFoundNew;
+      if (decision.done) { state.nameIndex++; state.searchPage = 1; state.searchPassFoundNew = false; }
+    }
+    // Light histories and empty aliases finalize in this invocation; only an
+    // unfinished stable pass or an exhausted shared budget creates retry debt.
+    if (state.nameIndex < state.names.length) {
+      if (receipt.triggers) { requirePublicGrowthTime(options.deadlineMs); await recomputePriority(company.id); }
+      return receipt;
+    }
+    const cutoff = new Date(Date.parse(`${state.searchEndDate}T00:00:00Z`) - 365 * 86_400_000).toISOString().slice(0, 10);
+    const subRows = await collectPublicGrowthKeysetPages<any>(async (afterId, limit) => {
+      requirePublicGrowthTime(options.deadlineMs);
+      let query = db.from("federal_subawards").select("id,prime_government_entity_id,subaward_government_entity_id,subaward_amount")
+        .or(`prime_government_entity_id.eq.${entityId},subaward_government_entity_id.eq.${entityId}`)
+        .gte("action_date", cutoff).lte("action_date", state!.searchEndDate).order("id", { ascending: true }).limit(limit);
+      if (afterId) query = query.gt("id", afterId);
+      const { data, error } = await query;
+      if (error) throw new Error(`subaward metric load failed: ${error.message}`);
+      return data ?? [];
+    }, { pageSize: STORED_METRIC_PAGE_SIZE, maxRows: STORED_METRIC_MAX_ROWS });
+    const primeDollars = subRows.filter((row) => row.prime_government_entity_id === entityId).reduce((sum, row) => sum + Number(row.subaward_amount ?? 0), 0);
+    const receivedDollars = subRows.filter((row) => row.subaward_government_entity_id === entityId).reduce((sum, row) => sum + Number(row.subaward_amount ?? 0), 0);
+    requirePublicGrowthTime(options.deadlineMs);
+    const { error: metricError } = await db.from("company_contract_metric_snapshots").upsert({ company_id: company.id,
+      as_of_date: state.searchEndDate, prime_subaward_dollars_365d: primeDollars, received_subaward_dollars_365d: receivedDollars }, { onConflict: "company_id,as_of_date" });
     if (metricError) throw new Error(`subaward metric upsert failed: ${metricError.message}`);
-    if (receipt.triggers) await recomputePriority(company.id);
+    requirePublicGrowthTime(options.deadlineMs);
+    await recomputePriority(company.id);
+    receipt.subawardDone = true; delete receipt.subawardContinuation;
     return receipt;
-  } catch (error) { return { ...receipt, status: "error", error: error instanceof Error ? error.message : String(error) }; }
+  } catch (error) {
+    if (error instanceof PublicGrowthDeadlineError && state) return receipt;
+    return { ...receipt, status: "error", error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export async function loadTamBatch(limit: number, offset: number): Promise<TamIdentity[]> {
@@ -337,6 +434,7 @@ export interface UsaspendingBatchOptions {
   awardContinuation?: PublicGrowthAwardContinuation;
   scope?: PublicGrowthCompanyScope;
   afterCompanyId?: string | null;
+  deadlineMs?: number;
 }
 
 export async function sweepUsaspendingTamBatch(limit: number, offset: number, options: UsaspendingBatchOptions = {}) {
@@ -348,17 +446,23 @@ export async function sweepUsaspendingTamBatch(limit: number, offset: number, op
   const receipts: CompanySweepReceipt[] = [];
   // Deliberately serial: each company can fan out to award and transaction calls;
   // bounded execution and clean checkpointing are more valuable than burst speed.
-  for (const company of companies) receipts.push(await sweepUsaspendingCompanySteps(company, options, 3));
+  const attempted: TamIdentity[] = [];
+  for (const company of companies) {
+    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) break;
+    receipts.push(await sweepUsaspendingCompanySteps(company, options, 3));
+    attempted.push(company);
+  }
+  const done = attempted.length === companies.length && (recurringWindow ? recurringWindow.done : companies.length < limit);
   const totals = receipts.reduce((s, r) => ({ matched: s.matched + (r.status === "matched" ? 1 : 0), ambiguous: s.ambiguous + (r.status === "ambiguous" ? 1 : 0), errors: s.errors + (r.status === "error" ? 1 : 0), awards: s.awards + r.awards, transactions: s.transactions + r.transactions, triggers: s.triggers + r.triggers }), { matched: 0, ambiguous: 0, errors: 0, awards: 0, transactions: 0, triggers: 0 });
   return {
     source: "usaspending",
     offset,
-    checked: companies.length,
-    nextOffset: offset + companies.length,
-    done: recurringWindow ? recurringWindow.done : companies.length < limit,
+    checked: attempted.length,
+    nextOffset: offset + attempted.length,
+    done,
     ...(recurringWindow ? {
       advanceCursor: false,
-      cursorPatch: { afterCompanyId: recurringWindow.done ? null : companies.at(-1)?.id ?? null },
+      cursorPatch: { afterCompanyId: done ? null : attempted.at(-1)?.id ?? options.afterCompanyId ?? null },
     } : {}),
     ...totals,
     receipts,
@@ -370,13 +474,14 @@ export async function sweepUsaspendingSubawardsTamBatch(
   offset: number,
   scope: PublicGrowthCompanyScope = "tam",
   afterCompanyId: string | null = null,
+  options: { deadlineMs?: number } = {},
 ) {
   const recurring = scope === "verified"
     ? await loadRecurringTamBatch("usaspending-subawards", limit + 1, afterCompanyId)
     : null;
   const recurringWindow = recurring ? takeRecurringBatch(recurring, limit) : null;
   const companies = recurringWindow ? recurringWindow.rows : await loadTamBatch(limit, offset);
-  const receipts = [];
+  const receipts: SubawardCompanyReceipt[] = [];
   // Most TAM companies have no verified federal identity. Resolve the whole
   // batch in one query so empty companies do not each pay a database round trip.
   const companyIds = companies.map((company) => company.id);
@@ -385,6 +490,15 @@ export async function sweepUsaspendingSubawardsTamBatch(
     : { data: [], error: null };
   if (error) throw new Error(`subaward match prefetch failed: ${error.message}`);
   const linked = new Set((verified ?? []).map((row) => String(row.company_id)));
-  for (const company of companies) if (linked.has(company.id)) receipts.push(await sweepUsaspendingSubawardsCompany(company));
-  return { source: "usaspending-subawards", offset, checked: companies.length, nextOffset: offset + companies.length, done: recurringWindow ? recurringWindow.done : companies.length < limit, ...(recurringWindow ? { advanceCursor: false, cursorPatch: { afterCompanyId: recurringWindow.done ? null : companies.at(-1)?.id ?? null } } : {}), matched: receipts.filter((r) => r.status === "linked").length, errors: receipts.filter((r) => r.status === "error").length, stored: receipts.reduce((s, r) => s + r.stored, 0), triggers: receipts.reduce((s, r) => s + r.triggers, 0), receipts };
+  const attempted: TamIdentity[] = [];
+  for (const company of companies) {
+    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) break;
+    if (linked.has(company.id)) receipts.push(await sweepUsaspendingSubawardsCompany(company, options));
+    attempted.push(company);
+  }
+  const done = attempted.length === companies.length && (recurringWindow ? recurringWindow.done : companies.length < limit);
+  return { source: "usaspending-subawards", offset, checked: attempted.length, nextOffset: offset + attempted.length, done,
+    ...(recurringWindow ? { advanceCursor: false, cursorPatch: { afterCompanyId: done ? null : attempted.at(-1)?.id ?? afterCompanyId } } : {}),
+    matched: receipts.filter((r) => r.status === "linked").length, errors: receipts.filter((r) => r.status === "error").length,
+    stored: receipts.reduce((sum, receipt) => sum + receipt.stored, 0), triggers: receipts.reduce((sum, receipt) => sum + receipt.triggers, 0), receipts };
 }

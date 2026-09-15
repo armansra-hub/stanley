@@ -8,10 +8,10 @@ const CONTRACT_CODES = ["A", "B", "C", "D"];
 
 export interface RecipientSuggestion { recipient_name: string; uei: string | null; duns: string | null }
 
-export async function autocompleteRecipients(searchText: string, attempts = 3): Promise<RecipientSuggestion[]> {
+export async function autocompleteRecipients(searchText: string, attempts = 3, deadlineMs?: number): Promise<RecipientSuggestion[]> {
   const data = await fetchJson<{ results?: RecipientSuggestion[] }>(`${API}/autocomplete/recipient/`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ search_text: searchText }),
-  }, 20_000, attempts);
+  }, 20_000, attempts, deadlineMs);
   return data.results ?? [];
 }
 
@@ -51,6 +51,7 @@ export async function searchContractAwardsPage(
   page: number,
   endDate: string,
   limit = 100,
+  deadlineMs?: number,
 ): Promise<AwardSearchPage> {
   const body = {
     filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
@@ -59,7 +60,7 @@ export async function searchContractAwardsPage(
   };
   const data = await fetchJson<any>(`${API}/search/spending_by_award/`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-  }, 20_000, 1);
+  }, 20_000, 1, deadlineMs);
   const rows: AwardSearchRow[] = (data.results ?? []).map(awardSearchRow).filter((row: AwardSearchRow) => row.generatedId);
   return { rows: [...new Map(rows.map((row: AwardSearchRow) => [row.generatedId, row])).values()], hasNext: data.page_metadata?.hasNext === true };
 }
@@ -94,8 +95,36 @@ export async function searchReceivedContractSubawards(recipient: string, startDa
   return all;
 }
 
-export async function fetchAwardDetail(generatedId: string, attempts = 3): Promise<any> {
-  return fetchJson<any>(`${API}/awards/${encodeURIComponent(generatedId)}/`, {}, 20_000, attempts);
+/** A single provider page; callers persist stable IDs before moving the cursor. */
+export async function searchReceivedContractSubawardsPage(
+  recipient: string, page: number, endDate: string, deadlineMs?: number,
+): Promise<{ rows: any[]; hasNext: boolean }> {
+  const body = {
+    filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
+    fields: ["Sub-Award ID", "Sub-Awardee Name", "Sub-Award Date", "Sub-Award Amount", "Sub-Award Description", "Sub-Recipient UEI", "Awarding Agency", "Awarding Sub Agency", "Prime Award ID", "Prime Recipient Name", "Prime Award Recipient UEI"],
+    limit: 100, page: Math.max(1, Math.trunc(page)), sort: "Sub-Award Date", order: "desc", subawards: true, spending_level: "subawards",
+  };
+  const data = await fetchJson<any>(`${API}/search/spending_by_award/`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  }, 20_000, 1, deadlineMs);
+  if (!Array.isArray(data.results) || typeof data.page_metadata?.hasNext !== "boolean") {
+    throw new Error("subaward search page omitted results or explicit pagination metadata");
+  }
+  const rows: any[] = [];
+  for (const result of data.results) {
+    const nested = Array.isArray(result.Subawards) ? result.Subawards : [result];
+    for (const sub of nested) rows.push({ ...sub,
+      primeAwardId: result["Prime Award ID"] ?? result["Award ID"] ?? result.prime_award_id ?? sub.prime_award_id ?? null,
+      primeAwardGeneratedId: result.prime_award_generated_internal_id ?? sub.prime_award_generated_internal_id ?? null,
+      awardingAgency: result["Awarding Agency"] ?? sub["Awarding Agency"] ?? null,
+      "Prime Recipient Name": sub["Prime Recipient Name"] ?? result["Prime Recipient Name"] ?? null,
+    });
+  }
+  return { rows, hasNext: data.page_metadata.hasNext };
+}
+
+export async function fetchAwardDetail(generatedId: string, attempts = 3, deadlineMs?: number): Promise<any> {
+  return fetchJson<any>(`${API}/awards/${encodeURIComponent(generatedId)}/`, {}, 20_000, attempts, deadlineMs);
 }
 
 export interface AwardTransactionPage {
@@ -104,11 +133,11 @@ export interface AwardTransactionPage {
 }
 
 /** One bounded transaction page used by the durable cron continuation. */
-export async function fetchAwardTransactionsPage(generatedId: string, page: number): Promise<AwardTransactionPage> {
+export async function fetchAwardTransactionsPage(generatedId: string, page: number, deadlineMs?: number): Promise<AwardTransactionPage> {
   const data = await fetchJson<any>(`${API}/transactions/`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ award_id: generatedId, page: Math.max(1, Math.trunc(page)), limit: 500, sort: "action_date", order: "desc" }),
-  }, 20_000, 1);
+  }, 20_000, 1, deadlineMs);
   return { rows: data.results ?? [], hasNext: data.page_metadata?.hasNext === true };
 }
 
