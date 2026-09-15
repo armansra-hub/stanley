@@ -29,9 +29,11 @@ export const DAILY_STAGE_SIZE = 5;
  * API lookups are not scheduled because they cannot succeed without a key; the
  * official monthly public extract remains the keyless high-volume source.
  *
- * This recurrence does not discover a newly linked company. Full-TAM discovery
- * and foundation refresh remain a separate, explicit-offset operation with their
- * own deliberate cadence; the daily plan only revisits already verified identities.
+ * This hourly recurrence revisits already verified identities. The separate
+ * /api/cron/federal-discovery schedule walks current TAM companies without a
+ * verified federal recipient/award link every five minutes in bounded batches.
+ * It saves identity and one award for enrollment; this plan handles their
+ * subsequent award history. Source failures remain explicit checkpoint debt.
  */
 export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
   {

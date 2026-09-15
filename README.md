@@ -34,6 +34,8 @@ Next.js 15 App Router, React 19, TypeScript, and Tailwind run on Vercel. Supabas
 
 `vercel.json` invokes `/api/cron/daily` **hourly**, despite its historical name. Each invocation runs one five-request stage from an 80-request manifest, giving a 16-stage rotation. Prime-award checks and candidate review appear in every stage. Data foundation imports are separate jobs. Coverage targets are plans, not guarantees that a provider succeeded.
 
+Federal discovery also runs every five minutes in bounded batches over current TAM companies without a verified federal recipient/award link. A verified identity and first award enroll the company into the existing award sweeps. Provider errors remain visible in the source checkpoint; a scheduled attempt does not mean a successful match or complete history.
+
 Production source is **GitHub `armansra-hub/stanley`, branch `main`**, through the existing Vercel Git integration. The source guard, platform permissions, and exact post-deploy source readback are the release controls. Do not deploy a local directory or prebuilt upload to production.
 
 ## Local development
