@@ -21,13 +21,13 @@ export function parseRevenueEstimate(value: string | null | undefined): number |
 
 export async function sweepRevenueTamBatch(limit: number, offset: number) {
   const db = serviceClient(), observedOn = new Date().toISOString().slice(0, 10);
-  const data: Array<{ id: string; name: string; revenue_band: string | null }> = [];
+  const data: Array<{ id: string; name: string; revenue_band: string | null; netsuite_internal_id: string | null }> = [];
   while (data.length < limit) {
     const pageSize = Math.min(DATABASE_PAGE_SIZE, limit - data.length);
     const start = offset + data.length;
-    const page = await db.from("companies").select("id,name,revenue_band").contains("lists", ["netsuite_tam"]).neq("status", "removed_from_tam").order("id").range(start, start + pageSize - 1);
+    const page = await db.from("companies").select("id,name,revenue_band,netsuite_internal_id").contains("lists", ["netsuite_tam"]).neq("status", "removed_from_tam").order("id").range(start, start + pageSize - 1);
     if (page.error) throw new Error(`revenue TAM load failed: ${page.error.message}`);
-    const rows = (page.data ?? []) as Array<{ id: string; name: string; revenue_band: string | null }>;
+    const rows = (page.data ?? []) as typeof data;
     data.push(...rows);
     if (rows.length < pageSize) break;
   }
@@ -36,12 +36,17 @@ export async function sweepRevenueTamBatch(limit: number, offset: number) {
   for (const company of data) {
     const estimated = parseRevenueEstimate(company.revenue_band);
     if (estimated == null) continue;
+    // A Stanley UUID identifies the company in our database, not its NetSuite
+    // lead record. Refuse an ungrounded source link before any batch writes.
+    if (typeof company.netsuite_internal_id !== "string" || !/^[1-9]\d*$/.test(company.netsuite_internal_id)) {
+      throw new Error(`revenue TAM NetSuite Internal ID invalid for company ${company.id}`);
+    }
     // NetSuite's revenue band is a standing snapshot, not a new growth event every
     // day. Keep observation rows dated, but use a stable milestone identity so a
     // later rotation cannot publish the same threshold again under a new date.
     const observationId = stableHash({ companyId: company.id, source: "netsuite_revenue_band", band: company.revenue_band }).slice(0, 24);
     observations.push({ company_id: company.id, source: "NetSuite TAM revenue band", observed_on: observedOn, estimated_revenue: estimated, revenue_band: company.revenue_band, source_url: null, payload_hash: stableHash({ band: company.revenue_band, estimated }), evidence: { estimateMethod: "revenue_band_lower_bound" } });
-    for (const event of deriveRevenueEvents({ source: "NetSuite TAM revenue band", observationId, priorRevenue: null, currentRevenue: estimated, signalDate: observedOn })) triggerRows.push({ companyId: company.id, event, sourceName: "NetSuite TAM revenue estimate", sourceUrl: `https://system.netsuite.com/app/common/entity/custjob.nl?id=${encodeURIComponent(company.id)}&signal=${encodeURIComponent(event.type)}&threshold=${event.metadata.threshold}`, confidence: 0.7 });
+    for (const event of deriveRevenueEvents({ source: "NetSuite TAM revenue band", observationId, priorRevenue: null, currentRevenue: estimated, signalDate: observedOn })) triggerRows.push({ companyId: company.id, event, sourceName: "NetSuite TAM revenue estimate", sourceUrl: `https://system.netsuite.com/app/common/entity/custjob.nl?id=${company.netsuite_internal_id}&signal=${encodeURIComponent(event.type)}&threshold=${event.metadata.threshold}`, confidence: 0.7 });
   }
   for (let start = 0; start < observations.length; start += WRITE_BATCH_SIZE) {
     const { error: upsertError } = await db.from("company_revenue_observations").upsert(observations.slice(start, start + WRITE_BATCH_SIZE), { onConflict: "company_id,source,observed_on" });

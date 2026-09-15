@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  companyRows: [] as Array<{ id: string; name: string; revenue_band: string | null }>,
+  companyRows: [] as Array<{ id: string; name: string; revenue_band: string | null; netsuite_internal_id: string | null }>,
+  companySelect: vi.fn(),
   range: vi.fn(),
   observationUpsert: vi.fn(),
   priorTriggers: [] as Array<{ company_id: string; dedupe_key: string }>,
@@ -27,6 +28,7 @@ vi.mock("@/lib/supabase/server", () => ({
       for (const method of ["select", "contains", "neq", "order"]) {
         query[method] = vi.fn(() => query);
       }
+      query.select = mocks.companySelect.mockImplementation(() => query);
       query.range = mocks.range;
       return query;
     },
@@ -44,15 +46,40 @@ import { parseRevenueEstimate, sweepRevenueTamBatch } from "./revenueSweep";
 describe("revenue TAM sweep", () => {
   beforeEach(() => {
     mocks.companyRows = [
-      { id: "company-1", name: "One", revenue_band: "$50M-$100M" },
-      { id: "company-2", name: "Two", revenue_band: "$20M-$30M" },
-      { id: "company-3", name: "No estimate", revenue_band: null },
+      { id: "company-1", name: "One", revenue_band: "$50M-$100M", netsuite_internal_id: "198527" },
+      { id: "company-2", name: "Two", revenue_band: "$20M-$30M", netsuite_internal_id: "215655421" },
+      { id: "company-3", name: "No estimate", revenue_band: null, netsuite_internal_id: null },
     ];
     mocks.range.mockReset().mockImplementation(async () => ({ data: mocks.companyRows, error: null }));
     mocks.observationUpsert.mockReset().mockResolvedValue({ error: null });
     mocks.priorTriggers = [];
     mocks.recordBulk.mockReset().mockResolvedValue(7);
     mocks.recomputePriority.mockReset().mockResolvedValue(42);
+    mocks.companySelect.mockReset();
+  });
+
+  it("links each milestone to its exact numeric NetSuite ID while preserving company and event identities", async () => {
+    await sweepRevenueTamBatch(250, 0);
+    expect(mocks.companySelect).toHaveBeenCalledWith("id,name,revenue_band,netsuite_internal_id");
+    const rows = mocks.recordBulk.mock.calls[0][0];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const company = mocks.companyRows.find((candidate) => candidate.id === row.companyId)!;
+      const url = new URL(row.sourceUrl);
+      expect(url.origin + url.pathname).toBe("https://system.netsuite.com/app/common/entity/custjob.nl");
+      expect(url.searchParams.get("id")).toBe(company.netsuite_internal_id);
+      expect(url.searchParams.get("signal")).toBe(row.event.type);
+      expect(url.searchParams.get("threshold")).toBe(String(row.event.metadata.threshold));
+      expect(row.event.dedupeKey).toContain("a".repeat(24));
+    }
+  });
+
+  it.each([null, "", "company-2", " 215655421", "215655421&x=1", "0"])("refuses an invalid source ID %s before any batch write", async (invalid) => {
+    mocks.companyRows[1].netsuite_internal_id = invalid;
+    await expect(sweepRevenueTamBatch(250, 0)).rejects.toThrow("NetSuite Internal ID invalid");
+    expect(mocks.observationUpsert).not.toHaveBeenCalled();
+    expect(mocks.recordBulk).not.toHaveBeenCalled();
+    expect(mocks.recomputePriority).not.toHaveBeenCalled();
   });
 
   it("parses the defensible lower bound of a revenue band", () => {

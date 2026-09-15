@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   beginCompanyRecovery: vi.fn(),
   inspectCompanyRecovery: vi.fn(),
   complete: vi.fn(),
+  checkpoint: vi.fn(),
   fail: vi.fn(),
   pending: vi.fn(),
   queueMain: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock("@/lib/publicGrowth/sweepState", () => {
     beginPublicGrowthCompanyRecoverySweep: mocks.beginCompanyRecovery,
     inspectPublicGrowthCompanyRecovery: mocks.inspectCompanyRecovery,
     completePublicGrowthSweep: mocks.complete,
+    checkpointPublicGrowthSweep: mocks.checkpoint,
     failPublicGrowthSweep: mocks.fail,
     pendingPublicGrowthRetries: mocks.pending,
     queuePublicGrowthMainFailures: mocks.queueMain,
@@ -138,6 +140,26 @@ describe("public-growth managed sweep route", () => {
     `https://stanley.local/api/cron/public-growth?${query}`,
     { headers: { "x-cron-secret": "test-cron-secret" } },
   );
+
+  it("rejects legacy SAM opportunity offsets before taking a lease", async () => {
+    const response = await GET(request("source=sam-opportunities&offset=0"));
+    expect(response.status).toBe(400); expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.opportunities).not.toHaveBeenCalled();
+  });
+
+  it("passes the managed SAM source checkpoint, deadline and fenced progress callback", async () => {
+    const sourceCursor = { version: 1, source: "frozen-source" };
+    const managed = { ...lease, source: "sam-opportunities", offset: 777, cursor: { offset: 777, samOpportunityCursor: sourceCursor } };
+    mocks.begin.mockResolvedValue(managed); mocks.complete.mockResolvedValue(777); mocks.checkpoint.mockResolvedValue(undefined);
+    mocks.opportunities.mockImplementation(async (_days, _offset, _limit, options) => {
+      expect(options.cursor).toEqual(sourceCursor); expect(options.deadlineMs).toBeGreaterThan(Date.now());
+      await options.checkpoint({ ...sourceCursor, nextByte: 50 });
+      return { checked: 1, done: false, errors: 0, advanceCursor: false, opportunityProgress: { sourceSnapshotComplete: false, nextByte: 50 } };
+    });
+    const response = await GET(request("source=sam-opportunities&limit=1000")); expect(response.status).toBe(200);
+    expect(mocks.opportunities).toHaveBeenCalledWith(31, 777, 1000, expect.any(Object));
+    expect(mocks.checkpoint).toHaveBeenCalledWith(managed, { samOpportunityCursor: { ...sourceCursor, nextByte: 50 } });
+    expect(mocks.complete).toHaveBeenCalledWith(managed, expect.objectContaining({ opportunityProgress: { sourceSnapshotComplete: false, nextByte: 50 } }));
+  });
 
   it("returns a distinct conflict without starting work when the source is busy", async () => {
     mocks.begin.mockRejectedValue(new PublicGrowthSweepBusyError("usaspending", "2099-08-11T00:06:00.000Z"));

@@ -16,6 +16,7 @@ import {
   beginPublicGrowthRecoverySweep,
   beginPublicGrowthSweep,
   completePublicGrowthSweep,
+  checkpointPublicGrowthSweep,
   failPublicGrowthSweep,
   inspectPublicGrowthCompanyRecovery,
   pendingPublicGrowthRetries,
@@ -127,6 +128,9 @@ async function run(req: NextRequest) {
     return NextResponse.json({ error: "exact foundation requires one valid companyId, an award source, and no offset" }, { status: 400 });
   }
   const companyScopedSource = new Set(["usaspending", "usaspending-subawards", "sam-entity"]).has(source);
+  if (source === "sam-opportunities" && explicitOffset != null) {
+    return NextResponse.json({ error: "SAM opportunities requires its managed source checkpoint; legacy offsets are not supported" }, { status: 400 });
+  }
   const requestedScope = url.searchParams.get("scope");
   if (requestedScope != null && requestedScope !== "verified" && requestedScope !== "tam") {
     return NextResponse.json({ error: "scope must be verified or tam" }, { status: 400 });
@@ -272,7 +276,10 @@ async function run(req: NextRequest) {
         };
       })(exactCompany)
       : source === "sam-entity" ? await sweepSamTamBatch(n, offset, companyScope, afterCompanyId)
-        : source === "sam-opportunities" ? await sweepSamOpportunities(days, offset, opportunityLimit)
+        : source === "sam-opportunities" ? await sweepSamOpportunities(days, offset, opportunityLimit, {
+          cursor: lease.cursor.samOpportunityCursor, deadlineMs: sourceDeadlineMs,
+          checkpoint: (cursor) => checkpointPublicGrowthSweep(lease, { samOpportunityCursor: cursor }),
+        })
         : source === "revenue" ? await sweepRevenueTamBatch(revenueLimit, offset)
         : source === "usaspending-subawards" ? await sweepUsaspendingSubawardsTamBatch(n, offset, companyScope, afterCompanyId)
         : await sweepUsaspendingTamBatch(usaspendingCompanyLimit, offset, {

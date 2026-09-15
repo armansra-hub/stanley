@@ -13,12 +13,14 @@ export async function reheatCompanyForFreshSignal(
   triggerType: string,
   sourceUrl: string | null,
   signalDate: string | null,
+  options: { strict?: boolean } = {},
 ): Promise<boolean> {
   const db = serviceClient();
-  const { data: company } = await db.from("companies")
+  const { data: company, error: companyError } = await db.from("companies")
     .select("status,exported_at,lists,trigger_reviewed_through")
     .eq("id", companyId)
     .maybeSingle();
+  if (options.strict && companyError) throw new Error(`signal reheat company read failed: ${companyError.message}`);
   const status = company?.status as string | undefined;
   const lists = Array.isArray(company?.lists) ? company.lists.map(String) : [];
   if (!lists.includes("netsuite_tam")) return false;
@@ -40,12 +42,13 @@ export async function reheatCompanyForFreshSignal(
   }
   if (!eligible || !status) return false;
 
-  const { data: reheated } = await db.from("companies")
+  const { data: reheated, error: updateError } = await db.from("companies")
     .update({ status: "new", has_new_signal: true })
     .eq("id", companyId)
     .eq("status", status)
     .select("id")
     .maybeSingle();
+  if (options.strict && updateError) throw new Error(`signal reheat company update failed: ${updateError.message}`);
   if (!reheated) return false;
   await logEvent("headhunter", "lead.signal_reheated", {
     summary: `Fresh ${triggerType} signal reheated a ${status} lead`,

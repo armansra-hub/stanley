@@ -2,11 +2,11 @@
 """Download DOL Form 5500 public files and ingest matched current NetSuite TAM plans.
 
 The foundation files are large enough that a run can outlive a shell or network
-connection. Progress is therefore committed to an atomic local checkpoint only
-after the corresponding API write succeeds. Replaying the uncommitted tail is
-safe because the server upserts observations and deduplicates derived triggers.
+connection. Persist the exact pending request before each write, then atomically
+commit progress only after a complete acknowledgment. An uncertain request is
+never replayed automatically: its source-bound readback must be reconciled first.
 """
-import argparse, csv, hashlib, json, os, re, time, urllib.error, urllib.request, zipfile
+import argparse, copy, csv, hashlib, json, os, re, time, urllib.error, urllib.request, zipfile
 from collections import defaultdict
 from foundation_app_http import open_app_request
 
@@ -32,6 +32,9 @@ def env_file(name):
 def request_json(url, secret, payload=None, attempts=4):
     body = None if payload is None else json.dumps(payload).encode()
     method = "GET" if body is None else "POST"
+    # A transient HTTP error can arrive after some or all writes committed.
+    # Read retries remain unchanged; no caller can opt a POST into replay.
+    if body is not None: attempts = 1
     req = urllib.request.Request(url, data=body, method=method, headers={"x-cron-secret": secret, "content-type": "application/json", "user-agent": USER_AGENT})
     last = None
     for attempt in range(attempts):
@@ -97,12 +100,118 @@ def load_state(path):
         raise SystemExit(f"unsupported checkpoint schema in {path}; use --reset only after reviewing it")
     return state
 
+def require_no_pending_batch(state):
+    # Even a malformed/null marker must not become permission to replay.
+    if state is not None and "pendingBatch" in state:
+        raise SystemExit("checkpoint contains an unresolved pending Form 5500 batch; preserve it and obtain explicit durable source-bound readback reconciliation before resume or reset")
+
+def require_not_stopped(stop_path):
+    if stop_path and os.path.exists(stop_path):
+        raise SystemExit(f"Form 5500 cooperative stop requested by {stop_path}; checkpoint preserved")
+
+def commit_batch(state_path, state, dataset_key, current, pending_matched, batch, secret, stop_path=None):
+    """One durable exact intent, at most one POST, then one acknowledged commit.
+
+    A crash after POST acceptance or before the final atomic checkpoint leaves
+    pendingBatch intact. Startup and --reset both refuse that state. Recovery
+    requires a separately reviewed readback/reconciliation; there is no replay
+    or pending-marker deletion option in this importer.
+    """
+    require_no_pending_batch(state)
+    require_not_stopped(stop_path)
+    dataset = state["datasets"][dataset_key]
+    if current < int(dataset.get("scanned", 0)) or pending_matched != len(batch):
+        raise RuntimeError("invalid Form 5500 batch checkpoint boundary")
+    receipt = {"stored": 0, "triggers": 0}
+    if batch:
+        payload = {"observations": batch}
+        body = json.dumps(payload).encode()
+        pending = {
+            "version": 1, "status": "pending_request",
+            "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "datasetKey": dataset_key,
+            "startScannedExclusive": int(dataset.get("scanned", 0)),
+            "endScannedInclusive": current, "matched": pending_matched,
+            "requestUrl": f"{state['app']}/api/cron/public-growth/form5500",
+            "requestMethod": "POST", "requestBodyUtf8": body.decode("utf-8"),
+            "requestBodySha256": hashlib.sha256(body).hexdigest(), "requestBodyBytes": len(body),
+            "tamSignature": state["tamSignature"], "archiveSha256": dataset.get("archiveSha256"),
+            "checkpointSha256Before": file_sha256(state_path),
+        }
+        prepared = copy.deepcopy(state)
+        prepared["pendingBatch"] = pending
+        atomic_json(state_path, prepared)  # Must succeed before any transport.
+        state.clear(); state.update(prepared)
+        require_not_stopped(stop_path)
+        try:
+            receipt = request_json(pending["requestUrl"], secret, payload, attempts=1)
+            if (not isinstance(receipt, dict)
+                or any(type(receipt.get(name)) is not int or receipt[name] < 0
+                       for name in ("received", "stored", "rejected", "triggers", "companies"))
+                or receipt["received"] != len(batch) or receipt["stored"] != len(batch)
+                or receipt["rejected"] != 0
+                or receipt["companies"] != len({row["companyId"] for row in batch})):
+                raise RuntimeError("Form 5500 response did not acknowledge the complete exact batch")
+        except Exception as error:
+            # Record only non-sensitive error classification, never response
+            # text/headers/credentials. The original request stays available.
+            failed = copy.deepcopy(state)
+            failed["pendingBatch"]["failure"] = {"type": type(error).__name__, "httpStatus": getattr(error, "code", None)}
+            atomic_json(state_path, failed)
+            state.clear(); state.update(failed)
+            raise
+    committed = copy.deepcopy(state)
+    next_dataset = committed["datasets"][dataset_key]
+    next_dataset["scanned"] = current
+    next_dataset["matched"] = int(dataset.get("matched", 0)) + pending_matched
+    next_dataset["stored"] = int(dataset.get("stored", 0)) + receipt["stored"]
+    next_dataset["triggers"] = int(dataset.get("triggers", 0)) + receipt["triggers"]
+    next_dataset["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if batch:
+        committed["lastAcknowledgedBatch"] = {
+            "datasetKey": dataset_key, "startScannedExclusive": pending["startScannedExclusive"],
+            "endScannedInclusive": current, "requestBodySha256": pending["requestBodySha256"],
+            "acknowledgedAt": next_dataset["updatedAt"], "response": receipt,
+        }
+        del committed["pendingBatch"]
+    # Counters, offset, acknowledgment, and pending removal commit together.
+    # If this fails, the durable pending checkpoint still blocks all resumes.
+    atomic_json(state_path, committed)
+    state.clear(); state.update(committed)
+    return receipt
+
 def process_alive(pid):
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+        if pid <= 0: return False
+        if os.name == "nt": return windows_process_alive(pid)
+        os.kill(pid, 0)
         return True
     except (OSError, TypeError, ValueError):
         return False
+
+def windows_process_alive(pid):
+    """Query an existing process handle without sending a Windows signal."""
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only.
+    if not handle:
+        if ctypes.get_last_error() == 87: return False  # No such process ID.
+        raise SystemExit("cannot establish Form 5500 lock owner's process state; preserve lock for explicit review")
+    try:
+        result = kernel.WaitForSingleObject(handle, 0)
+        if result == 0x00000102: return True  # WAIT_TIMEOUT: still running.
+        if result == 0: return False  # WAIT_OBJECT_0: process has exited.
+        raise SystemExit("cannot query Form 5500 lock owner's process state; preserve lock for explicit review")
+    finally:
+        kernel.CloseHandle(handle)
 
 def acquire_lock(state_path):
     """Prevent two foundation runs from advancing the same checkpoint."""
@@ -220,22 +329,27 @@ def main():
     parser.add_argument("--cache-dir", default=None, help="archive cache (default: <state-dir>/form5500-cache)")
     parser.add_argument("--checkpoint-every", type=int, default=5000, help="maximum scanned rows between durable checkpoints")
     parser.add_argument("--reset", action="store_true", help="start a new checkpoint; cached immutable ZIPs are retained")
+    parser.add_argument("--stop-file", default=None, help="cooperative stop sentinel (default: <state-file>.stop); checked before each POST")
     args = parser.parse_args()
     if not args.secret: raise SystemExit("CRON_SECRET is required")
     if args.batch_size < 1 or args.batch_size > 250: raise SystemExit("--batch-size must be between 1 and 250")
     if args.checkpoint_every < args.batch_size: raise SystemExit("--checkpoint-every must be at least --batch-size")
     app = args.app.rstrip("/")
     state_path = os.path.abspath(args.state_file)
+    stop_path = os.path.abspath(args.stop_file or state_path + ".stop")
     cache_dir = os.path.abspath(args.cache_dir or os.path.join(os.path.dirname(state_path), "form5500-cache"))
     lock_path = acquire_lock(state_path)
     try:
+        state = load_state(state_path)
+        require_no_pending_batch(state)
+        require_not_stopped(stop_path)
         if args.reset:
             try: os.unlink(state_path)
             except FileNotFoundError: pass
+            state = None
         companies = load_tam(app, args.secret)
         signature = tam_signature(companies)
         requested_years = sorted(set(args.years))
-        state = load_state(state_path)
         if state is None:
             state = {"version": STATE_VERSION, "app": app, "years": requested_years, "tamSignature": signature, "tamCount": len(companies), "datasets": {}, "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
             atomic_json(state_path, state)
@@ -249,6 +363,7 @@ def main():
 
         for year in requested_years:
             for form_type, stem in (("5500", "F_5500"), ("5500-SF", "F_5500_SF")):
+                require_not_stopped(stop_path)
                 key = f"{year}:{form_type}"
                 url = f"https://askebsa.dol.gov/FOIA%20Files/{year}/Latest/{stem}_{year}_Latest.zip"
                 dataset = state["datasets"].setdefault(key, {"year": year, "form": form_type, "sourceUrl": url, "status": "pending", "scanned": 0, "matched": 0, "stored": 0, "triggers": 0})
@@ -265,16 +380,9 @@ def main():
                 batch, pending_matched, current = [], 0, committed
 
                 def commit():
-                    nonlocal batch, pending_matched
-                    receipt = {"stored": 0, "triggers": 0}
-                    if batch:
-                        receipt = request_json(f"{app}/api/cron/public-growth/form5500", args.secret, {"observations": batch})
-                    dataset["scanned"] = current
-                    dataset["matched"] = int(dataset.get("matched", 0)) + pending_matched
-                    dataset["stored"] = int(dataset.get("stored", 0)) + int(receipt.get("stored", 0))
-                    dataset["triggers"] = int(dataset.get("triggers", 0)) + int(receipt.get("triggers", 0))
-                    dataset["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                    atomic_json(state_path, state)
+                    nonlocal batch, pending_matched, dataset
+                    commit_batch(state_path, state, key, current, pending_matched, batch, args.secret, stop_path)
+                    dataset = state["datasets"][key]
                     batch, pending_matched = [], 0
 
                 for row_number, row in enumerate(rows_from_zip(archive_path), start=1):

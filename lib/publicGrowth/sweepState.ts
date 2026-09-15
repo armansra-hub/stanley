@@ -19,6 +19,7 @@ export interface PublicGrowthSweepResult {
   stored?: number;
   historiesCompleted?: number;
   historiesIncomplete?: number;
+  opportunityProgress?: Record<string, unknown>;
   nextOffset?: number;
   done?: boolean;
   triggers?: number;
@@ -30,7 +31,7 @@ export interface PublicGrowthSweepResult {
   advanceCursor?: boolean;
   /** Fenced JSON fields merged into the source cursor by the completion RPC. */
   cursorPatch?: Record<string, unknown>;
-  mode?: "main" | "retry" | "main+retry";
+  mode?: "main" | "retry" | "main+retry" | "public_bulk_bounded";
   retryQueued?: number;
   retryRemaining?: number;
   retryDeadLettered?: string[];
@@ -731,6 +732,19 @@ export async function inspectPublicGrowthCompanyRecovery(
   };
 }
 
+/** Persist an exact in-run boundary while retaining the source's existing lease. */
+export async function checkpointPublicGrowthSweep(lease: PublicGrowthSweepLease, patch: Record<string, unknown>): Promise<void> {
+  if (!lease.managed || !lease.token) throw new PublicGrowthSweepLeaseLostError(lease.source);
+  const cursor = structuredClone({ ...lease.cursor, ...patch, offset: lease.offset });
+  const now = new Date().toISOString();
+  const { data, error } = await serviceClient().from("public_growth_sweep_state")
+    .update({ cursor, updated_at: now }).eq("source", lease.source).eq("lease_token", lease.token)
+    .gt("lease_until", now).select("source").maybeSingle();
+  if (error) throw new Error(`public-growth checkpoint failed for ${lease.source}: ${error.message}`);
+  if (data?.source !== lease.source) throw new PublicGrowthSweepLeaseLostError(lease.source);
+  lease.cursor = cursor;
+}
+
 export async function completePublicGrowthSweep(
   lease: PublicGrowthSweepLease,
   result: PublicGrowthSweepResult,
@@ -754,6 +768,7 @@ export async function completePublicGrowthSweep(
     retryChecked: result.retryChecked ?? (result.mode === "retry" ? result.checked : 0),
     ...(result.stored !== undefined ? { stored: result.stored } : {}),
     ...(result.historiesCompleted !== undefined ? { historiesCompleted: result.historiesCompleted, historiesIncomplete: result.historiesIncomplete ?? 0 } : {}),
+    ...(result.opportunityProgress !== undefined ? { opportunityProgress: result.opportunityProgress } : {}),
     nextOffset,
     done: result.done === true,
     triggers: result.triggers ?? 0,
