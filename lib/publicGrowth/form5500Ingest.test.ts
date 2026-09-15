@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  companies: [] as Array<{ id: string; name: string; state: string | null; city: string | null }>,
+  companySelect: vi.fn(),
   history: [] as Array<{ active_participants_eoy: number; form_year: number }>,
   historyError: null as { message: string } | null,
   historyIn: vi.fn(), historyEq: vi.fn(), historyOrder: vi.fn(), historyLimit: vi.fn(),
@@ -11,8 +13,8 @@ vi.mock("@/lib/supabase/server", () => ({
   serviceClient: () => ({ from: (table: string) => {
     if (table === "companies") {
       const query = {
-        select: () => query, in: () => query, contains: () => query,
-        neq: async () => ({ data: [{ id: "current-company" }], error: null }),
+        select: (columns: string) => { mocks.companySelect(columns); return query; }, in: () => query, contains: () => query,
+        neq: async () => ({ data: mocks.companies, error: null }),
       };
       return query;
     }
@@ -39,16 +41,18 @@ vi.mock("./storage", () => ({ recordPublicGrowthTrigger: mocks.record, stableHas
 import { crossYearEvents, ingestForm5500Observations, type Form5500ObservationInput } from "./form5500Ingest";
 
 const observation: Form5500ObservationInput = {
-  companyId: "current-company", filingId: "filing-2025", formType: "5500",
+  companyId: "bd2432fc-8a61-4f86-ac06-e1a2fb61642d", filingId: "filing-2025", formType: "5500",
   sponsorEin: "123456789", sponsorName: "Fixture", planNumber: "001", formYear: 2025,
+  sponsorState: "PA", sponsorCity: "Somerset",
   planYearEnd: "2025-12-31", activeParticipantsBoy: 40, activeParticipantsEoy: 100,
-  matchMethod: "exact_name_city_state", matchConfidence: 0.98, sourceUrl: "https://www.dol.gov/fixture",
+  matchMethod: "exact_name_state_city", matchConfidence: 0.98, sourceUrl: "https://www.dol.gov/fixture",
 };
 const prior = (year: number, count: number) => ({ form_year: year, active_participants_eoy: count });
 
 describe("Form 5500 adjacent-year evidence", () => {
   beforeEach(() => {
     vi.clearAllMocks(); mocks.history = []; mocks.historyError = null;
+    mocks.companies = [{ id: observation.companyId, name: "Fixture Inc", state: "PA", city: "Somerset" }];
     mocks.observationUpsert.mockResolvedValue({ error: null });
     mocks.record.mockResolvedValue(true); mocks.recompute.mockResolvedValue(1);
   });
@@ -101,7 +105,7 @@ describe("Form 5500 adjacent-year evidence", () => {
     mocks.history = [prior(2024, 40), prior(2023, 20)];
     await ingestForm5500Observations([observation]);
     expect(mocks.historyIn.mock.calls).toEqual([["form_year", [2024, 2023]]]);
-    expect(mocks.historyEq.mock.calls).toEqual([["company_id", "current-company"], ["plan_number", "001"], ["sponsor_ein", "123456789"]]);
+    expect(mocks.historyEq.mock.calls).toEqual([["company_id", observation.companyId], ["plan_number", "001"], ["sponsor_ein", "123456789"]]);
     expect(mocks.historyOrder.mock.calls).toEqual([["form_year", { ascending: false }]]);
     expect(mocks.historyLimit.mock.calls).toEqual([[3]]);
   });
@@ -111,5 +115,38 @@ describe("Form 5500 adjacent-year evidence", () => {
     await expect(ingestForm5500Observations([observation])).rejects.toThrow("adjacent-year history read failed");
     expect(mocks.observationUpsert).not.toHaveBeenCalled();
     expect(mocks.record).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "Fixture Inc", state: "CA", city: "Somerset" },
+    { name: "Fixture Inc", state: "PA", city: null },
+    { name: "Unrelated Business", state: "PA", city: "Somerset" },
+  ])("rejects unsupported identity before all history and mutation work: %j", async (fields) => {
+    mocks.companies = [{ id: observation.companyId, ...fields }];
+    expect(await ingestForm5500Observations([observation])).toEqual({ received: 1, stored: 0, rejected: 1, triggers: 0, companies: 0 });
+    expect(mocks.companySelect).toHaveBeenCalledWith("id,name,state,city");
+    expect(mocks.historyEq).not.toHaveBeenCalled();
+    expect(mocks.observationUpsert).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+    expect(mocks.recompute).not.toHaveBeenCalled();
+  });
+
+  it("checks JSON shapes and confidence rather than trusting a TypeScript cast", async () => {
+    const malformed = [null, { ...observation, sponsorState: ["PA"] }, { ...observation, matchConfidence: "0.98" },
+      { ...observation, matchMethod: "manually_verified" }, { ...observation, companyId: [observation.companyId] }];
+    expect(await ingestForm5500Observations(malformed as unknown as Form5500ObservationInput[]))
+      .toEqual({ received: 5, stored: 0, rejected: 5, triggers: 0, companies: 0 });
+    expect(mocks.companySelect).not.toHaveBeenCalled();
+    expect(mocks.observationUpsert).not.toHaveBeenCalled();
+  });
+
+  it("preserves valid name-only fallback and reports a mixed batch's rejected rows", async () => {
+    mocks.companies[0].city = null;
+    const valid = { ...observation, matchMethod: "unique_exact_name", matchConfidence: 0.91 };
+    const result = await ingestForm5500Observations([valid, observation]);
+    expect(result).toMatchObject({ received: 2, stored: 1, rejected: 1, companies: 1 });
+    expect(mocks.observationUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.observationUpsert).toHaveBeenCalledWith(expect.objectContaining({ match_method: "unique_exact_name", match_confidence: 0.91 }), expect.anything());
+    expect(mocks.recompute).toHaveBeenCalledTimes(1);
   });
 });

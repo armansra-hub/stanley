@@ -3,6 +3,7 @@ import { serviceClient } from "@/lib/supabase/server";
 import { recomputePriority } from "@/lib/db/triggers";
 import { deriveParticipantEvents } from "./metrics";
 import { recordPublicGrowthTrigger, stableHash } from "./storage";
+import { form5500IdentitySupported, isForm5500IdentityInput } from "./form5500Identity";
 import type { DerivedGrowthEvent } from "./types";
 
 export interface Form5500ObservationInput {
@@ -60,15 +61,18 @@ export function crossYearEvents(row: Form5500ObservationInput, history: { active
 }
 
 export async function ingestForm5500Observations(rows: Form5500ObservationInput[]) {
+  const candidates = rows.filter(isForm5500IdentityInput);
+  if (!candidates.length) return { received: rows.length, stored: 0, rejected: rows.length, triggers: 0, companies: 0 };
   const db = serviceClient();
-  const companyIds = [...new Set(rows.map((r) => r.companyId))];
-  const { data: allowed, error: allowedError } = await db.from("companies").select("id").in("id", companyIds).contains("lists", ["netsuite_tam"]).neq("status", "removed_from_tam");
+  const companyIds = [...new Set(candidates.map((r) => r.companyId))];
+  const { data: allowed, error: allowedError } = await db.from("companies").select("id,name,state,city").in("id", companyIds).contains("lists", ["netsuite_tam"]).neq("status", "removed_from_tam");
   if (allowedError) throw new Error(`TAM validation failed: ${allowedError.message}`);
-  const allow = new Set((allowed ?? []).map((x) => String(x.id)));
-  let stored = 0, triggers = 0, rejected = 0;
+  const byId = new Map((allowed ?? []).map((company) => [String(company.id), company]));
+  let stored = 0, triggers = 0, rejected = rows.length - candidates.length;
   const touched = new Set<string>();
-  for (const row of rows) {
-    if (!allow.has(row.companyId)) { rejected++; continue; }
+  for (const row of candidates) {
+    const company = byId.get(row.companyId);
+    if (!company || !form5500IdentitySupported(company, row)) { rejected++; continue; }
     let previousQuery = db.from("form5500_headcount_observations").select("active_participants_eoy,form_year")
       .eq("company_id", row.companyId).eq("plan_number", row.planNumber).in("form_year", [row.formYear - 1, row.formYear - 2]);
     if (row.sponsorEin) previousQuery = previousQuery.eq("sponsor_ein", row.sponsorEin);

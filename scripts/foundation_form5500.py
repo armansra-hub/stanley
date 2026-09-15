@@ -278,7 +278,7 @@ def ensure_archive(url, path, expected_sha=None, attempts=4):
 def match_company(row, index):
     sponsor = first(row, ["SPONSOR_DFE_NAME", "SF_SPONSOR_NAME"])
     dba = first(row, ["SPONS_DFE_DBA_NAME", "SF_SPONSOR_DFE_DBA_NAME"])
-    state = first(row, ["SPONS_DFE_MAIL_US_STATE", "SF_SPONS_US_STATE", "SPONS_DFE_LOC_US_STATE", "SF_SPONS_LOC_US_STATE"]).upper()
+    state = first(row, ["SPONS_DFE_MAIL_US_STATE", "SF_SPONS_US_STATE", "SPONS_DFE_LOC_US_STATE", "SF_SPONS_LOC_US_STATE"]).strip().upper()
     city = norm(first(row, ["SPONS_DFE_MAIL_US_CITY", "SF_SPONS_US_CITY", "SPONS_DFE_LOC_US_CITY", "SF_SPONS_LOC_US_CITY"]))
     candidates = {}
     for name in (sponsor, dba):
@@ -287,14 +287,23 @@ def match_company(row, index):
             for company in index.get(key, []): candidates[company["id"]] = company
     if not candidates: return None
     if state:
-        scoped = {cid: c for cid, c in candidates.items() if str(c.get("state") or "").upper() == state}
+        # A known contradictory state must never fall back to name-only identity.
+        candidates = {cid: c for cid, c in candidates.items()
+                      if not str(c.get("state") or "").strip()
+                      or str(c["state"]).strip().upper() == state}
+        if not candidates: return None
+        scoped = {cid: c for cid, c in candidates.items() if str(c.get("state") or "").strip().upper() == state}
         if scoped: candidates = scoped
     if city and len(candidates) > 1:
         scoped = {cid: c for cid, c in candidates.items() if norm(c.get("city")) == city}
         if scoped: candidates = scoped
     if len(candidates) != 1: return None
     cid = next(iter(candidates))
-    return cid, ("exact_name_state_city" if state and city else "unique_exact_name"), (0.98 if state and city else 0.91)
+    company = candidates[cid]
+    location_matches = bool(state and city
+                            and str(company.get("state") or "").strip().upper() == state
+                            and norm(company.get("city")) == city)
+    return cid, ("exact_name_state_city" if location_matches else "unique_exact_name"), (0.98 if location_matches else 0.91)
 
 def rows_from_zip(path):
     with zipfile.ZipFile(path) as archive:
