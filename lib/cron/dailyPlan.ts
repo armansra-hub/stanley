@@ -16,7 +16,11 @@ export const DAILY_STAGE_SIZE = 5;
  * hundreds of awards and transaction pages. Prime-award history now receives
  * one bounded invocation in every hourly stage. Six verified recipients per
  * stage covers that 250-recipient foundation population inside 48
- * hours. Subawards allocate that baseline in two 16-hour invocations. Prime awards
+ * hours. Subawards run every two hourly stages. A September source sample admitted
+ * only 13 main companies in 242 seconds despite n=125, so the requested batch
+ * ceiling cannot be treated as throughput. Eight calls per 16-hour rotation
+ * provide 24 opportunities in 48 hours; actual completion and retry debt still
+ * require source receipts. Prime awards
  * additionally service one retry; subawards service up to ten within a separate
  * 60-second retry budget. Main pages continue within the remaining request budget.
  * These are explicit eligible-set budgets, not full-TAM discovery or proof that
@@ -44,14 +48,13 @@ export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
     path: "/api/cron/public-growth?source=usaspending-subawards&scope=verified&n=125",
     foundationEligibleBaseline: 250,
     batchSize: 125,
-    invocationsPerRotation: 1,
+    invocationsPerRotation: 8,
     rotationHours: 16,
-    targetCycleHours: 32,
+    targetCycleHours: 48,
   },
 ] as const;
 
 const PUBLIC_GROWTH_PATHS = [
-  PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending-subawards")!.path,
   "/api/cron/public-growth?source=sam-opportunities&days=31&limit=1000",
   "/api/cron/public-growth?source=revenue&n=10&limit=4000",
 ] as const;
@@ -81,18 +84,18 @@ export function isGetCompatibleDailyPath(path: string): boolean {
 
 /** Pure, deterministic manifest for the one Vercel daily cron. */
 export function buildDailyWavePaths(_dayIndex?: number): string[] {
-  const TRIGGER_WAVES = 7, TRIGGER_N = 500;
+  const TRIGGER_WAVES = 6, TRIGGER_N = 500;
   const FMCSA_WAVES = 4, FMCSA_N = 250;
-  const SITE_WAVES = 15, SITE_N = 250;
+  const SITE_WAVES = 12, SITE_N = 250;
   const SOS_WAVES = 1, SOS_N = 400;
-  const ATS_WAVES = 15, ATS_N = 250;
+  const ATS_WAVES = 12, ATS_N = 250;
 
   const ordinaryPaths = [
     "/api/cron/tal-news",
     ...Array.from({ length: TRIGGER_WAVES }, (_, k) => `/api/cron/triggers?n=${TRIGGER_N}&wave=${k}`),
     ...Array.from({ length: FMCSA_WAVES }, (_, k) => `/api/cron/fmcsa?n=${FMCSA_N}&wave=${k}`),
-    // The 16-hour manifest repeats three times in 48 hours. News plans 10,500
-    // checks and website/ATS each plan 11,250, leaving missed-wave margin above
+    // The 16-hour manifest repeats three times in 48 hours. News, website and
+    // ATS each plan 9,000 checks, leaving missed-wave margin above
     // the current 7,441-company TAM. Actual completed checks remain bounded by
     // each worker's time budget and must be read from its receipts.
     ...Array.from({ length: SITE_WAVES }, (_, k) => `/api/cron/website?n=${SITE_N}&wave=${k}`),
@@ -102,17 +105,28 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
     "/api/cron/reconcile-hidden",
     "/api/cron/recompute",
   ];
-  if (ordinaryPaths.length !== 48) throw new Error(`daily cron expected 48 ordinary paths, received ${ordinaryPaths.length}`);
+  if (ordinaryPaths.length !== 40) throw new Error(`daily cron expected 40 ordinary paths, received ${ordinaryPaths.length}`);
 
   // Prime awards and candidate verification run in every hourly stage. This
   // prevents same-source lease collisions, removes the manual review backlog,
-  // and leaves three slots for continuous broad-source rotation.
+  // and leaves three slots for broad-source rotation. One of those slots goes
+  // to subawards on alternating stages, including the cyclic stage-14-to-0 gap.
   const prime = PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending")!;
-  const paths = Array.from({ length: 16 }, (_, stage) => [
-    `${prime.path}&wave=${stage}`,
-    `/api/cron/review-candidates?n=25&wave=${stage}`,
-    ...ordinaryPaths.slice(stage * 3, stage * 3 + 3),
-  ]).flat();
+  const subawards = PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending-subawards")!;
+  let ordinaryOffset = 0;
+  const paths = Array.from({ length: 16 }, (_, stage) => {
+    const subawardPaths = stage % 2 === 0 ? [`${subawards.path}&wave=${stage / 2}`] : [];
+    const count = 3 - subawardPaths.length;
+    const ordinary = ordinaryPaths.slice(ordinaryOffset, ordinaryOffset + count);
+    ordinaryOffset += count;
+    return [
+      `${prime.path}&wave=${stage}`,
+      `/api/cron/review-candidates?n=25&wave=${stage}`,
+      ...subawardPaths,
+      ...ordinary,
+    ];
+  }).flat();
+  if (ordinaryOffset !== ordinaryPaths.length) throw new Error("daily cron did not allocate every ordinary path");
   const unique = [...new Set(paths)];
   if (unique.length !== paths.length) throw new Error("daily cron plan contains duplicate child requests");
   if (unique.length !== DAILY_PLANNED_CHILDREN) {

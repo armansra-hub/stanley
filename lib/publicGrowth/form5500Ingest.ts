@@ -4,6 +4,7 @@ import { recomputePriority } from "@/lib/db/triggers";
 import { deriveParticipantEvents } from "./metrics";
 import { recordPublicGrowthTrigger, stableHash } from "./storage";
 import { form5500IdentitySupported, isForm5500IdentityInput } from "./form5500Identity";
+import { FORM5500_HISTORY_MAX_ROWS, form5500EvidenceForWrite, form5500ObservationExclusion } from "./form5500ObservationSafety";
 import type { DerivedGrowthEvent } from "./types";
 
 export interface Form5500ObservationInput {
@@ -73,20 +74,35 @@ export async function ingestForm5500Observations(rows: Form5500ObservationInput[
   for (const row of candidates) {
     const company = byId.get(row.companyId);
     if (!company || !form5500IdentitySupported(company, row)) { rejected++; continue; }
-    let previousQuery = db.from("form5500_headcount_observations").select("active_participants_eoy,form_year")
+    if (form5500ObservationExclusion(company.state, { sponsor_state: row.sponsorState, evidence: row.evidence })) { rejected++; continue; }
+    const { data: existing, error: existingError } = await db.from("form5500_headcount_observations")
+      .select("id,evidence,sponsor_state").eq("company_id", row.companyId).eq("filing_id", row.filingId).maybeSingle();
+    if (existingError) throw new Error(`Form 5500 existing observation read failed: ${existingError.message}`);
+    // A newly supported input cannot erase an existing reviewed hold or publish
+    // signals from that held filing. Reversal is a separate reviewed operation.
+    if (existing && form5500ObservationExclusion(company.state, existing)) { rejected++; continue; }
+    let previousQuery = db.from("form5500_headcount_observations").select("id,active_participants_eoy,form_year,sponsor_state,evidence")
       .eq("company_id", row.companyId).eq("plan_number", row.planNumber).in("form_year", [row.formYear - 1, row.formYear - 2]);
     if (row.sponsorEin) previousQuery = previousQuery.eq("sponsor_ein", row.sponsorEin);
-    // Three rows suffice to detect ambiguity in either of these two years:
-    // duplicate prior-year rows suppress all cross-year events; duplicate
-    // second-prior-year rows suppress only the consecutive-growth event.
-    const { data: history, error: historyError } = await previousQuery.order("form_year", { ascending: false }).limit(3);
+    // Filtering a three-row prefix could hide later valid duplicates. Read a
+    // bounded complete scope and refuse truncation before deriving any events.
+    const { data: history, error: historyError } = await previousQuery.order("form_year", { ascending: false }).order("id", { ascending: true }).limit(FORM5500_HISTORY_MAX_ROWS + 1);
     if (historyError) throw new Error(`Form 5500 adjacent-year history read failed: ${historyError.message}`);
-    const payload = { company_id: row.companyId, filing_id: row.filingId, form_type: row.formType, sponsor_ein: row.sponsorEin ?? null, sponsor_name: row.sponsorName, sponsor_dba: row.sponsorDba ?? null, sponsor_city: row.sponsorCity ?? null, sponsor_state: row.sponsorState ?? null, sponsor_zip: row.sponsorZip ?? null, plan_number: row.planNumber, plan_name: row.planName ?? null, form_year: row.formYear, plan_year_begin: row.planYearBegin ?? null, plan_year_end: row.planYearEnd ?? null, active_participants_boy: row.activeParticipantsBoy ?? null, active_participants_eoy: row.activeParticipantsEoy ?? null, match_method: row.matchMethod, match_confidence: row.matchConfidence, source_url: row.sourceUrl, payload_hash: stableHash(row), evidence: row.evidence ?? {} };
-    const { error } = await db.from("form5500_headcount_observations").upsert(payload, { onConflict: "company_id,filing_id" });
-    if (error) throw new Error(`Form 5500 observation upsert failed: ${error.message}`);
+    if ((history?.length ?? 0) > FORM5500_HISTORY_MAX_ROWS) throw new Error("Form 5500 adjacent-year history exceeds bounded complete-read limit");
+    const eligibleHistory = (history ?? []).filter((prior) => !form5500ObservationExclusion(company.state, prior));
+    const payload = { company_id: row.companyId, filing_id: row.filingId, form_type: row.formType, sponsor_ein: row.sponsorEin ?? null, sponsor_name: row.sponsorName, sponsor_dba: row.sponsorDba ?? null, sponsor_city: row.sponsorCity ?? null, sponsor_state: row.sponsorState ?? null, sponsor_zip: row.sponsorZip ?? null, plan_number: row.planNumber, plan_name: row.planName ?? null, form_year: row.formYear, plan_year_begin: row.planYearBegin ?? null, plan_year_end: row.planYearEnd ?? null, active_participants_boy: row.activeParticipantsBoy ?? null, active_participants_eoy: row.activeParticipantsEoy ?? null, match_method: row.matchMethod, match_confidence: row.matchConfidence, source_url: row.sourceUrl, payload_hash: stableHash(row), evidence: form5500EvidenceForWrite(existing?.evidence, row.evidence) };
+    // Do not use upsert: it can clear a concurrent quarantine. Existing rows use
+    // an evidence compare-and-set; a concurrent insert fails the unique key.
+    const write = existing
+      ? db.from("form5500_headcount_observations").update(payload).eq("id", existing.id)
+        .eq("evidence", JSON.stringify(existing.evidence)).select("id").maybeSingle()
+      : db.from("form5500_headcount_observations").insert(payload).select("id").single();
+    const { data: written, error } = await write;
+    if (error) throw new Error(`Form 5500 observation write failed: ${error.message}`);
+    if (!written) throw new Error("Form 5500 observation changed concurrently; no events published");
     stored++; touched.add(row.companyId);
     const boy = Number(row.activeParticipantsBoy ?? 0), eoy = Number(row.activeParticipantsEoy ?? 0);
-    const events = [...(boy >= 0 && eoy > 0 ? deriveParticipantEvents({ filingId: row.filingId, formYear: row.formYear, boy, eoy, signalDate: row.planYearEnd }) : []), ...crossYearEvents(row, history ?? [])];
+    const events = [...(boy >= 0 && eoy > 0 ? deriveParticipantEvents({ filingId: row.filingId, formYear: row.formYear, boy, eoy, signalDate: row.planYearEnd }) : []), ...crossYearEvents(row, eligibleHistory)];
     for (const event of events) if (await recordPublicGrowthTrigger(row.companyId, event, "DOL Form 5500", row.sourceUrl, row.matchConfidence)) triggers++;
   }
   for (const id of touched) await recomputePriority(id);

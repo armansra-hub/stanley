@@ -3,6 +3,7 @@ import {
   buildDailyWavePaths,
   DAILY_CHILD_REQUEST_LIMIT,
   DAILY_PLANNED_CHILDREN,
+  DAILY_STAGE_SIZE,
   isGetCompatibleDailyPath,
   PUBLIC_GROWTH_RECURRING_COVERAGE,
 } from "./dailyPlan";
@@ -25,14 +26,14 @@ describe("daily cron plan", () => {
 
   it("preserves primary coverage while assigning real slots to overdue sources", () => {
     const paths = buildDailyWavePaths(0);
-    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(7);
+    expect(pathsFor(paths, "/api/cron/triggers")).toHaveLength(6);
     expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(4);
-    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(15);
+    expect(pathsFor(paths, "/api/cron/website")).toHaveLength(12);
     expect(paths.filter((path) => path.includes("scope=tail"))).toHaveLength(0);
     expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(1);
-    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(15);
+    expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(12);
     expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(0);
-    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(19);
+    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(26);
     expect(pathsFor(paths, "/api/cron/review-candidates")).toHaveLength(16);
     expect(paths).toContain("/api/cron/reconcile-hidden");
 
@@ -77,13 +78,57 @@ describe("daily cron plan", () => {
     expect(limit).toBeLessThanOrEqual(4000);
   });
 
-  it("gives every recurring source a real 48-hour-or-faster cadence", () => {
+  it("preserves all recurring source routes without treating scheduled capacity as completion", () => {
     for (let day = 0; day < 5; day++) {
       const publicPaths = pathsFor(buildDailyWavePaths(day), "/api/cron/public-growth");
       const sources = publicPaths.map((path) => new URL(path, "https://local").searchParams.get("source"));
       expect(new Set(sources)).toEqual(new Set(["usaspending", "usaspending-subawards", "sam-opportunities", "revenue"]));
       expect(sources.filter((source) => source === "usaspending")).toHaveLength(16);
-      expect(sources).toHaveLength(19);
+      expect(sources.filter((source) => source === "usaspending-subawards")).toHaveLength(8);
+      expect(sources).toHaveLength(26);
+    }
+  });
+
+  it("spaces eight subaward waves exactly two hours apart across the rotation boundary", () => {
+    const paths = buildDailyWavePaths();
+    const stages: number[] = [], waves: number[] = [];
+    expect(DAILY_STAGE_SIZE).toBe(5);
+    expect(paths).toHaveLength(80);
+    for (let offset = 0; offset < paths.length; offset += DAILY_STAGE_SIZE) {
+      const stage = paths.slice(offset, offset + DAILY_STAGE_SIZE);
+      expect(stage).toHaveLength(5);
+      const subawards = stage.map((path) => new URL(path, "https://local"))
+        .filter((url) => url.searchParams.get("source") === "usaspending-subawards");
+      expect(subawards.length).toBeLessThanOrEqual(1);
+      if (subawards.length) {
+        stages.push(offset / DAILY_STAGE_SIZE);
+        waves.push(Number(subawards[0].searchParams.get("wave")));
+        expect(subawards[0].searchParams.get("scope")).toBe("verified");
+        expect(subawards[0].searchParams.has("offset")).toBe(false);
+      }
+    }
+    expect(stages).toHaveLength(8);
+    expect(new Set(waves).size).toBe(8);
+    for (let i = 0; i < stages.length; i++) {
+      expect((stages[(i + 1) % stages.length] - stages[i] + 16) % 16).toBe(2);
+    }
+    const coverage = PUBLIC_GROWTH_RECURRING_COVERAGE.find((source) => source.source === "usaspending-subawards")!;
+    expect(coverage.invocationsPerRotation).toBe(stages.length);
+    expect(coverage.rotationHours).toBe(16);
+  });
+
+  it("preserves unrelated source and maintenance allocations", () => {
+    const paths = buildDailyWavePaths();
+    for (const pathname of ["/api/cron/tal-news", "/api/cron/cosos", "/api/cron/reconcile-hidden", "/api/cron/recompute"]) {
+      expect(pathsFor(paths, pathname)).toHaveLength(1);
+    }
+    expect(pathsFor(paths, "/api/cron/fmcsa")).toHaveLength(4);
+    for (const source of ["revenue", "sam-opportunities"]) {
+      expect(paths.filter((path) => new URL(path, "https://local").searchParams.get("source") === source)).toHaveLength(1);
+    }
+    for (const pathname of ["/api/cron/triggers", "/api/cron/website", "/api/cron/ats"]) {
+      const plannedChecks = pathsFor(paths, pathname).reduce((sum, path) => sum + Number(new URL(path, "https://local").searchParams.get("n")), 0);
+      expect(plannedChecks * 3).toBe(9000);
     }
   });
 

@@ -23,6 +23,41 @@ export interface CompanySweepReceipt {
   awardDone?: boolean;
   awardContinuation?: PublicGrowthAwardContinuation;
   error?: string;
+  requestDiagnostic?: PrimeRequestDiagnostic;
+}
+
+type PrimeRequestOperation = "recipient_autocomplete" | "initial_award_search" | "continuation_award_search" | "award_detail" | "award_transactions";
+interface PrimeRequestDiagnostic {
+  operation: PrimeRequestOperation;
+  elapsedMs: number;
+  failureClass: "request_timeout" | "rate_limited" | "http_error" | "transport_error" | "invalid_json" | "request_error";
+  httpStatus: number | null;
+}
+
+class PrimeRequestError extends Error {
+  constructor(error: unknown, readonly diagnostic: PrimeRequestDiagnostic) {
+    super(error instanceof Error ? error.message : String(error));
+    this.name = error instanceof Error ? error.name : "Error";
+  }
+}
+
+/** Adds fixed-label diagnostics without altering provider attempts or deadlines. */
+async function observePrimeRequest<T>(operation: PrimeRequestOperation, request: () => Promise<T>): Promise<T> {
+  const started = Date.now();
+  try {
+    return await request();
+  } catch (error) {
+    // The outer worker already treats overall-budget exhaustion as resumable
+    // progress. Preserve that exact error object and control flow.
+    if (error instanceof PublicGrowthDeadlineError) throw error;
+    const name = error instanceof Error ? error.name : "";
+    const statusMatch = error instanceof Error ? /^([45]\d\d)(?:\s|:)/.exec(error.message) : null;
+    const httpStatus = statusMatch ? Number(statusMatch[1]) : null;
+    const failureClass: PrimeRequestDiagnostic["failureClass"] = name === "AbortError" || name === "TimeoutError"
+      ? "request_timeout" : httpStatus === 429 ? "rate_limited" : httpStatus != null ? "http_error"
+        : name === "SyntaxError" ? "invalid_json" : name === "TypeError" ? "transport_error" : "request_error";
+    throw new PrimeRequestError(error, { operation, elapsedMs: Math.max(0, Math.trunc(Date.now() - started)), failureClass, httpStatus });
+  }
 }
 
 const STORED_METRIC_PAGE_SIZE = 1000;
@@ -111,12 +146,12 @@ export async function sweepUsaspendingCompany(
     let state = options.awardContinuation ? structuredClone(options.awardContinuation) : null;
     let currentSearchPage: Awaited<ReturnType<typeof searchContractAwardsPage>> | null = null;
     if (!state) {
-      const suggestions = await autocompleteRecipients(company.name, 1, options.deadlineMs);
+      const suggestions = await observePrimeRequest("recipient_autocomplete", () => autocompleteRecipients(company.name, 1, options.deadlineMs));
       const exactNames = [...new Set(suggestions.map((x) => x.recipient_name).filter((name) => normalizeName(name) === normalizeName(company.name)))];
       if (!exactNames.includes(company.name)) exactNames.push(company.name);
       for (const recipientName of exactNames.slice(0, 4)) {
         const candidate = initialAwardContinuation(recipientName);
-        const page = await searchContractAwardsPage(recipientName, 1, candidate.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs);
+        const page = await observePrimeRequest("initial_award_search", () => searchContractAwardsPage(recipientName, 1, candidate.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs));
         if (page.rows.some((row) => normalizeName(row.recipientName) === normalizeName(recipientName))) {
           state = candidate; currentSearchPage = page; break;
         }
@@ -126,7 +161,7 @@ export async function sweepUsaspendingCompany(
     receipt.awardContinuation = state;
 
     if (!state.pendingAwardId) {
-      const page = currentSearchPage ?? await searchContractAwardsPage(state.recipientName, state.searchPage, state.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs);
+      const page = currentSearchPage ?? await observePrimeRequest("continuation_award_search", () => searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs));
       const exactRows = page.rows.filter((row) => normalizeName(row.recipientName) === normalizeName(state.recipientName));
       const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew, seenIds: state.seenAwardIds, pageIds: exactRows.map((row) => row.generatedId), hasNext: page.hasNext });
       const nextAward = decision.nextId ? exactRows.find((row) => row.generatedId === decision.nextId) : null;
@@ -161,7 +196,7 @@ export async function sweepUsaspendingCompany(
 
     const pendingAwardId = state.pendingAwardId;
     if (!pendingAwardId) throw new Error("USAspending continuation omitted its pending award");
-    const seed = compactAward(await fetchAwardDetail(pendingAwardId, 1, options.deadlineMs));
+    const seed = compactAward(await observePrimeRequest("award_detail", () => fetchAwardDetail(pendingAwardId, 1, options.deadlineMs)));
     if (state.entityId && !matchesFrozenPublicGrowthRecipient(
       { uei: state.uei, recipientId: state.recipientId },
       { uei: seed.recipient.uei, recipientId: seed.recipient.recipientId },
@@ -199,7 +234,7 @@ export async function sweepUsaspendingCompany(
       }
     }
 
-    const transactionPage = await fetchAwardTransactionsPage(seed.generatedAwardId, state.transactionPage, options.deadlineMs);
+    const transactionPage = await observePrimeRequest("award_transactions", () => fetchAwardTransactionsPage(seed.generatedAwardId, state!.transactionPage, options.deadlineMs));
     const seenTransactions = new Set(state.seenTransactionIds);
     const unseenTransactions = transactionPage.rows.filter((row) => !seenTransactions.has(transactionId(row)));
     receipt.transactions += await saveFederalTransactions(storedAwardId, sourceUrl, unseenTransactions);
@@ -229,7 +264,15 @@ export async function sweepUsaspendingCompany(
     if (error instanceof PublicGrowthDeadlineError && receipt.awardContinuation) {
       return { ...receipt, awardDone: false };
     }
-    return { ...receipt, status: "error", error: error instanceof Error ? error.message : String(error) };
+    const requestDiagnostic = error instanceof PrimeRequestError ? error.diagnostic : undefined;
+    const message = error instanceof Error ? error.message : String(error);
+    // lastError already survives in the exact source retry cursor. Append only
+    // fixed labels/numbers so saved failures can be classified without exposing
+    // source URLs, request bodies, or response text in the diagnostic object.
+    const suffix = requestDiagnostic
+      ? ` [usaspending_operation=${requestDiagnostic.operation}; elapsed_ms=${requestDiagnostic.elapsedMs}; failure_class=${requestDiagnostic.failureClass}]`
+      : "";
+    return { ...receipt, status: "error", error: message + suffix, ...(requestDiagnostic ? { requestDiagnostic } : {}) };
   }
 }
 
