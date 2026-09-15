@@ -1,4 +1,5 @@
 import "server-only";
+import { rotationBatches } from "./rotationBatches";
 import { pickCarriersForRotation, markFmcsaChecked, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
 import { isGenericName } from "@/lib/triggers/sweep";
@@ -14,16 +15,10 @@ import { getFmcsaSnapshot, upsertFmcsaSnapshot } from "@/lib/db/fmcsa";
  * fire on later runs. Boost-only; never creates a company.
  */
 export async function sweepFmcsaTam(limit = 150, opts: { offset?: number } = {}): Promise<{ checked: number; matched: number; fleet_growth: number }> {
-  const companies = await pickCarriersForRotation(limit, opts.offset ?? 0);
   const stats = { checked: 0, matched: 0, fleet_growth: 0 };
   const touched = new Set<string>();
 
-  // Time-boxed + batch-stamped (see sweepBase) — a slow wave commits partial progress.
-  const deadline = Date.now() + 48_000;
-  const BATCH = 8;
-  for (let i = 0; i < companies.length; i += BATCH) {
-    if (Date.now() > deadline) break;
-    const slice = companies.slice(i, i + BATCH);
+  for await (const slice of rotationBatches(pickCarriersForRotation, { limit, batchSize: 8, offset: opts.offset })) {
     await Promise.all(slice.map(async (c) => {
       try {
         const cn = normalizeCompanyName(c.name);

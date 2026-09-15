@@ -105,6 +105,7 @@ export async function POST(req: Request) {
     fromStatuses?: unknown;
     rows?: unknown;
     dryRun?: unknown;
+    exactIdsOnly?: unknown;
     note?: unknown;
     agent?: unknown;
   };
@@ -113,6 +114,10 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  if (body.exactIdsOnly != null && typeof body.exactIdsOnly !== "boolean") {
+    return NextResponse.json({ error: "exactIdsOnly must be boolean" }, { status: 422 });
+  }
+  const exactIdsOnly = body.exactIdsOnly === true;
 
   if (body.action === "set_current_tam_status") {
     if (!Array.isArray(body.internalIds) || body.internalIds.length === 0) {
@@ -229,8 +234,10 @@ export async function POST(req: Request) {
       .in("netsuite_internal_id", internalIds);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    const mutable = (data ?? []).filter((company) => !exactIdsOnly
+      || !(Array.isArray(company.lists) && company.lists.includes("tam_duplicate")));
     const now = new Date().toISOString();
-    const updates = (data ?? []).map((company) => ({
+    const updates = mutable.map((company) => ({
       id: company.id,
       name: company.name,
       status: "removed_from_tam",
@@ -239,10 +246,11 @@ export async function POST(req: Request) {
       is_base: true,
       last_updated_at: now,
     }));
-    const foundIds = new Set((data ?? []).map((company) => String(company.netsuite_internal_id)));
+    const foundIds = new Set(mutable.map((company) => String(company.netsuite_internal_id)));
     const missingInternalIds = internalIds.filter((internalId) => !foundIds.has(internalId));
     const summary = {
       action: "retire_membership",
+      exactIdsOnly,
       received: internalIds.length,
       companyRowsToRetire: updates.length,
       missingInternalIds,
@@ -304,6 +312,18 @@ export async function POST(req: Request) {
     const key = String(company.netsuite_internal_id);
     exactById.set(key, [...(exactById.get(key) ?? []), company]);
   }
+  if (exactIdsOnly) {
+    for (const [internalId, matches] of exactById) {
+      const canonical = matches.filter((company) =>
+        !(Array.isArray(company.lists) && company.lists.includes("tam_duplicate")),
+      );
+      if (canonical.length !== 1) {
+        return NextResponse.json({ error: "ambiguous exact NetSuite Internal ID", internalId }, { status: 409 });
+      }
+      // Retired duplicate rows are immutable history, never refresh targets.
+      exactById.set(internalId, canonical);
+    }
+  }
 
   const missing = rows.filter((row) => !exactById.has(row.internalId));
   const missingDomains = [...new Set(
@@ -319,6 +339,7 @@ export async function POST(req: Request) {
   const byDomain = new Map(
     ((domainData ?? []) as ExistingCompany[]).map((company) => [String(company.domain), company]),
   );
+  const reservedDomains = new Set(byDomain.keys());
 
   const updates: Record<string, unknown>[] = [];
   const inserts: Record<string, unknown>[] = [];
@@ -333,7 +354,7 @@ export async function POST(req: Request) {
     let matches = exactById.get(row.internalId) ?? [];
     if (!matches.length && domain) {
       const domainMatch = byDomain.get(domain);
-      if (domainMatch && !domainMatch.netsuite_internal_id) {
+      if (domainMatch && !domainMatch.netsuite_internal_id && !exactIdsOnly) {
         matches = [domainMatch];
         adopted.push(row.internalId);
       } else if (domainMatch && String(domainMatch.netsuite_internal_id) !== row.internalId) {
@@ -396,7 +417,9 @@ export async function POST(req: Request) {
       continue;
     }
 
-    const conflictingDomain = domain && byDomain.has(domain);
+    // Distinct exact IDs may share a website, including within this request.
+    // The unique domain key must never merge them or reject the second insert.
+    const conflictingDomain = domain && reservedDomains.has(domain);
     inserts.push({
       name: row.name,
       domain: conflictingDomain ? null : (domain || null),
@@ -417,10 +440,12 @@ export async function POST(req: Request) {
       first_seen_at: now,
       last_updated_at: now,
     });
+    if (domain) reservedDomains.add(domain);
   }
 
   const summary = {
     received: rows.length,
+    exactIdsOnly,
     exactMatches: rows.length - missing.length,
     companyRowsToUpdate: updates.length,
     companyRowsToInsert: inserts.length,

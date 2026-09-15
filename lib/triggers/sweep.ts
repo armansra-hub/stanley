@@ -1,9 +1,10 @@
 import "server-only";
+import { rotationBatches } from "./rotationBatches";
 import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate, headlineCandidateSeen } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
 import { fetchNewsForCompany, fetchNewsItems } from "@/lib/sources/googleNews";
 import { claimClassifierCall } from "@/lib/db/settings";
-import { classifyEventLLM } from "@/lib/triggers/classify";
+import { classifyEventLLM, HEADLINE_CLASSIFIER_BATCH_BUDGET_MS } from "@/lib/triggers/classify";
 import { classifyHeadline } from "@/lib/triggers/config";
 import { runActor } from "@/lib/apify/run";
 import { normalizeDomain } from "@/lib/domain";
@@ -184,7 +185,7 @@ const PE_RE = /\b(private equity|pe firm|portfolio company|portfolio of|backed b
 export async function classifyAndRecordHeadline(
   company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence,
   it: { raw_excerpt: string; source_url: string; signal_date: string | null; source_name: string },
-  opts: { llm?: boolean; requireNameMatch?: boolean } = {},
+  opts: { llm?: boolean; requireNameMatch?: boolean; classifierDeadlineMs?: number } = {},
 ): Promise<boolean> {
   const clean = cleanHeadline(it.raw_excerpt);
   if (opts.requireNameMatch !== false && !headlineIsAboutCompany(company.name, clean)) return false;
@@ -193,8 +194,9 @@ export async function classifyAndRecordHeadline(
   if (type === "news") return false; // cheap regex prefilter — only candidate events proceed
   if (await headlineCandidateSeen(company.id, it.raw_excerpt)) return false;
   let acquirer = type !== "ma" || maDirection(company.name, clean) === "acquirer";
-  if (opts.llm && (await claimClassifierCall())) {
-    const v = await classifyEventLLM(company.name, clean);
+  if (opts.llm && (opts.classifierDeadlineMs == null || Date.now() < opts.classifierDeadlineMs)
+    && (await claimClassifierCall())) {
+    const v = await classifyEventLLM(company.name, clean, { deadlineMs: opts.classifierDeadlineMs });
     if (v) {
       if (!v.about_company || v.event === "none") return false;
       type = v.event;
@@ -207,11 +209,11 @@ export async function classifyAndRecordHeadline(
   return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
-export async function checkCompanyNews(company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence, opts: { llm?: boolean } = {}): Promise<number> {
+export async function checkCompanyNews(company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence, opts: { llm?: boolean; classifierDeadlineMs?: number } = {}): Promise<number> {
   let added = 0;
   for (const it of await fetchNewsForCompany(company.name, 6)) {
     if (!isFresh(it.signal_date)) continue;
-    if (await classifyAndRecordHeadline(company, it, { llm: opts.llm, requireNameMatch: true })) added++;
+    if (await classifyAndRecordHeadline(company, it, { llm: opts.llm, requireNameMatch: true, classifierDeadlineMs: opts.classifierDeadlineMs })) added++;
   }
   return added;
 }
@@ -245,7 +247,9 @@ export async function checkExecChange(company: { id: string; name: string; netsu
  *     no ERP, from the JD) triggers. One call per ~50 domains ≈ $0.13.
  */
 export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number } = {}): Promise<{ checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number }> {
-  const companies = await pickForRotation(limit, opts.offset ?? 0);
+  // The optional paid actor needs one fixed domain list. Normal recurring news
+  // reserves only the next immediately attempted micro-batch below.
+  const companies = opts.finance ? await pickForRotation(limit, opts.offset ?? 0) : null;
   const touched = new Set<string>();
   let news = 0, finance = 0, erp = 0;
 
@@ -253,7 +257,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   // Tested 2026-06-27: 0 hits across 250 base domains — the NetSuite-TAM base skews to
   // small companies with no ATS career page the actor indexes, so this is near-zero ROI
   // here. Kept (gated) for future LARGER-company lists. Free news below is the workhorse.
-  const withDomain = opts.finance ? (companies.filter((c) => c.domain && isFinanceHireEligible(c)) as { id: string; name: string; domain: string }[]) : [];
+  const withDomain = opts.finance ? ((companies ?? []).filter((c) => c.domain && isFinanceHireEligible(c)) as { id: string; name: string; domain: string }[]) : [];
   const byDomain = new Map(withDomain.map((c) => [c.domain, c.id]));
   const domains = withDomain.map((c) => c.domain);
   if (domains.length) {
@@ -288,20 +292,17 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   //   2) it must be a real EVENT (funding / M&A / finance hire / expansion) — the
   //      generic "news" catch-all is dropped (a headline with no trigger keyword
   //      is not a reason to call). Plus freshness.
-  // TIME-BOXED + INCREMENTALLY STAMPED: each processed batch stamps its rotation
-  // cursor immediately, and the loop stops cleanly before Vercel's 60s kill — so a
-  // slow wave (many Opus-verified headlines) commits partial progress instead of
-  // losing everything to FUNCTION_INVOCATION_TIMEOUT (the pre-fix failure mode).
-  const deadline = Date.now() + 48_000;
-  const BATCH = 20;
+  // Reserve immediately attempted batches and leave untouched rows oldest when
+  // the 240-second source budget ends.
   let processed = 0;
-  for (let i = 0; i < companies.length; i += BATCH) {
-    if (Date.now() > deadline) break;
-    const slice = companies.slice(i, i + BATCH);
+  for await (const slice of rotationBatches(pickForRotation, {
+    limit, batchSize: 20, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
+  })) {
+    const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
     await Promise.all(slice.map(async (c) => {
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
-        let n = await checkCompanyNews(c, { llm: claimable });
+        let n = await checkCompanyNews(c, { llm: claimable, classifierDeadlineMs });
         // Exec-change (new finance leader) — claimable NetSuite-TAM leads only.
         if (claimable) { try { n += await checkExecChange(c); } catch { /* isolated */ } }
         if (n > 0) { news += n; touched.add(c.id); }

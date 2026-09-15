@@ -1,4 +1,5 @@
 import "server-only";
+import { rotationBatches } from "./rotationBatches";
 import { markSosChecked, pickSosCompaniesForRotation, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { fetchNewCoEntities, fetchRecentUccFilings, brandKey, lightNorm } from "@/lib/sources/coSos";
 
@@ -15,18 +16,15 @@ const LOOKBACK_DAYS = 150;
 const UCC_LOOKBACK_DAYS = 365;
 
 export async function sweepCoSos(limit = 200, opts: { offset?: number } = {}): Promise<{ checked: number; matched: number; triggered: number; ucc: number }> {
-  const companies = await pickSosCompaniesForRotation("CO", limit, opts.offset ?? 0);
   const stats = { checked: 0, matched: 0, triggered: 0, ucc: 0 };
   const sinceISO = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 19);
   const uccSinceISO = new Date(Date.now() - UCC_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 19);
   const touched = new Set<string>();
 
-  // Time-boxed; unauthenticated Socrata → modest concurrency.
-  const deadline = Date.now() + 48_000;
-  const BATCH = 6;
-  for (let i = 0; i < companies.length; i += BATCH) {
-    if (Date.now() > deadline) break;
-    const slice = companies.slice(i, i + BATCH);
+  for await (const slice of rotationBatches(
+    (n, offset) => pickSosCompaniesForRotation("CO", n, offset),
+    { limit, batchSize: 6, offset: opts.offset },
+  )) {
     stats.checked += slice.length;
     await Promise.all(slice.map(async (c) => {
       try {

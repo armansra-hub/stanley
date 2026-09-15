@@ -4,9 +4,7 @@ import { logEvent } from "@/lib/db/events";
 
 /** Website watch over the base (FREE). Secret-guarded. ?n= / ?offset= / ?scope=claimable|tail. */
 export const dynamic = "force-dynamic";
-// A 250-company wave normally finishes inside a minute, but live production
-// receipts show a small number of network-heavy waves need longer. Match the
-// dispatcher ceiling so those exact companies finish instead of returning 504.
+// Source workers use up to 240 seconds plus final-batch and receipt headroom.
 export const maxDuration = 300;
 
 async function run(req: NextRequest) {

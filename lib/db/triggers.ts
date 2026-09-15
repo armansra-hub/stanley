@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizeDomain } from "@/lib/domain";
 import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
 import { reheatCompanyForFreshSignal } from "@/lib/db/reheat";
@@ -310,16 +311,17 @@ export async function markChecked(ids: string[]): Promise<void> {
 /** The next batch of base companies to ATS-check — must have a domain; longest-since
  * (or never) ats-checked first. Positive offsets are manual recovery only. */
 export async function pickAtsForRotation(limit: number, offset = 0): Promise<Array<{ id: string; name: string; domain: string; ats_type: string | null; ats_token: string | null } & RotationSignalContext>> {
-  if (offset === 0) return reserveRotation("ats", limit);
+  if (offset === 0) return (await reserveRotation<any>("ats", limit))
+    .map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) }));
   const db = serviceClient();
-  const { data } = await db.from("companies").select("id, name, domain, ats_type, ats_token, record_dead, description, subindustry, ns_industry")
+  const { data } = await db.from("companies").select("id, name, domain, website_raw, ats_type, ats_token, record_dead, description, subindustry, ns_industry")
     .contains("lists", ["netsuite_tam"])
     .neq("status", "removed_from_tam")
-    .not("domain", "is", null)
+    .or("domain.not.is.null,website_raw.not.is.null")
     .order("ats_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
-  return (data ?? []) as any[];
+  return (data ?? []).map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) })) as any[];
 }
 
 /** Record the ATS detection/poll outcome (stamps ats_checked_at). Graceful pre-0020. */
@@ -415,11 +417,12 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
  *        "tail" = the monitored non-claimable base (ZoomInfo-only leads) — the AE
  *        mainly works claimable but still wants the ZoomInfo TAM watched. */
 export async function pickSitesForRotation(limit: number, offset = 0, scope: "claimable" | "tail" = "claimable"): Promise<Array<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null } & RotationSignalContext>> {
-  if (offset === 0) return reserveRotation("site", limit, scope);
+  if (offset === 0) return (await reserveRotation<any>("site", limit, scope))
+    .map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) }));
   const db = serviceClient();
-  const base: any = db.from("companies").select("id, name, domain, site_hash, site_checked_at, record_dead, description, subindustry, ns_industry")
+  const base: any = db.from("companies").select("id, name, domain, website_raw, site_hash, site_checked_at, record_dead, description, subindustry, ns_industry")
     .neq("status", "removed_from_tam")
-    .not("domain", "is", null);
+    .or("domain.not.is.null,website_raw.not.is.null");
   const scoped = scope === "claimable"
     ? base.contains("lists", ["netsuite_tam"])
     : base.eq("is_base", true).not("claimable", "is", true);
@@ -427,7 +430,7 @@ export async function pickSitesForRotation(limit: number, offset = 0, scope: "cl
     .order("site_checked_at", { ascending: true, nullsFirst: true })
     .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
-  return (data ?? []) as any[];
+  return (data ?? []).map((row: any) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) })) as any[];
 }
 
 /** Flag a detected parent company (subsidiary). Graceful pre-0029. */

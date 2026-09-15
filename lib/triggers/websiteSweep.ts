@@ -6,6 +6,8 @@ import { fetchSiteSignals } from "@/lib/sources/website";
 import { fetchFeed } from "@/lib/sources/googleNews";
 import { classifyAndRecordHeadline } from "@/lib/triggers/sweep";
 import { isFinanceHireEligible, isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
+import { rotationBatches } from "./rotationBatches";
+import { HEADLINE_CLASSIFIER_BATCH_BUDGET_MS } from "./classify";
 
 const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now() - new Date(d).getTime()) / 86_400_000; return a >= 0 && a < 180; };
 
@@ -20,17 +22,20 @@ const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now(
  * provide a canonical evidence page and previously created fabricated /# links.
  */
 export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail" } = {}): Promise<{ checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
-  const companies = await pickSitesForRotation(limit, opts.offset ?? 0, opts.scope ?? "claimable");
   const stats = { checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0 };
   let autodismiss = true;
   try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch { /* default true */ }
 
-  const deadline = Date.now() + 48_000;
-  const BATCH = 8;
-  for (let i = 0; i < companies.length; i += BATCH) {
-    if (Date.now() > deadline) break;
-    stats.checked += Math.min(BATCH, companies.length - i);
-    await Promise.all(companies.slice(i, i + BATCH).map(async (c) => {
+  for await (const slice of rotationBatches(
+    (n, offset) => pickSitesForRotation(n, offset, opts.scope ?? "claimable"),
+    { limit, batchSize: 12, offset: opts.offset },
+  )) {
+    // This includes the site's/feed's fetch time. Sequential headline verifier
+    // calls share the remainder; expiration still queues candidates for the
+    // unchanged independent final review and never publishes by fallback.
+    const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
+    stats.checked += slice.length;
+    await Promise.all(slice.map(async (c) => {
       try {
         const scan = await fetchSiteSignals(c.domain, c.name);
         let touched = false;
@@ -52,7 +57,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         if (scan.feedUrl) {
           for (const it of await fetchFeed(scan.feedUrl, 8)) {
             if (!fresh(it.signal_date)) continue;
-            if (await classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false })) { stats.triggered++; touched = true; }
+            if (await classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false, classifierDeadlineMs })) { stats.triggered++; touched = true; }
           }
         }
 

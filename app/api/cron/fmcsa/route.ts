@@ -5,7 +5,7 @@ import { logEvent } from "@/lib/db/events";
 /** FMCSA fleet-growth monitor over the TAM's transportation companies (FREE).
  * Secret-guarded. ?n= batch size, ?offset= wave offset. */
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 async function run(req: NextRequest) {
   const url = new URL(req.url);

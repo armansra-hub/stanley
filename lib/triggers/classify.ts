@@ -14,6 +14,8 @@ import Anthropic from "@anthropic-ai/sdk";
 const MODEL = process.env.MODEL_CLASSIFY || "claude-haiku-4-5";
 let client: Anthropic | null = null;
 const classifierClient = () => (client ??= new Anthropic({ maxRetries: 0 }));
+export const HEADLINE_CLASSIFIER_TIMEOUT_MS = 8_000;
+export const HEADLINE_CLASSIFIER_BATCH_BUDGET_MS = 30_000;
 
 const SCHEMA = {
   type: "object",
@@ -74,7 +76,16 @@ function parseCandidateEvidenceVerdict(raw: string | undefined): CandidateEviden
   }
 }
 
-export async function classifyEventLLM(companyName: string, headline: string): Promise<EventVerdict | null> {
+export async function classifyEventLLM(
+  companyName: string,
+  headline: string,
+  options: { deadlineMs?: number } = {},
+): Promise<EventVerdict | null> {
+  const timeoutMs = Math.min(HEADLINE_CLASSIFIER_TIMEOUT_MS,
+    options.deadlineMs == null ? HEADLINE_CLASSIFIER_TIMEOUT_MS : options.deadlineMs - Date.now());
+  if (timeoutMs <= 0) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const msg = await classifierClient().messages.create({
       model: MODEL,
@@ -83,12 +94,14 @@ export async function classifyEventLLM(companyName: string, headline: string): P
       system: "You classify whether a news headline reports a real, POSITIVE growth / ERP-readiness event about a SPECIFIC small company (the kind of company outgrowing QuickBooks that would buy NetSuite). Be strict: reject headlines that are not about this exact company, that report the company being ACQUIRED/sold, layoffs, an office relocation, a lawsuit, an award, or only coincidentally contain the company's name or generic words. Return only the structured JSON.",
       messages: [{ role: "user", content: `Company: ${companyName}\nHeadline: ${headline}` }],
       output_config: { format: { type: "json_schema", schema: SCHEMA } },
-    } as Anthropic.MessageCreateParamsNonStreaming);
+    } as Anthropic.MessageCreateParamsNonStreaming, { timeout: timeoutMs, signal: controller.signal });
     const text = msg.content.find((b): b is Anthropic.TextBlock => b.type === "text")?.text;
     if (!text) return null;
     return JSON.parse(text) as EventVerdict;
   } catch {
     return null; // any failure → caller falls back to the regex verdict
+  } finally {
+    clearTimeout(timer);
   }
 }
 

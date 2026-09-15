@@ -4,7 +4,7 @@ import { logEvent } from "@/lib/db/events";
 
 /** Secretary-of-State new-entity watch (CO pilot, FREE). Secret-guarded. ?n= / ?offset=. */
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 async function run(req: NextRequest) {
   const url = new URL(req.url);

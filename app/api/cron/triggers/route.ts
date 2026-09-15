@@ -6,7 +6,7 @@ import { logEvent } from "@/lib/db/events";
  * finance-hiring/ERP-readiness (paid) and attach decaying triggers (boost-only).
  * Secret-guarded. ?n= overrides the batch size. */
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 async function run(req: NextRequest) {
   const url = new URL(req.url);
