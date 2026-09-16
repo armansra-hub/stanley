@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
 
-const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn() }));
+const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc,
-  from: (table: string) => { if (table !== "app_events") throw new Error("Unexpected table");
+  from: (table: string) => { if (table === "public_growth_sweep_state") return {
+      select: (columns: string) => ({ eq: (key: string, value: string) => ({ maybeSingle: () => mocks.inspect(columns, key, value) }) }),
+    };
+    if (table !== "app_events") throw new Error("Unexpected table");
     return { insert: (record: unknown) => ({ select: () => ({ single: () => mocks.event(record) }) }) }; },
 }) }));
 vi.mock("@/lib/publicGrowth/federalDiscovery", () => ({ discoverFederalCompany: mocks.worker }));
@@ -25,6 +28,11 @@ const request = (query = "", headers: Record<string, string> = { "x-cron-secret"
   new NextRequest(`https://example.test/api/cron/federal-discovery${query}`, { headers });
 const retry = (n: number) => ({ companyId: id(n), failureAttempts: 1, queuedAt: "2026-09-15T00:00:00Z",
   lastAttemptedAt: "2026-09-15T00:00:00Z", firstFailedAt: "2026-09-15T00:00:00Z", lastError: "provider_error", awardContinuation: null });
+const timeoutRow = (n: number) => ({ ...row(n, "error"), reason: "request_timeout", stage: "award_search" });
+const timeoutState = (n: number, count = 2, strategy = "name-only-v1", stage = "award_search") => ({
+  companyId: id(n), strategy, stage, timeoutCount: count, firstObservedAt: "2026-09-14T00:00:00Z",
+  lastObservedAt: "2026-09-14T00:05:00Z", heldAt: count === 2 ? "2026-09-14T00:05:00Z" : null,
+});
 
 describe("federal discovery managed admission", () => {
   let lease: { source: string; offset: number; batchSize: number; managed: boolean; token: string; leaseUntil: string; cursor: Record<string, unknown> };
@@ -39,6 +47,7 @@ describe("federal discovery managed admission", () => {
     mocks.complete.mockResolvedValue(0); mocks.fail.mockResolvedValue(true);
     mocks.event.mockImplementation(async (record) => ({ data: { id: record.id, meta: record.meta }, error: null }));
     mocks.rpc.mockResolvedValue({ data: Array.from({ length: 21 }, (_, n) => ({ id: id(n + 1) })), error: null });
+    mocks.inspect.mockResolvedValue({ data: { cursor: {}, last_started_at: null, last_succeeded_at: null, last_error: null, lease_until: null }, error: null });
     mocks.worker.mockImplementation(async (companyId) => row(Number(companyId.slice(-12))));
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
@@ -92,6 +101,129 @@ describe("federal discovery managed admission", () => {
     const body = await (await GET(request())).json();
     expect(mocks.worker.mock.calls.map(([n]) => n)).toEqual([id(1), id(2)]);
     expect(body.retryChecked).toBe(1); expect(body.mainChecked).toBe(1); expect(body.retryRemaining).toBe(0);
+  });
+
+  it("holds the second identical timeout and continues healthy main companies", async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: [1, 2, 3].map((n) => ({ id: id(n) })), error: null })
+      .mockResolvedValueOnce({ data: [3, 4].map((n) => ({ id: id(n) })), error: null })
+      .mockResolvedValueOnce({ data: [4, 5, 6].map((n) => ({ id: id(n) })), error: null });
+    mocks.worker.mockImplementation(async (companyId) => companyId === id(1) ? timeoutRow(1) : row(Number(companyId.slice(-12))));
+    const first = await (await GET(request("?limit=2"))).json();
+    expect(first.heldStrategyCompanies).toBe(0);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual([expect.objectContaining({ companyId: id(1), timeoutCount: 1, heldAt: null })]);
+    vi.setSystemTime("2026-09-15T00:05:00Z");
+    const second = await (await GET(request("?limit=2"))).json();
+    expect(second.heldStrategyCompanies).toBe(1); expect(second.mainChecked).toBe(1); expect(second.retryChecked).toBe(1);
+    expect(lease.cursor.retryQueue).toEqual([expect.objectContaining({ companyId: id(1), failureAttempts: 2 })]);
+    const event = mocks.event.mock.calls[1][0];
+    expect(event.meta.requestStrategy).toBe("name-only-v1"); expect(event.meta.newStrategyHeldCompanyIds).toEqual([id(1)]);
+    expect(event.meta.strategyHoldReason).toBe("second_identical_request_timeout");
+    mocks.worker.mockClear(); vi.setSystemTime("2027-09-15T00:00:00Z");
+    const third = await (await GET(request("?limit=2"))).json();
+    expect(mocks.worker.mock.calls.map(([companyId]) => companyId)).toEqual([id(4), id(5)]);
+    expect(third.heldRetryExcluded).toBe(1); expect(third.checked).toBe(2); expect(third.heldStrategyCompanies).toBe(1);
+  });
+
+  it.each(["no_candidate", "matched"])("a completed %s result resets an unheld timeout streak", async (status) => {
+    lease.cursor = { retryQueue: [retry(1)], discoveryStrategyTimeouts: [timeoutState(1, 1)] };
+    mocks.worker.mockResolvedValueOnce({ ...row(1, status), stage: "award_search" }).mockResolvedValueOnce(timeoutRow(1));
+    await GET(request("?limit=1"));
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual([expect.objectContaining({ timeoutCount: 0, heldAt: null, lastResetAt: expect.any(String) })]);
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(1) }, { id: id(2) }], error: null });
+    const next = await (await GET(request("?limit=1"))).json();
+    expect(next.heldStrategyCompanies).toBe(0);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual([expect.objectContaining({ timeoutCount: 1, heldAt: null })]);
+  });
+
+  it("does not seed named strategy counts from untagged legacy failures or a different stage", async () => {
+    lease.cursor = { retryQueue: [{ ...retry(1), failureAttempts: 2, lastError: "award_search:request_timeout" }],
+      discoveryStrategyTimeouts: [timeoutState(1, 1, "name-only-v1", "award_detail")] };
+    mocks.worker.mockResolvedValue(timeoutRow(1));
+    const body = await (await GET(request("?limit=1"))).json();
+    expect(body.heldStrategyCompanies).toBe(0); expect(body.unresolvedDeadLetters).toBe(1);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual([timeoutState(1, 1, "name-only-v1", "award_detail"),
+      expect.objectContaining({ companyId: id(1), stage: "award_search", timeoutCount: 1, heldAt: null })]);
+  });
+
+  it("held retry and main IDs make zero provider calls and preserve failure evidence", async () => {
+    const originalRetry = retry(1);
+    lease.cursor = { retryQueue: [originalRetry], discoveryStrategyTimeouts: [timeoutState(1)] };
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(1) }], error: null });
+    const body = await (await GET(request())).json();
+    expect(body.checked).toBe(0); expect(body.skippedHeldCompanyIds).toEqual([id(1)]); expect(body.skippedHeldCount).toBe(1);
+    expect(body.heldRetryExcluded).toBe(1); expect(body.skippedHeldAreAttempts).toBe(false);
+    expect(body.selectionCycleComplete).toBe(true); expect(body.attemptCycleComplete).toBe(false); expect(body.afterCompanyId).toBeNull();
+    expect(mocks.complete.mock.calls[0][1].done).toBe(false);
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.event).not.toHaveBeenCalled();
+    expect(lease.cursor.retryQueue).toEqual([originalRetry]); expect(lease.cursor.discoveryAttemptsTotal).toBeUndefined();
+  });
+
+  it("advances an all-held page but neither its lookahead nor attempt count", async () => {
+    lease.cursor = { discoveryStrategyTimeouts: Array.from({ length: 21 }, (_, n) => timeoutState(n + 1)) };
+    const body = await (await GET(request())).json();
+    expect(body.checked).toBe(0); expect(body.afterCompanyId).toBe(id(20)); expect(body.skippedHeldCount).toBe(20);
+    expect(body.skippedHeldCompanyIds).not.toContain(id(21)); expect(body.selectionCycleComplete).toBe(false);
+    expect(lease.cursor.afterCompanyId).toBe(id(20)); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it("a held prefix does not advance over an unattempted healthy suffix", async () => {
+    lease.cursor = { discoveryStrategyTimeouts: [timeoutState(1)] };
+    mocks.checkpoint.mockImplementation(async (_lease, patch) => { lease.cursor = { ...lease.cursor, ...patch };
+      if (patch.discoveryInFlight?.length) vi.setSystemTime(Date.now() + 240_000); });
+    const body = await (await GET(request())).json();
+    expect(body.checked).toBe(0); expect(body.afterCompanyId).toBe(id(1)); expect(body.skippedHeldCompanyIds).toEqual([id(1)]);
+    expect(body.notAttemptedCompanyIds).toHaveLength(19); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it("retains a prior strategy hold as history without applying it to the current strategy", async () => {
+    const old = timeoutState(1, 2, "older-name-strategy");
+    lease.cursor = { discoveryStrategyTimeouts: [old] };
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(1) }], error: null });
+    const body = await (await GET(request())).json();
+    expect(body.checked).toBe(1); expect(body.heldStrategyCompanies).toBe(0);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual([old]);
+  });
+
+  it.each([null, {}, [timeoutState(1), timeoutState(1)], [{ ...timeoutState(1), timeoutCount: 3 }]])("malformed strategy state fails closed: %j", async (bad) => {
+    lease.cursor.discoveryStrategyTimeouts = bad;
+    expect((await GET(request())).status).toBe(500);
+    expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it("journal failure never applies a second-timeout hold or clears its in-flight fence", async () => {
+    lease.cursor = { retryQueue: [retry(1)], discoveryStrategyTimeouts: [timeoutState(1, 1)] };
+    mocks.worker.mockResolvedValue(timeoutRow(1)); mocks.event.mockResolvedValue({ data: null, error: { message: "unknown" } });
+    expect((await GET(request("?limit=1"))).status).toBe(500);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual([timeoutState(1, 1)]);
+    expect(lease.cursor.discoveryInFlight).toEqual([id(1)]);
+    mocks.worker.mockClear(); expect((await GET(request("?limit=1"))).status).toBe(409);
+    expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it("inspection is authenticated, exclusive and never acquires or mutates state", async () => {
+    expect((await GET(request("?inspect=1", {}))).status).toBe(401);
+    for (const q of ["?inspect=0", "?inspect=1&limit=20", "?inspect=1&inspect=1", "?inspect=1&companyId="+id(1)]) {
+      expect((await GET(request(q))).status).toBe(400);
+    }
+    expect(mocks.inspect).not.toHaveBeenCalled();
+    mocks.inspect.mockResolvedValue({ data: { cursor: { afterCompanyId: id(4), discoveryAttemptsTotal: 20,
+      retryQueue: [retry(1)], discoveryStrategyTimeouts: [timeoutState(1)], discoveryInFlight: [id(3)] },
+      last_started_at: "2026-09-15T00:00:00Z", last_succeeded_at: null, lease_until: "2026-09-15T00:06:00Z",
+      last_error: "raw error https://secret.example", lease_token: "never expose", extra: "untrusted" }, error: null });
+    const body = await (await GET(request("?inspect=1"))).json();
+    expect(body.readOnly).toBe(true); expect(body.afterCompanyId).toBe(id(4)); expect(body.retryCompanyIds).toEqual([id(1)]);
+    expect(body.heldCompanyIds).toEqual([id(1)]); expect(body.inFlightCompanyIds).toEqual([id(3)]); expect(body.errorPresent).toBe(true);
+    expect(body.leaseUntil).toBe("2026-09-15T00:06:00Z"); expect(body.attemptsTotal).toBe(20);
+    expect(mocks.inspect).toHaveBeenCalledWith("cursor,last_started_at,last_succeeded_at,last_error,lease_until", "source", "federal-discovery");
+    expect(JSON.stringify(body)).not.toMatch(/secret\.example|never expose|untrusted|last_error|lease_token/);
+    for (const operation of [mocks.begin, mocks.checkpoint, mocks.complete, mocks.fail, mocks.worker, mocks.event, mocks.rpc]) expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("inspection rejects malformed cursor data without exposing raw contents or writing", async () => {
+    mocks.inspect.mockResolvedValue({ data: { cursor: { discoveryInFlight: ["https://private.example"] } }, error: null });
+    const response = await GET(request("?inspect=1")); expect(response.status).toBe(500);
+    expect(JSON.stringify(await response.json())).not.toContain("private.example");
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.fail).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
   });
 
   it("429 stops new waves and persists source backoff with exact debt", async () => {
