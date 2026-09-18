@@ -49,7 +49,7 @@ begin
       and netsuite_internal_id <> p_netsuite_internal_id
       and grade_status = 'reading'
       and claim_expires_at > v_now
-  ) >= case when p_run_slug = 'ars-bs-tam-2026-09-17' then 3 else 1 end then
+  ) >= (case when p_run_slug = 'ars-bs-tam-2026-09-17' then 3 else 1 end) then
     raise exception 'TAM run active lease capacity reached';
   end if;
   select * into v_record from tam_regrade_records

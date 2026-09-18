@@ -27,11 +27,16 @@ describe("0058 September bounded grading claims", () => {
   });
 
   it("caps only the exact authorized successor at three; earlier and unknown runs remain one", () => {
-    const clause = candidate.match(/>= case when p_run_slug = '([^']+)' then (\d+) else (\d+) end then/);
+    const clause = candidate.match(/>= \(case when p_run_slug = '([^']+)' then (\d+) else (\d+) end\) then/);
     expect(clause?.slice(1)).toEqual(["ars-bs-tam-2026-09-17", "3", "1"]);
     expect(candidate).not.toContain("like 'ars-bs-tam");
     expect(candidate.match(/and netsuite_internal_id <> p_netsuite_internal_id/g)).toHaveLength(2);
     expect(candidate.match(/and claim_expires_at > v_now/g)).toHaveLength(2);
+  });
+
+  it("protects CASE's inner THEN from the PL/pgSQL IF condition terminator", () => {
+    expect(candidate).not.toMatch(/\)\s*>=\s*case\b/i);
+    expect(candidate).toContain(") >= (case when p_run_slug = 'ars-bs-tam-2026-09-17' then 3 else 1 end) then");
   });
 
   it("still requires a token for same-record resume and rejects foreign actor or expired publication ownership", () => {
