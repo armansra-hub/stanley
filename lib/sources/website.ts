@@ -4,6 +4,7 @@ import { extractGrowthSignals } from "@/lib/sources/growth";
 import { scanFinanceRoles } from "@/lib/sources/careers";
 import { isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
+import { companyPageUrl, discoverSiteLinks, htmlAttributes, htmlToVisibleText, sameCompanySite, sitePageEvidence, sitePageKind, sitemapLocations, type SitePageEvidence } from "./siteDiscovery";
 
 /**
  * Company-website growth-signal reader (FREE). Fetches a claimable company's own
@@ -26,14 +27,14 @@ async function fetchPage(url: string, ms = 7000): Promise<FetchedPage> {
     const response = await fetchPublicHttpText(url, {
       timeoutMs: ms,
       maxBytes: 4_000_000,
-      accept: "text/html,application/xhtml+xml",
+      accept: "text/html,application/xhtml+xml,application/xml,text/xml;q=0.9",
     });
     return response.status >= 200 && response.status < 300
       ? { html: response.body, finalUrl: response.finalUrl }
       : { html: "", finalUrl: response.finalUrl };
   } catch { return { html: "", finalUrl: url }; }
 }
-const cleanHtml = (h: string) => h.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ").trim();
+const cleanHtml = htmlToVisibleText;
 
 // Parent-company phrases. HIGH = explicit ownership; LOW = soft affiliation.
 const PARENT_HIGH = /\b(?:a\s+(?:wholly[-\s]owned\s+)?subsidiary\s+of|a\s+division\s+of|wholly[-\s]owned\s+by|acquired\s+by|now\s+part\s+of)\s+([A-Z][\w&.,'-]*(?:\s+[A-Z0-9][\w&.,'-]*){0,3})/;
@@ -46,9 +47,12 @@ function detectParent(rawText: string): { name: string; confidence: "high" | "lo
 
 // Discover the site's RSS/Atom feed URL from homepage HTML, else common paths.
 function findFeedUrl(html: string, base: string): string | null {
-  const m = html.match(/<link[^>]+type=["']application\/(?:rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/i)
-    || html.match(/href=["']([^"']*\/(?:feed|rss)(?:\/|\.xml)?)["']/i);
-  if (m?.[1]) { try { return new URL(m[1], base).toString(); } catch { return null; } }
+  for (const match of html.matchAll(/<(?:link|a)\b[^>]*>/gi)) {
+    const attrs = htmlAttributes(match[0]);
+    if (!attrs.href || !(/application\/(?:rss|atom)\+xml/i.test(attrs.type ?? "") || /\/(?:feed|rss)(?:\/|\.xml|$)/i.test(attrs.href))) continue;
+    const url = companyPageUrl(attrs.href, base);
+    if (url) return url;
+  }
   return null;
 }
 
@@ -59,7 +63,7 @@ function findFeedUrl(html: string, base: string): string | null {
 // hire (posted with normal "join our team" language) still counts.
 const CLIENT_BOARD_RE = /\b(our client|on behalf of (?:a|our) client|client is (?:seeking|looking|hiring)|for (?:a|our) client|direct[- ]hire(?: opportunit| position| role)|temp(?:orary)?[- ]to[- ]perm|contract[- ]to[- ]hire|submit your resume to|placing (?:candidates|talent)|recruiting (?:for|on behalf of)|now recruiting a|seeking candidates for)\b/;
 function looksLikeClientBoard(text: string): boolean {
-  return CLIENT_BOARD_RE.test(text);
+  return CLIENT_BOARD_RE.test(text.toLowerCase());
 }
 
 /** A finance opening we verified, with the page and the line that proves it. */
@@ -70,23 +74,70 @@ export interface SiteScan {
   parent: { name: string; confidence: "high" | "low" } | null;
   feedUrl: string | null;
   financeRoles: FinanceRoleHit[];
+  pages: SitePageEvidence[];
+  discoveredUrls: string[];
+  coverage: { attemptedUrls: string[]; succeededUrls: string[]; remainingUrls: string[] };
 }
 
-/** One pass over a company's site: growth phrases + parent-company + RSS feed URL. */
-export async function fetchSiteSignals(domain: string, companyName?: string): Promise<SiteScan> {
+/** Bounded link/sitemap discovery, with legacy paths only as fallbacks. */
+export async function fetchSiteSignals(domain: string, companyName?: string, options: { knownUrls?: string[]; maxPages?: number } = {}): Promise<SiteScan> {
   const base = `https://${domain.replace(/\/+$/, "")}`;
-  const homePage = await fetchPage(base);
-  // Secondary pages fetched in PARALLEL with a shorter timeout, so one slow page can't
-  // blow the wave's 60s budget (sequential fetches + the added careers pages timed out).
-  const [aboutPage, newsPage, careersPage, jobsPage] = await Promise.all([
-    fetchPage(`${base}/about`, 5000), fetchPage(`${base}/news`, 5000),
-    fetchPage(`${base}/careers`, 5000), fetchPage(`${base}/jobs`, 5000),
-  ]);
-  const home = homePage.html, about = aboutPage.html, news = newsPage.html;
-  const careersTxt = cleanHtml(careersPage.html), jobsTxt = cleanHtml(jobsPage.html);
-  const raw = `${home} ${about} ${news}`;
-  const rawText = `${cleanHtml(home)} ${cleanHtml(about)} ${cleanHtml(news)}`; // case preserved
-  const text = rawText.toLowerCase();
+  const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, Math.min(10, Math.floor(options.maxPages!))) : 8;
+  const attemptedUrls = [base];
+  const homePage = await fetchPage(base, 5000);
+  const empty: SiteScan = { growth: [], parent: null, feedUrl: null, financeRoles: [], pages: [], discoveredUrls: [], coverage: { attemptedUrls, succeededUrls: [], remainingUrls: [] } };
+  if (!homePage.html || !sameCompanySite(homePage.finalUrl, base)) return empty;
+  const pages = [homePage];
+  const candidates = new Map<string, string>();
+  const add = (rawUrl: string, kind?: string) => {
+    const url = companyPageUrl(rawUrl, base);
+    if (url && url !== new URL(homePage.finalUrl).toString()) candidates.set(url, kind ?? sitePageKind(url) ?? "about");
+  };
+  for (const link of discoverSiteLinks(homePage.html, homePage.finalUrl)) add(link.url, link.kind);
+  for (const url of (options.knownUrls ?? []).slice(0, 40)) add(url);
+
+  // Fetch at most a root sitemap plus two relevant child maps. This is discovery,
+  // never a claim that the site's entire sitemap or article history was covered.
+  const sitemapUrl = new URL("/sitemap.xml", homePage.finalUrl).toString();
+  const sitemap = await fetchPage(sitemapUrl, 3500);
+  if (sameCompanySite(sitemap.finalUrl, base)) {
+    if (/<sitemapindex\b/i.test(sitemap.html)) {
+      const children = sitemapLocations(sitemap.html, base)
+        .sort((a, b) => Number(/post|news|page|career/i.test(b)) - Number(/post|news|page|career/i.test(a))).slice(0, 2);
+      for (const child of await Promise.all(children.map((url) => fetchPage(url, 3000)))) {
+        if (!sameCompanySite(child.finalUrl, base)) continue;
+        for (const url of sitemapLocations(child.html, base)) if (sitePageKind(url)) add(url);
+      }
+    } else {
+      for (const url of sitemapLocations(sitemap.html, base)) if (sitePageKind(url)) add(url);
+    }
+  }
+  const discoveredKinds = new Set(candidates.values());
+  for (const [path, kind] of [["about", "about"], ["news", "news"], ["careers", "careers"], ["jobs", "careers"]]) {
+    if (!discoveredKinds.has(kind)) add(`${base}/${path}`, kind);
+  }
+  // One representative page per category precedes additional pages. A newsroom
+  // with hundreds of links must not crowd out careers or location evidence.
+  const chosen: string[] = [];
+  for (const kind of ["news", "careers", "about", "locations", "services"]) {
+    const first = [...candidates].find(([, value]) => value === kind)?.[0];
+    if (first) chosen.push(first);
+  }
+  const firstWave = [...new Set([...chosen, ...candidates.keys()])].slice(0, Math.min(5, maxPages - 1));
+  attemptedUrls.push(...firstWave);
+  for (const page of await Promise.all(firstWave.map((url) => fetchPage(url, 4000)))) {
+    if (page.html && sameCompanySite(page.finalUrl, base)) pages.push(page);
+  }
+  for (const page of pages.slice(1)) {
+    for (const link of discoverSiteLinks(page.html, page.finalUrl)) add(link.url, link.kind);
+  }
+  const nextWave = [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)).slice(0, Math.max(0, maxPages - attemptedUrls.length));
+  attemptedUrls.push(...nextWave);
+  for (const page of await Promise.all(nextWave.map((url) => fetchPage(url, 3500)))) {
+    if (page.html && sameCompanySite(page.finalUrl, base)) pages.push(page);
+  }
+  const evidence = [...new Map(pages.map((page) => [page.finalUrl, sitePageEvidence(page.html, page.finalUrl)])).values()];
+  const rawText = evidence.filter((page) => !isCareerEvidenceUrl(page.url)).map((page) => page.text).join(" ");
   const growth: { type: "press" | "new_entity" | "ma"; label: string; snippet?: string }[] = [];
   if (rawText.trim()) {
     // Growth phrases must read as a reported EVENT (announcement verb, date, or place),
@@ -102,10 +153,10 @@ export async function fetchSiteSignals(domain: string, companyName?: string): Pr
   // recruiting CLIENT BOARD (staffing firm posting roles for clients) is skipped — those
   // aren't the company's own hires. A staffing firm's OWN finance hire on a normal
   // careers page (no client-board language) still counts.
-  const homeText = cleanHtml(home);
+  const homeText = cleanHtml(homePage.html);
   const financeRoles: FinanceRoleHit[] = [];
   const seenRoles = new Set<string>();
-  for (const [pageUrl, pageText] of [[careersPage.finalUrl, careersTxt], [jobsPage.finalUrl, jobsTxt]] as const) {
+  for (const { url: pageUrl, text: pageText } of evidence) {
     if (!pageText || !isCareerEvidenceUrl(pageUrl) || looksLikeClientBoard(pageText)) continue;
     // requireJobPage rejects the soft-404 case where /careers serves the homepage,
     // and drops role words that are the firm's own service offering.
@@ -115,5 +166,11 @@ export async function fetchSiteSignals(domain: string, companyName?: string): Pr
       financeRoles.push({ ...hit, url: pageUrl }); // the page we actually verified
     }
   }
-  return { growth, parent: detectParent(cleanHtml(raw)), feedUrl: home ? findFeedUrl(home, base) : null, financeRoles };
+  return {
+    growth,
+    parent: detectParent([homeText, ...evidence.filter((page) => sitePageKind(page.url) === "about").map((page) => page.text)].join(" ")),
+    feedUrl: pages.map((page) => findFeedUrl(page.html, page.finalUrl)).find(Boolean) ?? null,
+    financeRoles, pages: evidence, discoveredUrls: [...candidates.keys()],
+    coverage: { attemptedUrls, succeededUrls: evidence.map((page) => page.url), remainingUrls: [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)) },
+  };
 }

@@ -24,9 +24,9 @@ let writeHook: ((table: string, payload: any) => unknown) | undefined;
 let queryError: string | undefined;
 function query(table: string) {
   const filters: Record<string, unknown> = {};
-  let single = false, limit = Infinity, payload: any, options: any;
+  let single = false, limit = Infinity, payload: any, options: any, selected = "";
   const q: any = {
-    select: () => q, eq: (k: string, v: unknown) => { filters[k] = v; return q; }, contains: () => q, neq: () => q,
+    select: (value: string) => { selected = value; return q; }, eq: (k: string, v: unknown) => { filters[k] = v; return q; }, contains: () => q, neq: () => q,
     limit: (n: number) => { limit = n; return q; }, maybeSingle: () => { single = true; return q; },
     insert: (p: any) => { payload = p; options = { insert: true }; return q; },
     upsert: (p: any, o: any) => { payload = p; options = o; return q; },
@@ -42,7 +42,9 @@ function query(table: string) {
         return { data: null, error: null };
       }
       const custom = readHook?.(table, filters); if (custom) return custom;
-      const rows = (tables[table] ?? []).filter((r) => Object.entries(filters).every(([k, v]) => r[k] === v)).slice(0, limit);
+      let rows = (tables[table] ?? []).filter((r) => Object.entries(filters).every(([k, v]) => r[k] === v)).slice(0, limit);
+      if (selected.includes("government_entities!inner")) rows = rows.map((row) => ({ ...row,
+        government_entities: tables.government_entities.find((entity) => entity.id === row.government_entity_id) }));
       return { data: structuredClone(single ? rows[0] ?? null : rows), error: null };
     }).then(resolve, reject),
   };
@@ -107,10 +109,10 @@ describe("bounded federal discovery", () => {
     expect(mocks.search).toHaveBeenCalledTimes(1);
     expect(writes).toEqual([]);
   });
-  it.each(["truncated", "different recipients", "missing UEI"])("retains ambiguity for %s rather than selecting first identity", async (kind) => {
+  it.each(["different recipients", "missing UEI"])("retains ambiguity for %s rather than selecting first identity", async (kind) => {
     const rows = kind === "different recipients" ? [sourceRow, { ...sourceRow, generated_internal_id: "A2", "Recipient UEI": "ZZZZZZZZZZZZ" }]
       : kind === "missing UEI" ? [{ ...sourceRow, "Recipient UEI": null }] : [sourceRow];
-    mocks.search.mockResolvedValue({ results: rows, page_metadata: { hasNext: kind === "truncated" } });
+    mocks.search.mockResolvedValue({ results: rows, page_metadata: { hasNext: false } });
     expect(await discoverFederalCompany(ID)).toMatchObject({ status: "ambiguous", verified: false });
     expect(mocks.detail).not.toHaveBeenCalled(); expect(writes).toEqual([]);
   });
@@ -137,11 +139,48 @@ describe("bounded federal discovery", () => {
     expect(tables.government_entities).toEqual([existing]); expect(tables.company_government_matches).toEqual([link]);
     expect(writes.some((w) => w.table === "government_entities")).toBe(false);
   });
-  it.each(["rejected link", "other link", "identifier conflict", "award conflict"])("preserves %s without writes", async (kind) => {
+  it.each(["rejected link", "identifier conflict", "award conflict"])("preserves %s without writes", async (kind) => {
     tables.government_entities.push({ id: ENTITY, legal_name: company.name, uei: UEI, usaspending_recipient_id: kind === "identifier conflict" ? "other" : "recipient1" });
     if (kind.endsWith("link")) tables.company_government_matches.push({ company_id: ID, government_entity_id: kind === "other link" ? OTHER : ENTITY, match_status: kind === "rejected link" ? "rejected" : "verified" });
     if (kind === "award conflict") tables.federal_awards.push({ id: "existing", generated_award_id: "A1", government_entity_id: OTHER });
     expect(await discoverFederalCompany(ID)).toMatchObject({ status: "ambiguous" }); expect(writes).toEqual([]);
+  });
+  it("keeps a truncated name search pending and discovers an exact candidate on a later page", async () => {
+    mocks.search.mockResolvedValueOnce({ results: [{ ...sourceRow, "Recipient Name": "Unrelated" }], page_metadata: { hasNext: true } })
+      .mockResolvedValueOnce({ results: [sourceRow], page_metadata: { hasNext: false } });
+    const first = await discoverFederalCompany(ID);
+    expect(first).toMatchObject({ status: "in_progress", mayHaveWritten: false, continuation: { page: 2, candidate: null } });
+    expect(writes).toEqual([]);
+    const final = await discoverFederalCompany(ID, { continuation: first.continuation });
+    expect(final).toMatchObject({ status: "matched" });
+    expect(JSON.parse(mocks.search.mock.calls[1][1].body).page).toBe(2);
+  });
+  it("retains cross-page ambiguity and never binds the first same-name recipient", async () => {
+    mocks.search.mockResolvedValueOnce({ results: [sourceRow], page_metadata: { hasNext: true } })
+      .mockResolvedValueOnce({ results: [{ ...sourceRow, generated_internal_id: "A2", "Recipient UEI": "ZZZZZZZZZZZZ" }], page_metadata: { hasNext: false } });
+    const first = await discoverFederalCompany(ID);
+    expect(first.status).toBe("in_progress");
+    expect(await discoverFederalCompany(ID, { continuation: first.continuation })).toMatchObject({ status: "ambiguous", reason: "recipient_identity_ambiguous" });
+    expect(writes).toEqual([]); expect(mocks.detail).not.toHaveBeenCalled();
+  });
+  it("uses verified identifiers through legal-name changes and permits another verified entity", async () => {
+    tables.government_entities = [{ id: ENTITY, legal_name: "Previous Legal Name", dba_name: company.name, uei: UEI, usaspending_recipient_id: "recipient1" },
+      { id: OTHER, legal_name: "Acme Subsidiary", uei: "ZZZZZZZZZZZZ", usaspending_recipient_id: "recipient2" }];
+    tables.company_government_matches = [ENTITY, OTHER].map((id) => ({ company_id: ID, government_entity_id: id, match_status: "verified" }));
+    const before = structuredClone(tables.government_entities);
+    expect(await discoverFederalCompany(ID)).toMatchObject({ status: "matched", entityId: ENTITY });
+    expect(JSON.parse(mocks.search.mock.calls[0][1].body).filters.recipient_search_text).toEqual([UEI]);
+    expect(tables.government_entities).toEqual(before);
+  });
+  it("fails closed when a frozen verified identifier changes between pages", async () => {
+    tables.government_entities = [{ id: ENTITY, legal_name: company.name, uei: UEI, usaspending_recipient_id: "recipient1" }];
+    tables.company_government_matches = [{ company_id: ID, government_entity_id: ENTITY, match_status: "verified" }];
+    mocks.search.mockResolvedValue({ results: [], page_metadata: { hasNext: false } });
+    const first = await discoverFederalCompany(ID);
+    expect(first.status).toBe("in_progress");
+    tables.government_entities[0].uei = "ZZZZZZZZZZZZ";
+    expect(await discoverFederalCompany(ID, { continuation: first.continuation })).toMatchObject({ status: "error", sourceRequests: 0 });
+    expect(writes).toEqual([]);
   });
   it("rechecks exact membership and identity after the provider response", async () => {
     mocks.detail.mockImplementation(async () => { tables.companies[0].state = "CA"; return sourceDetail; });

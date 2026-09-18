@@ -4,6 +4,9 @@ import { fetchJson, PublicGrowthDeadlineError, requirePublicGrowthTime } from ".
 import { decideIdentityMatch, normalizeName } from "./identity";
 import { awardUrl, compactAward, fetchAwardDetail } from "./usaspending";
 import { stableHash } from "./storage";
+import { assertFrozenFederalIdentities, federalSearchTargets, loadVerifiedFederalIdentities,
+  matchesFederalIdentifiers, targetAcceptsSearchRow, type VerifiedFederalIdentity } from "./federalIdentity";
+import { parseFederalDiscoveryContinuation, type FederalDiscoveryContinuation } from "./federalDiscoveryState";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -12,7 +15,7 @@ const SEARCH_URL = "https://api.usaspending.gov/api/v2/search/spending_by_award/
 type Stage = "membership" | "award_search" | "award_detail" | "identity" | "persist" | "readback";
 export interface FederalDiscoveryReceipt {
   companyId: string;
-  status: "matched" | "no_candidate" | "ambiguous" | "error";
+  status: "matched" | "no_candidate" | "in_progress" | "ambiguous" | "error";
   reason: string;
   stage: Stage;
   elapsedMs: number;
@@ -25,6 +28,7 @@ export interface FederalDiscoveryReceipt {
   httpStatus?: number;
   entityId?: string;
   awardId?: string;
+  continuation?: FederalDiscoveryContinuation;
 }
 class DiscoveryHold extends Error {
   constructor(readonly outcome: "ambiguous" | "error", readonly reason: string) { super(reason); }
@@ -53,12 +57,12 @@ const companyIdentity = (c: any) => stableHash([c.id, c.name, c.domain, c.websit
 
 // A bounded discovery read deliberately validates the provider shape. The older
 // history search adapter defaults absent results/pagination to an empty page.
-async function searchPage(name: string, deadlineMs: number) {
+async function searchPage(name: string, page: number, endDate: string, deadlineMs: number) {
   const data = await fetchJson<any>(SEARCH_URL, {
     method: "POST", redirect: "error", headers: { "content-type": "application/json" },
     body: JSON.stringify({ filters: { recipient_search_text: [name], award_type_codes: ["A", "B", "C", "D"],
-      time_period: [{ start_date: "2007-10-01", end_date: new Date().toISOString().slice(0, 10) }] },
-    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page: 1, sort: "Start Date", order: "desc" }),
+      time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
+    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page, sort: "Start Date", order: "desc" }),
   }, 20_000, 1, deadlineMs);
   if (!data || !Array.isArray(data.results) || data.results.length > 100 || typeof data.page_metadata?.hasNext !== "boolean") {
     fail("invalid_search_response");
@@ -75,21 +79,24 @@ type Entity = { id: string; uei: string | null; usaspending_recipient_id: string
 async function entityBy(field: string, value: string): Promise<Entity | null> {
   return checked(serviceClient().from("government_entities").select("id,uei,usaspending_recipient_id,legal_name").eq(field, value).maybeSingle());
 }
-async function resolveEntity(recipient: ReturnType<typeof compactAward>["recipient"]): Promise<Entity | null> {
+async function resolveEntity(recipient: ReturnType<typeof compactAward>["recipient"], bound?: VerifiedFederalIdentity | null): Promise<Entity | null> {
   const byUei = recipient.uei ? await entityBy("uei", recipient.uei) : null;
   const byRecipient = recipient.recipientId ? await entityBy("usaspending_recipient_id", recipient.recipientId) : null;
   if (byUei && byRecipient && byUei.id !== byRecipient.id) hold("conflicting_entity_identifiers");
   const entity = byUei ?? byRecipient;
   if (entity && ((entity.uei && recipient.uei && !same(entity.uei, recipient.uei))
     || (entity.usaspending_recipient_id && recipient.recipientId && !same(entity.usaspending_recipient_id, recipient.recipientId))
-    || normalizeName(entity.legal_name) !== normalizeName(recipient.legalName))) hold("conflicting_existing_entity");
+    || (bound ? entity.id !== bound.entityId : normalizeName(entity.legal_name) !== normalizeName(recipient.legalName)))) hold("conflicting_existing_entity");
+  if (bound && !entity) hold("verified_entity_missing");
   return entity;
 }
-async function companyLinks(companyId: string, entity: Entity | null) {
+async function companyLinks(companyId: string, _entity: Entity | null) {
   const links = await checked(serviceClient().from("company_government_matches")
     .select("government_entity_id,match_status").eq("company_id", companyId).limit(101));
   if (!Array.isArray(links) || links.length > 100) fail("invalid_existing_links");
-  if (links.some((link) => !entity || link.government_entity_id !== entity.id || link.match_status !== "verified")) hold("conflicting_existing_link");
+  // Other verified legal entities are legitimate. A pending/rejected link still
+  // requires review; discovery never replaces those decisions.
+  if (links.some((link) => link.match_status !== "verified")) hold("conflicting_existing_link");
   return links;
 }
 async function existingAward(generatedId: string, entity: Entity | null): Promise<any> {
@@ -122,43 +129,72 @@ async function insertPreserving(table: string, payload: any, onConflict: string)
 }
 
 /** First-award discovery only: no transaction, metric, grade, or signal writes. */
-export async function discoverFederalCompany(companyId: string, options: { deadlineMs?: number } = {}): Promise<FederalDiscoveryReceipt> {
+export async function discoverFederalCompany(companyId: string, options: { deadlineMs?: number; continuation?: FederalDiscoveryContinuation } = {}): Promise<FederalDiscoveryReceipt> {
   const started = Date.now();
   const deadline = Math.min(started + 60_000, options.deadlineMs ?? Infinity);
   let stage: Stage = "membership", sourceRequests = 0, mayHaveWritten = false;
+  let state: FederalDiscoveryContinuation | undefined;
   const receipt = (status: FederalDiscoveryReceipt["status"], reason: string, extra: Partial<FederalDiscoveryReceipt> = {}): FederalDiscoveryReceipt => ({
     companyId, status, reason, stage, elapsedMs: Math.max(0, Date.now() - started), sourceRequests,
-    verified: status === "matched", historyComplete: false, exhaustive: false, mayHaveWritten, ...extra,
+    verified: status === "matched", historyComplete: false, exhaustive: false, mayHaveWritten,
+    ...(state && status !== "matched" && status !== "no_candidate" ? { continuation: structuredClone(state) } : {}), ...extra,
   });
   try {
     if (!UUID.test(companyId) || !Number.isFinite(deadline)) fail("invalid_request");
     return await withServiceDeadline(deadline, async () => {
       requirePublicGrowthTime(deadline);
       const company = await currentCompany(companyId);
+      const identities = await loadVerifiedFederalIdentities(companyId);
+      state = options.continuation ? parseFederalDiscoveryContinuation(options.continuation, companyId) : {
+        version: 1, companyId, companyIdentity: companyIdentity(company), searchEndDate: new Date().toISOString().slice(0, 10),
+        targets: federalSearchTargets(company.name, identities), targetIndex: 0, page: 1, candidate: null, lastPageHash: null,
+      };
+      if (state.companyIdentity !== companyIdentity(company)) hold("company_identity_changed");
+      assertFrozenFederalIdentities(state.targets.flatMap((target) => target.identity ? [target.identity] : []), identities);
+      const target = state.targets[state.targetIndex];
+      if (!target.identity && normalizeName(target.query) !== normalizeName(company.name)) fail("invalid_unbound_query");
       stage = "award_search"; requirePublicGrowthTime(deadline); sourceRequests++;
-      const page = await searchPage(company.name, deadline);
-      const candidates = page.rows.filter((row) => normalizeName(row.name) === normalizeName(company.name));
-      // Pagination cannot establish uniqueness or absence for an unlinked name.
-      if (page.hasNext) hold("candidate_page_truncated");
-      if (!candidates.length) return receipt("no_candidate", "no_qualifying_candidate_in_bounded_page");
-      const recipientKeys = new Set(candidates.map((row) => row.uei?.toUpperCase() ?? "unknown"));
-      if (recipientKeys.size !== 1 || recipientKeys.has("unknown")) hold("recipient_identity_ambiguous");
-      const selected = candidates[0];
+      const page = await searchPage(target.query, state.page, state.searchEndDate, deadline);
+      const pageHash = stableHash(page.rows);
+      if (page.hasNext && (!page.rows.length || pageHash === state.lastPageHash)) fail("search_pagination_did_not_advance");
+      const candidates = page.rows.filter((row) => targetAcceptsSearchRow(target, { recipientName: row.name, recipientUei: row.uei }));
+      if (!target.identity) {
+        const recipientKeys = new Set([...candidates, ...(state.candidate ? [state.candidate] : [])].map((row) => row.uei?.toUpperCase() ?? "unknown"));
+        if (recipientKeys.has("unknown") || recipientKeys.size > 1) hold("recipient_identity_ambiguous");
+      }
+      state.candidate ??= candidates[0] ?? null;
+      // Unbound names require the entire query window before choosing an
+      // identity. Bound identifiers can accept an exact candidate immediately.
+      if (page.hasNext && (!target.identity || !state.candidate)) {
+        if (state.page >= 10000) fail("search_partition_limit_requires_review");
+        state.page++; state.lastPageHash = pageHash;
+        return receipt("in_progress", "candidate_search_continues");
+      }
+      if (!state.candidate) {
+        if (state.targetIndex + 1 < state.targets.length) {
+          state.targetIndex++; state.page = 1; state.lastPageHash = null;
+          return receipt("in_progress", "next_verified_alias");
+        }
+        return receipt("no_candidate", "no_qualifying_candidate_in_search_window");
+      }
+      const selected = state.candidate;
       stage = "award_detail"; requirePublicGrowthTime(deadline); sourceRequests++;
       const detail = await fetchAwardDetail(selected.id, 1, deadline);
       if (!detail || typeof detail !== "object" || !detail.recipient || typeof detail.recipient !== "object") fail("invalid_award_response");
       const award = { ...compactAward(detail), sourceUrl: awardUrl(selected.id) }, recipient = award.recipient;
-      if (award.generatedAwardId !== selected.id || !same(selected.uei, recipient.uei)
-        || normalizeName(recipient.legalName) !== normalizeName(company.name)
+      if (award.generatedAwardId !== selected.id || (selected.uei && !same(selected.uei, recipient.uei))
+        || (target.identity ? !matchesFederalIdentifiers(target.identity, recipient) : normalizeName(recipient.legalName) !== normalizeName(company.name))
         || !/^[A-Z0-9]{12}$/i.test(recipient.uei ?? "")
         || ![award.awardCeiling, award.currentAwardAmount, award.totalObligations].every(Number.isFinite)) fail("award_identity_mismatch");
       stage = "identity";
-      const decision = decideIdentityMatch(company, recipient);
+      const decision = target.identity ? { status: "verified", method: "verified_identifier", confidence: 1,
+        evidence: { verifiedEntityId: target.identity.entityId, matchedIdentifiers: true } } : decideIdentityMatch(company, recipient);
       if (decision.status !== "verified") hold("identity_not_verified");
       return serialized(deadline, async () => {
         const fresh = await currentCompany(companyId);
         if (companyIdentity(fresh) !== companyIdentity(company)) hold("company_identity_changed");
-        let entity = await resolveEntity(recipient);
+        if (target.identity) assertFrozenFederalIdentities([target.identity], await loadVerifiedFederalIdentities(companyId));
+        let entity = await resolveEntity(recipient, target.identity);
         await companyLinks(companyId, entity);
         await existingAward(award.generatedAwardId, entity);
         stage = "persist"; requirePublicGrowthTime(deadline);
@@ -169,7 +205,7 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
             source: "usaspending", source_url: award.sourceUrl, observed_at: new Date().toISOString(),
             evidence: { discovery: true, generatedAwardId: award.generatedAwardId }, payload_hash: stableHash(recipient) };
           await insertPreserving("government_entities", payload, "uei");
-          entity = await resolveEntity(recipient);
+          entity = await resolveEntity(recipient, target.identity);
           if (!entity) fail("entity_readback_missing");
         }
         const verifiedEntity = entity as Entity;
@@ -183,7 +219,7 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
           evidence: { ...decision.evidence, discovery: true, generatedAwardId: award.generatedAwardId },
           verified_by: "deterministic", verified_at: new Date().toISOString(), updated_at: new Date().toISOString() }, "company_id,government_entity_id");
         const links = await companyLinks(companyId, verifiedEntity);
-        if (links.length !== 1) fail("match_readback_missing");
+        if (links.filter((link) => link.government_entity_id === verifiedEntity.id).length !== 1) fail("match_readback_missing");
         let stored = await existingAward(award.generatedAwardId, verifiedEntity);
         if (!stored) {
           requirePublicGrowthTime(deadline);
@@ -203,8 +239,8 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
         stage = "readback"; requirePublicGrowthTime(deadline);
         const finalCompany = await currentCompany(companyId);
         if (companyIdentity(finalCompany) !== companyIdentity(company)) hold("company_identity_changed");
-        if ((await companyLinks(companyId, verifiedEntity)).length !== 1) fail("match_readback_missing");
-        const finalEntity = await resolveEntity(recipient);
+        if ((await companyLinks(companyId, verifiedEntity)).filter((link) => link.government_entity_id === verifiedEntity.id).length !== 1) fail("match_readback_missing");
+        const finalEntity = await resolveEntity(recipient, target.identity);
         if (finalEntity?.id !== verifiedEntity.id) fail("entity_readback_missing");
         if (!(await existingAward(award.generatedAwardId, verifiedEntity))) fail("award_readback_missing");
         return receipt("matched", "verified_identity_and_first_award_persisted", { entityId: verifiedEntity.id, awardId: String(stored.id) });

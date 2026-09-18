@@ -1,4 +1,6 @@
 "use client";
+import FederalIdentityContext from "@/components/FederalIdentityContext";
+import { federalAwardLabel, type FederalCoverage, type RelatedFederalEntity } from "@/lib/publicGrowth/federalPresentation";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -792,6 +794,7 @@ export default function Dashboard({
             {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered || isOldGold || isTal) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
             <Select value={stateFilter} onChange={setStateFilter} placeholder="All states" options={states} />
             {(isTriggered || isStarred) && <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />}
+            {isTriggered && <Link href="/headhunter/intelligence" className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--gold)] hover:bg-[var(--surface-2)]">Explore intelligence →</Link>}
             {(isBase || isOldGold) && (
               <ScoreRange
                 label={isBase ? "TAM score" : "Old Gold score"}
@@ -1492,6 +1495,9 @@ type DrawerTrigger = {
 
 type PublicGrowthDetail = {
   entities: Array<Record<string, unknown>>;
+  pendingEntities: Array<Record<string, unknown>>;
+  relatedEntities: RelatedFederalEntity[];
+  federalCoverage?: FederalCoverage;
   contractMetrics: Record<string, unknown> | null;
   contractRevenueByYear: Array<{ year: number; obligated: number; deobligated: number; transactions: number }>;
   awards: Array<Record<string, unknown>>;
@@ -1620,20 +1626,14 @@ function DetailDrawer({
           <button onClick={onClose} className="text-[var(--text-muted)]">✕</button>
         </div>
 
-        {publicGrowth && (publicGrowth.entities.length > 0 || publicGrowth.awards.length > 0 || publicGrowth.naicsSize.length > 0 || publicGrowth.headcount.length > 0 || publicGrowth.revenue.length > 0 || publicGrowth.opportunities.length > 0) && (
+        {publicGrowth && (publicGrowth.federalCoverage || publicGrowth.entities.length > 0 || publicGrowth.awards.length > 0 || publicGrowth.naicsSize.length > 0 || publicGrowth.headcount.length > 0 || publicGrowth.revenue.length > 0 || publicGrowth.opportunities.length > 0) && (
           <div className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "rgba(110,168,230,0.45)", background: "rgba(110,168,230,0.05)" }}>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "#6ea8e6" }}>Public growth intelligence</h3>
-            <CappedList items={publicGrowth.entities} renderItem={(entity, i) => (
-              <div key={`entity-${i}`} className="mb-2 text-xs">
-                <span className="font-semibold">{String(entity.legal_name ?? c.name)}</span>
-                {entity.uei ? <span className="text-[var(--text-muted)]"> · UEI {String(entity.uei)}</span> : null}
-                {entity.cage_code ? <span className="text-[var(--text-muted)]"> · CAGE {String(entity.cage_code)}</span> : null}
-                {entity.registration_status ? <span className="text-[var(--text-muted)]"> · SAM {String(entity.registration_status)}</span> : null}
-                {entity.expiration_date ? <span className="text-[var(--text-muted)]"> through {fmt(String(entity.expiration_date))}</span> : null}
-              </div>
-            )} />
+            {publicGrowth.federalCoverage && <FederalIdentityContext entities={publicGrowth.entities}
+              pendingEntities={publicGrowth.pendingEntities ?? []} relatedEntities={publicGrowth.relatedEntities ?? []} coverage={publicGrowth.federalCoverage} />}
             {publicGrowth.contractMetrics && (
               <div className="mb-3 grid grid-cols-2 gap-2 rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
+                <div className="col-span-2 font-semibold">Direct entity metrics · stored as of {fmt(String(publicGrowth.contractMetrics.as_of_date ?? "")) || "date unavailable"}</div>
                 <div><div className="text-[10px] uppercase text-[var(--text-muted)]">30d obligated</div><strong>{obligatedDollars(publicGrowth.contractMetrics.obligations_30d)}</strong></div>
                 <div><div className="text-[10px] uppercase text-[var(--text-muted)]">90d obligated</div><strong>{obligatedDollars(publicGrowth.contractMetrics.obligations_90d)}</strong></div>
                 <div><div className="text-[10px] uppercase text-[var(--text-muted)]">12m obligated</div><strong>{obligatedDollars(publicGrowth.contractMetrics.obligations_365d)}</strong></div>
@@ -1657,21 +1657,23 @@ function DetailDrawer({
             )}
             {publicGrowth.awards.length > 0 && (
               <div className="mb-3">
-                <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">Federal contract revenue by year</div>
+                <div className="mb-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">Direct federal obligations by year</div>
                 <CappedList items={publicGrowth.contractRevenueByYear ?? []} renderItem={(year) => (
                   <div key={`contract-year-${year.year}`} className="flex items-center justify-between border-t py-1 text-xs" style={{ borderColor: "var(--border)" }}>
-                    <span>{year.year}</span><strong>{obligatedDollars(year.obligated)} obligated revenue</strong>
+                    <span>{year.year}</span><strong>{obligatedDollars(year.obligated)} obligated</strong>
                   </div>
                 )} />
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Award details ({publicGrowth.awards.length})</summary>
+                  <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Direct award details ({publicGrowth.awards.length})</summary>
                   <div className="mt-1 space-y-2">
                   <CappedList items={rankedAwards} renderItem={(a, i) => (
                     <div key={`award-${i}`} className="rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
                       <div className="font-semibold">{obligatedDollars(a.award_ceiling)} ceiling · {obligatedDollars(a.total_obligations)} obligated</div>
+                      <div className="text-[var(--text-muted)]">{federalAwardLabel(a.award_type)} · {String(publicGrowth.entities.find((entity) => entity.id === a.government_entity_id)?.legal_name ?? "Verified recipient")}</div>
                       <div className="text-[var(--text-muted)]">{String(a.awarding_agency ?? "Federal award")}{a.award_id ? ` · ${String(a.award_id)}` : ""}{a.start_date ? ` · ${fmt(String(a.start_date))}` : ""}</div>
                       {a.description ? <p className="mt-1 text-[var(--text-muted)]">{String(a.description)}</p> : null}
                       {a.source_url ? <a href={String(a.source_url)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">USAspending ↗</a> : null}
+                      {a.parent_award_id ? <a href={`https://www.usaspending.gov/award/${encodeURIComponent(String(a.parent_award_id))}/latest`} target="_blank" rel="noreferrer" className="ml-3 mt-1 inline-block text-[var(--accent)] hover:underline">Parent award reference ↗</a> : null}
                     </div>
                   )} />
                   </div>
@@ -1702,7 +1704,8 @@ function DetailDrawer({
           </div>
         )}
         {/* Quick actions — act on the lead without closing the drawer + hunting the row. */}
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Link href={`/headhunter/intelligence?companyId=${encodeURIComponent(c.id)}`} className="rounded-md border px-2.5 py-1 text-xs text-[var(--gold)] hover:bg-[var(--surface-2)]">Account intelligence →</Link>
           <button onClick={() => onStar(c.id, !c.starred)} className="rounded-md border px-2.5 py-1 text-xs" style={{ borderColor: "var(--border)", color: c.starred ? "var(--tier-b)" : "var(--text-muted)" }}>
             {c.starred ? "★ Starred" : "☆ Star"}
           </button>

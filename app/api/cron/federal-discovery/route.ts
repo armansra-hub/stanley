@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import { discoverFederalCompany } from "@/lib/publicGrowth/federalDiscovery";
+import { parseFederalDiscoveryContinuation, readFederalDiscoveryContinuations,
+  type FederalDiscoveryContinuation } from "@/lib/publicGrowth/federalDiscoveryState";
 import {
   applyPublicGrowthRetryOutcomes, beginPublicGrowthSweep, checkpointPublicGrowthSweep,
   completePublicGrowthSweep, failPublicGrowthSweep,
@@ -140,7 +142,7 @@ function authorized(req: NextRequest) {
 
 type Outcome = {
   companyId: string;
-  status: "matched" | "no_candidate" | "ambiguous" | "error";
+  status: "matched" | "no_candidate" | "in_progress" | "ambiguous" | "error";
   reason: string;
   stage: string;
   elapsedMs: number;
@@ -150,6 +152,7 @@ type Outcome = {
   exhaustive: false;
   mayHaveWritten: boolean | null;
   httpStatus?: number | null;
+  continuation?: FederalDiscoveryContinuation;
 };
 
 function debtOutcome(row: Outcome): PublicGrowthCompanyOutcome {
@@ -172,6 +175,7 @@ async function inspectState() {
     const cursor = data ? data.cursor : {};
     if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) throw new Error("invalid discovery cursor");
     const retries = readPublicGrowthRetryState(cursor);
+    const continuations = readFederalDiscoveryContinuations(cursor);
     const timeouts = strategyTimeouts(cursor);
     const unresolvedHold = readbackHold(cursor);
     const inFlight = cursor.discoveryInFlight ?? [];
@@ -187,6 +191,7 @@ async function inspectState() {
     return NextResponse.json({ source: SOURCE, status: data ? "read_only" : "not_started", readOnly: true,
       requestStrategy: REQUEST_STRATEGY, afterCompanyId: publicGrowthAfterCompanyId(cursor),
       attemptsTotal: counter(cursor.discoveryAttemptsTotal), retryCount: retries.retryQueue.length,
+      pendingSearches: Object.keys(continuations).length,
       retryCompanyIds: retries.retryQueue.map((row) => row.companyId),
       unresolvedDeadLetterCount: retries.deadLetters.filter((row) => row.resolvedAt === null).length,
       unresolvedDeadLetterCompanyIds: retries.deadLetters.filter((row) => row.resolvedAt === null).map((row) => row.companyId),
@@ -245,13 +250,19 @@ async function run(req: NextRequest) {
     const strategyHeldAtStart = new Set([...heldCompanies(timeoutState)].map((id) => id.toLowerCase()));
     const heldAtStart = new Set([...strategyHeldAtStart, ...readbackHeld]);
     const retryState = readPublicGrowthRetryState(lease.cursor);
+    let continuations = readFederalDiscoveryContinuations(lease.cursor);
     // A readback hold takes reporting precedence on overlap; category skip
     // counts remain disjoint, while strategy-history totals stay unchanged.
     const heldRetryExcluded = retryState.retryQueue.filter((row) => strategyHeldAtStart.has(row.companyId.toLowerCase()) && !readbackHeld.has(row.companyId.toLowerCase())).length;
     const readbackHeldRetryExcluded = retryState.retryQueue.filter((row) => readbackHeld.has(row.companyId.toLowerCase())).length;
-    const retries = retryState.retryQueue.filter((row) => !heldAtStart.has(row.companyId.toLowerCase())).slice(0, Math.min(CONCURRENCY, limit));
+    const failedIds = new Set([...retryState.retryQueue.map((row) => row.companyId),
+      ...retryState.deadLetters.filter((row) => row.resolvedAt === null).map((row) => row.companyId)]);
+    const pendingIds = Object.keys(continuations).filter((id) => !heldAtStart.has(id.toLowerCase()) && !failedIds.has(id))
+      .sort().slice(0, Math.min(CONCURRENCY, limit));
+    const retries = retryState.retryQueue.filter((row) => !heldAtStart.has(row.companyId.toLowerCase()))
+      .slice(0, Math.min(CONCURRENCY, limit - pendingIds.length));
     const retryIds = new Set(retries.map((row) => row.companyId));
-    const mainLimit = limit - retries.length;
+    const mainLimit = limit - retries.length - pendingIds.length;
     const { data, error } = mainLimit > 0
       ? await serviceClient().rpc("list_federal_discovery_tam_batch", { p_limit: mainLimit + 1, p_after_company_id: after })
       : { data: [], error: null };
@@ -274,8 +285,8 @@ async function run(req: NextRequest) {
       readbackHeldRetryExcluded, skippedUncertainCompanyIds,
       skippedUncertainCount: skippedUncertainCompanyIds.length, skippedUncertainAreAttempts: false,
     };
-    const mainIds = selectedMainIds.filter((id) => !retryIds.has(id) && !heldAtStart.has(id));
-    const planned = [...retries.map((row) => row.companyId), ...mainIds];
+    const mainIds = selectedMainIds.filter((id) => !retryIds.has(id) && !pendingIds.includes(id) && !heldAtStart.has(id));
+    const planned = [...pendingIds, ...retries.map((row) => row.companyId), ...mainIds];
     const deadlineMs = Date.now() + 240_000;
     const outcomes: Outcome[] = [];
     const attempted = new Set<string>();
@@ -297,11 +308,14 @@ async function run(req: NextRequest) {
       const returned = await Promise.all(ids.map(async (id): Promise<Outcome | null> => {
         if (Date.now() >= deadlineMs) return null;
         try {
-          const row = await discoverFederalCompany(id, { deadlineMs: Math.min(deadlineMs, Date.now() + 60_000) });
-          if (row.companyId !== id || !["matched", "no_candidate", "ambiguous", "error"].includes(row.status)
+          const row = await discoverFederalCompany(id, { deadlineMs: Math.min(deadlineMs, Date.now() + 60_000),
+            ...(continuations[id] ? { continuation: continuations[id] } : {}) });
+          if (row.companyId !== id || !["matched", "no_candidate", "in_progress", "ambiguous", "error"].includes(row.status)
               || typeof row.mayHaveWritten !== "boolean") {
             throw new Error("invalid exact discovery outcome");
           }
+          if (row.continuation) parseFederalDiscoveryContinuation(row.continuation, id);
+          if (row.status === "in_progress" && (!row.continuation || row.mayHaveWritten)) throw new Error("invalid pending discovery outcome");
           return row;
         } catch {
           return { companyId: id, status: "error", reason: "worker_exception", stage: "worker", elapsedMs: 0,
@@ -326,7 +340,7 @@ async function run(req: NextRequest) {
         }).select("id,meta").single();
         const signature = (rows: Outcome[]) => JSON.stringify(rows.map((row) => [row.companyId, row.status,
           row.reason, row.stage, row.sourceRequests, row.elapsedMs, row.verified, row.historyComplete, row.exhaustive,
-          row.httpStatus ?? null, row.mayHaveWritten]));
+          row.httpStatus ?? null, row.mayHaveWritten, row.continuation ?? null]));
         if (eventError || event?.id !== eventId || !Array.isArray(event.meta?.attemptedCompanies)
             || event.meta.coverageVerified !== false || event.meta.historyComplete !== false || event.meta.requestStrategy !== REQUEST_STRATEGY
             || JSON.stringify(event.meta.newStrategyHeldCompanyIds) !== JSON.stringify(newlyHeldCompanyIds)
@@ -349,6 +363,12 @@ async function run(req: NextRequest) {
       }
       outcomes.push(...wave);
       for (const row of wave) attempted.add(row.companyId);
+      const nextContinuations = { ...continuations };
+      for (const row of wave) {
+        if (row.status === "matched" || row.status === "no_candidate") delete nextContinuations[row.companyId];
+        else if (row.continuation) nextContinuations[row.companyId] = row.continuation;
+      }
+      readFederalDiscoveryContinuations({ discoveryContinuations: nextContinuations });
       // Only journal-verified, known-no-write outcomes contribute. Legacy retry
       // counters mix failure types and never seed this strategy-specific count.
       timeoutState = nextTimeoutState;
@@ -382,11 +402,13 @@ async function run(req: NextRequest) {
         patch.discoveryRateLimitStreak = streak;
       }
       await checkpointPublicGrowthSweep(lease, { ...patch, afterCompanyId: nextAfter, discoveryInFlight: [], discoveryInFlightEventId: null,
+        discoveryContinuations: nextContinuations,
         discoveryStrategyTimeouts: timeoutState, discoverySkippedHeldCompanyIds: skippedHeldCompanyIds,
         discoverySkippedUncertainCompanyIds: skippedUncertainCompanyIds,
         discoveryRequestStrategy: REQUEST_STRATEGY,
         discoveryAttemptsTotal: initialTotal + outcomes.length, discoveryBackoffUntil: backoffUntil,
         lastDiscoveryOutcomes: outcomes, lastDiscoveryAttemptedAt: new Date().toISOString() });
+      continuations = nextContinuations;
       if (rateLimited) break;
     }
     if (outcomes.length === 0 && (skippedHeldCompanyIds.length > 0 || skippedUncertainCompanyIds.length > 0)) {
@@ -401,11 +423,13 @@ async function run(req: NextRequest) {
     const selectionCycleComplete = mainLimit > 0 && rawIds.length <= mainLimit
       && rawIds.every((id) => attempted.has(id) || heldAtStart.has(id));
     const heldStrategyCompanies = heldCompanies(timeoutState).size;
-    const attemptCycleComplete = selectionCycleComplete && heldStrategyCompanies === 0 && readbackHeld.size === 0;
+    const attemptCycleComplete = selectionCycleComplete && heldStrategyCompanies === 0 && readbackHeld.size === 0
+      && Object.keys(continuations).length === 0;
     const state = readPublicGrowthRetryState(lease.cursor);
     const receipt = { source: SOURCE, checked: outcomes.length, matched: outcomes.filter((x) => x.status === "matched").length,
       noCandidate: outcomes.filter((x) => x.status === "no_candidate").length, ambiguous: outcomes.filter((x) => x.status === "ambiguous").length,
       errors: outcomes.filter((x) => x.status === "error").length,
+      inProgress: outcomes.filter((x) => x.status === "in_progress").length, pendingSearches: Object.keys(continuations).length,
       sourceRequests: outcomes.some((x) => x.sourceRequests === null) ? null : outcomes.reduce((n, x) => n + (x.sourceRequests ?? 0), 0),
       mainChecked: outcomes.filter((x) => !retryIds.has(x.companyId)).length, retryChecked: outcomes.filter((x) => retryIds.has(x.companyId)).length,
       attemptCycleComplete, selectionCycleComplete, afterCompanyId: selectionCycleComplete ? null : nextAfter, notAttemptedCompanyIds: remaining,

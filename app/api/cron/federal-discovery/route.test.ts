@@ -39,6 +39,9 @@ const readbackHold = (ids = [id(1)]) => ({
   originalEventId: id(900), companyIds: ids, evidenceSha256: "a".repeat(64),
   observedAt: "2026-09-14T10:00:00.123456Z", heldAt: "2026-09-14T10:01:00.000000Z",
 });
+const searchContinuation = (n: number, page = 2) => ({ version: 1, companyId: id(n), companyIdentity: "frozen-company",
+  searchEndDate: "2026-09-15", targets: [{ query: "Acme", identity: null }], targetIndex: 0, page,
+  candidate: null, lastPageHash: "a".repeat(64) });
 
 describe("federal discovery managed admission", () => {
   let lease: { source: string; offset: number; batchSize: number; managed: boolean; token: string; leaseUntil: string; cursor: Record<string, unknown> };
@@ -57,6 +60,57 @@ describe("federal discovery managed admission", () => {
     mocks.worker.mockImplementation(async (companyId) => row(Number(companyId.slice(-12))));
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+
+  it("journals and checkpoints unfinished search pages before resuming their exact query", async () => {
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(1) }], error: null });
+    const state = searchContinuation(1);
+    mocks.worker.mockResolvedValueOnce({ ...row(1, "in_progress"), continuation: state });
+    const first = await (await GET(request())).json();
+    expect(first).toMatchObject({ inProgress: 1, pendingSearches: 1, attemptCycleComplete: false });
+    expect(lease.cursor.discoveryContinuations).toEqual({ [id(1)]: state });
+    expect(lease.cursor.retryQueue).toEqual([]);
+    expect(mocks.event.mock.calls[0][0].meta.attemptedCompanies[0].continuation).toEqual(state);
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    const final = await (await GET(request())).json();
+    expect(mocks.worker.mock.calls[1][1].continuation).toEqual(state);
+    expect(final.pendingSearches).toBe(0); expect(lease.cursor.discoveryContinuations).toEqual({});
+  });
+
+  it("does not advance a page when its exact continuation journal readback differs", async () => {
+    const before = searchContinuation(1), next = searchContinuation(1, 3);
+    lease.cursor = { discoveryContinuations: { [id(1)]: before } };
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    mocks.worker.mockResolvedValue({ ...row(1, "in_progress"), continuation: next });
+    mocks.event.mockImplementation(async (record) => {
+      const meta = structuredClone(record.meta); meta.attemptedCompanies[0].continuation.page = 9;
+      return { data: { id: record.id, meta }, error: null };
+    });
+    expect((await GET(request())).status).toBe(500);
+    expect(lease.cursor.discoveryContinuations).toEqual({ [id(1)]: before });
+    expect(lease.cursor.discoveryInFlight).toEqual([id(1)]);
+  });
+
+  it("retains held search continuations without admitting them or clearing their debt", async () => {
+    const state = searchContinuation(1), hold = readbackHold([id(1)]);
+    lease.cursor = { discoveryContinuations: { [id(1)]: state }, discoveryReadbackHold: hold, retryQueue: [retry(1)] };
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    const result = await (await GET(request())).json();
+    expect(result.pendingSearches).toBe(1); expect(result.attemptCycleComplete).toBe(false);
+    expect(mocks.worker).not.toHaveBeenCalled();
+    expect(lease.cursor.discoveryContinuations).toEqual({ [id(1)]: state });
+    expect(lease.cursor.discoveryReadbackHold).toEqual(hold); expect(lease.cursor.retryQueue).toEqual([retry(1)]);
+  });
+
+  it("keeps a failed page under retry/dead-letter admission instead of repeatedly draining pending searches", async () => {
+    const state = searchContinuation(1);
+    lease.cursor = { discoveryContinuations: { [id(1)]: state }, retryQueue: [retry(1)] };
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    mocks.worker.mockResolvedValue({ ...row(1, "error"), continuation: state });
+    const result = await (await GET(request())).json();
+    expect(result.retryChecked).toBe(1); expect(result.pendingSearches).toBe(1);
+    expect((lease.cursor.retryQueue as any[])[0].failureAttempts).toBe(2);
+    expect(mocks.worker).toHaveBeenCalledTimes(1);
+  });
 
   it("readback holds exclude retry and main IDs while other retry outcomes preserve held debt and evidence", async () => {
     const hold = readbackHold([id(1), id(3)]);

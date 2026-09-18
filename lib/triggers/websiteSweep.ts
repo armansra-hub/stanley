@@ -8,6 +8,10 @@ import { classifyAndRecordHeadline } from "@/lib/triggers/sweep";
 import { isFinanceHireEligible, isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
 import { rotationBatches } from "./rotationBatches";
 import { HEADLINE_CLASSIFIER_BATCH_BUDGET_MS } from "./classify";
+import { enqueueObservation, intelligenceEnabled } from "@/lib/intelligence/observations";
+import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
+import { companyPageUrl, sameCompanySite, sitePageEvidence } from "@/lib/sources/siteDiscovery";
+import { fetchPublicHttpText } from "./urlSafety";
 
 const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now() - new Date(d).getTime()) / 86_400_000; return a >= 0 && a < 180; };
 
@@ -23,6 +27,7 @@ const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now(
  */
 export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail" } = {}): Promise<{ checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
   const stats = { checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0 };
+  const captureEnabled = intelligenceEnabled();
   let autodismiss = true;
   try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch { /* default true */ }
 
@@ -37,13 +42,60 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
     stats.checked += slice.length;
     await Promise.all(slice.map(async (c) => {
       try {
-        const scan = await fetchSiteSignals(c.domain, c.name);
+        const sourceKey = "website";
+        let state: Awaited<ReturnType<typeof readSourceState>> | null = null;
+        let stateReadFailed = false;
+        if (captureEnabled) {
+          try { state = await readSourceState(c.id, sourceKey); }
+          catch { stateReadFailed = true; }
+        }
+        const base = `https://${c.domain}`;
+        const urls = (value: unknown): string[] => Array.isArray(value)
+          ? [...new Set(value.filter((url): url is string => typeof url === "string" && url.length <= 2048).map(url => companyPageUrl(url, base)).filter((url): url is string => Boolean(url)))].slice(0, 200) : [];
+        const knownUrls = urls(state?.cursor?.knownUrls);
+        const priorPending = urls(state?.cursor?.pendingUrls);
+        const scan = captureEnabled
+          ? await fetchSiteSignals(c.domain, c.name, { knownUrls, maxPages: 5 })
+          : await fetchSiteSignals(c.domain, c.name);
+        let captureFailed = stateReadFailed;
+        const fetchedPending: string[] = [];
+        const failedPending: string[] = [];
+        if (captureEnabled) {
+          // Reserve three slots for the prior backlog. Homepage discovery alone
+          // must not keep selecting the same first few newsroom links forever.
+          const pending = (priorPending.length ? priorPending : knownUrls)
+            .filter(url => !scan.coverage.attemptedUrls.includes(url)).slice(0, 3);
+          await Promise.all(pending.map(async url => {
+            try {
+              const response = await fetchPublicHttpText(url, { timeoutMs: 3500, maxBytes: 1_000_000 });
+              if (response.status < 200 || response.status >= 300 || !sameCompanySite(response.finalUrl, base)) throw new Error("Website page unavailable");
+              const page = sitePageEvidence(response.body, response.finalUrl);
+              if (!page.text.trim()) throw new Error("Website page has no evidence");
+              if (!scan.pages.some(existing => existing.url === page.url)) scan.pages.push(page);
+              fetchedPending.push(url);
+            } catch { failedPending.push(url); }
+          }));
+          if (!scan.pages.some(page => page.text.trim())) captureFailed = true;
+          for (const page of scan.pages) {
+            if (!page.text.trim()) continue;
+            try {
+              const published = [...new Set(page.sourceDates.filter(date => date.kind === "published").map(date => date.value))];
+              const stored = await enqueueObservation({
+                companyId: c.id, companyName: c.name, companyDomain: c.domain,
+                sourceKind: "website", sourceUrl: page.url, title: page.title || `${c.name} company website`,
+                text: page.text, eventDate: published.length === 1 ? published[0] : null,
+                metadata: { sourceDates: page.sourceDates, meaningfulContentHash: page.contentHash, textTruncated: page.truncated },
+              });
+              if (!stored) captureFailed = true;
+            } catch { captureFailed = true; }
+          }
+        }
         let touched = false;
 
         const current = [...new Set(scan.growth.map((h) => h.label))].sort();
         const fingerprint = current.join("|");
         const priorSet = new Set((c.site_hash ?? "").split("|").filter(Boolean));
-        await setSiteChecked(c.id, fingerprint);
+        if (!captureEnabled) await setSiteChecked(c.id, fingerprint);
         stats.changed += scan.growth.filter((x) => !priorSet.has(x.label)).length;
 
         if (scan.parent) {
@@ -55,9 +107,19 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         // Real newsroom/blog items retain the exact source page and the existing
         // event verifier, including the acquirer-position check for M&A.
         if (scan.feedUrl) {
-          for (const it of await fetchFeed(scan.feedUrl, 8)) {
-            if (!fresh(it.signal_date)) continue;
-            if (await classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false, classifierDeadlineMs })) { stats.triggered++; touched = true; }
+          const feedItems = (await fetchFeed(scan.feedUrl, captureEnabled ? 12 : 8)).filter(it => fresh(it.signal_date));
+          if (captureEnabled) {
+            for (let from = 0; from < feedItems.length; from += 4) {
+              const results = await Promise.allSettled(feedItems.slice(from, from + 4).map(it => classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false, classifierDeadlineMs })));
+              for (const result of results) {
+                if (result.status === "rejected") captureFailed = true;
+                else if (result.value) { stats.triggered++; touched = true; }
+              }
+            }
+          } else {
+            for (const it of feedItems) {
+              if (await classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false, classifierDeadlineMs })) { stats.triggered++; touched = true; }
+            }
           }
         }
 
@@ -71,6 +133,23 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         }
 
         if (touched) await recomputePriority(c.id);
+        if (captureEnabled) {
+          if (stateReadFailed) return; // preserve an unknown durable cursor
+          const allKnown = urls([...knownUrls, ...scan.discoveredUrls]);
+          const verifiedUrls = urls([...urls(state?.cursor?.verifiedUrls), ...scan.pages.filter(page => page.text.trim()).map(page => page.url)]);
+          const attempted = new Set([...scan.coverage.attemptedUrls, ...fetchedPending]);
+          const newlyDiscovered = scan.discoveredUrls.filter(url => !knownUrls.includes(url));
+          const pending = captureFailed
+            ? urls([...priorPending, ...scan.discoveredUrls])
+            : urls([...priorPending.filter(url => !attempted.has(url)), ...newlyDiscovered.filter(url => !attempted.has(url)), ...failedPending]);
+          const incomplete = captureFailed || failedPending.length > 0;
+          await writeSourceState(c.id, sourceKey, {
+            cursor: { knownUrls: allKnown, verifiedUrls, pendingUrls: pending, attemptedPages: scan.coverage.attemptedUrls.length + fetchedPending.length + failedPending.length, retainedPages: scan.pages.length },
+            complete: !incomplete && pending.length === 0,
+            ...(incomplete ? { error: "Website evidence capture incomplete; saved pages will be retried" } : {}),
+          });
+          if (!captureFailed) await setSiteChecked(c.id, fingerprint);
+        }
       } catch { /* per-company isolated */ }
       finally {
         // A permanently broken domain must not monopolize the oldest-first cursor.

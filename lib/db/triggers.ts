@@ -169,6 +169,7 @@ export async function reconcilePublishableSignalFlags(companyId: string): Promis
 export async function queueCandidate(
   company: { id: string; name: string; netsuite_internal_id?: string | null; record_dead?: boolean | null; description?: string | null; subindustry?: string | null; ns_industry?: string | null },
   t: { type: string; summary: string; source_name?: string | null; source_url?: string | null; signal_date?: string | null },
+  options: { requireReceipt?: boolean } = {},
 ): Promise<boolean> {
   try {
     if (t.type === "finance_hire" && (!isFinanceHireEligible(company) || !isFinanceHireEvidenceUrl(t.source_url, t.source_name))) return false;
@@ -185,8 +186,10 @@ export async function queueCandidate(
       strength: spec?.strength ?? null,
       half_life_days: spec?.half_life_days ?? null,
     }, { onConflict: "company_id,type,summary", ignoreDuplicates: true }).select("id");
+    if (error && options.requireReceipt) throw new Error("Candidate persistence failed");
     return !error && (data?.length ?? 0) === 1;
   } catch {
+    if (options.requireReceipt) throw new Error("Candidate persistence failed");
     return false; // never break a sweep over the queue
   }
 }
@@ -208,15 +211,38 @@ export async function headlineCandidateSeen(companyId: string, summary: string):
 }
 
 /** Publish a verified candidate as a real trigger. */
-export async function promoteCandidate(candidateId: string): Promise<boolean> {
+export async function promoteCandidate(candidateId: string, options: { leaseToken?: string } = {}): Promise<boolean> {
   const db = serviceClient();
-  const { data: c } = await db.from("trigger_candidates").select("*").eq("id", candidateId).maybeSingle();
+  let read = db.from("trigger_candidates").select("*").eq("id", candidateId);
+  if (options.leaseToken) read = read.eq("review_lease_token", options.leaseToken).gt("review_lease_until", new Date().toISOString());
+  const { data: c, error: readError } = await read.maybeSingle();
+  if (readError && options.leaseToken) throw new Error("Candidate promotion read failed");
   if (!c || c.verdict !== "keep" || c.promoted_trigger_id) return false;
+  // A leased recovery must have a precise evidence URL for idempotent readback.
+  if (options.leaseToken && !c.source_url) return false;
   const ok = await recordTrigger(String(c.company_id), {
     type: String(c.type), summary: String(c.summary),
     source_name: (c.source_name as string) ?? null, source_url: (c.source_url as string) ?? null,
     signal_date: (c.signal_date as string) ?? null,
   });
+  if (options.leaseToken) {
+    // The insert may have succeeded before a worker lost its response. Recover
+    // only this exact source/type receipt, never the company's latest trigger.
+    const { data: trigger, error } = await db.from("triggers").select("*")
+      .eq("company_id", c.company_id).eq("type", c.type).eq("source_url", c.source_url).maybeSingle();
+    if (error || !trigger) throw new Error("Candidate publication has no exact trigger receipt");
+    if (!isPublishableTriggerEvidence(trigger)) return false;
+    // Repeating these operations preserves the existing human freshness boundary
+    // and repairs an interrupted post-insert update before completing the receipt.
+    await reheatCompanyForFreshSignal(String(c.company_id), String(c.type), String(c.source_url), c.signal_date ?? null, { strict: true });
+    await recomputePriority(String(c.company_id));
+    const { data: saved, error: saveError } = await db.from("trigger_candidates")
+      .update({ promoted_trigger_id: trigger.id, review_lease_token: null, review_lease_until: null, review_last_error: null })
+      .eq("id", candidateId).eq("verdict", "keep").is("promoted_trigger_id", null)
+      .eq("review_lease_token", options.leaseToken).gt("review_lease_until", new Date().toISOString()).select("id").maybeSingle();
+    if (saveError || !saved) throw new Error("Candidate publication checkpoint was not confirmed");
+    return true;
+  }
   if (ok) {
     const { data: t } = await db.from("triggers").select("id").eq("company_id", c.company_id)
       .eq("type", c.type).order("detected_at", { ascending: false }).limit(1).maybeSingle();
@@ -540,15 +566,20 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
   else if (opts.band === "Medium") q = q.gte("signal_score", 30).lt("signal_score", 60);
   else if (opts.band === "Weak") q = q.lt("signal_score", 30);
   if (opts.q) { const s = opts.q.replace(/[%,]/g, " ").trim(); if (s) q = q.or(`name.ilike.%${s}%,domain.ilike.%${s}%`); }
-  // With a signal-type filter we fetch the whole matching set (bounded) and paginate
-  // in memory, so totals stay correct after filtering. Without one: normal DB paging.
-  const { data, error } = await q
+  // Filters depend on joined evidence and the per-account review boundary. Read
+  // every matching account page before those filters; never silently omit rows
+  // when the growing worklist exceeds PostgREST's per-response row limit.
+  const ordered = q
     .order("record_dead", { ascending: true }) // dead sinks even when its cached priority is stale
-    .order("priority", { ascending: false }).order("name", { ascending: true })
-    // A review boundary is applied after the trigger join, so load the bounded
-    // active set and paginate only after stale pre-review evidence is removed.
-    .range(0, 1999);
-  if (error) throw new Error(`listTriggered failed: ${error.message}`);
+    .order("priority", { ascending: false }).order("name", { ascending: true }).order("id", { ascending: true });
+  const data: any[] = [];
+  const seen = new Set<string>();
+  for (let page = 0;; page++) {
+    const { data: rows, error } = await ordered.range(page * 500, page * 500 + 499);
+    if (error) throw new Error(`listTriggered failed: ${error.message}`);
+    for (const row of rows ?? []) if (!seen.has(String(row.id))) { seen.add(String(row.id)); data.push(row); }
+    if ((rows?.length ?? 0) < 500) break;
+  }
   let companies = (data ?? []).map((r: any) => {
     const trigs = ((r.triggers ?? []) as TriggerRow[])
       .filter((trigger) => isPublishableTriggerForCompany(trigger, r))

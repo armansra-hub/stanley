@@ -17,7 +17,7 @@ function authorized(req: NextRequest): boolean {
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const n = Math.min(Math.max(Number(new URL(req.url).searchParams.get("n") ?? 25) || 25, 1), 50);
-  const result = await reviewPendingCandidates(n);
+  const result = await reviewPendingCandidates(n, { deadlineMs: Date.now() + 210_000 });
   await logEvent("headhunter", "trigger.candidates_auto_reviewed", {
     summary: `Automatic news review: ${result.promoted} published, ${result.rejected} rejected, ${result.deferred} deferred`,
     entity_type: "cron",

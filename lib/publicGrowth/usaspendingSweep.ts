@@ -6,8 +6,12 @@ import { calculateContractMetrics, deriveContractEvents } from "./metrics";
 import { awardUrl, autocompleteRecipients, compactAward, fetchAwardDetail, fetchAwardTransactionsPage, recipientProfileUrl, searchContractAwardsPage, searchReceivedContractSubawardsPage } from "./usaspending";
 import { PublicGrowthDeadlineError, requirePublicGrowthTime } from "./http";
 import { recordPublicGrowthTrigger, saveCompanyGovernmentMatch, saveFederalAward, saveFederalSubaward, saveFederalTransactions, saveGovernmentEntity, stableHash } from "./storage";
-import { collectPublicGrowthKeysetPages, matchesFrozenPublicGrowthRecipient, parsePublicGrowthSubawardContinuation, stableIdPageDecision, takeRecurringBatch, type PublicGrowthAwardContinuation, type PublicGrowthSubawardContinuation } from "./sweepState";
+import { collectPublicGrowthKeysetPages, parsePublicGrowthSubawardContinuation, stableIdPageDecision, takeRecurringBatch, type PublicGrowthAwardContinuation, type PublicGrowthSubawardContinuation } from "./sweepState";
 import type { AwardFact, TamIdentity, TransactionFact } from "./types";
+import { assertFrozenFederalIdentities, federalSearchTargets, loadVerifiedFederalIdentities, matchesFederalIdentifiers,
+  targetAcceptsSearchRow, type VerifiedFederalIdentity } from "./federalIdentity";
+import { currentSubawardWindow, isSubawardResultWindowError, splitSubawardWindow,
+  SUBAWARD_PARTITION_PAGE_BUDGET, SUBAWARD_SEARCH_PAGE_SIZE } from "./subawardPartitions";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -136,6 +140,12 @@ function transactionId(row: any): string {
   return exact || `hash:${stableHash(row)}`;
 }
 
+function ignoreAwardForTarget(state: PublicGrowthAwardContinuation, id: string) {
+  const ignored = new Set(state.ignoredAwardIds ?? []);
+  if (!ignored.has(id) && ignored.size >= 25_000) throw new Error("award identity exclusions reached the supported 25000-ID bound");
+  ignored.add(id); state.ignoredAwardIds = [...ignored];
+}
+
 /** One bounded search page and one bounded transaction page per invocation. */
 export async function sweepUsaspendingCompany(
   company: TamIdentity,
@@ -146,31 +156,59 @@ export async function sweepUsaspendingCompany(
     let state = options.awardContinuation ? structuredClone(options.awardContinuation) : null;
     let currentSearchPage: Awaited<ReturnType<typeof searchContractAwardsPage>> | null = null;
     if (!state) {
-      const suggestions = await observePrimeRequest("recipient_autocomplete", () => autocompleteRecipients(company.name, 1, options.deadlineMs));
-      const exactNames = [...new Set(suggestions.map((x) => x.recipient_name).filter((name) => normalizeName(name) === normalizeName(company.name)))];
-      if (!exactNames.includes(company.name)) exactNames.push(company.name);
-      for (const recipientName of exactNames.slice(0, 4)) {
-        const candidate = initialAwardContinuation(recipientName);
-        const page = await observePrimeRequest("initial_award_search", () => searchContractAwardsPage(recipientName, 1, candidate.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs));
-        if (page.rows.some((row) => normalizeName(row.recipientName) === normalizeName(recipientName))) {
-          state = candidate; currentSearchPage = page; break;
-        }
+      const identities = await loadVerifiedFederalIdentities(company.id);
+      let targets = federalSearchTargets(company.name, identities);
+      if (!identities.length) {
+        const suggestions = await observePrimeRequest("recipient_autocomplete", () => autocompleteRecipients(company.name, 1, options.deadlineMs));
+        const names = [...new Set([company.name, ...suggestions.map((x) => x.recipient_name)
+          .filter((name) => normalizeName(name) === normalizeName(company.name))])];
+        if (names.length > 300) throw new Error("recipient alias set exceeds supported continuation bound");
+        targets = names.map((query) => ({ query, identity: null }));
       }
-      if (!state) { receipt.awardDone = true; return receipt; }
+      state = initialAwardContinuation(targets[0].query);
+      state.searchTargets = targets; state.searchTargetIndex = 0;
+      const identity = targets[0].identity;
+      if (identity) { state.entityId = identity.entityId; state.uei = identity.uei; state.recipientId = identity.recipientId; }
+      receipt.awardContinuation = state;
+      currentSearchPage = await observePrimeRequest("initial_award_search", () => searchContractAwardsPage(state!.recipientName, 1, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs));
     }
     receipt.awardContinuation = state;
+    const target = state.searchTargets?.[state.searchTargetIndex ?? 0];
+    if (state.searchTargets) {
+      if (!target || target.query !== state.recipientName) throw new Error("federal search target differs from continuation");
+      const frozen = state.searchTargets.flatMap((entry) => entry.identity ? [entry.identity] : []);
+      if (frozen.length) assertFrozenFederalIdentities(frozen, await loadVerifiedFederalIdentities(company.id));
+      if (target.identity && (state.entityId !== target.identity.entityId || state.uei !== target.identity.uei
+          || state.recipientId !== target.identity.recipientId)) throw new Error("federal search target binding changed");
+    }
 
     if (!state.pendingAwardId) {
       const page = currentSearchPage ?? await observePrimeRequest("continuation_award_search", () => searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs));
-      const exactRows = page.rows.filter((row) => normalizeName(row.recipientName) === normalizeName(state.recipientName));
-      const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew, seenIds: state.seenAwardIds, pageIds: exactRows.map((row) => row.generatedId), hasNext: page.hasNext });
+      const exactRows = page.rows.filter((row) => target
+        ? targetAcceptsSearchRow(target, row) : normalizeName(row.recipientName) === normalizeName(state.recipientName));
+      const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew,
+        seenIds: [...state.seenAwardIds, ...(state.ignoredAwardIds ?? [])], pageIds: exactRows.map((row) => row.generatedId), hasNext: page.hasNext });
       const nextAward = decision.nextId ? exactRows.find((row) => row.generatedId === decision.nextId) : null;
       if (!nextAward) {
         state.searchPage = decision.page;
         state.searchPassFoundNew = decision.passFoundNew;
         if (decision.done) {
-          if (state.entityId) {
-            const stored = await loadStoredContractFacts(state.entityId, options.deadlineMs);
+          if (state.searchTargets && (state.searchTargetIndex ?? 0) + 1 < state.searchTargets.length) {
+            state.searchTargetIndex = (state.searchTargetIndex ?? 0) + 1;
+            const next = state.searchTargets[state.searchTargetIndex];
+            state.recipientName = next.query; state.searchPage = 1; state.searchPassFoundNew = false;
+            state.ignoredAwardIds = [];
+            state.entityId = next.identity?.entityId ?? null; state.uei = next.identity?.uei ?? null; state.recipientId = next.identity?.recipientId ?? null;
+            receipt.awardDone = false; return receipt;
+          }
+          if (state.entityId || state.searchTargets?.some((entry) => entry.identity)) {
+            const entityIds = [...new Set([...(state.entityId ? [state.entityId] : []), ...(state.searchTargets ?? []).flatMap((entry) => entry.identity ? [entry.identity.entityId] : [])])];
+            const stored = { awards: [] as AwardFact[], transactions: [] as TransactionFact[], agencies: [] as string[] };
+            for (const id of entityIds) {
+              const facts = await loadStoredContractFacts(id, options.deadlineMs);
+              stored.awards.push(...facts.awards); stored.transactions.push(...facts.transactions); stored.agencies.push(...facts.agencies);
+            }
+            stored.agencies = [...new Set(stored.agencies)];
             const metrics = calculateContractMetrics(stored.awards, stored.transactions);
             requirePublicGrowthTime(options.deadlineMs);
             await saveMetrics(company.id, metrics, stored.agencies);
@@ -189,6 +227,7 @@ export async function sweepUsaspendingCompany(
         receipt.status = state.entityId ? "matched" : "no_awards";
         receipt.awardDone = false; receipt.awardContinuation = state; return receipt;
       }
+      if (state.seenAwardIds.length >= 25_000) throw new Error("award continuation reached the supported 25000-ID bound");
       state.pendingAwardId = nextAward.generatedId;
       state.transactionPage = 1; state.transactionPassFoundNew = false; state.seenTransactionIds = [];
       state.searchPassFoundNew = true; receipt.awardContinuation = state;
@@ -197,29 +236,35 @@ export async function sweepUsaspendingCompany(
     const pendingAwardId = state.pendingAwardId;
     if (!pendingAwardId) throw new Error("USAspending continuation omitted its pending award");
     const seed = compactAward(await observePrimeRequest("award_detail", () => fetchAwardDetail(pendingAwardId, 1, options.deadlineMs)));
-    if (state.entityId && !matchesFrozenPublicGrowthRecipient(
+    if (seed.generatedAwardId !== pendingAwardId) throw new Error("award detail differs from requested stable ID");
+    if (state.entityId && !matchesFederalIdentifiers(
       { uei: state.uei, recipientId: state.recipientId },
       { uei: seed.recipient.uei, recipientId: seed.recipient.recipientId },
     )) {
-      state.seenAwardIds = [...new Set([...state.seenAwardIds, pendingAwardId])];
+      ignoreAwardForTarget(state, pendingAwardId);
       state.pendingAwardId = null; state.seenTransactionIds = [];
       receipt.status = "ambiguous"; receipt.awardDone = false; receipt.awardContinuation = state; return receipt;
     }
-    const decision = decideIdentityMatch(company, { legalName: seed.recipient.legalName, city: seed.recipient.city, state: seed.recipient.state, uei: seed.recipient.uei });
-    const entityId = await saveGovernmentEntity({
+    const decision = target?.identity ? { status: "verified" as const, method: "verified_identifier", confidence: 1,
+      evidence: { verifiedEntityId: target.identity.entityId, matchedIdentifiers: true } }
+      : decideIdentityMatch(company, { legalName: seed.recipient.legalName, city: seed.recipient.city, state: seed.recipient.state, uei: seed.recipient.uei });
+    const entityId = target?.identity?.entityId ?? await saveGovernmentEntity({
       uei: seed.recipient.uei, usaspending_recipient_id: seed.recipient.recipientId, legal_name: seed.recipient.legalName,
       city: seed.recipient.city, state: seed.recipient.state, postal_code: seed.recipient.postalCode, country_code: seed.recipient.countryCode,
       address_line1: seed.recipient.address, parent_uei: seed.recipient.parentUei, parent_name: seed.recipient.parentName,
       source: "USAspending", source_url: awardUrl(seed.generatedAwardId), evidence: { businessCategories: seed.recipient.businessCategories },
     });
-    await saveCompanyGovernmentMatch(company.id, entityId, decision);
+    if (!target?.identity) await saveCompanyGovernmentMatch(company.id, entityId, decision);
     if (decision.status !== "verified") {
-      state.seenAwardIds = [...new Set([...state.seenAwardIds, pendingAwardId])];
+      ignoreAwardForTarget(state, pendingAwardId);
       state.pendingAwardId = null; state.seenTransactionIds = [];
       receipt.status = "ambiguous"; receipt.awardDone = false; receipt.awardContinuation = state; return receipt;
     }
 
-    state.entityId = entityId; state.uei = seed.recipient.uei; state.recipientId = seed.recipient.recipientId;
+    state.entityId = entityId;
+    if (!target?.identity) { state.uei = seed.recipient.uei; state.recipientId = seed.recipient.recipientId; }
+    if (target && !target.identity) target.identity = { entityId, legalName: seed.recipient.legalName, dbaName: null,
+      uei: seed.recipient.uei, recipientId: seed.recipient.recipientId };
     receipt.status = "matched"; receipt.entityId = entityId; receipt.uei = seed.recipient.uei;
     const sourceUrl = awardUrl(seed.generatedAwardId);
     const storedAwardId = await saveFederalAward(entityId, { ...seed, sourceUrl });
@@ -237,6 +282,7 @@ export async function sweepUsaspendingCompany(
     const transactionPage = await observePrimeRequest("award_transactions", () => fetchAwardTransactionsPage(seed.generatedAwardId, state!.transactionPage, options.deadlineMs));
     const seenTransactions = new Set(state.seenTransactionIds);
     const unseenTransactions = transactionPage.rows.filter((row) => !seenTransactions.has(transactionId(row)));
+    if (new Set([...seenTransactions, ...unseenTransactions.map(transactionId)]).size > 25_000) throw new Error("transaction continuation reached the supported 25000-ID bound");
     receipt.transactions += await saveFederalTransactions(storedAwardId, sourceUrl, unseenTransactions);
     for (const row of transactionPage.rows) seenTransactions.add(transactionId(row));
     state.seenTransactionIds = [...seenTransactions];
@@ -335,30 +381,53 @@ export async function sweepUsaspendingSubawardsCompany(
     }
     requirePublicGrowthTime(options.deadlineMs);
     const db = serviceClient();
-    const { data: links, error: linksError } = await db.from("company_government_matches")
-      .select("government_entity_id,government_entities!inner(legal_name,dba_name)")
-      .eq("company_id", company.id).eq("match_status", "verified");
-    if (linksError) throw new Error(`subaward verified-link load failed: ${linksError.message}`);
-    const entityIds = [...new Set((links ?? []).map((link: any) => String(link.government_entity_id)))];
+    const currentIdentities = await loadVerifiedFederalIdentities(company.id);
+    const entityIds = currentIdentities.map((identity) => identity.entityId);
     if (!entityIds.length && !state) { receipt.subawardDone = true; return receipt; }
-    if (entityIds.length !== 1 || (state && state.entityId !== entityIds[0])) {
+    if (state && !entityIds.includes(state.entityId)) {
       throw new Error("subaward frozen verified government identity is absent, ambiguous, or changed");
     }
+    const namesFor = (identity: VerifiedFederalIdentity) => [...new Set([identity.uei, identity.legalName, identity.dbaName]
+      .filter((value): value is string => Boolean(value)))];
     if (!state) {
-      const names = [...new Set([company.name, ...(links ?? []).flatMap((link: any) => [link.government_entities?.legal_name, link.government_entities?.dba_name])]
-        .filter(Boolean).map((value) => String(value).trim()).filter(Boolean))];
+      const names = namesFor(currentIdentities[0]);
       state = parsePublicGrowthSubawardContinuation({ version: 1, companyId: company.id, entityId: entityIds[0], names,
         nameIndex: 0, searchEndDate: new Date().toISOString().slice(0, 10), searchPage: 1,
-        searchPassFoundNew: false, seenSubawardIds: [] });
+        searchPassFoundNew: false, seenSubawardIds: [], identities: currentIdentities, identityIndex: 0 });
       receipt.subawardContinuation = state;
     }
+    const identities = state.identities ?? currentIdentities.filter((identity) => identity.entityId === state!.entityId);
+    assertFrozenFederalIdentities(identities, currentIdentities);
+    if (identities.some((identity) => !identity.uei)) throw new Error("subaward verified identity lacks a UEI; identity research required");
+    const byUei = new Map(identities.map((identity) => [identity.uei!.toUpperCase(), identity.entityId]));
+    if (byUei.size !== identities.length) throw new Error("subaward identities have conflicting UEIs");
     receipt.status = "linked";
-    const entityId = state.entityId;
     for (let sourceStep = 0; sourceStep < 3 && state.nameIndex < state.names.length && receipt.stored < SUBAWARD_ROWS_PER_STEP; sourceStep++) {
+      requirePublicGrowthTime(options.deadlineMs);
+      // Old cursors may already be past the local work budget. Replay within
+      // smaller date scopes while retaining every previously persisted ID.
+      if (state.searchPage > SUBAWARD_PARTITION_PAGE_BUDGET) {
+        splitSubawardWindow(state, "local_page_budget");
+        continue;
+      }
       const name = state.names[state.nameIndex];
-      const page = await searchReceivedContractSubawardsPage(name, state.searchPage, state.searchEndDate, options.deadlineMs);
+      const window = currentSubawardWindow(state);
+      let page: Awaited<ReturnType<typeof searchReceivedContractSubawardsPage>>;
+      try {
+        page = state.searchWindows
+          ? await searchReceivedContractSubawardsPage(name, state.searchPage, window.endDate, options.deadlineMs, window.startDate)
+          : await searchReceivedContractSubawardsPage(name, state.searchPage, state.searchEndDate, options.deadlineMs);
+      } catch (error) {
+        if (!isSubawardResultWindowError(error)) throw error;
+        splitSubawardWindow(state, "provider_result_window");
+        continue;
+      }
       const exactRows = page.rows.filter((row) => {
         const fields = subawardFields(row);
+        const subUei = String(row["Sub-Recipient UEI"] ?? "").trim().toUpperCase();
+        const primeUei = String(row["Prime Award Recipient UEI"] ?? "").trim().toUpperCase();
+        if (byUei.has(subUei) || byUei.has(primeUei)) return true;
+        if (subUei || primeUei) return false;
         return normalizeName(fields.recipientName) === normalizeName(name) || normalizeName(fields.primeName) === normalizeName(name);
       });
       const seen = new Set(state.seenSubawardIds);
@@ -368,11 +437,18 @@ export async function sweepUsaspendingSubawardsCompany(
         if (receipt.stored >= SUBAWARD_ROWS_PER_STEP) break;
         if (seen.size >= 25_000) throw new Error("subaward continuation reached its supported25000 stable-ID bound");
         requirePublicGrowthTime(options.deadlineMs);
-        const receivedMatch = normalizeName(recipientName) === normalizeName(name), primeMatch = normalizeName(primeName) === normalizeName(name);
+        const receivedEntity = byUei.get(String(row["Sub-Recipient UEI"] ?? "").trim().toUpperCase());
+        const primeEntity = byUei.get(String(row["Prime Award Recipient UEI"] ?? "").trim().toUpperCase());
+        // A verified company link does not make another same-named subrecipient ours.
+        if (!receivedEntity && !primeEntity) {
+          if (!row["Sub-Recipient UEI"] && !row["Prime Award Recipient UEI"]) throw new Error("subaward recipient identifiers missing; row remains unresolved");
+          continue;
+        }
+        const receivedMatch = Boolean(receivedEntity);
         receipt.checked++;
         const sourceUrl = `https://www.usaspending.gov/search/?hash=contract-subaward&subaward=${encodeURIComponent(externalId)}`;
         await saveFederalSubaward({ externalSubawardId: externalId, primeAwardGeneratedId: row.primeAwardGeneratedId ?? row.primeAwardId,
-          primeGovernmentEntityId: primeMatch ? entityId : null, subawardGovernmentEntityId: receivedMatch ? entityId : null,
+          primeGovernmentEntityId: primeEntity ?? null, subawardGovernmentEntityId: receivedEntity ?? null,
           subawardeeName: recipientName, amount, actionDate: actionDate || null, description, awardingAgency: row.awardingAgency, sourceUrl, evidence: row });
         const event = { family: "federal_contract", type: receivedMatch ? "federal_subaward" : "federal_prime_subaward_activity",
           dedupeKey: `usaspending:subaward:${externalId}:${receivedMatch ? "received" : "issued"}`, strength: amount >= 1_000_000 ? 86 : 74,
@@ -383,10 +459,31 @@ export async function sweepUsaspendingSubawardsCompany(
         // A failed persistence/trigger step leaves this ID unseen for safe replay.
         seen.add(externalId); state.seenSubawardIds = [...seen]; state.searchPassFoundNew = true; receipt.stored++;
       }
+      // A full last budget page is never a completeness claim, even if provider
+      // hit-count metadata stops there. Unprocessed page rows recur in a child
+      // window; global stable IDs prevent replay from duplicating stored rows.
+      if (state.searchPage >= SUBAWARD_PARTITION_PAGE_BUDGET
+          && (page.hasNext || (page.sourceResultCount ?? page.rows.length) >= SUBAWARD_SEARCH_PAGE_SIZE)) {
+        splitSubawardWindow(state, "local_page_budget");
+        continue;
+      }
       const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew,
         seenIds: state.seenSubawardIds, pageIds: exactRows.map((row) => subawardFields(row).externalId), hasNext: page.hasNext });
       state.searchPage = decision.page; state.searchPassFoundNew = decision.passFoundNew;
-      if (decision.done) { state.nameIndex++; state.searchPage = 1; state.searchPassFoundNew = false; }
+      if (decision.done) {
+        if (state.searchWindows && (state.searchWindowIndex ?? 0) + 1 < state.searchWindows.length) {
+          state.searchWindowIndex = (state.searchWindowIndex ?? 0) + 1;
+          state.searchPage = 1; state.searchPassFoundNew = false;
+          continue;
+        }
+        state.nameIndex++; state.searchPage = 1; state.searchPassFoundNew = false;
+        if (state.searchWindows) state.searchWindowIndex = 0;
+        if (state.nameIndex === state.names.length && state.identities && (state.identityIndex ?? 0) + 1 < state.identities.length) {
+          state.identityIndex = (state.identityIndex ?? 0) + 1;
+          const next = state.identities[state.identityIndex]; state.entityId = next.entityId;
+          state.names = namesFor(next); state.nameIndex = 0;
+        }
+      }
     }
     // Light histories and empty aliases finalize in this invocation; only an
     // unfinished stable pass or an exhausted shared budget creates retry debt.
@@ -395,18 +492,19 @@ export async function sweepUsaspendingSubawardsCompany(
       return receipt;
     }
     const cutoff = new Date(Date.parse(`${state.searchEndDate}T00:00:00Z`) - 365 * 86_400_000).toISOString().slice(0, 10);
+    const metricEntityIds = identities.map((identity) => identity.entityId);
     const subRows = await collectPublicGrowthKeysetPages<any>(async (afterId, limit) => {
       requirePublicGrowthTime(options.deadlineMs);
       let query = db.from("federal_subawards").select("id,prime_government_entity_id,subaward_government_entity_id,subaward_amount")
-        .or(`prime_government_entity_id.eq.${entityId},subaward_government_entity_id.eq.${entityId}`)
+        .or(`prime_government_entity_id.in.(${metricEntityIds.join(",")}),subaward_government_entity_id.in.(${metricEntityIds.join(",")})`)
         .gte("action_date", cutoff).lte("action_date", state!.searchEndDate).order("id", { ascending: true }).limit(limit);
       if (afterId) query = query.gt("id", afterId);
       const { data, error } = await query;
       if (error) throw new Error(`subaward metric load failed: ${error.message}`);
       return data ?? [];
     }, { pageSize: STORED_METRIC_PAGE_SIZE, maxRows: STORED_METRIC_MAX_ROWS });
-    const primeDollars = subRows.filter((row) => row.prime_government_entity_id === entityId).reduce((sum, row) => sum + Number(row.subaward_amount ?? 0), 0);
-    const receivedDollars = subRows.filter((row) => row.subaward_government_entity_id === entityId).reduce((sum, row) => sum + Number(row.subaward_amount ?? 0), 0);
+    const primeDollars = subRows.filter((row) => metricEntityIds.includes(row.prime_government_entity_id)).reduce((sum, row) => sum + Number(row.subaward_amount ?? 0), 0);
+    const receivedDollars = subRows.filter((row) => metricEntityIds.includes(row.subaward_government_entity_id)).reduce((sum, row) => sum + Number(row.subaward_amount ?? 0), 0);
     requirePublicGrowthTime(options.deadlineMs);
     const { error: metricError } = await db.from("company_contract_metric_snapshots").upsert({ company_id: company.id,
       as_of_date: state.searchEndDate, prime_subaward_dollars_365d: primeDollars, received_subaward_dollars_365d: receivedDollars }, { onConflict: "company_id,as_of_date" });

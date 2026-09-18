@@ -1,6 +1,7 @@
 import "server-only";
 import { advanceCursorOffset } from "@/lib/cron/rotation";
 import { serviceClient } from "@/lib/supabase/server";
+import { parseSubawardPartitions, subawardDateMillis, SUBAWARD_HISTORY_START, type SubawardSearchWindow } from "./subawardPartitions";
 
 export interface PublicGrowthSweepLease {
   source: string;
@@ -109,6 +110,10 @@ export interface PublicGrowthAwardContinuation {
   transactionPage: number;
   transactionPassFoundNew: boolean;
   seenTransactionIds: string[];
+  searchTargets?: import("./federalIdentity").FederalSearchTarget[];
+  searchTargetIndex?: number;
+  /** Excluded for this identity only; another verified entity may own the award. */
+  ignoredAwardIds?: string[];
 }
 
 export interface PublicGrowthSubawardContinuation {
@@ -121,6 +126,11 @@ export interface PublicGrowthSubawardContinuation {
   searchPage: number;
   searchPassFoundNew: boolean;
   seenSubawardIds: string[];
+  /** Optional source-scoped date partitions; legacy cursors keep their full range. */
+  searchWindows?: SubawardSearchWindow[];
+  searchWindowIndex?: number;
+  identities?: import("./federalIdentity").VerifiedFederalIdentity[];
+  identityIndex?: number;
 }
 
 export interface PublicGrowthRetryEntry {
@@ -244,7 +254,44 @@ function optionalAwardContinuation(value: unknown, label: string): PublicGrowthA
     transactionPage: positiveInteger(row.transactionPage, `${label}.transactionPage`),
     transactionPassFoundNew: row.transactionPassFoundNew,
     seenTransactionIds: uniqueStringArray(row.seenTransactionIds, `${label}.seenTransactionIds`),
+    ...(row.ignoredAwardIds === undefined ? {} : { ignoredAwardIds: uniqueStringArray(row.ignoredAwardIds, `${label}.ignoredAwardIds`) }),
+    ...awardTargets(row, label),
   };
+}
+
+function frozenIdentity(value: unknown, label: string): import("./federalIdentity").VerifiedFederalIdentity {
+  const row = objectRecord(value);
+  if (!row) throw new Error(`${label} must be an identity`);
+  return { entityId: exactCompanyId(row.entityId, `${label}.entityId`),
+    legalName: boundedString(row.legalName, `${label}.legalName`),
+    dbaName: row.dbaName == null ? null : boundedString(row.dbaName, `${label}.dbaName`),
+    uei: row.uei == null ? null : boundedString(row.uei, `${label}.uei`, 64),
+    recipientId: row.recipientId == null ? null : boundedString(row.recipientId, `${label}.recipientId`, 200) };
+}
+
+function awardTargets(row: Record<string, unknown>, label: string): Pick<PublicGrowthAwardContinuation, "searchTargets" | "searchTargetIndex"> {
+  if (row.searchTargets === undefined && row.searchTargetIndex === undefined) return {};
+  if (!Array.isArray(row.searchTargets) || !row.searchTargets.length || row.searchTargets.length > 300) throw new Error(`${label} has invalid search targets`);
+  const searchTargets = row.searchTargets.map((value, index) => {
+    const target = objectRecord(value);
+    if (!target) throw new Error(`${label} has invalid search target`);
+    return { query: boundedString(target.query, `${label}.searchTargets[${index}].query`),
+      identity: target.identity == null ? null : frozenIdentity(target.identity, `${label}.searchTargets[${index}].identity`) };
+  });
+  const searchTargetIndex = Number(row.searchTargetIndex);
+  if (!Number.isInteger(searchTargetIndex) || searchTargetIndex < 0 || searchTargetIndex >= searchTargets.length) throw new Error(`${label} has invalid search target index`);
+  return { searchTargets, searchTargetIndex };
+}
+
+function subawardIdentities(row: Record<string, unknown>, label: string): Pick<PublicGrowthSubawardContinuation, "identities" | "identityIndex"> {
+  if (row.identities === undefined && row.identityIndex === undefined) return {};
+  if (!Array.isArray(row.identities) || !row.identities.length || row.identities.length > 100) throw new Error(`${label} has invalid identities`);
+  const identities = row.identities.map((value, index) => frozenIdentity(value, `${label}.identities[${index}]`));
+  const identityIndex = Number(row.identityIndex);
+  if (new Set(identities.map((identity) => identity.entityId)).size !== identities.length
+      || !Number.isInteger(identityIndex) || identityIndex < 0 || identityIndex >= identities.length
+      || identities[identityIndex].entityId !== row.entityId) throw new Error(`${label} has invalid identity index`);
+  return { identities, identityIndex };
 }
 
 export function parsePublicGrowthSubawardContinuation(value: unknown, label = "subawardContinuation"): PublicGrowthSubawardContinuation {
@@ -255,7 +302,7 @@ export function parsePublicGrowthSubawardContinuation(value: unknown, label = "s
   const nameIndex = Number(row.nameIndex);
   if (!Number.isInteger(nameIndex) || nameIndex < 0 || nameIndex > names.length) throw new Error(`${label}.nameIndex is outside the frozen names`);
   const searchEndDate = boundedString(row.searchEndDate, `${label}.searchEndDate`, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(searchEndDate) || !Number.isFinite(Date.parse(`${searchEndDate}T00:00:00.000Z`))) throw new Error(`${label}.searchEndDate must be an ISO date`);
+  if (subawardDateMillis(searchEndDate, `${label}.searchEndDate`) < subawardDateMillis(SUBAWARD_HISTORY_START, label)) throw new Error(`${label}.searchEndDate predates supported subaward history`);
   if (typeof row.searchPassFoundNew !== "boolean") throw new Error(`${label}.searchPassFoundNew must be boolean`);
   return {
     version: 1,
@@ -265,6 +312,8 @@ export function parsePublicGrowthSubawardContinuation(value: unknown, label = "s
     searchPage: positiveInteger(row.searchPage, `${label}.searchPage`),
     searchPassFoundNew: row.searchPassFoundNew,
     seenSubawardIds: uniqueStringArray(row.seenSubawardIds, `${label}.seenSubawardIds`),
+    ...parseSubawardPartitions(row, searchEndDate, label),
+    ...subawardIdentities(row, label),
   };
 }
 

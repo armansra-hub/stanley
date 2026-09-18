@@ -1,5 +1,6 @@
 import "server-only";
 import { fetchJson } from "./http";
+import { SUBAWARD_HISTORY_START, SUBAWARD_SEARCH_PAGE_SIZE } from "./subawardPartitions";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -61,8 +62,12 @@ export async function searchContractAwardsPage(
   const data = await fetchJson<any>(`${API}/search/spending_by_award/`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   }, 20_000, 1, deadlineMs);
-  const rows: AwardSearchRow[] = (data.results ?? []).map(awardSearchRow).filter((row: AwardSearchRow) => row.generatedId);
-  return { rows: [...new Map(rows.map((row: AwardSearchRow) => [row.generatedId, row])).values()], hasNext: data.page_metadata?.hasNext === true };
+  if (!Array.isArray(data?.results) || data.results.length > body.limit || typeof data.page_metadata?.hasNext !== "boolean") {
+    throw new Error("award search page omitted results or explicit pagination metadata");
+  }
+  const rows: AwardSearchRow[] = data.results.map(awardSearchRow);
+  if (rows.some((row) => !row.generatedId || !row.recipientName)) throw new Error("award search page contains invalid identity rows");
+  return { rows: [...new Map(rows.map((row: AwardSearchRow) => [row.generatedId, row])).values()], hasNext: data.page_metadata.hasNext };
 }
 
 export async function searchContractAwards(recipient: string, startDate = "2007-10-01", endDate = new Date(Date.now() + 120 * 86_400_000).toISOString().slice(0, 10), maxPages = 100): Promise<AwardSearchRow[]> {
@@ -97,17 +102,17 @@ export async function searchReceivedContractSubawards(recipient: string, startDa
 
 /** A single provider page; callers persist stable IDs before moving the cursor. */
 export async function searchReceivedContractSubawardsPage(
-  recipient: string, page: number, endDate: string, deadlineMs?: number,
-): Promise<{ rows: any[]; hasNext: boolean }> {
+  recipient: string, page: number, endDate: string, deadlineMs?: number, startDate = SUBAWARD_HISTORY_START,
+): Promise<{ rows: any[]; hasNext: boolean; sourceResultCount: number }> {
   const body = {
-    filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
+    filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: startDate, end_date: endDate }] },
     fields: ["Sub-Award ID", "Sub-Awardee Name", "Sub-Award Date", "Sub-Award Amount", "Sub-Award Description", "Sub-Recipient UEI", "Awarding Agency", "Awarding Sub Agency", "Prime Award ID", "Prime Recipient Name", "Prime Award Recipient UEI"],
-    limit: 100, page: Math.max(1, Math.trunc(page)), sort: "Sub-Award Date", order: "desc", subawards: true, spending_level: "subawards",
+    limit: SUBAWARD_SEARCH_PAGE_SIZE, page: Math.max(1, Math.trunc(page)), sort: "Sub-Award Date", order: "desc", subawards: true, spending_level: "subawards",
   };
   const data = await fetchJson<any>(`${API}/search/spending_by_award/`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   }, 20_000, 1, deadlineMs);
-  if (!Array.isArray(data.results) || typeof data.page_metadata?.hasNext !== "boolean") {
+  if (!Array.isArray(data?.results) || data.results.length > body.limit || typeof data.page_metadata?.hasNext !== "boolean") {
     throw new Error("subaward search page omitted results or explicit pagination metadata");
   }
   const rows: any[] = [];
@@ -118,9 +123,11 @@ export async function searchReceivedContractSubawardsPage(
       primeAwardGeneratedId: result.prime_award_generated_internal_id ?? sub.prime_award_generated_internal_id ?? null,
       awardingAgency: result["Awarding Agency"] ?? sub["Awarding Agency"] ?? null,
       "Prime Recipient Name": sub["Prime Recipient Name"] ?? result["Prime Recipient Name"] ?? null,
+      "Prime Award Recipient UEI": sub["Prime Award Recipient UEI"] ?? result["Prime Award Recipient UEI"] ?? null,
+      "Sub-Recipient UEI": sub["Sub-Recipient UEI"] ?? result["Sub-Recipient UEI"] ?? null,
     });
   }
-  return { rows, hasNext: data.page_metadata.hasNext };
+  return { rows, hasNext: data.page_metadata.hasNext, sourceResultCount: data.results.length };
 }
 
 export async function fetchAwardDetail(generatedId: string, attempts = 3, deadlineMs?: number): Promise<any> {
@@ -138,7 +145,10 @@ export async function fetchAwardTransactionsPage(generatedId: string, page: numb
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ award_id: generatedId, page: Math.max(1, Math.trunc(page)), limit: 500, sort: "action_date", order: "desc" }),
   }, 20_000, 1, deadlineMs);
-  return { rows: data.results ?? [], hasNext: data.page_metadata?.hasNext === true };
+  if (!Array.isArray(data?.results) || data.results.length > 500 || typeof data.page_metadata?.hasNext !== "boolean") {
+    throw new Error("award transaction page omitted results or explicit pagination metadata");
+  }
+  return { rows: data.results, hasNext: data.page_metadata.hasNext };
 }
 
 export async function fetchAwardTransactions(generatedId: string): Promise<any[]> {

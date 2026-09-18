@@ -34,7 +34,7 @@ describe("automatic trigger-candidate review cron", () => {
       headers: { "x-cron-secret": "review-secret" },
     }));
     expect(response.status).toBe(200);
-    expect(mocks.review).toHaveBeenCalledWith(25);
+    expect(mocks.review).toHaveBeenCalledWith(25, { deadlineMs: expect.any(Number) });
     expect(await response.json()).toEqual({ checked: 3, kept: 1, rejected: 1, promoted: 1, deferred: 1 });
     expect(mocks.logEvent).toHaveBeenCalledWith("headhunter", "trigger.candidates_auto_reviewed", expect.objectContaining({
       meta: expect.objectContaining({ promoted: 1, rejected: 1, deferred: 1 }),

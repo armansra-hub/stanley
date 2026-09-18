@@ -9,6 +9,11 @@ import { classifyHeadline } from "@/lib/triggers/config";
 import { runActor } from "@/lib/apify/run";
 import { normalizeDomain } from "@/lib/domain";
 import { parseDateLoose } from "@/lib/time";
+import { createHash } from "node:crypto";
+import { enqueueObservation, intelligenceEnabled } from "@/lib/intelligence/observations";
+import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
+import { fetchPublicHttpText, validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
+import { sitePageEvidence } from "@/lib/sources/siteDiscovery";
 import {
   isCareerEvidenceUrl,
   isFinanceHireEligible,
@@ -182,10 +187,54 @@ const PE_RE = /\b(private equity|pe firm|portfolio company|portfolio of|backed b
  * event. Shared by Google-News (requireNameMatch=true) and the company's own
  * newsroom RSS (requireNameMatch=false — it's already their feed). Returns true if a
  * NEW trigger landed. opts.llm = use the Opus verifier (budget-gated) on claimable. */
+type NewsCompany = { id: string; name: string; domain?: string | null; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence;
+type HeadlineItem = { raw_excerpt: string; source_url: string; signal_date: string | null; source_name: string };
+type HeadlineOptions = { llm?: boolean; requireNameMatch?: boolean; classifierDeadlineMs?: number; captureIntelligence?: boolean };
+
+function headlineKey(item: HeadlineItem): string {
+  return createHash("sha256").update(JSON.stringify([item.source_url, item.raw_excerpt, item.signal_date])).digest("hex");
+}
+
+/** Article text is fetched through the same DNS-pinned transport as final review. */
+async function observeHeadline(company: NewsCompany, item: HeadlineItem): Promise<void> {
+  const source = validatePublicHttpUrl(item.source_url);
+  if (source.pathname.replace(/\/+$/, "").length < 2) throw new Error("Article evidence unavailable");
+  const response = await fetchPublicHttpText(source.toString(), { timeoutMs: 4000, maxRedirects: 6, maxBytes: 1_000_000 });
+  const finalUrl = validatePublicHttpUrl(response.finalUrl);
+  if (response.status < 200 || response.status >= 300 || finalUrl.pathname.replace(/\/+$/, "").length < 2) throw new Error("Article evidence unavailable");
+  const evidence = sitePageEvidence(response.body, response.finalUrl);
+  // A Google consent/article gateway is not publisher body text. Preserve the
+  // item for retry while the existing RSS/headline candidate path can continue.
+  if (evidence.text.length < 160 || /(?:^|\.)(?:google\.com|googleusercontent\.com)$/i.test(finalUrl.hostname)) throw new Error("Article body unavailable");
+  const stored = await enqueueObservation({
+    companyId: company.id, companyName: company.name, companyDomain: company.domain,
+    netsuiteInternalId: company.netsuite_internal_id, sourceKind: "news", sourceUrl: response.finalUrl,
+    title: item.raw_excerpt, text: evidence.text, eventDate: item.signal_date,
+    metadata: { sourceName: item.source_name, feedUrl: item.source_url, sourceDates: evidence.sourceDates, articleBodyAvailable: true, textTruncated: evidence.truncated },
+  });
+  if (!stored) throw new Error("News observation persistence disabled");
+}
+
 export async function classifyAndRecordHeadline(
-  company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence,
+  company: NewsCompany,
+  it: HeadlineItem,
+  opts: HeadlineOptions = {},
+): Promise<boolean> {
+  if (!intelligenceEnabled() || opts.captureIntelligence === false) return classifyLegacyHeadline(company, it, opts);
+  // Capture starts before the old name/type filters, without changing their
+  // publication rules or letting an unavailable article erase legacy effects.
+  const [capture, legacy] = await Promise.allSettled([
+    observeHeadline(company, it), classifyLegacyHeadline(company, it, opts),
+  ]);
+  if (capture.status === "rejected") throw new Error("News evidence capture incomplete");
+  if (legacy.status === "rejected") throw legacy.reason;
+  return legacy.value;
+}
+
+async function classifyLegacyHeadline(
+  company: NewsCompany,
   it: { raw_excerpt: string; source_url: string; signal_date: string | null; source_name: string },
-  opts: { llm?: boolean; requireNameMatch?: boolean; classifierDeadlineMs?: number } = {},
+  opts: HeadlineOptions,
 ): Promise<boolean> {
   const clean = cleanHeadline(it.raw_excerpt);
   if (opts.requireNameMatch !== false && !headlineIsAboutCompany(company.name, clean)) return false;
@@ -209,8 +258,35 @@ export async function classifyAndRecordHeadline(
   return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
-export async function checkCompanyNews(company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence, opts: { llm?: boolean; classifierDeadlineMs?: number } = {}): Promise<number> {
+export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boolean; classifierDeadlineMs?: number } = {}): Promise<number> {
   let added = 0;
+  if (intelligenceEnabled()) {
+    const sourceKey = "news:google";
+    const state = await readSourceState(company.id, sourceKey);
+    const seen = new Set(Array.isArray(state.cursor?.seen) ? state.cursor.seen.filter((value): value is string => typeof value === "string").slice(-128) : []);
+    const pending = Array.isArray(state.cursor?.pending) ? state.cursor.pending.filter((value): value is HeadlineItem => Boolean(value && typeof value === "object" && typeof value.raw_excerpt === "string" && typeof value.source_url === "string" && typeof value.source_name === "string" && (value.signal_date === null || typeof value.signal_date === "string"))).slice(0, 24) : [];
+    const fetched = await fetchNewsForCompany(company.name, 24);
+    const items = [...new Map([...pending, ...fetched].filter(item => isFresh(item.signal_date)).map(item => [headlineKey(item), item])).values()];
+    const failed: HeadlineItem[] = [];
+    for (let start = 0; start < items.length; start += 4) {
+      const batch = items.slice(start, start + 4);
+      const results = await Promise.allSettled(batch.map(item => classifyAndRecordHeadline(company, item, { ...opts, requireNameMatch: true, captureIntelligence: !seen.has(headlineKey(item)) })));
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") { if (result.value) added++; seen.add(headlineKey(batch[index])); }
+        else failed.push(batch[index]);
+      });
+    }
+    // A source adapter returning [] can mean an upstream failure; do not claim
+    // a successful coverage pass when the adapter cannot distinguish the two.
+    const incomplete = failed.length > 0 || fetched.length === 0;
+    await writeSourceState(company.id, sourceKey, {
+      cursor: { seen: [...seen].slice(-128), pending: failed.slice(0, 24), scope: "latest_24_feed_items" },
+      complete: !incomplete,
+      ...(incomplete ? { error: "News capture incomplete; pending evidence will retry" } : {}),
+    });
+    if (incomplete) throw new Error("News capture incomplete");
+    return added;
+  }
   for (const it of await fetchNewsForCompany(company.name, 6)) {
     if (!isFresh(it.signal_date)) continue;
     if (await classifyAndRecordHeadline(company, it, { llm: opts.llm, requireNameMatch: true, classifierDeadlineMs: opts.classifierDeadlineMs })) added++;
@@ -299,16 +375,23 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
     limit, batchSize: 20, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
   })) {
     const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
+    const completed: string[] = [];
     await Promise.all(slice.map(async (c) => {
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
-        let n = await checkCompanyNews(c, { llm: claimable, classifierDeadlineMs });
+        let n = 0;
+        let newsComplete = false;
+        try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs }); newsComplete = true; }
+        catch (error) { if (!intelligenceEnabled()) throw error; }
         // Exec-change (new finance leader) — claimable NetSuite-TAM leads only.
         if (claimable) { try { n += await checkExecChange(c); } catch { /* isolated */ } }
         if (n > 0) { news += n; touched.add(c.id); }
+        if (newsComplete) completed.push(c.id);
       } catch { /* source-isolated */ }
     }));
-    await markChecked(slice.map((c) => c.id)); // commit progress batch-by-batch
+    // Rotation reservations already record attempts. Only successful new-lane
+    // persistence receives this completion stamp; failures retain retry state.
+    await markChecked(intelligenceEnabled() ? completed : slice.map((c) => c.id));
     processed += slice.length;
   }
 
