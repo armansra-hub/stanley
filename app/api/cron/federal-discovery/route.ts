@@ -18,6 +18,48 @@ const CONCURRENCY = 4;
 // strategy records remain history; neither elapsed time nor a release clears them.
 const REQUEST_STRATEGY = "name-only-v1";
 
+type ReadbackHold = {
+  version: 1;
+  status: "unresolved";
+  reason: "interrupted_wave_outcome_unknown";
+  originalEventId: string;
+  companyIds: string[];
+  evidenceSha256: string;
+  observedAt: string;
+  heldAt: string;
+};
+
+// Only an explicitly reviewed state transition may create this hold. This route
+// never converts a fresh in-flight fence, clears a hold, or resolves its debt.
+function readbackHold(cursor: Record<string, unknown>): ReadbackHold | null {
+  const raw = cursor.discoveryReadbackHold;
+  if (raw === undefined) return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid discovery readback hold");
+  const row = raw as ReadbackHold;
+  const fields = ["version", "status", "reason", "originalEventId", "companyIds", "evidenceSha256", "observedAt", "heldAt"];
+  const canonicalUuid = (v: unknown): v is string => typeof v === "string" && UUID.test(v) && v === v.toLowerCase();
+  // UTC timestamps retain up to PostgreSQL's six fractional digits; reject
+  // rolled-over calendar dates instead of accepting Date.parse normalization.
+  const timestampKey = (v: unknown): string | null => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(v)) return null;
+    const parsed = Date.parse(v);
+    if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 19) !== v.slice(0, 19)) return null;
+    return v.slice(0, 19) + "." + (v.slice(19, -1).replace(/^\./, "")).padEnd(6, "0") + "Z";
+  };
+  const observed = timestampKey(row.observedAt);
+  const held = timestampKey(row.heldAt);
+  if (Object.keys(raw).length !== fields.length || Object.keys(raw).some((key) => !fields.includes(key))
+      || row.version !== 1 || row.status !== "unresolved" || row.reason !== "interrupted_wave_outcome_unknown"
+      || !canonicalUuid(row.originalEventId) || !Array.isArray(row.companyIds)
+      || row.companyIds.length < 1 || row.companyIds.length > CONCURRENCY
+      || row.companyIds.some((id) => !canonicalUuid(id)) || new Set(row.companyIds).size !== row.companyIds.length
+      || typeof row.evidenceSha256 !== "string" || !/^[0-9a-f]{64}$/.test(row.evidenceSha256)
+      || observed === null || held === null || held < observed) {
+    throw new Error("invalid discovery readback hold fields");
+  }
+  return { ...row, companyIds: [...row.companyIds] };
+}
+
 type StrategyTimeout = {
   companyId: string;
   strategy: string;
@@ -131,6 +173,7 @@ async function inspectState() {
     if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) throw new Error("invalid discovery cursor");
     const retries = readPublicGrowthRetryState(cursor);
     const timeouts = strategyTimeouts(cursor);
+    const unresolvedHold = readbackHold(cursor);
     const inFlight = cursor.discoveryInFlight ?? [];
     if (!Array.isArray(inFlight) || inFlight.length > CONCURRENCY || inFlight.some((id) => typeof id !== "string" || !UUID.test(id))
         || new Set(inFlight).size !== inFlight.length) throw new Error("invalid discovery in-flight state");
@@ -148,6 +191,11 @@ async function inspectState() {
       unresolvedDeadLetterCount: retries.deadLetters.filter((row) => row.resolvedAt === null).length,
       unresolvedDeadLetterCompanyIds: retries.deadLetters.filter((row) => row.resolvedAt === null).map((row) => row.companyId),
       heldStrategyCompanies: held.length, heldCompanyIds: held,
+      unresolvedReadbackCompanyIds: unresolvedHold?.companyIds ?? [],
+      unresolvedReadbackCompanies: unresolvedHold?.companyIds.length ?? 0,
+      readbackHoldStatus: unresolvedHold?.status ?? null,
+      readbackHoldReason: unresolvedHold?.reason ?? null,
+      historyComplete: false, attemptCycleComplete: false,
       strategyTimeoutCounts: timeouts.filter((row) => row.strategy === REQUEST_STRATEGY).map((row) => ({
         companyId: row.companyId, stage: row.stage, timeoutCount: row.timeoutCount, heldAt: row.heldAt,
       })),
@@ -177,6 +225,8 @@ async function run(req: NextRequest) {
   try {
     lease = await beginPublicGrowthSweep(SOURCE, limit, null);
     const after = publicGrowthAfterCompanyId(lease.cursor);
+    const unresolvedHold = readbackHold(lease.cursor);
+    const readbackHeld = new Set(unresolvedHold?.companyIds ?? []);
     const backoff = lease.cursor.discoveryBackoffUntil;
     if (backoff !== undefined && backoff !== null && (typeof backoff !== "string" || !Number.isFinite(Date.parse(backoff)))) {
       throw new Error("invalid discovery backoff");
@@ -192,10 +242,14 @@ async function run(req: NextRequest) {
       return NextResponse.json({ source: SOURCE, status: "interrupted_attempt_requires_readback", checked: 0, coverageVerified: false }, { status: 409 });
     }
     let timeoutState = strategyTimeouts(lease.cursor);
-    const heldAtStart = heldCompanies(timeoutState);
+    const strategyHeldAtStart = new Set([...heldCompanies(timeoutState)].map((id) => id.toLowerCase()));
+    const heldAtStart = new Set([...strategyHeldAtStart, ...readbackHeld]);
     const retryState = readPublicGrowthRetryState(lease.cursor);
-    const heldRetryExcluded = retryState.retryQueue.filter((row) => heldAtStart.has(row.companyId)).length;
-    const retries = retryState.retryQueue.filter((row) => !heldAtStart.has(row.companyId)).slice(0, Math.min(CONCURRENCY, limit));
+    // A readback hold takes reporting precedence on overlap; category skip
+    // counts remain disjoint, while strategy-history totals stay unchanged.
+    const heldRetryExcluded = retryState.retryQueue.filter((row) => strategyHeldAtStart.has(row.companyId.toLowerCase()) && !readbackHeld.has(row.companyId.toLowerCase())).length;
+    const readbackHeldRetryExcluded = retryState.retryQueue.filter((row) => readbackHeld.has(row.companyId.toLowerCase())).length;
+    const retries = retryState.retryQueue.filter((row) => !heldAtStart.has(row.companyId.toLowerCase())).slice(0, Math.min(CONCURRENCY, limit));
     const retryIds = new Set(retries.map((row) => row.companyId));
     const mainLimit = limit - retries.length;
     const { data, error } = mainLimit > 0
@@ -210,7 +264,16 @@ async function run(req: NextRequest) {
       previous = id;
     }
     const selectedMainIds = rawIds.slice(0, mainLimit);
-    const skippedHeldCompanyIds = selectedMainIds.filter((id) => heldAtStart.has(id));
+    const skippedHeldCompanyIds = selectedMainIds.filter((id) => strategyHeldAtStart.has(id) && !readbackHeld.has(id));
+    const skippedUncertainCompanyIds = selectedMainIds.filter((id) => readbackHeld.has(id));
+    const readbackSummary = {
+      unresolvedReadbackCompanyIds: unresolvedHold?.companyIds ?? [],
+      unresolvedReadbackCompanies: readbackHeld.size,
+      readbackHoldStatus: unresolvedHold?.status ?? null,
+      readbackHoldReason: unresolvedHold?.reason ?? null,
+      readbackHeldRetryExcluded, skippedUncertainCompanyIds,
+      skippedUncertainCount: skippedUncertainCompanyIds.length, skippedUncertainAreAttempts: false,
+    };
     const mainIds = selectedMainIds.filter((id) => !retryIds.has(id) && !heldAtStart.has(id));
     const planned = [...retries.map((row) => row.companyId), ...mainIds];
     const deadlineMs = Date.now() + 240_000;
@@ -255,7 +318,7 @@ async function run(req: NextRequest) {
         const meta = { source: SOURCE, requestStrategy: REQUEST_STRATEGY, attemptedCompanies: wave, attemptedAt: observedAt,
           newStrategyHeldCompanyIds: newlyHeldCompanyIds, strategyHoldReason: "second_identical_request_timeout",
           heldStrategyCompanies: heldCompanies(nextTimeoutState).size,
-          skippedHeldCount: skippedHeldCompanyIds.length,
+          skippedHeldCount: skippedHeldCompanyIds.length, ...readbackSummary,
           coverageVerified: false, historyComplete: false };
         const { data: event, error: eventError } = await serviceClient().from("app_events").insert({
           id: eventId, module: "headhunter", kind: "federal.discovery.attempts", entity_type: "cron",
@@ -269,6 +332,7 @@ async function run(req: NextRequest) {
             || JSON.stringify(event.meta.newStrategyHeldCompanyIds) !== JSON.stringify(newlyHeldCompanyIds)
             || event.meta.strategyHoldReason !== meta.strategyHoldReason || event.meta.heldStrategyCompanies !== meta.heldStrategyCompanies
             || event.meta.skippedHeldCount !== meta.skippedHeldCount
+            || Object.entries(readbackSummary).some(([key, value]) => JSON.stringify(event.meta[key]) !== JSON.stringify(value))
             || signature(event.meta.attemptedCompanies) !== signature(wave)) {
           throw new Error("discovery attempt journal not verified");
         }
@@ -281,7 +345,7 @@ async function run(req: NextRequest) {
         await failPublicGrowthSweep(lease, new Error("discovery_enrollment_write_requires_readback"));
         return NextResponse.json({ source: SOURCE, status: "enrollment_write_requires_readback", checked: outcomes.length + wave.length,
           uncertainCompanyIds: uncertain.map((row) => row.companyId), outcomes: [...outcomes, ...wave],
-          afterCompanyId: nextAfter, coverageVerified: false, historyComplete: false }, { status: 409 });
+          afterCompanyId: nextAfter, ...readbackSummary, coverageVerified: false, historyComplete: false }, { status: 409 });
       }
       outcomes.push(...wave);
       for (const row of wave) attempted.add(row.companyId);
@@ -296,6 +360,20 @@ async function run(req: NextRequest) {
       const mainWave = wave.filter((row) => !retryIds.has(row.companyId)).map(debtOutcome);
       if (mainWave.length) patch = queuePublicGrowthMainFailures({ ...lease.cursor, ...patch }, mainWave,
         mainWave.filter((row) => row.status === "error").length).cursorPatch;
+      // Shared retry parsers normalize dates and drop extension fields. Held
+      // rows have no new outcome: preserve their exact original evidence even
+      // when an unrelated retry/main outcome rewrites the same arrays.
+      for (const key of ["retryQueue", "deadLetters"] as const) {
+        if (patch[key] === undefined) continue;
+        const priorRows = (lease.cursor[key] ?? []) as { companyId: string }[];
+        const heldRows = priorRows.filter((row) => heldAtStart.has(String(row.companyId).toLowerCase()));
+        const nextRows = patch[key] as { companyId: string }[];
+        for (const held of heldRows) {
+          const positions = nextRows.flatMap((row, index) => row.companyId === held.companyId ? [index] : []);
+          if (positions.length !== 1) throw new Error("held discovery debt changed unexpectedly");
+          nextRows[positions[0]] = structuredClone(held);
+        }
+      }
       advanceSelectedPrefix();
       rateLimited = wave.some((row) => row.httpStatus === 429);
       if (rateLimited) {
@@ -305,23 +383,25 @@ async function run(req: NextRequest) {
       }
       await checkpointPublicGrowthSweep(lease, { ...patch, afterCompanyId: nextAfter, discoveryInFlight: [], discoveryInFlightEventId: null,
         discoveryStrategyTimeouts: timeoutState, discoverySkippedHeldCompanyIds: skippedHeldCompanyIds,
+        discoverySkippedUncertainCompanyIds: skippedUncertainCompanyIds,
         discoveryRequestStrategy: REQUEST_STRATEGY,
         discoveryAttemptsTotal: initialTotal + outcomes.length, discoveryBackoffUntil: backoffUntil,
         lastDiscoveryOutcomes: outcomes, lastDiscoveryAttemptedAt: new Date().toISOString() });
       if (rateLimited) break;
     }
-    if (outcomes.length === 0 && skippedHeldCompanyIds.length > 0) {
+    if (outcomes.length === 0 && (skippedHeldCompanyIds.length > 0 || skippedUncertainCompanyIds.length > 0)) {
       advanceSelectedPrefix();
       // An all-held page has no provider work or attempt journal. Persist the
       // exact skipped IDs atomically with traversal, preserving all failure debt.
       await checkpointPublicGrowthSweep(lease, { afterCompanyId: nextAfter,
-        discoverySkippedHeldCompanyIds: skippedHeldCompanyIds, discoveryRequestStrategy: REQUEST_STRATEGY });
+        discoverySkippedHeldCompanyIds: skippedHeldCompanyIds,
+        discoverySkippedUncertainCompanyIds: skippedUncertainCompanyIds, discoveryRequestStrategy: REQUEST_STRATEGY });
     }
     const remaining = planned.filter((id) => !attempted.has(id));
     const selectionCycleComplete = mainLimit > 0 && rawIds.length <= mainLimit
       && rawIds.every((id) => attempted.has(id) || heldAtStart.has(id));
     const heldStrategyCompanies = heldCompanies(timeoutState).size;
-    const attemptCycleComplete = selectionCycleComplete && heldStrategyCompanies === 0;
+    const attemptCycleComplete = selectionCycleComplete && heldStrategyCompanies === 0 && readbackHeld.size === 0;
     const state = readPublicGrowthRetryState(lease.cursor);
     const receipt = { source: SOURCE, checked: outcomes.length, matched: outcomes.filter((x) => x.status === "matched").length,
       noCandidate: outcomes.filter((x) => x.status === "no_candidate").length, ambiguous: outcomes.filter((x) => x.status === "ambiguous").length,
@@ -329,12 +409,13 @@ async function run(req: NextRequest) {
       sourceRequests: outcomes.some((x) => x.sourceRequests === null) ? null : outcomes.reduce((n, x) => n + (x.sourceRequests ?? 0), 0),
       mainChecked: outcomes.filter((x) => !retryIds.has(x.companyId)).length, retryChecked: outcomes.filter((x) => retryIds.has(x.companyId)).length,
       attemptCycleComplete, selectionCycleComplete, afterCompanyId: selectionCycleComplete ? null : nextAfter, notAttemptedCompanyIds: remaining,
-      requestStrategy: REQUEST_STRATEGY, heldStrategyCompanies, heldRetryExcluded, skippedHeldCompanyIds,
+      requestStrategy: REQUEST_STRATEGY, heldStrategyCompanies, heldRetryExcluded, skippedHeldCompanyIds, ...readbackSummary,
       strategyHoldReason: "second_identical_request_timeout",
       skippedHeldCount: skippedHeldCompanyIds.length, skippedHeldAreAttempts: false,
       retryRemaining: state.retryQueue.length, unresolvedDeadLetters: state.deadLetters.filter((x) => x.resolvedAt === null).length,
       outcomes, rateLimited, backoffUntil, coverageVerified: false, historyComplete: false,
       reason: rateLimited ? "provider_rate_limited" : remaining.length ? "runtime_budget"
+        : readbackHeld.size ? "bounded_selection_finished_with_unresolved_readback_holds"
         : skippedHeldCompanyIds.length ? "bounded_selection_finished_with_strategy_holds" : "bounded_attempts_finished" };
     await completePublicGrowthSweep(lease, { ...receipt, done: attemptCycleComplete, advanceCursor: false, mode: "main+retry",
       cursorPatch: { afterCompanyId: receipt.afterCompanyId, lastDiscoveryReceipt: receipt,

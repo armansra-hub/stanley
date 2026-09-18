@@ -34,6 +34,12 @@ const timeoutState = (n: number, count = 2, strategy = "name-only-v1", stage = "
   lastObservedAt: "2026-09-14T00:05:00Z", heldAt: count === 2 ? "2026-09-14T00:05:00Z" : null,
 });
 
+const readbackHold = (ids = [id(1)]) => ({
+  version: 1, status: "unresolved", reason: "interrupted_wave_outcome_unknown",
+  originalEventId: id(900), companyIds: ids, evidenceSha256: "a".repeat(64),
+  observedAt: "2026-09-14T10:00:00.123456Z", heldAt: "2026-09-14T10:01:00.000000Z",
+});
+
 describe("federal discovery managed admission", () => {
   let lease: { source: string; offset: number; batchSize: number; managed: boolean; token: string; leaseUntil: string; cursor: Record<string, unknown> };
   beforeEach(() => {
@@ -51,6 +57,186 @@ describe("federal discovery managed admission", () => {
     mocks.worker.mockImplementation(async (companyId) => row(Number(companyId.slice(-12))));
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+
+  it("readback holds exclude retry and main IDs while other retry outcomes preserve held debt and evidence", async () => {
+    const hold = readbackHold([id(1), id(3)]);
+    const heldRetry = { ...retry(1), retainedEvidence: { requestUnknown: true } };
+    const dead = { companyId: id(3), totalFailures: 3, firstFailedAt: "2026-09-13T00:00:00Z",
+      lastFailedAt: "2026-09-14T00:00:00Z", lastError: "prior_error", deadLetteredAt: "2026-09-14T00:00:00Z",
+      resolvedAt: null, occurrences: 1, awardContinuation: null, retainedEvidence: { immutable: [1, 2] } };
+    lease.cursor = { discoveryReadbackHold: hold, retryQueue: [heldRetry, retry(2)], deadLetters: [dead],
+      discoveryAttemptsTotal: 120, lastHistoricalEvidence: { exact: ["preserved"] } };
+    mocks.rpc.mockResolvedValue({ data: [1, 2, 3, 4].map((n) => ({ id: id(n) })), error: null });
+    const body = await (await GET(request())).json();
+    expect(mocks.worker.mock.calls.map(([companyId]) => companyId)).toEqual([id(2), id(4)]);
+    expect(body.retryChecked).toBe(1); expect(body.mainChecked).toBe(1); expect(body.sourceRequests).toBe(2);
+    expect(body.checked).toBe(2); expect(body.retryRemaining).toBe(1);
+    expect(body.readbackHeldRetryExcluded).toBe(1); expect(body.heldRetryExcluded).toBe(0);
+    expect(body.skippedUncertainCompanyIds).toEqual([id(1), id(3)]); expect(body.skippedHeldCount).toBe(0);
+    expect(body.selectionCycleComplete).toBe(true); expect(body.attemptCycleComplete).toBe(false);
+    expect(mocks.complete.mock.calls[0][1].done).toBe(false);
+    expect(lease.cursor.retryQueue).toEqual([heldRetry]); expect(lease.cursor.deadLetters).toEqual([dead]);
+    expect(lease.cursor.discoveryReadbackHold).toEqual(hold); expect(lease.cursor.lastHistoricalEvidence).toEqual({ exact: ["preserved"] });
+    expect(lease.cursor.discoveryAttemptsTotal).toBe(122);
+    expect(mocks.event.mock.calls.flatMap(([e]) => e.meta.attemptedCompanies.map((r: { companyId: string }) => r.companyId))).toEqual([id(2), id(4)]);
+    expect(mocks.event.mock.calls[0][0].meta.skippedUncertainCount).toBe(2);
+  });
+
+  it("an uppercase strategy-held retry stays excluded with exact evidence while healthy work continues", async () => {
+    const upper = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+    const strategy = { ...timeoutState(1), companyId: upper };
+    const debt = { ...retry(1), companyId: upper, retainedEvidence: { preserve: ["exact"] } };
+    lease.cursor = { discoveryStrategyTimeouts: [strategy], retryQueue: [debt], discoveryAttemptsTotal: 41 };
+    // The selector uses canonical UUID spelling; both admissions must agree.
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(2) }, { id: upper.toLowerCase() }], error: null });
+    const body = await (await GET(request())).json();
+    expect(mocks.worker.mock.calls.map(([companyId]) => companyId)).toEqual([id(2)]);
+    expect(body.checked).toBe(1); expect(body.mainChecked).toBe(1); expect(body.retryChecked).toBe(0);
+    expect(body.heldRetryExcluded).toBe(1); expect(body.skippedHeldCompanyIds).toEqual([upper.toLowerCase()]);
+    expect(body.readbackHeldRetryExcluded).toBe(0); expect(body.unresolvedReadbackCompanies).toBe(0);
+    expect(body.skippedUncertainCompanyIds).toEqual([]); expect(body.attemptCycleComplete).toBe(false);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual([strategy]); expect(lease.cursor.retryQueue).toEqual([debt]);
+    expect(lease.cursor.discoveryAttemptsTotal).toBe(42);
+    expect(mocks.event.mock.calls.flatMap(([event]) => event.meta.attemptedCompanies.map((r: { companyId: string }) => r.companyId))).toEqual([id(2)]);
+    mocks.inspect.mockResolvedValue({ data: { cursor: lease.cursor }, error: null });
+    const inspected = await (await GET(request("?inspect=1"))).json();
+    expect(inspected.heldCompanyIds).toEqual([upper]);
+    expect(inspected.strategyTimeoutCounts[0].companyId).toBe(upper);
+  });
+
+  it("a legacy uppercase retry UUID cannot bypass the lowercase exact readback hold", async () => {
+    const lower = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const originalRetry = { ...retry(1), companyId: lower.toUpperCase() };
+    lease.cursor = { discoveryReadbackHold: readbackHold([lower]), retryQueue: [originalRetry] };
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(2) }], error: null });
+    const body = await (await GET(request())).json();
+    expect(mocks.worker.mock.calls.map(([companyId]) => companyId)).toEqual([id(2)]);
+    expect(body.readbackHeldRetryExcluded).toBe(1); expect(lease.cursor.retryQueue).toEqual([originalRetry]);
+  });
+
+  it("an all-readback-held page advances only its selected prefix with no attempts, journal, or debt change", async () => {
+    const hold = readbackHold([id(1), id(2), id(3), id(4)]);
+    lease.cursor = { discoveryReadbackHold: hold, retryQueue: [retry(1)], discoveryAttemptsTotal: 51 };
+    mocks.rpc.mockResolvedValue({ data: [1, 2, 3, 4, 5].map((n) => ({ id: id(n) })), error: null });
+    const before = structuredClone(lease.cursor);
+    const body = await (await GET(request("?limit=4"))).json();
+    expect(body.afterCompanyId).toBe(id(4)); expect(body.selectionCycleComplete).toBe(false);
+    expect(body.skippedUncertainCompanyIds).toEqual(hold.companyIds); expect(body.skippedUncertainCount).toBe(4);
+    expect(body.checked).toBe(0); expect(body.sourceRequests).toBe(0); expect(body.skippedUncertainAreAttempts).toBe(false);
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.event).not.toHaveBeenCalled();
+    expect(lease.cursor.discoveryAttemptsTotal).toBe(51); expect(lease.cursor.retryQueue).toEqual(before.retryQueue);
+    expect(lease.cursor.discoveryReadbackHold).toEqual(hold); expect(mocks.complete.mock.calls[0][1].done).toBe(false);
+    expect(lease.cursor.discoverySkippedUncertainCompanyIds).not.toContain(id(5));
+  });
+
+  it("a mixed readback-held prefix never jumps an unattempted eligible ID or lookahead", async () => {
+    lease.cursor = { discoveryReadbackHold: readbackHold([id(1), id(3)]) };
+    mocks.rpc.mockResolvedValue({ data: [1, 2, 3, 4].map((n) => ({ id: id(n) })), error: null });
+    mocks.checkpoint.mockImplementation(async (_lease, patch) => { lease.cursor = { ...lease.cursor, ...patch };
+      if (patch.discoveryInFlight?.length) vi.setSystemTime(Date.now() + 240_000); });
+    const body = await (await GET(request("?limit=3"))).json();
+    expect(body.checked).toBe(0); expect(body.afterCompanyId).toBe(id(1));
+    expect(body.notAttemptedCompanyIds).toEqual([id(2)]); expect(body.skippedUncertainCompanyIds).toEqual([id(1), id(3)]);
+    expect(body.selectionCycleComplete).toBe(false); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it("readback and strategy categories remain distinct even when the same ID has both holds", async () => {
+    const strategies = [timeoutState(1), timeoutState(2)];
+    lease.cursor = { discoveryReadbackHold: readbackHold([id(1)]), discoveryStrategyTimeouts: strategies,
+      retryQueue: [retry(1), retry(2)] };
+    mocks.rpc.mockResolvedValue({ data: [1, 2, 3].map((n) => ({ id: id(n) })), error: null });
+    const body = await (await GET(request())).json();
+    expect(mocks.worker.mock.calls.map(([companyId]) => companyId)).toEqual([id(3)]);
+    expect(body.skippedUncertainCompanyIds).toEqual([id(1)]); expect(body.skippedHeldCompanyIds).toEqual([id(2)]);
+    expect(body.readbackHeldRetryExcluded).toBe(1); expect(body.heldRetryExcluded).toBe(1);
+    expect(body.heldStrategyCompanies).toBe(2); expect(body.unresolvedReadbackCompanies).toBe(1);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual(strategies); expect(lease.cursor.retryQueue).toEqual([retry(1), retry(2)]);
+  });
+
+  it("unrelated-page completion and later wraps cannot resolve a readback hold by time, success or strategy", async () => {
+    const hold = readbackHold([id(1)]);
+    lease.cursor = { discoveryReadbackHold: hold, discoveryStrategyTimeouts: [timeoutState(1, 2, "older-strategy")] };
+    mocks.rpc.mockResolvedValueOnce({ data: [{ id: id(2) }], error: null })
+      .mockResolvedValueOnce({ data: [{ id: id(1) }], error: null });
+    const first = await (await GET(request())).json();
+    expect(first.selectionCycleComplete).toBe(true); expect(first.attemptCycleComplete).toBe(false);
+    expect(first.coverageVerified).toBe(false); expect(first.historyComplete).toBe(false);
+    expect(mocks.complete.mock.calls[0][1].done).toBe(false);
+    // Model the real helper's persisted wrap (the test complete stub is read-only).
+    lease.cursor.afterCompanyId = first.afterCompanyId;
+    vi.setSystemTime("2030-09-15T00:00:00Z"); mocks.worker.mockClear();
+    const second = await (await GET(request())).json();
+    expect(second.checked).toBe(0); expect(second.skippedUncertainCompanyIds).toEqual([id(1)]);
+    expect(second.attemptCycleComplete).toBe(false); expect(lease.cursor.discoveryReadbackHold).toEqual(hold);
+    expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null, [], {}, { ...readbackHold(), version: 2 }, { ...readbackHold(), status: "resolved" },
+    { ...readbackHold(), reason: "timeout" }, { ...readbackHold(), companyIds: [] },
+    { ...readbackHold(), companyIds: [id(1), id(1)] }, { ...readbackHold(), companyIds: [1, 2, 3, 4, 5].map(id) },
+    { ...readbackHold(), companyIds: ["AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"] },
+    { ...readbackHold(), originalEventId: "invalid" }, { ...readbackHold(), evidenceSha256: "a".repeat(63) },
+    { ...readbackHold(), observedAt: "2026-02-30T00:00:00Z" },
+    { ...readbackHold(), heldAt: "2026-09-14T10:00:00.123455Z" },
+    { ...readbackHold(), observedAt: "2026-09-14T10:00:00.1234567Z" },
+    { ...readbackHold(), heldAt: "2026-09-14T10:01:00+00:00" },
+    { ...readbackHold(), extra: "https://private.example" },
+  ])("rejects malformed readback hold before selection/provider work and in inspection: %j", async (bad) => {
+    lease.cursor.discoveryReadbackHold = bad;
+    expect((await GET(request())).status).toBe(500);
+    expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+    expect(mocks.checkpoint).not.toHaveBeenCalled(); expect(mocks.event).not.toHaveBeenCalled();
+    mocks.inspect.mockResolvedValue({ data: { cursor: { discoveryReadbackHold: bad } }, error: null });
+    const response = await GET(request("?inspect=1")); expect(response.status).toBe(500);
+    expect(JSON.stringify(await response.json())).not.toContain("private.example");
+  });
+
+  it("inspection returns only bounded readback hold IDs/status/counts without its private evidence fields", async () => {
+    const hold = readbackHold([id(1), id(2)]);
+    mocks.inspect.mockResolvedValue({ data: { cursor: { discoveryReadbackHold: hold }, last_error: "secret", lease_token: "private" }, error: null });
+    const body = await (await GET(request("?inspect=1"))).json();
+    expect(body.unresolvedReadbackCompanyIds).toEqual(hold.companyIds); expect(body.unresolvedReadbackCompanies).toBe(2);
+    expect(body.readbackHoldStatus).toBe("unresolved"); expect(body.readbackHoldReason).toBe(hold.reason);
+    expect(body.heldStrategyCompanies).toBe(0); expect(body.historyComplete).toBe(false); expect(body.attemptCycleComplete).toBe(false);
+    expect(JSON.stringify(body)).not.toMatch(/secret|private|originalEventId|evidenceSha256/);
+    for (const f of [mocks.begin, mocks.checkpoint, mocks.complete, mocks.fail, mocks.worker, mocks.event]) expect(f).not.toHaveBeenCalled();
+  });
+
+  it.each([id(1), id(4)])("a fresh in-flight fence remains a global stop even with existing hold: %s", async (freshId) => {
+    const hold = readbackHold([id(1)]);
+    lease.cursor = { discoveryReadbackHold: hold, discoveryInFlight: [freshId], discoveryInFlightEventId: id(901), discoveryAttemptsTotal: 77 };
+    const before = structuredClone(lease.cursor);
+    expect((await GET(request())).status).toBe(409);
+    expect(lease.cursor).toEqual(before); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+    expect(mocks.checkpoint).not.toHaveBeenCalled(); expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
+  it.each(["journal", "checkpoint", "readback-metadata"])("failed %s verification preserves a fresh fence and the old hold", async (failure) => {
+    const hold = readbackHold([id(1)]);
+    lease.cursor = { discoveryReadbackHold: hold, discoveryAttemptsTotal: 77 };
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(2) }], error: null });
+    if (failure === "journal") mocks.event.mockResolvedValue({ data: null, error: { message: "unknown" } });
+    if (failure === "readback-metadata") mocks.event.mockImplementation(async (record) => ({ data: { id: record.id,
+      meta: { ...record.meta, unresolvedReadbackCompanyIds: [] } }, error: null }));
+    if (failure === "checkpoint") mocks.checkpoint.mockImplementation(async (_lease, patch) => {
+      if (patch.afterCompanyId) throw new Error("unknown"); lease.cursor = { ...lease.cursor, ...patch };
+    });
+    expect((await GET(request())).status).toBe(500);
+    expect(lease.cursor.discoveryInFlight).toEqual([id(2)]); expect(lease.cursor.discoveryReadbackHold).toEqual(hold);
+    expect(lease.cursor.discoveryAttemptsTotal).toBe(77); expect(mocks.complete).not.toHaveBeenCalled();
+    mocks.worker.mockClear(); expect((await GET(request())).status).toBe(409); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it("an uncertain new write remains fenced without replacing or enlarging the existing manual hold", async () => {
+    const hold = readbackHold([id(1)]);
+    lease.cursor = { discoveryReadbackHold: hold };
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(2) }], error: null });
+    mocks.worker.mockResolvedValue({ ...row(2, "error"), mayHaveWritten: true });
+    const response = await GET(request()); expect(response.status).toBe(409);
+    expect(lease.cursor.discoveryInFlight).toEqual([id(2)]); expect(lease.cursor.discoveryReadbackHold).toEqual(hold);
+    expect(lease.cursor.retryQueue).toBeUndefined(); expect(mocks.complete).not.toHaveBeenCalled();
+  });
 
   it("rejects absent/query credentials and accepts only configured header or bearer secrets", async () => {
     expect((await GET(request("", {}))).status).toBe(401);
