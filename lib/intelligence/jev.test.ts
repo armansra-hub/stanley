@@ -181,7 +181,7 @@ describe("Jev evidence adapter", () => {
     const evaluate = vi.fn();
     const oversized = { ...input, text: "界".repeat(Math.ceil(MAX_EVIDENCE_STATE_BYTES / 3)) };
     expect(estimateEvidenceInputTokens(oversized)).toBeNull();
-    expect(await evaluateEvidence(oversized, { evaluate })).toMatchObject({ ok: false, error: { kind: "invalid_input" } });
+    expect(await evaluateEvidence(oversized, { evaluate })).toMatchObject({ ok: false, usage: { inputTokens: 0, outputTokens: 0 }, error: { kind: "invalid_input" } });
     expect(evaluate).not.toHaveBeenCalled();
   });
 
@@ -255,7 +255,7 @@ describe("Jev evidence adapter", () => {
     [429, "rate_limit", true], [503, "provider_unavailable", true], [504, "timeout", true], [529, "provider_unavailable", true],
   ])("classifies HTTP %s for the worker, with no provider body leakage", async (statusCode, kind, retryable) => {
     const result = await evaluateEvidence(input, { evaluate: async () => { throw { statusCode, responseHeaders: { "retry-after": "2.5" }, responseBody: input.text }; } });
-    expect(result).toMatchObject({ ok: false, error: { kind, retryable, statusCode, retryAfterMs: 2_500 } });
+    expect(result).toMatchObject({ ok: false, usage: null, error: { kind, retryable, statusCode, retryAfterMs: 2_500 } });
     expect(JSON.stringify(result)).not.toContain(input.text);
   });
 

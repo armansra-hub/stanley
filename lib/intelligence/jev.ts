@@ -295,7 +295,7 @@ function classifyFailure(error: unknown, cancelled: boolean, timedOut: boolean):
 /** One direct HTTP attempt. Native wire schema: https://docs.typesafe.ai/api */
 async function directEvaluate(request: JevEvaluationRequest, fetcher: typeof fetch): Promise<unknown> {
   const apiKey = process.env.TYPESAFE_API_KEY?.trim();
-  if (!apiKey || /[\r\n]/.test(apiKey)) throw { statusCode: 401 };
+  if (!apiKey || /[\r\n]/.test(apiKey)) throw { statusCode: 401, preDispatch: true };
   const response = await fetcher(TYPESAFE_EVALUATION_URL, {
     method: "POST", cache: "no-store", redirect: "error", signal: request.abortSignal,
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", accept: "application/json" },
@@ -330,13 +330,16 @@ async function directEvaluate(request: JevEvaluationRequest, fetcher: typeof fet
 export async function evaluateEvidence(input: EvaluateEvidenceInput, dependencies: JevDependencies = {}): Promise<EvaluateEvidenceResult> {
   const configuredModel = process.env.TYPESAFE_MODEL?.trim() || JEV_MODEL;
   const base = { model: PINNED_JEV_MODEL.test(configuredModel) ? configuredModel : JEV_MODEL, questionVersion: JEV_QUESTION_VERSION };
+  // Local rejection proves no billable dispatch. Unknown provider/transport
+  // outcomes still retain null usage and the conservative reservation.
+  const zeroUsage: EvaluationUsage = { inputTokens: 0, outputTokens: 0 };
   const prepared = prepare(input);
-  if (!prepared) return { ...base, ok: false, usage: null, error: { kind: "invalid_input", retryable: false } };
-  if (!PINNED_JEV_MODEL.test(configuredModel)) return { ...base, ok: false, usage: null, error: { kind: "invalid_request", retryable: false } };
+  if (!prepared) return { ...base, ok: false, usage: zeroUsage, error: { kind: "invalid_input", retryable: false } };
+  if (!PINNED_JEV_MODEL.test(configuredModel)) return { ...base, ok: false, usage: zeroUsage, error: { kind: "invalid_request", retryable: false } };
   if (input.privacy === "private_excerpt" && !hasPrivateExcerptAuthorization()) {
-    return { ...base, ok: false, usage: null, error: { kind: "privacy_not_authorized", retryable: false } };
+    return { ...base, ok: false, usage: zeroUsage, error: { kind: "privacy_not_authorized", retryable: false } };
   }
-  if (input.abortSignal?.aborted) return { ...base, ok: false, usage: null, error: { kind: "cancelled", retryable: false } };
+  if (input.abortSignal?.aborted) return { ...base, ok: false, usage: zeroUsage, error: { kind: "cancelled", retryable: false } };
   const timeout = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
   const abortSignal = input.abortSignal ? AbortSignal.any([input.abortSignal, timeout]) : timeout;
   let result: unknown;
@@ -345,7 +348,8 @@ export async function evaluateEvidence(input: EvaluateEvidenceInput, dependencie
       ...prepared, model: configuredModel, maxRetries: 0, abortSignal,
     });
   } catch (error) {
-    return { ...base, ok: false, usage: null, error: classifyFailure(error, Boolean(input.abortSignal?.aborted), timeout.aborted) };
+    return { ...base, ok: false, usage: record(error)?.preDispatch === true ? zeroUsage : null,
+      error: classifyFailure(error, Boolean(input.abortSignal?.aborted), timeout.aborted) };
   }
   const usage = usageFrom(result);
   const invalid = (): EvaluateEvidenceResult => ({ ...base, ok: false, usage, error: { kind: "invalid_response", retryable: false } });

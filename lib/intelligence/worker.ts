@@ -1,8 +1,8 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { evaluateEvidence, JEV_QUESTION_VERSION } from "./jev";
+import { evaluateEvidence, estimateEvidenceInputTokens, JEV_QUESTION_VERSION } from "./jev";
 import { publishJevFinding, jevSignalType } from "./publish";
-import type { EvaluateEvidenceResult } from "./evaluation";
+import type { EvaluateEvidenceInput, EvaluateEvidenceResult } from "./evaluation";
 import { intelligenceEnabled, INTELLIGENCE_VERSION } from "./observations";
 import { reserveJev, settleJev, secondsUntilNextMonth } from "./budget";
 import { OPERATING_CRITERIA, OPERATING_TOPICS, type OperatingTopic } from "./profiles";
@@ -33,6 +33,31 @@ export function evidencePackets(text: string, bytes = 8000): { start: number; en
 
 export function nextRetrySeconds(attempt: number): number {
   return Math.min(86_400, 60 * 2 ** Math.min(Math.max(attempt, 1), 10));
+}
+
+/** Assemble the actual worker request before reserving any paid-call budget. */
+export function workerEvidenceInput(
+  observation: Pick<Observation, "evidence_text" | "source_kind" | "source_url" | "title" | "event_date" | "observed_at">,
+  company: { name: string; domain?: string | null; subindustry?: string | null; ns_industry?: string | null },
+  packet: { start: number; end: number; text: string }, question: string | null,
+  feedback: EvaluateEvidenceInput["feedbackExamples"],
+): EvaluateEvidenceInput {
+  const surroundingContext = [
+    packet.start > 0 ? `Source introduction: ${evidencePackets(observation.evidence_text, 800)[0]?.text ?? ""}` : "",
+    packet.start > 0 ? `Immediately before this packet: ${evidencePackets(observation.evidence_text.slice(Math.max(0, packet.start - 200), packet.start), 800)[0]?.text ?? ""}` : "",
+    packet.end < observation.evidence_text.length ? `Immediately after this packet: ${evidencePackets(observation.evidence_text.slice(packet.end, packet.end + 200), 800)[0]?.text ?? ""}` : "",
+  ].filter(Boolean).join("\n");
+  const companyContext = evidencePackets([company.subindustry, company.ns_industry].filter(value => value?.trim()).join("; "), 600)[0]?.text;
+  return {
+    text: packet.text, companyName: String(company.name), companyDomain: company.domain ?? undefined,
+    sourceKind: observation.source_kind, sourceUrl: observation.source_url, title: observation.title,
+    eventDate: observation.event_date ?? undefined, observedAt: observation.observed_at,
+    ...(companyContext?.trim() ? { companyContext } : {}),
+    ...(surroundingContext ? { surroundingContext } : {}),
+    sections: evidencePackets(packet.text, 1200).map(({ text }, i) => ({ id: `s${i + 1}`, text })),
+    criteria: question ? [{ id: "view_match", instructions: question }] : OPERATING_CRITERIA,
+    feedbackExamples: feedback, privacy: "public",
+  };
 }
 
 /** Selection is an interpretation aid, not an alternate trigger publisher. */
@@ -71,25 +96,18 @@ async function runJob(job: Job, deadline: number): Promise<string> {
       await finish(job, "queued", { parts }, { p_error: "continuation", p_retry_seconds: 30 });
       return "continued";
     }
+    const input = workerEvidenceInput(observation, company, packet, question, feedback);
+    if (estimateEvidenceInputTokens(input) === null) {
+      await finish(job, "failed", { parts }, { p_error: "invalid_input" });
+      return "invalid_input";
+    }
     const reservation = await reserveJev();
     if (!reservation) {
       await finish(job, "queued", { parts }, { p_error: "budget_deferred", p_retry_seconds: secondsUntilNextMonth() });
       return "budget_deferred";
     }
-    const evaluation = await evaluateEvidence({
-      text: packet.text, companyName: String(company.name), companyDomain: company.domain ?? undefined,
-      sourceKind: observation.source_kind, sourceUrl: observation.source_url, title: observation.title,
-      eventDate: observation.event_date ?? undefined, observedAt: observation.observed_at,
-      companyContext: evidencePackets([company.subindustry, company.ns_industry].filter(Boolean).join("; "), 600)[0]?.text,
-      surroundingContext: [
-        packet.start > 0 ? `Source introduction: ${evidencePackets(observation.evidence_text, 800)[0]?.text ?? ""}` : "",
-        packet.start > 0 ? `Immediately before this packet: ${evidencePackets(observation.evidence_text.slice(Math.max(0, packet.start - 200), packet.start), 800)[0]?.text ?? ""}` : "",
-        packet.end < observation.evidence_text.length ? `Immediately after this packet: ${evidencePackets(observation.evidence_text.slice(packet.end, packet.end + 200), 800)[0]?.text ?? ""}` : "",
-      ].filter(Boolean).join("\n"),
-      sections: evidencePackets(packet.text, 1200).map(({ text }, i) => ({ id: `s${i + 1}`, text })),
-      criteria: question ? [{ id: "view_match", instructions: question }] : OPERATING_CRITERIA,
-      feedbackExamples: feedback,
-      privacy: "public", abortSignal: AbortSignal.timeout(Math.min(20_000, Math.max(1, deadline - Date.now()))),
+    const evaluation = await evaluateEvidence({ ...input,
+      abortSignal: AbortSignal.timeout(Math.min(20_000, Math.max(1, deadline - Date.now()))),
     });
     await settleJev(reservation, evaluation.usage?.inputTokens ?? null);
     if (!evaluation.ok) {

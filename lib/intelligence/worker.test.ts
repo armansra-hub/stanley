@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { evidencePackets, candidateType, nextRetrySeconds } from "./worker";
+import { evidencePackets, candidateType, nextRetrySeconds, workerEvidenceInput } from "./worker";
+import { estimateEvidenceInputTokens } from "./jev";
 import type { EvaluateEvidenceResult } from "./evaluation";
 
 const result = { ok: true, model: "test", questionVersion: "v1", usage: null, metadata: { provider: "typesafe-direct" }, criteria: {},
@@ -8,6 +9,23 @@ const result = { ok: true, model: "test", questionVersion: "v1", usage: null, me
 } as Extract<EvaluateEvidenceResult, { ok: true }>;
 
 describe("complete bounded evidence packets", () => {
+  it("prepares a short single-packet page without empty optional neighboring context", () => {
+    const observation = { evidence_text: "Acme opened an Austin facility.", source_kind: "company_news", source_url: "https://acme.test/news",
+      title: "New facility", event_date: null, observed_at: "2026-09-18T23:00:00Z" };
+    const input = workerEvidenceInput(observation, { name: "Acme", domain: "acme.test", subindustry: " " }, evidencePackets(observation.evidence_text, 6000)[0], null, []);
+    expect(input).not.toHaveProperty("surroundingContext");
+    expect(input).not.toHaveProperty("companyContext");
+    expect(estimateEvidenceInputTokens(input)).not.toBeNull();
+  });
+  it("keeps source context on a long page and prepares every packet within the same bounds", () => {
+    const observation = { evidence_text: "Acme opened an Austin facility.\n".repeat(600), source_kind: "company_news", source_url: "https://acme.test/news",
+      title: "New facility", event_date: null, observed_at: "2026-09-18T23:00:00Z" };
+    for (const packet of evidencePackets(observation.evidence_text, 6000)) {
+      const input = workerEvidenceInput(observation, { name: "Acme", domain: "acme.test", subindustry: "Engineering" }, packet, null, []);
+      expect(input.surroundingContext?.length).toBeGreaterThan(0);
+      expect(estimateEvidenceInputTokens(input)).not.toBeNull();
+    }
+  });
   it("covers Unicode and long text exactly without split surrogate pairs", () => {
     const text = "A public update 😀 漢字.\n".repeat(3000);
     const packets = evidencePackets(text);
