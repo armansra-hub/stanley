@@ -4,6 +4,17 @@ import { OPERATING_TOPICS } from "./profiles";
 import { businessServicesResearchContext, operatingTopicPriority, researchSourcePriority } from "./businessServices";
 
 describe("business-services research focus", () => {
+  it("routes current NetSuite TAM labels to specific research without relabeling the account", () => {
+    for (const [industry, topic] of [["Agencies", "subcontractor_costs"], ["Media & Publishing", "media_rights"],
+      ["Freight & Logistics", "fleet_costs"], ["Passenger Transportation", "fleet_costs"],
+      ["Facilities Management", "recurring_revenue"], ["Operational Support Services", "workforce_billing"],
+      ["Advisory Services", "client_profitability"]]) {
+      expect(operatingTopicPriority(industry, "website")[0]).toBe(topic);
+      expect(businessServicesResearchContext(industry)).toContain(`(${industry})`);
+    }
+    expect(businessServicesResearchContext("Operational Support Services")).toContain("first identify the actual service model");
+    expect(businessServicesResearchContext("Advisory Services")).toContain("establish the actual advisory practice");
+  });
   it("uses valid operating topics for every actual territory subindustry", () => {
     for (const industry of SUBINDUSTRIES) for (const kind of ["website", "ats_job", "news"]) {
       const topics = operatingTopicPriority(industry, kind);

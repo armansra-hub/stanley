@@ -59,6 +59,7 @@ async function postJSON(url: string, body: unknown) {
 export default function Dashboard({
   initial,
   usingSample = false,
+  initialLoadError = null,
   exportConfig,
   actorOverrides = {},
   exportHistory = [],
@@ -66,6 +67,7 @@ export default function Dashboard({
 }: {
   initial: Company[];
   usingSample?: boolean;
+  initialLoadError?: string | null;
   exportConfig?: SqlExportConfig;
   actorOverrides?: Record<string, { enabled?: boolean }>;
   exportHistory?: ExportRecord[];
@@ -394,6 +396,9 @@ export default function Dashboard({
   const [triggeredTotal, setTriggeredTotal] = useState(0);
   const [triggeredOffset, setTriggeredOffset] = useState(0);
   const [triggeredLoading, setTriggeredLoading] = useState(false);
+  const [triggeredError, setTriggeredError] = useState<string | null>(null);
+  const [triggeredLoaded, setTriggeredLoaded] = useState(false);
+  const triggeredRequest = useRef(0);
   const TRIGGER_PAGE = 250;
   // Signal-type multi-select (mirrors the Tags dropdown): empty = all signals.
   const [selectedSignals, setSelectedSignals] = useState<Set<string>>(new Set());
@@ -415,14 +420,22 @@ export default function Dashboard({
     ...extra,
   });
   async function fetchTriggered(offset = 0) {
+    const version = ++triggeredRequest.current;
     setTriggeredLoading(true);
-    const res = await fetch("/api/headhunter/triggered", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(triggeredFilterBody({ limit: TRIGGER_PAGE, offset })) });
-    const r: { companies?: TriggeredRow[]; total?: number } | null = res.ok ? await res.json() : null;
-    setTriggeredLoading(false);
-    if (!r) return;
-    setTriggeredTotal(r.total ?? 0);
-    setTriggeredOffset(offset);
-    setTriggeredRows(offset === 0 ? (r.companies ?? []) : (prev) => [...prev, ...(r.companies ?? [])]);
+    setTriggeredError(null);
+    try {
+      const res = await fetch("/api/headhunter/triggered", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(triggeredFilterBody({ limit: TRIGGER_PAGE, offset })) });
+      if (!res.ok) throw new Error("triggered_unavailable");
+      const r: { companies?: TriggeredRow[]; total?: number } = await res.json();
+      if (!Array.isArray(r.companies) || typeof r.total !== "number") throw new Error("triggered_invalid_response");
+      if (version !== triggeredRequest.current) return;
+      setTriggeredTotal(r.total);
+      setTriggeredOffset(offset);
+      setTriggeredRows(offset === 0 ? r.companies : (prev) => [...prev, ...r.companies!]);
+      setTriggeredLoaded(true);
+    } catch {
+      if (version === triggeredRequest.current) setTriggeredError("Triggered could not load. Previously loaded rows remain visible; the current result count is unavailable.");
+    } finally { if (version === triggeredRequest.current) setTriggeredLoading(false); }
   }
   async function fetchAllTriggered(): Promise<TriggeredRow[]> {
     const all: TriggeredRow[] = [];
@@ -658,9 +671,9 @@ export default function Dashboard({
                 borderColor: usingSample ? "var(--tier-b)" : "var(--tier-a)",
                 color: usingSample ? "var(--tier-b)" : "var(--tier-a)",
               }}
-              title={usingSample ? "Showing seeded sample data (DB empty)" : "Live data from Supabase"}
+              title={usingSample ? "Showing seeded sample data because no database is configured" : initialLoadError ? "Live database configured; initial account list could not load" : "Live data from Supabase"}
             >
-              {usingSample ? "SAMPLE DATA" : "LIVE · SUPABASE"}
+              {usingSample ? "SAMPLE DATA" : initialLoadError ? "LIVE · READ ERROR" : "LIVE · SUPABASE"}
             </span>
           </div>
           <p className="text-sm text-[var(--text-muted)]">
@@ -750,6 +763,7 @@ export default function Dashboard({
         </div>
       </div>
 
+      {initialLoadError && <div role="alert" className="mb-4 rounded border border-[var(--gold)] p-3 text-sm">{initialLoadError}<button type="button" className="ml-3 text-[var(--gold)] underline" onClick={() => window.location.reload()}>Reload page</button></div>}
       {/* Tabs */}
       <div className="mb-4 flex gap-1 border-b border-[var(--border)]">
         {(["triggered", "oldgold", "tal", "imported", "starred", "history"] as Tab[]).map((t) => (
@@ -917,6 +931,7 @@ export default function Dashboard({
         </>
       )}
 
+      {isTriggered && triggeredError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded border border-[var(--gold)] p-3 text-sm"><span>{triggeredError}</span><button type="button" disabled={triggeredLoading} className="rounded border px-3 py-1.5 text-[var(--gold)] disabled:opacity-50" onClick={() => void fetchTriggered(0)}>{triggeredLoading ? "Retrying…" : "Retry Triggered"}</button></div>}
       {/* Table / History */}
       {isHistory ? (
         <ExportHistoryPanel records={exportHistory} onReopen={(text) => setSqlModal(text)} exportConfig={exportConfig} />
@@ -1109,7 +1124,7 @@ export default function Dashboard({
               );
             })}
             {tableRows.length === 0 && (
-              <tr><Td colSpan={12} className="py-10 text-center text-[var(--text-muted)]">{(isBase && baseLoading) || (isTriggered && triggeredLoading) || (isOldGold && oldGoldLoading) ? "Loading…" : isOldGold ? "No qual-note leads yet — upload the TAM CSV with qualification notes, then run the analysis." : isTriggered ? "Nothing has triggered yet — the engine sweeps the base for news/funding/hiring on the daily cron." : "No companies match these filters."}</Td></tr>
+              <tr><Td colSpan={12} className="py-10 text-center text-[var(--text-muted)]">{(isBase && baseLoading) || (isTriggered && (triggeredLoading || (!triggeredLoaded && !triggeredError))) || (isOldGold && oldGoldLoading) ? "Loading…" : isOldGold ? "No qual-note leads yet — upload the TAM CSV with qualification notes, then run the analysis." : isTriggered && triggeredError ? "Triggered results are unavailable. Use Retry Triggered above." : isTriggered ? "No triggered accounts match the current filters." : "No companies match these filters."}</Td></tr>
             )}
           </tbody>
         </table>
@@ -1125,7 +1140,7 @@ export default function Dashboard({
         )}
         {isTriggered && (
           <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>
-            <span>Showing {triggeredRows.length.toLocaleString()} of {triggeredTotal.toLocaleString()} triggered, ranked by priority</span>
+            <span>{triggeredError ? triggeredLoaded ? `Showing ${triggeredRows.length.toLocaleString()} previously loaded accounts; current total unavailable` : "Triggered count unavailable" : !triggeredLoaded ? "Loading Triggered count…" : `Showing ${triggeredRows.length.toLocaleString()} of ${triggeredTotal.toLocaleString()} triggered, ranked by priority`}</span>
             {triggeredRows.length < triggeredTotal && (
               <button onClick={() => fetchTriggered(triggeredOffset + 100)} disabled={triggeredLoading} className="rounded-md border px-3 py-1 font-medium" style={{ borderColor: "var(--border)", color: "var(--gold)" }}>
                 {triggeredLoading ? "Loading…" : "Load more"}

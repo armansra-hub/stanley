@@ -11,25 +11,25 @@ export const dynamic = "force-dynamic"; // always read fresh from the DB
 export default async function HeadhunterPage() {
   let companies = SAMPLE_COMPANIES;
   let usingSample = true;
+  let initialLoadError: string | null = null;
   let exportConfig: SqlExportConfig | undefined;
   let actorOverrides: Record<string, { enabled?: boolean }> = {};
   let exportHistory: ExportRecord[] = [];
   let lastRefreshAt: string | null = null;
 
   if (hasSupabaseEnv()) {
+    companies = [];
+    usingSample = false;
     try {
       // Last refresh = the most recent suite activity (cron / import / trigger sweep).
       const ev = await listEvents({ module: "headhunter", limit: 1 });
       lastRefreshAt = ev[0]?.ts ?? null;
     } catch { /* events table may be absent */ }
     try {
-      const fromDb = await getCompanies();
-      if (fromDb.length > 0) {
-        companies = fromDb;
-        usingSample = false;
-      }
+      companies = await getCompanies();
     } catch (e) {
-      console.error("Falling back to sample data:", e);
+      initialLoadError = "The initial account list could not load. Live worklists load separately; reload the page to retry the account list.";
+      console.error("Initial account list load failed:", e);
     }
     try {
       exportHistory = await getExportHistory();
@@ -54,6 +54,7 @@ export default async function HeadhunterPage() {
     <Dashboard
       initial={companies}
       usingSample={usingSample}
+      initialLoadError={initialLoadError}
       exportConfig={exportConfig}
       actorOverrides={actorOverrides}
       exportHistory={exportHistory}

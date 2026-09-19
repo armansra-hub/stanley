@@ -56,8 +56,27 @@ const TRANSPORT: ResearchLane = {
   paths: /fleet|carrier|freight|transport|rental|moving|settlement|fuel|maintenance|services|terminals?|routes?/i,
 };
 
+// Current NetSuite TAM imports use these broader labels, while public discovery
+// uses config/territory.ts. These aliases select questions; they never relabel accounts.
+const OPERATIONAL_SUPPORT: ResearchLane = {
+  focus: "Operational support services: first identify the actual service model from the source. For staffing/search, examine pay-versus-bill rates, timesheets, placement margins, payroll-to-collections timing and ATS/VMS handoffs; client vacancies are not the firm's own hiring. For outsourced onsite services, examine contract/site margins, labor, subcontractors and recurring/work-order billing. For translation, examine freelance linguist costs and language-project billing. For document services, examine retention/retrieval/scanning charges and system-to-finance handoffs. Do not assume every company does all of these or treats customer property as owned inventory.",
+  topics: ["workforce_billing", "subcontractor_costs", "recurring_revenue", "client_profitability", "cash_working_capital", "systems_project", "project_billing", "unbilled_work", "government_work"],
+  paths: /services?|staff|placement|workforce|payroll|contract|language|translat|document|records|scann|security|maintenance|solutions|case.stud/i,
+};
+const ADVISORY: ResearchLane = {
+  focus: "Advisory services: establish the actual advisory practice from the source before applying a workflow. Examine engagement or matter profitability, retainers versus hourly/fixed fees, unbilled work, reimbursable costs, collections and practice/partner reporting. For legal firms distinguish case-management integration and client trust funds from operating cash. An adviser's client transaction or systems project is not the adviser's own event; do not assume specialized legal or regulated advisory tools will be replaced.",
+  topics: ["client_profitability", "unbilled_work", "project_billing", "recurring_revenue", "financial_controls", "cash_working_capital", "systems_project", "close_reporting", "subcontractor_costs"],
+  paths: /advis|practice|engagement|matter|legal|partner|services|billing|clients|case.stud/i,
+};
+
 function laneFor(subindustry: string | null): ResearchLane {
   if (subindustry && LANES[subindustry]) return LANES[subindustry];
+  if (subindustry === "Agencies") return AGENCY;
+  if (subindustry === "Media & Publishing") return MEDIA;
+  if (subindustry === "Freight & Logistics" || subindustry === "Passenger Transportation") return TRANSPORT;
+  if (subindustry === "Facilities Management") return LANES["Facilities Management & Commercial Cleaning"];
+  if (subindustry === "Operational Support Services") return OPERATIONAL_SUPPORT;
+  if (subindustry === "Advisory Services") return ADVISORY;
   if (subindustry === "Advertising & Marketing" || subindustry === "Multimedia & Graphic Design") return AGENCY;
   const bucket = subindustry ? bucketForSubindustry(subindustry) : null;
   if (bucket === "Media / Advertising / Publishing") return MEDIA;

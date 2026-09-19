@@ -25,12 +25,16 @@ These are research questions. A customer's project, vacancy, acquisition or buil
 
 ## How collection and Jev work together
 
+Research recognizes both the public-discovery taxonomy and the current NetSuite TAM labels: Agencies, Management Consulting, Operational Support Services, Advisory Services, Freight & Logistics, Media & Publishing, Facilities Management and Passenger Transportation. Broad support/advisory labels prompt Jev to identify the actual service model from the source before using a specialized workflow. Account labels and TAM membership are unchanged.
+
 1. The frequent collector reserves eligible TAM accounts lacking captured evidence first. A baseline reads the homepage and one discovered operating page. It immediately saves each usable source; optional-page failures do not erase that evidence.
 2. A separate five-minute research schedule works through discovered but unread pages as well as due refreshes. It can follow new relevant company links. Its per-URL leases and revisit dates are shared with manual research.
 3. Jev receives the named account, domain, actual source context, source dates and the relevant business-services lens. Operating questions are bounded to ten per packet: three general operating clues plus source/subindustry priorities. Research ranking asks Jev which discovered source to read next; it does not ask Jev to rejudge its previous answer.
 4. Public text identity excludes private CRM locators. Unchanged evidence and paid packet interpretations are reused. The existing application spend envelope is unchanged.
 5. Every native packet result retains its own attribution, passage and publication receipt. A different representative packet cannot suppress its operating topic. Useful undated or evergreen results remain available in the account; eligible dated developments can enter Triggered.
 6. Existing source cards receive Jev context without duplicating the event. No second-model review is introduced. Broad traits, changes and unverified pain hypotheses remain distinguishable.
+
+Saved-response recovery retains one oldest-job slot; the other two claim slots prefer normal/fresh evidence over routing replays. This preserves recovery progress without putting all newly captured signals behind the backfill.
 
 Google RSS can remain headline-only when a real publisher body cannot be fetched. Such evidence is labeled; an empty healthy feed differs from a transport error. Supported ATS scans, missing boards and unsupported systems also have distinct status.
 
