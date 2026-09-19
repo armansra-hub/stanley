@@ -43,6 +43,31 @@ function timeout(mock: ReturnType<typeof vi.fn>) {
 }
 
 describe("prime request diagnostics", () => {
+  it("resumes a legacy identifier-bound checkpoint through its current verified link without rematching by name/address", async () => {
+    verified = [{ government_entity_id: ENTITY, government_entities: {
+      legal_name: "Different Legal Name", dba_name: null, uei: "U1", usaspending_recipient_id: "R1" } }];
+    const prior = continuation({ recipientName: "Old Frozen Query", entityId: ENTITY, uei: "U1", recipientId: "R1",
+      pendingAwardId: "A1", transactionPage: 3, seenTransactionIds: ["existing"] });
+    mocks.detail.mockResolvedValue({ generatedAwardId: "A1", recipient: { legalName: "Different Legal Name", uei: "U1", recipientId: "R1" }, businessSizeStatus: "unknown" });
+    mocks.transactions.mockResolvedValue({ rows: [], hasNext: true }); mocks.saveTransactions.mockResolvedValue(0);
+    const result = await sweepUsaspendingCompany(company, { awardContinuation: prior });
+    expect(result.status).toBe("matched");
+    expect(result.awardContinuation).toMatchObject({ recipientName: "Old Frozen Query", entityId: ENTITY,
+      transactionPage: 4, seenTransactionIds: ["existing"], searchTargetIndex: 0,
+      searchTargets: [{ query: "Old Frozen Query", identity: { entityId: ENTITY, uei: "U1", recipientId: "R1" } }] });
+    expect(mocks.award).toHaveBeenCalledWith(ENTITY, expect.objectContaining({ generatedAwardId: "A1" }));
+    expect(mocks.entity).not.toHaveBeenCalled(); expect(mocks.match).not.toHaveBeenCalled();
+    expect(mocks.autocomplete).not.toHaveBeenCalled(); expect(mocks.search).not.toHaveBeenCalled();
+  });
+  it.each(["missing", "uei_changed", "recipient_changed"])("does not trust legacy checkpoint identifiers without an unchanged verified binding: %s", async (failure) => {
+    if (failure !== "missing") verified = [{ government_entity_id: ENTITY, government_entities: {
+      legal_name: "Acme", dba_name: null, uei: failure === "uei_changed" ? "OTHER" : "U1",
+      usaspending_recipient_id: failure === "recipient_changed" ? "OTHER" : "R1" } }];
+    const result = await sweepUsaspendingCompany(company, { awardContinuation: continuation({ entityId: ENTITY, uei: "U1", recipientId: "R1", pendingAwardId: "A1" }) });
+    expect(result).toMatchObject({ status: "error", error: "legacy federal verified identity changed" });
+    expect(mocks.detail).not.toHaveBeenCalled(); expect(mocks.search).not.toHaveBeenCalled();
+    expect(mocks.entity).not.toHaveBeenCalled(); expect(mocks.match).not.toHaveBeenCalled(); expect(mocks.award).not.toHaveBeenCalled();
+  });
   it("persists a vehicle and its ordering date through the existing award and transaction path", async () => {
     const id = "CONT_IDV_TEST_9700";
     mocks.search.mockResolvedValue({ rows: [{ generatedId: id, recipientName: "Acme", lastDateToOrder: "2030-02-01" }], hasNext: false });
@@ -101,7 +126,11 @@ describe("prime request diagnostics", () => {
     const query: any = {};
     for (const method of ["select", "eq", "order", "limit", "gt"]) query[method] = () => query;
     query.then = (resolve: any) => Promise.resolve({ data: null, error: { message: "metric facts unavailable" } }).then(resolve);
-    mocks.from.mockReturnValue(query);
+    const identityQuery: any = {};
+    for (const method of ["select", "eq", "limit"]) identityQuery[method] = () => identityQuery;
+    identityQuery.then = (resolve: any) => Promise.resolve({ data: [{ government_entity_id: ENTITY,
+      government_entities: { legal_name: "Acme", dba_name: null, uei: "U1", usaspending_recipient_id: null } }], error: null }).then(resolve);
+    mocks.from.mockImplementation((table) => table === "company_government_matches" ? identityQuery : query);
     const prior = continuation({ collection: "idvs", entityId: ENTITY, uei: "U1", searchPage: 501, searchAfter: pair, seenAwardIds: ["old"] });
     const failed = await sweepUsaspendingCompany(company, { awardContinuation: prior });
     expect(failed).toMatchObject({ status: "error", awardContinuation: { searchPage: 501, searchAfter: pair } });

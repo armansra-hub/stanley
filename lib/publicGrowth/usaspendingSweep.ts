@@ -162,7 +162,18 @@ export async function sweepUsaspendingCompany(
   try {
     let enrichedIdentity = false;
     let state = options.awardContinuation ? structuredClone(options.awardContinuation) : null;
-    if (state) Object.assign(state, usaspendingCursorField(state));
+    if (state) { Object.assign(state, usaspendingCursorField(state)); receipt.awardContinuation = state; }
+    if (state?.entityId && !state.searchTargets) {
+      // Older checkpoints predate per-alias bindings. Reuse their exact frozen
+      // entity only when the company's current verified link still confirms
+      // both identifiers; the checkpoint alone must never grant verification.
+      const current = (await loadVerifiedFederalIdentities(company.id)).find((identity) => identity.entityId === state!.entityId);
+      if (!current || current.uei !== state.uei || current.recipientId !== state.recipientId) {
+        throw new Error("legacy federal verified identity changed");
+      }
+      state.searchTargets = [{ query: state.recipientName, identity: { ...current } }];
+      state.searchTargetIndex = 0;
+    }
     let currentSearchPage: Awaited<ReturnType<typeof searchContractAwardsPage>> | null = null;
     if (!state) {
       const identities = await loadVerifiedFederalIdentities(company.id);

@@ -25,7 +25,7 @@ try {
     create table companies(id uuid primary key,netsuite_internal_id text,status text,lists text[]);
     create table lead_documents(id uuid primary key,netsuite_internal_id text,company_id uuid,doc_type text,body text,captured_at timestamptz);
     create table intelligence_observations(id uuid primary key,company_id uuid,source_url text,observed_at timestamptz,is_current boolean,feedback_excluded boolean,source_kind text,metadata jsonb);`);
-  await db.exec(await readFile(new URL("../../supabase/migrations/0076_company_identity_context.sql", import.meta.url), "utf8"));
+  await db.exec(await readFile(new URL("../../supabase/migrations/0080_company_identity_context.sql", import.meta.url), "utf8"));
   await db.query(`insert into companies values($1,'12345','new','{netsuite_tam}'),($2,'67890','new','{}'),
     ($3,'12345','removed_from_tam','{netsuite_tam}'),($4,'12345','new','{netsuite_tam,tam_duplicate}'),($5,'99999','new',null)`, [company, other, removed, duplicate, empty]);
 
