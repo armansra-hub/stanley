@@ -13,10 +13,10 @@ const source: StoryEvidence = { id: "source", company_id: company.id, content_ha
 const story = { overview: [{ text: "The company opened an Austin distribution center.", citations: [source.id] }],
   developments: [], hypotheses: [], contradictions: [], unknowns: ["Current systems"] };
 type Call = { table: string; filters: unknown[][]; patch?: Record<string, unknown> };
-let job: Record<string, unknown>, calls: Call[], stale: boolean, evidence: StoryEvidence;
+let job: Record<string, unknown>, calls: Call[], stale: boolean, evidence: StoryEvidence, cached: Record<string, unknown> | null;
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubEnv("ANTHROPIC_API_KEY", "synthetic-test-key"); calls = []; stale = false;
-  evidence = source;
+  evidence = source; cached = null;
   job = { company_id: company.id, desired_hash: storyEvidenceHash(company, [source]), lease_token: "lease", attempts: 1,
     force_requested: true, checkpoint: null };
   let claimed = false;
@@ -29,7 +29,7 @@ beforeEach(() => {
     query.update = (patch: Record<string, unknown>) => { call.patch = patch; return query; };
     const result = () => ({ data: table === "companies" ? company : table === "intelligence_observations"
       ? call.filters.some(filter => filter[0] === "eq" && filter[1] === "is_current" && filter[2] === false) ? [] : [evidence]
-      : call.patch ? stale ? null : { company_id: company.id } : null, error: null });
+      : table === "intelligence_account_stories" ? cached : call.patch ? stale ? null : { company_id: company.id } : null, error: null });
     query.single = query.maybeSingle = async () => result();
     query.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve);
     return query;
@@ -75,11 +75,47 @@ describe("budgeted resumable account writing", () => {
     expect(mocks.settle).toHaveBeenCalledWith("reservation", null);
     expect(mocks.rpc).toHaveBeenCalledWith("intelligence_story_finish", expect.objectContaining({ p_status: "queued", p_error: "writer_unavailable" }));
   });
-  it("dirty wakeups compute the actual evidence hash before spending", async () => {
+  it("normalizes a promising dirty wakeup under its exact lease and writes it immediately", async () => {
+    job.desired_hash = "0".repeat(64); job.force_requested = false;
+    expect(await runAccountStoryWorker(1)).toMatchObject({ processed: 1, normalized: 1, writerCalls: 1, outcomes: { complete: 1 } });
+    expect(mocks.generate).toHaveBeenCalledOnce();
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_story_enqueue")).toBe(false);
+    const normalization = calls.find(call => call.patch?.desired_hash)!;
+    expect(normalization.patch).toEqual({ desired_hash: storyEvidenceHash(company, [source]), checkpoint: null });
+    expect(normalization.filters).toContainEqual(["eq", "lease_token", "lease"]);
+    expect(normalization.filters).toContainEqual(["eq", "desired_hash", "0".repeat(64)]);
+    expect(normalization.filters).toContainEqual(["eq", "status", "running"]);
+  });
+  it("handles cheap dirty reconciliation separately from the two paid writing slots", async () => {
+    let claimed = 0;
+    mocks.rpc.mockImplementation(async (name: string) => {
+      if (name !== "intelligence_story_claim") return { data: true, error: null };
+      evidence = claimed < 4 ? { ...source, event_date: "2020-01-01" } : source;
+      return { data: claimed++ < 6 ? [{ ...job, lease_token: `lease-${claimed}`, desired_hash: "0".repeat(64), force_requested: false }] : [], error: null };
+    });
+    expect(await runAccountStoryWorker(2)).toMatchObject({ processed: 6, normalized: 6, writerCalls: 2, outcomes: { superseded: 4, complete: 2 } });
+    expect(mocks.generate).toHaveBeenCalledTimes(2);
+  });
+  it("bounds an all-unpromising dirty backlog to sixteen reconciliations", async () => {
+    evidence = { ...source, event_date: "2020-01-01" };
+    mocks.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_story_claim"
+      ? [{ ...job, desired_hash: "0".repeat(64), force_requested: false }] : true, error: null }));
+    expect(await runAccountStoryWorker(2)).toMatchObject({ processed: 16, normalized: 16, writerCalls: 0, outcomes: { superseded: 16 } });
+    expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+  });
+  it("reuses an existing story when a dirty wakeup normalizes to its same evidence hash", async () => {
     job.desired_hash = "0".repeat(64);
-    expect(await runAccountStoryWorker(1)).toMatchObject({ outcomes: { superseded: 1 } });
-    expect(mocks.reserve).not.toHaveBeenCalled();
-    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_story_enqueue", expect.objectContaining({ p_hash: storyEvidenceHash(company, [source]) }));
+    cached = { story, observation_ids: [source.id], coverage: { synthetic: true }, model: ACCOUNT_WRITER_MODEL };
+    expect(await runAccountStoryWorker(1)).toMatchObject({ normalized: 1, writerCalls: 0, outcomes: { complete: 1 } });
+    expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_story_finish", expect.objectContaining({
+      p_hash: storyEvidenceHash(company, [source]), p_story: story, p_coverage: { synthetic: true } }));
+  });
+  it("cannot normalize or spend after concurrent evidence or a manual request takes its lease", async () => {
+    stale = true; job.desired_hash = "0".repeat(64);
+    expect(await runAccountStoryWorker(1)).toMatchObject({ normalized: 1, writerCalls: 0, outcomes: { superseded: 1 } });
+    expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_story_finish")).toBe(false);
   });
   it("does not turn an unpromising automatic dirty wakeup into a paid writing job", async () => {
     evidence = { ...source, event_date: "2020-01-01" };

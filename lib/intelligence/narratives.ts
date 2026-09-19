@@ -146,75 +146,105 @@ async function finish(job: StoryJob, status: string, error: string | null, secon
 export async function runAccountStoryWorker(limit = 1, deadlineMs = Date.now() + 55_000) {
   if (!intelligenceEnabled()) return { processed: 0, outcomes: {} as Record<string, number> };
   const outcomes: Record<string, number> = {};
-  let processed = 0;
+  let processed = 0, normalized = 0, writerCalls = 0;
+  const storyLimit = Math.min(3, Math.max(0, limit));
+  const normalizationLimit = 16;
   const db = serviceClient();
   const { error: backfillError } = await db.rpc("intelligence_event_backfill", { p_limit: 50 });
   if (backfillError) throw new Error(`Account event backfill failed: ${backfillError.code ?? "database_error"}`);
-  for (let i = 0; i < Math.min(3, Math.max(0, limit)) && Date.now() < deadlineMs - 22_000; i++) {
+  while (writerCalls < storyLimit && normalized < normalizationLimit
+    && processed < storyLimit + normalizationLimit && Date.now() < deadlineMs - 22_000) {
     const { data, error } = await db.rpc("intelligence_story_claim", { p_limit: 1 });
     if (error) throw new Error(`Account story claim failed: ${error.code ?? "database_error"}`);
-    const job = (data as StoryJob[] | null)?.[0];
+    let job = (data as StoryJob[] | null)?.[0];
     if (!job) break;
     let outcome = "service_error";
     try {
       const { company, rows } = await loadStoryEvidence(job.company_id);
       const hash = storyEvidenceHash(company, rows);
       if (hash !== job.desired_hash) {
-        await queueAccountStory(job.company_id, { force: job.force_requested });
-        // A formerly promising account may lose its evidence after feedback.
-        await finish(job, "superseded", "superseded_evidence");
-        outcome = "superseded";
-      } else if (job.checkpoint?.hash === hash) {
-        outcome = await finish(job, "complete", null, 60, job.checkpoint) ? "complete" : "superseded";
-      } else if (!job.force_requested && !isPromisingAccount(rows)) {
-        // Eligibility can expire while a real-hash job waits for budget. The
-        // dirty-hash path is already filtered by queueAccountStory above.
-        // This schedules writing spend; it never changes Jev's judgment.
-        await finish(job, "superseded", "not_promising"); outcome = "not_promising";
-      } else if (!process.env.ANTHROPIC_API_KEY) {
-        await finish(job, "queued", "writer_not_configured", 86400); outcome = "writer_not_configured";
-      } else {
-        const request = buildStoryRequest(company, rows);
-        if (!request.sources.length) {
-          await finish(job, "failed", "no_attributable_source"); outcome = "no_attributable_source";
+        normalized++;
+        if (!rows.length || (!job.force_requested && !isPromisingAccount(rows))) {
+          await finish(job, "superseded", "superseded_evidence"); outcome = "superseded";
         } else {
-          const reservation = await reserveGeneration(ACCOUNT_WRITER_MODEL);
-          if (!reservation) {
-            await finish(job, "queued", "budget_deferred", secondsUntilNextMonth()); outcome = "budget_deferred";
+          // Resolve the dirty marker under the existing lease. Re-enqueueing
+          // here sent ready accounts behind the entire old dirty backlog.
+          const { data: owned, error: normalizeError } = await db.from("intelligence_story_jobs")
+            .update({ desired_hash: hash, checkpoint: null })
+            .eq("company_id", job.company_id).eq("lease_token", job.lease_token).eq("desired_hash", job.desired_hash)
+            .eq("status", "running").gt("lease_until", new Date().toISOString()).select("company_id").maybeSingle();
+          if (normalizeError) throw new Error("Account story normalization unavailable");
+          if (!owned) outcome = "superseded";
+          else {
+            job = { ...job, desired_hash: hash, checkpoint: null };
+          }
+        }
+      }
+      if (hash === job.desired_hash) {
+        if (!job.checkpoint) {
+          // Also covers a resume after normalization succeeded but this cache
+          // read or completion was interrupted; unchanged work is never rewritten.
+          const { data: cached, error: cacheError } = await db.from("intelligence_account_stories")
+            .select("story,observation_ids,coverage,model").eq("company_id", job.company_id).eq("evidence_hash", hash).limit(1).maybeSingle();
+          if (cacheError) throw new Error("Account story cache unavailable");
+          if (cached) job.checkpoint = { hash, story: cached.story as AccountStory,
+            observationIds: cached.observation_ids, coverage: cached.coverage, model: cached.model };
+        }
+        if (job.checkpoint?.hash === hash) {
+          outcome = await finish(job, "complete", null, 60, job.checkpoint) ? "complete" : "superseded";
+        } else if (!job.force_requested && !isPromisingAccount(rows)) {
+          // Eligibility can expire while a real-hash job waits for budget. The
+          // dirty-hash path is already filtered during normalization above.
+          // This schedules writing spend; it never changes Jev's judgment.
+          await finish(job, "superseded", "not_promising"); outcome = "not_promising";
+        } else if (Date.now() >= deadlineMs - 22_000) {
+          await finish(job, "queued", "continuation", 30); outcome = "deadline_deferred";
+        } else if (!process.env.ANTHROPIC_API_KEY) {
+          await finish(job, "queued", "writer_not_configured", 86400); outcome = "writer_not_configured";
+        } else {
+          const request = buildStoryRequest(company, rows);
+          if (!request.sources.length) {
+            await finish(job, "failed", "no_attributable_source"); outcome = "no_attributable_source";
           } else {
-            let usage: GenerationUsage | null = null;
-            let responseText = "";
-            try {
-              const response = await new Anthropic({ maxRetries: 0 }).messages.create({ model: ACCOUNT_WRITER_MODEL,
-                max_tokens: ACCOUNT_WRITER_MAX_OUTPUT, system: request.system,
-                messages: [{ role: "user", content: request.user }],
-              }, { timeout: Math.min(20_000, Math.max(1, deadlineMs - Date.now())) });
-              usage = { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens,
-                cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? 0,
-                cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0 };
-              responseText = response.content.filter(block => block.type === "text").map(block => block.text).join("");
-            } catch {
-              await settleGeneration(reservation, usage);
-              await finish(job, job.attempts >= 4 ? "failed" : "queued", "writer_unavailable", Math.min(86400, 300 * 2 ** job.attempts));
-              outcome = "writer_unavailable";
-            }
-            if (responseText) {
-              await settleGeneration(reservation, usage);
-              const story = parseAccountStory(responseText, request.sources.map(source => source.id));
-              if (!story) {
-                await finish(job, "failed", "writer_response_format"); outcome = "writer_response_format";
-              } else {
-                const checkpoint: StoryCheckpoint = { hash, story, observationIds: request.sources.map(source => source.id),
-                  coverage: { ...request.coverage, sources: request.sources.map(({ passages: _passages, ...source }) => source) }, model: ACCOUNT_WRITER_MODEL };
-                const { data: saved, error: saveError } = await db.from("intelligence_story_jobs").update({ checkpoint })
-                  .eq("company_id", job.company_id).eq("lease_token", job.lease_token).eq("desired_hash", hash)
-                  .eq("status", "running").gt("lease_until", new Date().toISOString()).select("company_id").maybeSingle();
-                if (saveError) throw new Error("Account story paid-result checkpoint unavailable");
-                outcome = !saved ? "superseded" : await finish(job, "complete", null, 60, checkpoint) ? "complete" : "superseded";
+            const reservation = await reserveGeneration(ACCOUNT_WRITER_MODEL);
+            if (!reservation) {
+              await finish(job, "queued", "budget_deferred", secondsUntilNextMonth()); outcome = "budget_deferred";
+            } else {
+              let usage: GenerationUsage | null = null;
+              let responseText = "";
+              try {
+                writerCalls++;
+                const response = await new Anthropic({ maxRetries: 0 }).messages.create({ model: ACCOUNT_WRITER_MODEL,
+                  max_tokens: ACCOUNT_WRITER_MAX_OUTPUT, system: request.system,
+                  messages: [{ role: "user", content: request.user }],
+                }, { timeout: Math.min(20_000, Math.max(1, deadlineMs - Date.now())) });
+                usage = { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens,
+                  cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? 0,
+                  cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0 };
+                responseText = response.content.filter(block => block.type === "text").map(block => block.text).join("");
+              } catch {
+                await settleGeneration(reservation, usage);
+                await finish(job, job.attempts >= 4 ? "failed" : "queued", "writer_unavailable", Math.min(86400, 300 * 2 ** job.attempts));
+                outcome = "writer_unavailable";
               }
-            } else if (outcome !== "writer_unavailable") {
-              await settleGeneration(reservation, usage);
-              await finish(job, "failed", "writer_response_format"); outcome = "writer_response_format";
+              if (responseText) {
+                await settleGeneration(reservation, usage);
+                const story = parseAccountStory(responseText, request.sources.map(source => source.id));
+                if (!story) {
+                  await finish(job, "failed", "writer_response_format"); outcome = "writer_response_format";
+                } else {
+                  const checkpoint: StoryCheckpoint = { hash, story, observationIds: request.sources.map(source => source.id),
+                    coverage: { ...request.coverage, sources: request.sources.map(({ passages: _passages, ...source }) => source) }, model: ACCOUNT_WRITER_MODEL };
+                  const { data: saved, error: saveError } = await db.from("intelligence_story_jobs").update({ checkpoint })
+                    .eq("company_id", job.company_id).eq("lease_token", job.lease_token).eq("desired_hash", hash)
+                    .eq("status", "running").gt("lease_until", new Date().toISOString()).select("company_id").maybeSingle();
+                  if (saveError) throw new Error("Account story paid-result checkpoint unavailable");
+                  outcome = !saved ? "superseded" : await finish(job, "complete", null, 60, checkpoint) ? "complete" : "superseded";
+                }
+              } else if (outcome !== "writer_unavailable") {
+                await settleGeneration(reservation, usage);
+                await finish(job, "failed", "writer_response_format"); outcome = "writer_response_format";
+              }
             }
           }
         }
@@ -222,9 +252,9 @@ export async function runAccountStoryWorker(limit = 1, deadlineMs = Date.now() +
     } catch { /* Preserve live lease/checkpoint; another invocation resumes it. */ }
     outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
     processed++;
-    if (outcome === "budget_deferred") break;
+    if (outcome === "budget_deferred" || outcome === "deadline_deferred") break;
   }
-  return { processed, outcomes };
+  return { processed, normalized, writerCalls, outcomes };
 }
 
 export async function loadAccountIntelligence(companyId: string) {
