@@ -10,7 +10,7 @@ Hosted application modules and their shared infrastructure.
 
 **Status:** Source present. **Purpose:** Bring territory imports, claimed accounts, prioritization, evidence, and exports into one interface.
 
-**How it works:** Imports normalize account records; the UI exposes TAM, Old Gold, and Triggered as different views. Company detail and history preserve the evidence behind a worklist. An imported account is not automatically a claimed account.
+**How it works:** Imports normalize account records; the UI exposes TAM, Old Gold, and Triggered separately. Inline Account Intelligence adds Jev evidence, operating matches, research and Claude-written cited stories while preserving account context. An imported account is not automatically claimed.
 
 **Infrastructure:** Next.js App Router, React, TypeScript, Supabase Postgres.
 
@@ -66,7 +66,7 @@ Hosted application modules and their shared infrastructure.
 
 **Status:** Source present. **Purpose:** Rank fresh external changes separately from CRM readiness.
 
-**How it works:** Combine signal strength, decay, and fit. A reviewed company reheats only from evidence whose event and detection are both newer than the human review boundary. Export freshness uses the configured window. Starred items and history support manual review.
+**How it works:** Combine source-supported signal priority, decay and fit. Eligible Jev packets publish directly or enrich existing source cards; the separate legacy review path remains. Human review boundaries, event/detection dates, quarantine and export freshness still apply. Public intelligence never rewrites TAM or Old Gold.
 
 **Infrastructure:** Trigger tables, freshness functions, dashboard, export routes.
 
@@ -110,7 +110,7 @@ Hosted application modules and their shared infrastructure.
 
 **How it works:** Route conversation through configured model and tool contracts. Voice is an input surface for the same application capabilities; account access and tool permissions still bound actions. Model defaults vary by component and settings.
 
-**Infrastructure:** Anthropic-backed chat orchestration; app chat routes and browser UI.
+**Infrastructure:** Anthropic-backed chat orchestration and application tools. Jev is a separate evidence/research provider, not the chat model.
 
 **Evidence:** Public: lib/chat/run.ts; lib/chat/tools.ts; app/api/chat/.
 
@@ -122,7 +122,7 @@ Hosted application modules and their shared infrastructure.
 
 **Status:** Source present. **Purpose:** Share bounded lead evidence, grades, task status, and messages across authorized agents.
 
-**How it works:** Dedicated agent-token authentication protects specific endpoints. Read access uses table and scalar-column allowlists. Writes use specialized validation, dry-run support, exact identity, and atomic database guards. Cron secrets and query tokens do not grant bridge access.
+**How it works:** Dedicated agent-token authentication protects bounded reads and specialized writes. The separately gated intelligence/evaluate endpoint supports Jev excerpt annotations with usage-only server persistence. Exact identity, publication provenance and atomic grade guards remain required.
 
 **Infrastructure:** app/api/agent, server-only credentials, Supabase audit events.
 

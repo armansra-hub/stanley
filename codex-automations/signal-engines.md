@@ -10,7 +10,7 @@ Individual source families inside Stanley; these are components, not separate de
 
 **Status:** Source present. **Purpose:** Bound each hosted ingestion invocation while covering multiple source families.
 
-**How it works:** The historically named daily route runs hourly. One invocation executes a five-request stage from an 80-request manifest, a 16-stage rotation. Prime awards and candidate review recur each stage. Provider failures mean intended coverage is not proof of successful observation.
+**How it works:** The historical daily route still runs hourly with a five-request stage from an 80-request manifest. Additional gated intelligence interpretation, baseline collection and directed research run every five minutes; shared sources run every fifteen minutes. Federal discovery has its own five-minute job. Schedules are capacity plans, not successful coverage guarantees.
 
 **Infrastructure:** Vercel cron; lib/cron; authenticated worker routes.
 
@@ -24,7 +24,7 @@ Individual source families inside Stanley; these are components, not separate de
 
 **Status:** Source present. **Purpose:** Find relevant company news while preventing same-name misattribution.
 
-**How it works:** Collect RSS/news candidates, check company identity, classify qualifying evidence, and route uncertain candidates for review. URL safety and evidence requirements apply before a trigger is accepted.
+**How it works:** With intelligence enabled, labeled publisher-body or headline-only evidence enters Jev interpretation. Eligible packet findings publish without a second-model review; exact source/identity, date and freshness routing still applies. The legacy intelligence-disabled path and legacy candidates retain their existing reviewer. Google wrappers are not article bodies.
 
 **Infrastructure:** RSS parser, Google News sources, regex and model classification, review queue.
 
@@ -38,7 +38,7 @@ Individual source families inside Stanley; these are components, not separate de
 
 **Status:** Source present. **Purpose:** Detect operational change and hiring evidence from company-linked surfaces.
 
-**How it works:** Sweep known company websites and careers sources, interpret configured events, and retain attributable evidence. Source-specific thresholds and freshness are implemented in code; observed hiring is not a confirmed purchase project.
+**How it works:** Known company websites, supported PDFs and ATS boards feed retained public observations. Resumable ATS scans preserve listing history and distinguish baseline, changed, reappearing and removed listings. Jev interprets source and derived hiring context; a removed listing is not a confirmed hire.
 
 **Infrastructure:** Website/ATS sweep workers, configured data providers including Apify where used.
 

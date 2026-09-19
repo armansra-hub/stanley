@@ -2,10 +2,13 @@
 
 A colleague-facing inventory of Arman Sra's Codex work, reviewed **September 11, 2026**. It covers Stanley plus the sales workflows, custom skills, dashboards, research tools, deal-memory systems, document builders, and historical experiments found across the accessible local workspaces.
 
-**82 catalog entries** describe related systems and components. This is **not 82 independent apps or active automations**: some entries are modules within Stanley, implementations of the same workflow, one-off deliverables, or historical/imported material. Six saved Codex automation definitions were found, including one one-time reminder.
+**88 catalog entries** describe related systems and components. This is **not 88 independent apps or active automations**: some entries are modules within Stanley, implementations of the same workflow, one-off deliverables, or historical/imported material. Six saved Codex automation definitions were found, including one one-time reminder.
+
+Jev-specific update: **September 18, 2026 (Pacific)**. Added six Stanley components and refreshed the related existing entries against current source. The original cross-project inventory and its coverage counts remain the September 11 snapshot.
 
 ## Start here
 
+- For Jev specifically: [usage and code map](../docs/JEV_USAGE.md) and [Jev catalog entries](jev-intelligence.md).
 - For the full software logic: [Stanley architecture](../docs/ARCHITECTURE.md), [infrastructure and setup](../docs/SETUP.md), and [local operational rules](../operations/README.md).
 - For what runs when: [scheduled automation inventory](scheduled-automations.md).
 - For how thoroughly this was checked: [workspace coverage, evidence, and limitations](workspace-coverage.md).
@@ -179,6 +182,19 @@ Retired implementations, task-only work, and items that must not be counted as c
 | HX08 | [Calendar visualization, file inspection, and workflow-video analysis](history-and-experiments.md#hx08) | Task evidence only |
 | HX09 | [Training-course assistance and setup troubleshooting](history-and-experiments.md#hx09) | Task evidence only |
 | HX10 | [Bundled plugins, runtimes, and duplicated source checkouts](history-and-experiments.md#hx10) | Imported |
+
+### [Jev intelligence and research](jev-intelligence.md)
+
+Stanley components using Jev, including the distinction between Jev judgments and Claude writing.
+
+| ID | Component | Status |
+|---|---|---|
+| JV01 | [Direct Jev interpretation and trigger publication](jev-intelligence.md#jv01) | Source present |
+| JV02 | [Jev operating profiles, saved questions and matching](jev-intelligence.md#jv02) | Source present |
+| JV03 | [Jev-directed research and source ranking](jev-intelligence.md#jv03) | Source present |
+| JV04 | [Jev evidence feeding Claude account stories](jev-intelligence.md#jv04) | Source present |
+| JV05 | [Optional local Jev TAM evidence annotations](jev-intelligence.md#jv05) | Source present |
+| JV06 | [Jev budget, checkpoints, feedback and runtime visibility](jev-intelligence.md#jv06) | Source present |
 
 ## Sharing boundary
 

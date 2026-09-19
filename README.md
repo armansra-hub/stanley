@@ -2,6 +2,8 @@
 
 Stanley is a single-user prospecting and workflow assistant for a NetSuite account executive. It combines a hosted application with local, supervised sales workflows. The package name remains `jarvis`; the product is Stanley.
 
+**Next.js · Supabase · Jev (TypeSafe) · Claude · Vercel**. Jev interprets source evidence and guides account research; Claude provides chat, account-story writing, and the separate legacy classification path. See the [Jev usage and code map](docs/JEV_USAGE.md).
+
 **Sharing this with a colleague?** Start with the [architecture and logic guide](docs/ARCHITECTURE.md), then [setup and infrastructure](docs/SETUP.md) and the [local workflow guide](operations/README.md).
 
 **Explore the broader work library:** [Codex Automations](codex-automations/README.md) catalogs the systems, skills, dashboards, research tools, deal-memory workflows, and historical experiments found across 12 local Codex projects. Reviewed September 11, 2026, with explicit status, evidence, infrastructure, schedules, and coverage limits.
@@ -13,6 +15,7 @@ This documentation was reconciled with GitHub `main` and the local Stanley works
 | Surface | Purpose | Main implementation |
 |---|---|---|
 | Headhunter (`/headhunter`) | Import and monitor the TAM, manage the claimed TAL, review public signals, and prioritize TAM / Old Gold worklists | `components/Dashboard.tsx`, `lib/db/companies.ts`, `app/api/headhunter/` |
+| Account Intelligence | Jev source interpretation, operating-topic matches, saved research questions, and directed research; cited account stories use Claude | `lib/intelligence/`, [Jev usage map](docs/JEV_USAGE.md) |
 | Missions (`/missions`) | Tasks, reminders, recurring work, time placement around Outlook busy blocks, and conversational actions | `lib/missions/`, `lib/db/missions.ts` |
 | Kill List (`/kill-list`) | Manually maintained pipeline, activity history, and dated tasks linked to Missions | `lib/killlist/`, `lib/db/killlist.ts` |
 | Ask Stanley | Chat and voice-assisted access to application tools | `lib/chat/`, `app/api/chat/` |
@@ -30,7 +33,7 @@ TAL replacement uses exact NetSuite Internal IDs, rejects unresolved or ambiguou
 
 ## Runtime and infrastructure
 
-Next.js 15 App Router, React 19, TypeScript, and Tailwind run on Vercel. Supabase Postgres stores business state, trigger evidence, tasks, and audit records; database service credentials remain server-only. Anthropic powers classification and conversational tools. Models are configurable; different components have different code defaults.
+Next.js 15 App Router, React 19, TypeScript, and Tailwind run on Vercel. Supabase Postgres stores business state, trigger evidence, tasks, and audit records; database service credentials remain server-only. Jev runs through the direct TypeSafe API for evidence interpretation and research ranking. Anthropic powers conversational tools, cited account-story writing, and the separate legacy classifier/reviewer. Models are configurable; different components have different code defaults.
 
 The optional [direct Jev intelligence engine](docs/INTELLIGENCE.md) adds changed-source interpretation, saved research questions, operating-pattern matches and cited company profiles. Eligible Jev findings publish directly to Triggered with their source passage and preserved model judgments; no second-model or candidate review is added to that path. Existing legacy collectors keep their review behavior. Short cloud jobs collect and interpret evidence on five- and fifteen-minute schedules once enabled. It calls TypeSafe directly; no Vercel AI Gateway connection is required.
 

@@ -62,20 +62,26 @@
     {
       "workspace_relative_source": "tools/stage_tam_final_grades.py",
       "repository_path": "operations/reference/tools/stage_tam_final_grades.py",
-      "sha256": "fad605282d2320103e1160fafcbc46aa7dfe78878200b866da7a85510cac0476",
-      "normalized_sha256": "fad605282d2320103e1160fafcbc46aa7dfe78878200b866da7a85510cac0476"
+      "sha256": "727ea2234648656b2b4da41a0df93c37a37053864a268ae18d2de188d3491af1",
+      "normalized_sha256": "727ea2234648656b2b4da41a0df93c37a37053864a268ae18d2de188d3491af1",
+      "refreshed_on": "2026-09-18",
+      "refresh_note": "Companion source synchronization for the Jev/TAM handoff; no live workflow executed."
     },
     {
       "workspace_relative_source": "tools/tam_v9_reader_schema.json",
       "repository_path": "operations/reference/tools/tam_v9_reader_schema.json",
-      "sha256": "7208cd8067c6de032db27184958cb34c4adc6bbac917f5646f3704b5d161b068",
-      "normalized_sha256": "7208cd8067c6de032db27184958cb34c4adc6bbac917f5646f3704b5d161b068"
+      "sha256": "a45167504266ce4395d8d0777a9c9639b2c8646e26d60fd84368059c16f8bdd0",
+      "normalized_sha256": "a45167504266ce4395d8d0777a9c9639b2c8646e26d60fd84368059c16f8bdd0",
+      "refreshed_on": "2026-09-18",
+      "refresh_note": "Companion source synchronization for the Jev/TAM handoff; no live workflow executed."
     },
     {
       "workspace_relative_source": "tools/tam_v9_validator_schema.json",
       "repository_path": "operations/reference/tools/tam_v9_validator_schema.json",
-      "sha256": "fc279c6d28c31a3228450beca8b19a47397aeda4723398ccbfdc8d025d69e550",
-      "normalized_sha256": "fc279c6d28c31a3228450beca8b19a47397aeda4723398ccbfdc8d025d69e550"
+      "sha256": "7ab47c760d78efe88f0d4adb86fc48ed9bf768f433ca075fe53464acf8a761fb",
+      "normalized_sha256": "7ab47c760d78efe88f0d4adb86fc48ed9bf768f433ca075fe53464acf8a761fb",
+      "refreshed_on": "2026-09-18",
+      "refresh_note": "Companion source synchronization for the Jev/TAM handoff; no live workflow executed."
     },
     {
       "workspace_relative_source": "tools/tam_v9_chunk_reader_schema.json",
@@ -150,6 +156,14 @@
       "sha256": "146553abdb3323c7c892162d5a882e89edfce00dbebbc2b866b36e0652c4a4e2",
       "normalized_sha256": "146553abdb3323c7c892162d5a882e89edfce00dbebbc2b866b36e0652c4a4e2",
       "refreshed_on": "2026-09-19"
+    },
+    {
+      "workspace_relative_source": "tools/tests/test_stage_tam_final_grades.py",
+      "repository_path": "operations/reference/tools/tests/test_stage_tam_final_grades.py",
+      "sha256": "2563f28760447597c883e235dae9e38601b1ad6a7d202a3425cf494834cdac5a",
+      "normalized_sha256": "2563f28760447597c883e235dae9e38601b1ad6a7d202a3425cf494834cdac5a",
+      "refreshed_on": "2026-09-18",
+      "refresh_note": "Companion source synchronization for the Jev/TAM handoff; no live workflow executed."
     }
   ]
 }
