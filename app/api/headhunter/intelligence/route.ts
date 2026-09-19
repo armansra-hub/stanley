@@ -10,6 +10,7 @@ export const maxDuration = 300;
 const empty = { enabled: false, views: [], observations: [], hasMore: false,
   spend: { usedUsd: 0, reservedUsd: 0, limitUsd: 20 }, jobs: { queued: 0, running: 0, failed: 0 },
   sourceCoverage: { complete: 0, partial: 0, failed: 0 } };
+type ReadStage = "client" | "status" | "views" | "observations" | "feedback" | "response";
 
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -21,13 +22,26 @@ export async function GET(req: NextRequest) {
   if ((companyId && !isUuid(companyId)) || (viewId && !isUuid(viewId)) || !Number.isInteger(offset) || offset < 0 || offset > 100_000) {
     return NextResponse.json({ error: "invalid_filter" }, { status: 400 });
   }
+  let stage: ReadStage = "client";
+  let code = "unknown";
+  const fail = (failedStage: ReadStage, error: unknown): never => {
+    stage = failedStage;
+    const value = error && typeof error === "object" && "code" in error ? error.code : null;
+    // Only standard SQLSTATE/PostgREST identifiers. Never emit provider messages,
+    // details, hints, response bodies, query values or credentials.
+    code = typeof value === "string" && /^(?:[0-9A-Z]{5}|PGRST[0-9]{3})$/.test(value) ? value : "unknown";
+    throw new Error("intelligence_read_failed");
+  };
   try {
     const db = serviceClient();
+    stage = "status";
     const [status, views] = await Promise.all([
       db.rpc("intelligence_status"),
       db.from("intelligence_views").select("id,name,question,active,backfill_complete").eq("active", true).order("created_at", { ascending: false }).limit(100),
     ]);
-    if (status.error || views.error) throw new Error("storage_unavailable");
+    if (status.error) fail("status", status.error);
+    if (views.error) fail("views", views.error);
+    stage = "observations";
     let query = db.from("intelligence_observations")
       .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,feedback_excluded,public_priority_weight,companies!inner(name,status)${viewId ? ",intelligence_view_matches!inner(probability,view_id)" : ""}`)
       .eq("is_current", true).eq("feedback_excluded", dismissed).neq("companies.status", "removed_from_tam")
@@ -35,12 +49,14 @@ export async function GET(req: NextRequest) {
     if (companyId) query = query.eq("company_id", companyId);
     if (viewId) query = query.eq("intelligence_view_matches.view_id", viewId).gte("intelligence_view_matches.probability", 0.7);
     const { data, error } = await query;
-    if (error) throw new Error("observations_unavailable");
+    if (error) fail("observations", error);
     // The optional embedded relation makes this select dynamic to Supabase's parser.
     const rows = (data ?? []) as unknown as Record<string, unknown>[];
     const ids = rows.map((row) => String(row.id));
+    stage = "feedback";
     const feedback = ids.length ? await db.from("intelligence_feedback").select("observation_id,reason,note").in("observation_id", ids) : { data: [], error: null };
-    if (feedback.error) throw new Error("feedback_unavailable");
+    if (feedback.error) fail("feedback", feedback.error);
+    stage = "response";
     const feedbackById = new Map((feedback.data ?? []).map((f) => [f.observation_id, { reason: f.reason, note: f.note }]));
     // Supabase's inferred relationship shape is unavailable until generated schema types are introduced.
     const observations = rows.map((row) => {
@@ -52,7 +68,8 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ ...status.data, enabled: intelligenceEnabled() && status.data?.enabled === true, views: views.data ?? [], observations, hasMore: observations.length === 50 });
   } catch {
-    return NextResponse.json({ error: "intelligence_storage_unavailable" }, { status: 503 });
+    console.error("intelligence.read_failed", { stage, code });
+    return NextResponse.json({ error: "intelligence_storage_unavailable", stage }, { status: 503 });
   }
 }
 

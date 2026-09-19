@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), priority: vi.fn(), authorized: vi.fn(), calls: [] as { table: string; method: string; args: unknown[] }[] }));
+const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), priority: vi.fn(), authorized: vi.fn(), failure: { table: "", code: "" }, calls: [] as { table: string; method: string; args: unknown[] }[] }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: m.from, rpc: m.rpc }) }));
 vi.mock("@/lib/intelligence/worker", () => ({ runIntelligenceWorker: vi.fn() }));
 vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: () => true }));
@@ -10,6 +10,7 @@ vi.mock("@/lib/intelligence/http", () => ({ intelligenceUiAuthorized: m.authoriz
 import { GET, POST } from "./route";
 const company = "10000000-0000-4000-8000-000000000001", observation = "10000000-0000-4000-8000-000000000002";
 beforeEach(() => {
+  m.failure.table = ""; m.failure.code = "";
   m.calls.length = 0; m.authorized.mockReturnValue(true); m.priority.mockReset().mockResolvedValue(10);
   m.rpc.mockResolvedValue({ data: { enabled: true }, error: null });
   m.from.mockImplementation((table: string) => {
@@ -20,13 +21,35 @@ beforeEach(() => {
     };
     chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: table === "intelligence_observations"
       ? single ? { company_id: company, title: "Source headline" } : [{ id: observation, company_id: company, companies: { name: "Synthetic" } }]
-      : [], error: null }).then(resolve);
+      : [], error: m.failure.table === table ? { code: m.failure.code, message: "private provider detail must not be logged" } : null }).then(resolve);
     return chain;
   });
 });
+afterEach(() => vi.restoreAllMocks());
 const post = (body: Record<string, unknown>) => POST(new NextRequest("https://stanley.test/api/headhunter/intelligence", { method: "POST", body: JSON.stringify(body) }));
 
 describe("reversible intelligence feedback API", () => {
+  it.each([
+    ["intelligence_views", "views", "PGRST205"],
+    ["intelligence_observations", "observations", "42703"],
+    ["intelligence_feedback", "feedback", "42501"],
+  ])("logs only the fixed stage and standard error code for %s", async (table, stage, code) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.failure.table = table; m.failure.code = code;
+    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence"));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "intelligence_storage_unavailable", stage });
+    expect(log).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("intelligence.read_failed", { stage, code });
+  });
+  it("identifies status RPC failure and suppresses arbitrary error-code text", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.rpc.mockResolvedValue({ data: null, error: { code: "private SQL or token", details: "not for logs" } });
+    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence"));
+    expect(await response.json()).toEqual({ error: "intelligence_storage_unavailable", stage: "status" });
+    expect(log).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("intelligence.read_failed", { stage: "status", code: "unknown" });
+  });
   it("filters exclusions before both saved-view pagination and all-evidence pagination", async () => {
     for (const suffix of ["", `?viewId=${company}`]) {
       m.calls.length = 0;
