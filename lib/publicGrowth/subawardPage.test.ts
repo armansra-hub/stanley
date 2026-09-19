@@ -6,6 +6,27 @@ import { searchReceivedContractSubawardsPage, searchContractAwardsPage, fetchAwa
 beforeEach(() => mocks.fetch.mockReset());
 
 describe("bounded subaward source page", () => {
+  it("uses exact provider pairs for prime and same-day subaward requests beyond the offset ceiling", async () => {
+    const after = { lastRecordUniqueId: 567, lastRecordSortValue: "1693526400000" };
+    mocks.fetch.mockResolvedValue({ results: [{ generated_internal_id: "A1", "Recipient Name": "Acme", "Sub-Award ID": "S1" }],
+      page_metadata: { hasNext: true, last_record_unique_id: 456, last_record_sort_value: "1693526400000" } });
+    const prime = await searchContractAwardsPage("Acme", 701, "2026-09-18", 100, 5000, after);
+    const sub = await searchReceivedContractSubawardsPage("Acme", 701, "2026-09-01", 5000, "2026-09-01", after);
+    expect(prime.nextCursor).toEqual({ lastRecordUniqueId: 456, lastRecordSortValue: "1693526400000" });
+    expect(sub.nextCursor).toEqual(prime.nextCursor);
+    for (const call of mocks.fetch.mock.calls) expect(JSON.parse(call[1].body)).toMatchObject({
+      page: 701, last_record_unique_id: 567, last_record_sort_value: "1693526400000", limit: 100,
+    });
+    expect(JSON.parse(mocks.fetch.mock.calls[1][1].body).filters.time_period).toEqual([{ start_date: "2026-09-01", end_date: "2026-09-01" }]);
+  });
+  it("keeps sequential search partial if a next pair disappears or repeats", async () => {
+    const after = { lastRecordUniqueId: 567, lastRecordSortValue: "1693526400000" };
+    mocks.fetch.mockResolvedValue({ results: [{ generated_internal_id: "A1", "Recipient Name": "Acme" }], page_metadata: { hasNext: true } });
+    await expect(searchContractAwardsPage("Acme", 701, "2026-09-18", 100, undefined, after)).rejects.toThrow("omitted");
+    mocks.fetch.mockResolvedValue({ results: [{ "Sub-Award ID": "S1" }],
+      page_metadata: { hasNext: true, last_record_unique_id: 567, last_record_sort_value: "1693526400000" } });
+    await expect(searchReceivedContractSubawardsPage("Acme", 701, "2026-09-01", undefined, "2026-09-01", after)).rejects.toThrow("did not advance");
+  });
   it("uses one20second attempt and preserves nested prime provenance", async () => {
     mocks.fetch.mockResolvedValue({ results: [{ "Prime Award ID": "P1", "Prime Recipient Name": "Prime", "Prime Award Recipient UEI": "ABCDEFGHIJKL",
       Subawards: [{ "Sub-Award ID": "S1", "Sub-Recipient UEI": "ZYXWVUTSRQPO" }] }], page_metadata: { hasNext: true } });

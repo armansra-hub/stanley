@@ -1,0 +1,149 @@
+import { describe, expect, it, vi } from "vitest";
+import { jevSignalType, publishJevFinding, type JevPublicationObservation } from "./publish";
+import type { EvaluateEvidenceResult } from "./evaluation";
+
+const now = Date.parse("2026-09-18T12:00:00Z");
+const company = { id: "11111111-1111-4111-8111-111111111111", name: "Blue River Services", status: "new" };
+const text = "Blue River Services opened a second operating site and expanded its project delivery team.";
+const observation: JevPublicationObservation = { id: "22222222-2222-4222-8222-222222222222", company_id: company.id, source_kind: "news", source_url: "https://blueriver.com/news/expansion", title: "Blue River adds a second operating site", evidence_text: text, event_date: "2026-09-17T00:00:00Z", observed_at: "2026-09-18T00:00:00Z", is_current: true, metadata: {} };
+const evaluation: Extract<EvaluateEvidenceResult, { ok: true }> = { ok: true, model: "jev-1.13.0", questionVersion: "stanley-evidence-v1",
+  attributes: { signalType: "press", companyRelationship: "direct", evidenceSectionId: "s1", companyRelevance: .93, concreteEvent: .88, isAcquirer: .12,
+    operationalComplexity: .71, growthRelevance: .87, evidenceStrength: .76, requiresResearch: .41 }, criteria: { multi_location: .94 },
+  metadata: { provider: "typesafe-direct", responseModel: "jev-1.13.0", confidence: { signalType: .91 } }, usage: { inputTokens: 800, outputTokens: 20 } };
+const input = () => ({ company: { ...company }, observation: structuredClone(observation), evaluation: structuredClone(evaluation), passage: { start: 0, end: text.length, text } });
+
+function fixture() {
+  let saved: any = null;
+  const record = vi.fn(async (companyId, trigger) => { saved = { id: "trigger1", company_id: companyId, type: trigger.type, source_url: trigger.source_url,
+    source_name: trigger.source_name, summary: trigger.summary, signal_date: trigger.signal_date, metadata: { jevFinding: trigger.jevFinding, intelligenceEvidence: trigger.intelligenceEvidence } }; return true; });
+  const find = vi.fn(async () => saved);
+  const reheat = vi.fn().mockResolvedValue(true);
+  const priority = vi.fn().mockResolvedValue(50);
+  return { record, find, reheat, priority, now: () => now, setSaved: (value: any) => { saved = value; }, getSaved: () => saved };
+}
+
+describe("direct Jev publication", () => {
+  it("publishes raw Jev attributes and scores, model version and exact passage without second-model review", async () => {
+    const deps = fixture();
+    expect(await publishJevFinding(input(), deps)).toMatchObject({ status: "published", triggerId: "trigger1" });
+    const metadata = deps.getSaved().metadata;
+    expect(metadata.jevFinding).toMatchObject({ interpretation: "jev", independentlyVerified: false, model: evaluation.model,
+      questionVersion: evaluation.questionVersion, attributes: evaluation.attributes, criteria: evaluation.criteria, confidence: evaluation.metadata.confidence, usage: evaluation.usage });
+    expect(metadata.intelligenceEvidence).toEqual({ observationId: observation.id, excerpt: text, start: 0, end: text.length, observedAt: observation.observed_at });
+    expect(deps.reheat).toHaveBeenCalledWith(company.id, "press", observation.source_url, observation.event_date);
+    expect(deps.priority).toHaveBeenCalledWith(company.id);
+  });
+  it("uses exact stored receipt on retry and does not insert a second trigger", async () => {
+    const deps = fixture();
+    const first = await publishJevFinding(input(), deps);
+    const retry = await publishJevFinding(input(), deps);
+    expect(retry).toEqual({ ...first, status: "already_published" });
+    expect(deps.record).toHaveBeenCalledTimes(1);
+    expect(deps.priority).toHaveBeenCalledTimes(2);
+  });
+  it("accepts JSONB key reordering in a byte-equivalent source receipt", async () => {
+    const deps = fixture();
+    await publishJevFinding(input(), deps);
+    const saved = deps.getSaved();
+    saved.metadata.intelligenceEvidence = Object.fromEntries(Object.entries(saved.metadata.intelligenceEvidence).reverse());
+    saved.metadata.jevFinding = Object.fromEntries(Object.entries(saved.metadata.jevFinding).reverse());
+    expect((await publishJevFinding(input(), deps)).status).toBe("already_published");
+  });
+  it("never treats recordTrigger false as a persistence receipt", async () => {
+    const deps = fixture();
+    deps.record.mockResolvedValue(false);
+    await expect(publishJevFinding(input(), deps)).rejects.toThrow("no exact source receipt");
+    expect(deps.priority).not.toHaveBeenCalled();
+  });
+  it("recovers a concurrently inserted exact finding even when insert returns false", async () => {
+    const deps = fixture();
+    const insert = deps.record.getMockImplementation()!;
+    deps.record.mockImplementation(async (id, trigger) => { await insert(id, trigger); return false; });
+    expect((await publishJevFinding(input(), deps)).status).toBe("already_published");
+  });
+  it("retries an interrupted priority update from the saved trigger receipt", async () => {
+    const deps = fixture();
+    deps.priority.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(publishJevFinding(input(), deps)).rejects.toThrow("database unavailable");
+    expect((await publishJevFinding(input(), deps)).status).toBe("already_published");
+    expect(deps.record).toHaveBeenCalledTimes(1);
+  });
+  it("requires strict post-insert reheat completion before returning publication success", async () => {
+    const deps = fixture();
+    deps.reheat.mockRejectedValueOnce(new Error("reheat unavailable"));
+    await expect(publishJevFinding(input(), deps)).rejects.toThrow("reheat unavailable");
+    expect(deps.priority).not.toHaveBeenCalled();
+    expect((await publishJevFinding(input(), deps)).status).toBe("already_published");
+  });
+  it("throws when a supposedly inserted finding loses metadata or has a changed source passage", async () => {
+    const deps = fixture();
+    const insert = deps.record.getMockImplementation()!;
+    deps.record.mockImplementation(async (id, trigger) => { await insert(id, trigger); delete deps.getSaved().metadata.jevFinding; return true; });
+    await expect(publishJevFinding(input(), deps)).rejects.toThrow("metadata was not retained");
+    const good = fixture();
+    await publishJevFinding(input(), good);
+    good.getSaved().metadata.intelligenceEvidence.excerpt = "changed";
+    await expect(publishJevFinding(input(), good)).rejects.toThrow("receipt mismatch");
+  });
+  it("preserves a pre-existing different article interpretation under the established dedupe key", async () => {
+    const deps = fixture();
+    deps.setSaved({ id: "legacy1", company_id: company.id, type: "ma", source_url: observation.source_url, metadata: {} });
+    expect(await publishJevFinding(input(), deps)).toEqual({ status: "not_eligible", reason: "source_already_recorded", triggerId: "legacy1" });
+    expect(deps.record).not.toHaveBeenCalled();
+    expect(deps.priority).not.toHaveBeenCalled();
+  });
+  it("preserves verified-government publication for every government type and capture", async () => {
+    for (const signalType of ["gov_contract", "federal_award", "federal_subaward", "sam_award_notice"] as const) {
+      expect(jevSignalType({ ...evaluation, attributes: { ...evaluation.attributes, signalType } }, observation.event_date, now)).toBeNull();
+    }
+    const deps = fixture();
+    const request = input(); request.observation.source_kind = "government";
+    expect(await publishJevFinding(request, deps)).toMatchObject({ status: "not_eligible", reason: "government_publisher_required" });
+    expect(deps.record).not.toHaveBeenCalled();
+  });
+  it("keeps undated, future, stale, unrelated and low-relevance output on the raw observation only", async () => {
+    for (const date of [null, "2026-10-18", "2020-01-01", "invalid"]) expect(jevSignalType(evaluation, date, now)).toBeNull();
+    expect(jevSignalType({ ...evaluation, attributes: { ...evaluation.attributes, companyRelationship: "related" } }, observation.event_date, now)).toBeNull();
+    expect(jevSignalType({ ...evaluation, attributes: { ...evaluation.attributes, companyRelevance: .3 } }, observation.event_date, now)).toBeNull();
+    const deps = fixture(); const request = input(); request.observation.event_date = null;
+    expect((await publishJevFinding(request, deps)).status).toBe("not_eligible");
+    expect(deps.record).not.toHaveBeenCalled();
+  });
+  it("rejects wrong-account, unsafe source and invented/misaligned passage without publication", async () => {
+    const deps = fixture(); const wrong = input(); wrong.observation.company_id = "other";
+    await expect(publishJevFinding(wrong, deps)).rejects.toThrow("account mismatch");
+    const unsafe = input(); unsafe.observation.source_url = "http://127.0.0.1/private";
+    await expect(publishJevFinding(unsafe, deps)).rejects.toThrow();
+    const invented = input(); invented.passage.text = "Invented passage";
+    await expect(publishJevFinding(invented, deps)).rejects.toThrow("passage mismatch");
+    expect(deps.record).not.toHaveBeenCalled();
+  });
+  it("bounds provider metadata without leaking arbitrary provider fields", async () => {
+    const deps = fixture(); const request = input();
+    (request.evaluation.metadata as any).rawProviderError = "do not persist";
+    await publishJevFinding(request, deps);
+    expect(JSON.stringify(deps.getSaved())).not.toContain("do not persist");
+    const invalid = input(); invalid.evaluation.criteria = Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`c${i}`, .5]));
+    await expect(publishJevFinding(invalid, fixture())).rejects.toThrow("metadata");
+  });
+  it("preserves native scores, choices, probabilities and legends without reconciling model judgments", async () => {
+    const deps = fixture(); const request = input();
+    request.evaluation.metadata.rawAnswers = {
+      operationalComplexity: { type: "score", score: 3.72, probabilities: { "0": .1, "1": .2, "2": .7 }, legend: { "0": "No operating change", "1": "Some change", "2": "Multiple operating changes" }, confidence: .61 },
+      signalType: { type: "choice", choice: "press", probabilities: { press: .84, none: .16 }, confidence: .72 },
+      concreteEvent: { type: "noul", noul: .887, confidence: .81 },
+    };
+    await publishJevFinding(request, deps);
+    expect(deps.getSaved().metadata.jevFinding.rawAnswers).toEqual(request.evaluation.metadata.rawAnswers);
+    expect(deps.getSaved().metadata.jevFinding.attributes.operationalComplexity).toBe(.71);
+  });
+  it("allows valid ATS finance evidence URLs while preserving existing company policy", async () => {
+    const deps = fixture(); const request = input();
+    request.evaluation.attributes.signalType = "finance_hire";
+    request.observation.source_kind = "job";
+    request.observation.source_url = "https://jobs.lever.co/blueriver/controller-123";
+    expect((await publishJevFinding(request, deps)).status).toBe("published");
+    const blocked = input(); blocked.company.name = "Blue River Accounting Firm"; blocked.evaluation.attributes.signalType = "finance_hire";
+    expect((await publishJevFinding(blocked, fixture())).status).toBe("not_eligible");
+  });
+});

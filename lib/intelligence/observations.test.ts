@@ -9,6 +9,8 @@ describe("durable observation identity", () => {
     expect(canonicalEvidenceUrl(base.sourceUrl)).toBe("https://example.com/news?article=2");
     expect(prepareObservation(base).contentHash).toBe(prepareObservation({ ...base, observedAt: "2026-09-18T00:00:00Z" }).contentHash);
     expect(prepareObservation(base).contentHash).not.toBe(prepareObservation({ ...base, companyDomain: "example.com" }).contentHash);
+    expect(prepareObservation(base).sourceKey).toBe(prepareObservation({ ...base, sourceKind: "news" }).sourceKey);
+    expect(prepareObservation(base).contentHash).toBe(prepareObservation({ ...base, sourceKind: "news" }).contentHash);
   });
   it("keeps exact source spans and marks bounded public captures", () => {
     const text = "First paragraph.\n".repeat(800);

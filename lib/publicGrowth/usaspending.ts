@@ -1,6 +1,7 @@
 import "server-only";
 import { fetchJson } from "./http";
 import { SUBAWARD_HISTORY_START, SUBAWARD_SEARCH_PAGE_SIZE } from "./subawardPartitions";
+import { usaspendingCursorRequest, usaspendingNextCursor, type UsaspendingSearchAfter, type UsaspendingSearchCursor } from "./usaspendingCursor";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -34,6 +35,7 @@ export interface AwardSearchRow {
 export interface AwardSearchPage {
   rows: AwardSearchRow[];
   hasNext: boolean;
+  nextCursor?: UsaspendingSearchCursor;
 }
 
 function awardSearchRow(x: any): AwardSearchRow {
@@ -53,11 +55,13 @@ export async function searchContractAwardsPage(
   endDate: string,
   limit = 100,
   deadlineMs?: number,
+  searchAfter?: UsaspendingSearchAfter,
 ): Promise<AwardSearchPage> {
   const body = {
     filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
     fields: ["Award ID", "Recipient Name", "Recipient UEI", "Award Amount", "Awarding Agency", "Awarding Sub Agency", "Funding Agency", "Funding Sub Agency", "Description", "Start Date", "End Date"],
     limit: Math.max(1, Math.min(100, Math.trunc(limit))), page: Math.max(1, Math.trunc(page)), sort: "Start Date", order: "desc",
+    ...usaspendingCursorRequest(searchAfter),
   };
   const data = await fetchJson<any>(`${API}/search/spending_by_award/`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -67,7 +71,9 @@ export async function searchContractAwardsPage(
   }
   const rows: AwardSearchRow[] = data.results.map(awardSearchRow);
   if (rows.some((row) => !row.generatedId || !row.recipientName)) throw new Error("award search page contains invalid identity rows");
-  return { rows: [...new Map(rows.map((row: AwardSearchRow) => [row.generatedId, row])).values()], hasNext: data.page_metadata.hasNext };
+  const nextCursor = usaspendingNextCursor(data.page_metadata, data.results.length, searchAfter);
+  return { rows: [...new Map(rows.map((row: AwardSearchRow) => [row.generatedId, row])).values()], hasNext: data.page_metadata.hasNext,
+    ...(nextCursor ? { nextCursor } : {}) };
 }
 
 export async function searchContractAwards(recipient: string, startDate = "2007-10-01", endDate = new Date(Date.now() + 120 * 86_400_000).toISOString().slice(0, 10), maxPages = 100): Promise<AwardSearchRow[]> {
@@ -103,11 +109,13 @@ export async function searchReceivedContractSubawards(recipient: string, startDa
 /** A single provider page; callers persist stable IDs before moving the cursor. */
 export async function searchReceivedContractSubawardsPage(
   recipient: string, page: number, endDate: string, deadlineMs?: number, startDate = SUBAWARD_HISTORY_START,
-): Promise<{ rows: any[]; hasNext: boolean; sourceResultCount: number }> {
+  searchAfter?: UsaspendingSearchAfter,
+): Promise<{ rows: any[]; hasNext: boolean; sourceResultCount: number; nextCursor?: UsaspendingSearchCursor }> {
   const body = {
     filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: startDate, end_date: endDate }] },
     fields: ["Sub-Award ID", "Sub-Awardee Name", "Sub-Award Date", "Sub-Award Amount", "Sub-Award Description", "Sub-Recipient UEI", "Awarding Agency", "Awarding Sub Agency", "Prime Award ID", "Prime Recipient Name", "Prime Award Recipient UEI"],
     limit: SUBAWARD_SEARCH_PAGE_SIZE, page: Math.max(1, Math.trunc(page)), sort: "Sub-Award Date", order: "desc", subawards: true, spending_level: "subawards",
+    ...usaspendingCursorRequest(searchAfter),
   };
   const data = await fetchJson<any>(`${API}/search/spending_by_award/`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -127,7 +135,8 @@ export async function searchReceivedContractSubawardsPage(
       "Sub-Recipient UEI": sub["Sub-Recipient UEI"] ?? result["Sub-Recipient UEI"] ?? null,
     });
   }
-  return { rows, hasNext: data.page_metadata.hasNext, sourceResultCount: data.results.length };
+  const nextCursor = usaspendingNextCursor(data.page_metadata, data.results.length, searchAfter);
+  return { rows, hasNext: data.page_metadata.hasNext, sourceResultCount: data.results.length, ...(nextCursor ? { nextCursor } : {}) };
 }
 
 export async function fetchAwardDetail(generatedId: string, attempts = 3, deadlineMs?: number): Promise<any> {

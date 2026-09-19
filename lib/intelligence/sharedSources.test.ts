@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildSharedAccountIndex, parseSharedFeed, rankSharedSources, runSharedSources, type SharedAccount, type SharedItem, type SharedSource, type SharedSourceStore } from "./sharedSources";
+import { buildSharedAccountIndex, feedbackSourceOrder, parseSharedFeed, rankSharedSources, runSharedSources, type SharedAccount, type SharedItem, type SharedSource, type SharedSourceStore } from "./sharedSources";
 
 const now = Date.parse("2026-09-18T12:00:00Z");
 const account = (id: string, name = "Blue River Services", state = "WA"): SharedAccount => ({ id, name, state, city: "Seattle", domain: "blueriver.com", netsuite_internal_id: id });
@@ -24,6 +24,12 @@ beforeEach(() => vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "true"));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("shared source parsing and account retrieval", () => {
+  it("preserves the oldest quiet source while recorded outcomes order remaining capacity", () => {
+    const ranked = rankSharedSources([source("quiet", { states: ["VA"], next_fetch_at: "2026-09-16" }), source("useful"), source("not_now")], [account("1")]);
+    const ordered = feedbackSourceOrder(ranked, { quiet: .9, useful: 1.02, not_now: .98 });
+    expect(ordered.map(entry => entry.source.id)).toEqual(["quiet", "useful", "not_now"]);
+    expect(feedbackSourceOrder(ranked, { quiet: 100, useful: -100, not_now: 100 })[0].source.id).toBe("quiet");
+  });
   it("distinguishes valid empty feeds from HTML, malformed feeds and unsafe article links", async () => {
     expect(await parseSharedFeed('<rss version="2.0"><channel><title>Empty</title></channel></rss>', source().url)).toEqual([]);
     await expect(parseSharedFeed("<html>blocked</html>", source().url)).rejects.toThrow("not_rss");

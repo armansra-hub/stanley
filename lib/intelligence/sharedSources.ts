@@ -5,6 +5,7 @@ import { serviceClient } from "@/lib/supabase/server";
 import { fetchPublicHttpText, validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
 import { htmlToVisibleText, sitePageEvidence } from "@/lib/sources/siteDiscovery";
 import { canonicalEvidenceUrl, enqueueObservation, intelligenceEnabled, type ObservationInput } from "./observations";
+import { getSourceAttentionWeights } from "./feedback";
 
 export type SharedSource = {
   id: string; name: string; url: string; enabled: boolean; format: string;
@@ -41,6 +42,17 @@ export function rankSharedSources(sources: SharedSource[], accounts: SharedAccou
     const supported = source.free_access && SUPPORTED.has(source.format) && !!source.verified_at;
     return { source, accountCount, supported };
   }).sort((a, b) => Number(b.supported) - Number(a.supported) || b.accountCount - a.accountCount || a.source.id.localeCompare(b.source.id));
+}
+
+/** One oldest source always receives baseline capacity. Remaining capacity uses
+ * account concentration with explicit recorded-feedback weights limited to ±10%. */
+export function feedbackSourceOrder(ranked: ReturnType<typeof rankSharedSources>, weights: Record<string, number>) {
+  const oldest = [...ranked].sort((a, b) => Date.parse(a.source.next_fetch_at) - Date.parse(b.source.next_fetch_at) || a.source.id.localeCompare(b.source.id));
+  const baseline = oldest.shift();
+  const weight = (id: string) => Number.isFinite(weights[id]) ? Math.max(.9, Math.min(1.1, weights[id])) : 1;
+  oldest.sort((a, b) => Math.max(1, b.accountCount) * weight(b.source.id) - Math.max(1, a.accountCount) * weight(a.source.id)
+    || Date.parse(a.source.next_fetch_at) - Date.parse(b.source.next_fetch_at) || a.source.id.localeCompare(b.source.id));
+  return baseline ? [baseline, ...oldest] : [];
 }
 
 /** Build one token/domain index per invocation; each item inspects only indexed candidates. */
@@ -98,6 +110,7 @@ export interface SharedSourceStore {
   enabled(): Promise<boolean>;
   sources(): Promise<SharedSource[]>;
   accounts(): Promise<SharedAccount[]>;
+  attentionWeights?(): Promise<Record<string, number>>;
   claim(id: string): Promise<SharedSource | null>;
   snapshot(source: SharedSource, items: SharedItem[] | null, error: string | null): Promise<void>;
   pending(source: SharedSource, limit: number): Promise<SharedItem[]>;
@@ -115,6 +128,7 @@ function databaseStore(): SharedSourceStore {
   return {
     async enabled() { const { data, error } = await db.from("intelligence_config").select("enabled").eq("id", 1).single(); check(error); return data?.enabled === true; },
     async sources() { const { data, error } = await db.from("intelligence_shared_sources").select("*").eq("enabled", true).order("id").limit(100); check(error); return data ?? []; },
+    attentionWeights: getSourceAttentionWeights,
     async accounts() {
       const result: SharedAccount[] = [];
       // Keyset pages, minimum public account context only. Never load CRM notes.
@@ -154,13 +168,13 @@ export async function runSharedSources(deps: Dependencies = {}) {
   if (!sources.length) return result;
   const accounts = await store.accounts();
   const match = buildSharedAccountIndex(accounts);
-  const ranked = rankSharedSources(sources, accounts).filter((entry) => entry.supported && entry.source.enabled);
+  const weights = store.attentionWeights ? await store.attentionWeights() : {};
+  const ranked = feedbackSourceOrder(rankSharedSources(sources, accounts).filter((entry) => entry.supported && entry.source.enabled), weights);
   const fetchText = deps.fetchText ?? fetchPublicHttpText;
   const enqueue = deps.enqueue ?? enqueueObservation;
   const now = deps.now ?? Date.now;
   const deadline = now() + 210_000;
-  // Overdue sources first, concentration breaks ties. This prevents a large state starving a small one.
-  ranked.sort((a, b) => Date.parse(a.source.next_fetch_at) - Date.parse(b.source.next_fetch_at) || b.accountCount - a.accountCount || a.source.id.localeCompare(b.source.id));
+  // The oldest source retains a baseline slot independent of feedback.
   for (const entry of ranked) {
     if (result.claimed >= 3 || now() >= deadline) break;
     const source = await store.claim(entry.source.id);

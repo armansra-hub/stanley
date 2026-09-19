@@ -16,10 +16,14 @@ import {
   type TriggerEvidence,
 } from "@/lib/triggers/signalIntegrity";
 import { triggerIsAfterReviewBoundary } from "@/lib/triggers/freshness";
+import { readTriggerSourceEvidence, type TriggerSourceEvidence } from "@/lib/intelligence/triggerEvidence";
+import { intelligenceEnabled } from "@/lib/intelligence/observations";
+import { getPublicFeedbackWeight } from "@/lib/intelligence/feedback";
+import type { JevFindingReceipt } from "@/lib/intelligence/publish";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-export interface TriggerInput { type: string; summary: string; source_name?: string; source_url?: string | null; signal_date?: string | null }
+export interface TriggerInput { type: string; summary: string; source_name?: string; source_url?: string | null; signal_date?: string | null; intelligenceEvidence?: TriggerSourceEvidence | null; jevFinding?: JevFindingReceipt | null }
 export interface TriggerRow { id: string; company_id: string; type: string; strength: number; half_life_days: number; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; metadata?: Record<string, unknown> | null }
 
 /** Homepage growth phrases were historically stored with a fabricated /# anchor.
@@ -50,6 +54,10 @@ export async function recordTrigger(companyId: string, t: TriggerInput): Promise
   const { error } = await db.from("triggers").insert({
     company_id: companyId, type: t.type, strength: spec.strength, half_life_days: spec.half_life_days,
     summary: t.summary.slice(0, 280), source_name: t.source_name ?? null, source_url: t.source_url ?? null, signal_date: t.signal_date ?? null,
+    ...(readTriggerSourceEvidence({ intelligenceEvidence: t.intelligenceEvidence }) ? { metadata: {
+      intelligenceEvidence: t.intelligenceEvidence,
+      ...(t.jevFinding && Buffer.byteLength(JSON.stringify(t.jevFinding), "utf8") <= 48_000 ? { jevFinding: t.jevFinding } : {}),
+    } } : {}),
   });
   if (error) return false; // unique-index violation on a dupe
   await reheatCompanyForFreshSignal(companyId, t.type, t.source_url ?? null, t.signal_date ?? null).catch(() => {});
@@ -127,7 +135,8 @@ export async function recomputePriority(companyId: string): Promise<number> {
   if (graded !== null && graded !== undefined && Number(graded) <= 0) verdictFactor = 0.1;
   else if (digest.includes("points to disqualification")) verdictFactor = 0.35;
   else if (digest.includes("some historical fit or pain exists")) verdictFactor = 0.85;
-  const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * 100) / 100;
+  const feedbackWeight = intelligenceEnabled() ? await getPublicFeedbackWeight(companyId) : 1;
+  const priority = Math.round(best * fit * listBonus * multiBonus * incumbentFactor * peFactor * deadFactor * verdictFactor * feedbackWeight * 100) / 100;
   const { error: updateError } = await db.from("companies").update({ priority }).eq("id", companyId);
   if (updateError) throw new Error(`priority update failed: ${updateError.message}`);
   return priority;
@@ -531,7 +540,7 @@ export async function markSosChecked(ids: string[]): Promise<void> {
 }
 
 /** Map a mapCompany-shaped row + attach the top trigger (for the Triggered worklist). */
-export interface TriggerPreview { type: string; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string }
+export interface TriggerPreview { type: string; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; source_evidence?: TriggerSourceEvidence | null }
 export interface TriggeredCompany extends Company { priority?: number; top_trigger?: TriggerPreview | null; all_triggers?: TriggerPreview[]; trigger_count?: number; trigger_types?: string[]; insights?: InsightBadge[] }
 
 /** The synthetic "signal" for DOL-5500 headcount leads in the signal-type filter
@@ -596,7 +605,7 @@ export async function listTriggered(opts: { limit?: number; offset?: number; inc
       }
       return live(b) - live(a);
     });
-    const all_triggers: TriggerPreview[] = sorted.map((t) => ({ type: t.type, summary: t.summary, source_name: t.source_name, source_url: t.source_url, signal_date: t.signal_date, detected_at: t.detected_at }));
+    const all_triggers: TriggerPreview[] = sorted.map((t) => ({ type: t.type, summary: t.summary, source_name: t.source_name, source_url: t.source_url, signal_date: t.signal_date, detected_at: t.detected_at, source_evidence: readTriggerSourceEvidence(t.metadata) }));
     const { triggers, ...rest } = r; void triggers;
     const trigger_types = [...new Set(trigs.map((t) => t.type))];
     const { rest: rest2, insights } = withInsights(rest);

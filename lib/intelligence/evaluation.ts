@@ -21,6 +21,14 @@ export interface EvaluateEvidenceInput {
   sourceKind?: string;
   sourceUrl?: string;
   title?: string;
+  /** Source-reported event timing, preserved as supplied; never default to collection time. */
+  eventDate?: string;
+  /** When this source was collected, distinct from the date of its described event. */
+  observedAt?: string;
+  /** Caller-supplied public company background, not private CRM notes or proof of this event. */
+  companyContext?: string;
+  /** Verbatim nearby text from this same source, supplied by the caller for attribution. */
+  surroundingContext?: string;
   privacy?: "public" | "private_excerpt";
   criteria?: readonly SemanticCriterion[];
   /** Candidate verbatim spans of text; the model selects an ID, never generates a quote. */
@@ -69,7 +77,16 @@ export interface EvaluationMetadata {
   responseModel?: string;
   /** Provider-reported distribution concentration, not a correctness certificate. */
   confidence?: Record<string, number>;
+  /** Native typed answers for requested questions, without score normalization,
+   * recalibration or a second model. Unknown response fields are not copied. */
+  rawAnswers?: Record<string, RawEvaluationAnswer>;
 }
+
+export type RawEvaluationAnswer = (
+  | { type: "noul"; noul: number }
+  | { type: "choice"; choice: string; probabilities?: Record<string, number> }
+  | { type: "score"; score: number; probabilities?: Record<string, number>; legend?: Record<string, string> }
+) & { confidence?: number };
 
 export type EvaluateEvidenceResult = {
   model: string;

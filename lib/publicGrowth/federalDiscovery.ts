@@ -7,6 +7,8 @@ import { stableHash } from "./storage";
 import { assertFrozenFederalIdentities, federalSearchTargets, loadVerifiedFederalIdentities,
   matchesFederalIdentifiers, targetAcceptsSearchRow, type VerifiedFederalIdentity } from "./federalIdentity";
 import { parseFederalDiscoveryContinuation, type FederalDiscoveryContinuation } from "./federalDiscoveryState";
+import { advanceUsaspendingCursor, isUsaspendingResultWindowError, usaspendingCursorRequest, usaspendingNextCursor,
+  USASPENDING_LEGACY_PAGE_BUDGET, type UsaspendingSearchAfter } from "./usaspendingCursor";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -55,14 +57,14 @@ async function currentCompany(id: string) {
 }
 const companyIdentity = (c: any) => stableHash([c.id, c.name, c.domain, c.website_raw, c.city, c.state, c.netsuite_internal_id]);
 
-// A bounded discovery read deliberately validates the provider shape. The older
-// history search adapter defaults absent results/pagination to an empty page.
-async function searchPage(name: string, page: number, endDate: string, deadlineMs: number) {
+// A bounded discovery read validates source shape and paired sequential cursors.
+async function searchPage(name: string, page: number, endDate: string, deadlineMs: number, searchAfter?: UsaspendingSearchAfter) {
   const data = await fetchJson<any>(SEARCH_URL, {
     method: "POST", redirect: "error", headers: { "content-type": "application/json" },
     body: JSON.stringify({ filters: { recipient_search_text: [name], award_type_codes: ["A", "B", "C", "D"],
       time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
-    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page, sort: "Start Date", order: "desc" }),
+    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page, sort: "Start Date", order: "desc",
+    ...usaspendingCursorRequest(searchAfter) }),
   }, 20_000, 1, deadlineMs);
   if (!data || !Array.isArray(data.results) || data.results.length > 100 || typeof data.page_metadata?.hasNext !== "boolean") {
     fail("invalid_search_response");
@@ -73,7 +75,7 @@ async function searchPage(name: string, page: number, endDate: string, deadlineM
     if (!id || id.length > 500 || !name || (row["Recipient UEI"] != null && !text(row["Recipient UEI"]))) fail("invalid_search_response");
     return { id, name, uei: text(row["Recipient UEI"]) };
   }) as Array<{ id: string; name: string; uei: string | null }>;
-  return { rows, hasNext: data.page_metadata.hasNext as boolean };
+  return { rows, hasNext: data.page_metadata.hasNext as boolean, nextCursor: usaspendingNextCursor(data.page_metadata, rows.length, searchAfter) };
 }
 type Entity = { id: string; uei: string | null; usaspending_recipient_id: string | null; legal_name: string };
 async function entityBy(field: string, value: string): Promise<Entity | null> {
@@ -153,8 +155,19 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
       assertFrozenFederalIdentities(state.targets.flatMap((target) => target.identity ? [target.identity] : []), identities);
       const target = state.targets[state.targetIndex];
       if (!target.identity && normalizeName(target.query) !== normalizeName(company.name)) fail("invalid_unbound_query");
-      stage = "award_search"; requirePublicGrowthTime(deadline); sourceRequests++;
-      const page = await searchPage(target.query, state.page, state.searchEndDate, deadline);
+      stage = "award_search"; requirePublicGrowthTime(deadline);
+      if (state.searchAfter === undefined && state.page >= USASPENDING_LEGACY_PAGE_BUDGET) {
+        state.page = 1; state.lastPageHash = null; state.searchAfter = null;
+        return receipt("in_progress", "legacy_search_restarts_with_sequential_cursor");
+      }
+      sourceRequests++;
+      let page: Awaited<ReturnType<typeof searchPage>>;
+      try { page = await searchPage(target.query, state.page, state.searchEndDate, deadline, state.searchAfter); }
+      catch (error) {
+        if (state.searchAfter !== undefined || !isUsaspendingResultWindowError(error)) throw error;
+        state.page = 1; state.lastPageHash = null; state.searchAfter = null;
+        return receipt("in_progress", "provider_window_restarts_with_sequential_cursor");
+      }
       const pageHash = stableHash(page.rows);
       if (page.hasNext && (!page.rows.length || pageHash === state.lastPageHash)) fail("search_pagination_did_not_advance");
       const candidates = page.rows.filter((row) => targetAcceptsSearchRow(target, { recipientName: row.name, recipientUei: row.uei }));
@@ -167,12 +180,14 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
       // identity. Bound identifiers can accept an exact candidate immediately.
       if (page.hasNext && (!target.identity || !state.candidate)) {
         if (state.page >= 10000) fail("search_partition_limit_requires_review");
+        advanceUsaspendingCursor(state, true, page.nextCursor);
         state.page++; state.lastPageHash = pageHash;
         return receipt("in_progress", "candidate_search_continues");
       }
       if (!state.candidate) {
         if (state.targetIndex + 1 < state.targets.length) {
           state.targetIndex++; state.page = 1; state.lastPageHash = null;
+          if (state.searchAfter !== undefined) state.searchAfter = null;
           return receipt("in_progress", "next_verified_alias");
         }
         return receipt("no_candidate", "no_qualifying_candidate_in_search_window");

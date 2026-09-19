@@ -15,4 +15,11 @@ describe("operating profiles", () => {
   it("does not count the same URL twice as corroboration", () => {
     expect(buildOperatingProfile([row, { ...row, id: "2" }]).topics[0].sources).toHaveLength(1);
   });
+  it("removes an exact corrected source without changing its stored judgments or other evidence", () => {
+    const result = buildOperatingProfile([{ ...row, feedback_excluded: true }]);
+    expect(result.hypotheses).toEqual([]);
+    expect(result.developments).toEqual([]);
+    expect(result.coverage.observations).toBe(0);
+    expect(buildOperatingProfile([{ ...row, feedback_excluded: false }]).hypotheses).toHaveLength(1);
+  });
 });

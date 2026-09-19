@@ -15,9 +15,10 @@ import { parseCsv, rowsToBaseRows, rowsToTalRows } from "@/lib/csv";
 import { ACTORS } from "@/config/actors";
 import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongestSignal } from "./badges";
 import ChatPanel from "./ChatPanel";
+import { readTriggerSourceEvidence, type TriggerSourceEvidence } from "@/lib/intelligence/triggerEvidence";
 
 type Tab = "triggered" | "oldgold" | "tal" | "imported" | "starred" | "history";
-type TriggerPreview = { type: string; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string };
+type TriggerPreview = { type: string; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; source_evidence?: TriggerSourceEvidence | null };
 type InsightBadge = { kind: string; label: string; detail: string | null; evidence: string; evidence_url: string | null; confidence: string };
 
 function download(filename: string, text: string, mime: string) {
@@ -1428,7 +1429,7 @@ function QuickViewTriggerList({
   labels,
   sinceLabel,
 }: {
-  triggers: Array<{ type: string; summary: string; source_name?: string | null; source_url: string | null; signal_date: string | null; detected_at: string }>;
+  triggers: Array<{ type: string; summary: string; source_name?: string | null; source_url: string | null; signal_date: string | null; detected_at: string; source_evidence?: TriggerSourceEvidence | null }>;
   labels: Record<string, string>;
   sinceLabel: (iso: string | null | undefined) => string;
 }) {
@@ -1447,6 +1448,7 @@ function QuickViewTriggerList({
             <div key={`${trigger.type}-${trigger.source_url ?? index}-${trigger.signal_date ?? trigger.detected_at}`}>
               <div className="text-xs font-semibold" style={{ color: "var(--gold)" }}>{trigger.source_name === "LinkedIn" ? "🔗 LinkedIn trigger event" : labels[trigger.type] ?? trigger.type.replace(/_/g, " ")} · {sinceLabel(trigger.signal_date ?? trigger.detected_at)}</div>
               <div className="text-xs text-[var(--text-muted)]">{trigger.summary}</div>
+              <TriggerSourceExcerpt evidence={trigger.source_evidence} />
               {trigger.source_url ? <a href={trigger.source_url} target="_blank" rel="noreferrer" className="text-[11px] text-[var(--accent)] hover:underline" onClick={(e) => e.stopPropagation()}>View source ↗</a> : null}
             </div>
           ))}
@@ -1491,7 +1493,17 @@ function oldGoldIntroCall(c: Company): string | null {
 type DrawerTrigger = {
   id: string; type: string; strength: number; half_life_days: number; summary: string;
   source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; live: number;
+  metadata?: Record<string, unknown> | null;
 };
+
+function TriggerSourceExcerpt({ evidence }: { evidence?: TriggerSourceEvidence | null }) {
+  if (!evidence) return null;
+  return <details className="mt-1 text-xs text-[var(--text-muted)]" onClick={event => event.stopPropagation()}>
+    <summary className="cursor-pointer text-[var(--accent)]">Supporting source passage</summary>
+    <blockquote className="mt-1 border-l-2 pl-2 whitespace-pre-wrap" style={{ borderColor: "var(--border)" }}>{evidence.excerpt}</blockquote>
+    <span className="text-[10px]">Collected {new Date(evidence.observedAt).toLocaleDateString()}</span>
+  </details>;
+}
 
 type PublicGrowthDetail = {
   entities: Array<Record<string, unknown>>;
@@ -1815,6 +1827,7 @@ function DetailDrawer({
                       <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(t.signal_date || t.detected_at)}{t.live < t.strength * 0.5 ? " · fading" : ""}</span>
                     </div>
                     <p className="text-[var(--text-muted)]">{t.summary}</p>
+                    <TriggerSourceExcerpt evidence={readTriggerSourceEvidence(t.metadata)} />
                     {t.source_url && <a href={t.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{t.source_name || "source"} ↗</a>}
                   </div>
                 )} />

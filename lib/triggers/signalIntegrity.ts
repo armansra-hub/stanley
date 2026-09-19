@@ -175,6 +175,7 @@ function hasQuarantineMarker(metadata: Record<string, unknown> | null | undefine
 
 /** Storage-level visibility/scoring gate that does not need company context. */
 export function isPublishableTriggerEvidence(trigger: TriggerEvidence): boolean {
+  if (trigger.metadata?.intelligenceFeedbackExcluded === true) return false;
   if (hasQuarantineMarker(trigger.metadata)) return false;
   if (isLegacyNameOnlyGovernmentTrigger(trigger)) return false;
   // Form D discovery is retired until a filing can be corroborated by a second

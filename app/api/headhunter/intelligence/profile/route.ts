@@ -8,6 +8,7 @@ import { sameCompanySite, sitePageEvidence, sitePageKind } from "@/lib/sources/s
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { runIntelligenceWorker } from "@/lib/intelligence/worker";
 import { logEvent } from "@/lib/db/events";
+import { researchCandidates, type ResearchAttempt } from "@/lib/intelligence/research";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -22,7 +23,7 @@ async function loadProfile(companyId: string) {
   for (let page = 0;; page++) {
     const { data, error: evidenceError } = await db.from("intelligence_observations")
       .select("id,source_url,title,source_kind,event_date,observed_at,evidence_text,attributes")
-      .eq("company_id", companyId).eq("is_current", true).order("id").range(page * 100, page * 100 + 99);
+      .eq("company_id", companyId).eq("is_current", true).eq("feedback_excluded", false).order("id").range(page * 100, page * 100 + 99);
     if (evidenceError) throw new Error("evidence_unavailable");
     rows.push(...(data ?? []) as ProfileObservation[]);
     if ((data?.length ?? 0) < 100) break;
@@ -30,7 +31,7 @@ async function loadProfile(companyId: string) {
   const profile = buildOperatingProfile(rows);
   const state = await readSourceState(companyId, "website");
   const home = company.domain ? `https://${String(company.domain).replace(/^https?:\/\//, "")}` : null;
-  const verified = Array.isArray(state.cursor?.verifiedUrls) ? state.cursor.verifiedUrls.filter((url): url is string => typeof url === "string" && !!home && sameCompanySite(url, home)) : [];
+  const verified = Array.isArray(state.cursor?.verifiedUrls) ? state.cursor.verifiedUrls.filter((url): url is string => typeof url === "string" && url.length <= 2048 && !!home && sameCompanySite(url, home)).slice(0, 100) : [];
   const missing = new Set(profile.topics.filter(topic => topic.state === "unknown").map(topic => topic.id));
   const priority = (url: string) => {
     const kind = sitePageKind(new URL(url).pathname);
@@ -40,8 +41,15 @@ async function loadProfile(companyId: string) {
     if (kind === "news") return 2;
     return 1;
   };
-  const nextSources = [...new Set(verified)].sort((a, b) => priority(b) - priority(a)).slice(0, 3);
-  return { company, profile, nextSources };
+  const [attempts, pending] = await Promise.all([
+    verified.length ? db.from("intelligence_research_attempts").select("source_url,next_attempt_at,last_attempt_at")
+      .eq("company_id", companyId).in("source_url", verified).limit(100) : Promise.resolve({ data: [], error: null }),
+    db.from("intelligence_jobs").select("id,intelligence_observations!inner(company_id)", { count: "exact", head: true })
+      .eq("intelligence_observations.company_id", companyId).in("status", ["queued", "running"]),
+  ]);
+  if (attempts.error || pending.error) throw new Error("research_state_unavailable");
+  const candidates = researchCandidates(verified, (attempts.data ?? []) as ResearchAttempt[], priority);
+  return { company, profile, nextSources: candidates.slice(0, 3), candidates, pendingJobs: pending.count ?? 0 };
 }
 
 export async function GET(req: NextRequest) {
@@ -49,7 +57,10 @@ export async function GET(req: NextRequest) {
   if (!intelligenceEnabled()) return NextResponse.json({ error: "intelligence_disabled" }, { status: 409 });
   const companyId = req.nextUrl.searchParams.get("companyId");
   if (!isUuid(companyId)) return NextResponse.json({ error: "invalid_company" }, { status: 400 });
-  try { return NextResponse.json(await loadProfile(companyId), { headers: { "Cache-Control": "no-store" } }); }
+  try {
+    const { candidates: _candidates, ...result } = await loadProfile(companyId);
+    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
+  }
   catch { return NextResponse.json({ error: "profile_unavailable" }, { status: 503 }); }
 }
 
@@ -61,24 +72,37 @@ export async function POST(req: NextRequest) {
   try { body = await smallJson(req); } catch { return NextResponse.json({ error: "invalid_body" }, { status: 400 }); }
   if (!isUuid(body.companyId)) return NextResponse.json({ error: "invalid_company" }, { status: 400 });
   try {
-    const { company, nextSources } = await loadProfile(body.companyId);
+    const { company, candidates } = await loadProfile(body.companyId);
+    const db = serviceClient();
+    const { data: claims, error: claimError } = await db.rpc("intelligence_research_claim", { p_company: company.id, p_urls: candidates });
+    if (claimError || !Array.isArray(claims)) throw new Error("research_claim_failed");
     // Persist observations during this invocation; acknowledged research is not a
     // volatile in-memory background task. Interpretations use the durable queue.
-    const outcomes = await Promise.all(nextSources.map(async url => {
+    const outcomes = await Promise.all((claims as { source_url: string; lease_token: string }[]).map(async claim => {
+      const url = claim.source_url;
+      let outcome: "queued" | "unchanged" | "source_failed" | "source_empty" = "source_failed";
       try {
         const fetched = await fetchPublicHttpText(url, { timeoutMs: 12000, maxRedirects: 4, maxBytes: 1000000 });
-        if (fetched.status < 200 || fetched.status >= 300 || !sameCompanySite(fetched.finalUrl, url)) return "source_failed";
+        if (fetched.status < 200 || fetched.status >= 300 || !sameCompanySite(fetched.finalUrl, url)) throw new Error("source_failed");
         const page = sitePageEvidence(fetched.body, fetched.finalUrl);
-        if (!page.text.trim()) return "source_empty";
-        const published = page.sourceDates.find(date => date.kind === "published")?.value;
-        const result = await enqueueObservation({ companyId: company.id, companyName: company.name, companyDomain: company.domain,
-          netsuiteInternalId: company.netsuite_internal_id, sourceKind: "website", sourceUrl: page.url, title: page.title || company.name,
-          text: page.text, eventDate: published ?? null, metadata: { focusedResearch: true, sourceDates: page.sourceDates, sourceTruncated: page.truncated } });
-        return result?.queued ? "queued" : "unchanged";
-      } catch { return "source_failed"; }
+        if (!page.text.trim()) outcome = "source_empty";
+        else {
+          const published = page.sourceDates.find(date => date.kind === "published")?.value;
+          const result = await enqueueObservation({ companyId: company.id, companyName: company.name, companyDomain: company.domain,
+            netsuiteInternalId: company.netsuite_internal_id, sourceKind: "website", sourceUrl: page.url, title: page.title || company.name,
+            text: page.text, eventDate: published ?? null, metadata: { focusedResearch: true, sourceDates: page.sourceDates, sourceTruncated: page.truncated } });
+          if (!result) throw new Error("observation_not_persisted");
+          outcome = result.queued ? "queued" : "unchanged";
+        }
+      } catch { outcome = "source_failed"; }
+      const { data: saved, error: finishError } = await db.rpc("intelligence_research_finish", {
+        p_company: company.id, p_url: url, p_lease: claim.lease_token, p_outcome: outcome,
+      });
+      if (finishError || saved !== true) throw new Error("research_completion_failed");
+      return outcome;
     }));
     after(async () => { await runIntelligenceWorker(3, Date.now() + 120000).catch(() => {}); });
-    await logEvent("headhunter", "intelligence.focused_research", { summary: `Refreshed ${nextSources.length} public account sources`, entity_type: "company", entity_id: company.id, meta: { outcomes } });
-    return NextResponse.json({ ok: true, outcomes, sources: nextSources.length });
+    await logEvent("headhunter", "intelligence.focused_research", { summary: `Refreshed ${claims.length} public account sources`, entity_type: "company", entity_id: company.id, meta: { outcomes } });
+    return NextResponse.json({ ok: true, outcomes, sources: claims.length });
   } catch { return NextResponse.json({ error: "research_unavailable" }, { status: 503 }); }
 }

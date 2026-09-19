@@ -12,6 +12,8 @@ import { assertFrozenFederalIdentities, federalSearchTargets, loadVerifiedFedera
   targetAcceptsSearchRow, type VerifiedFederalIdentity } from "./federalIdentity";
 import { currentSubawardWindow, isSubawardResultWindowError, splitSubawardWindow,
   SUBAWARD_PARTITION_PAGE_BUDGET, SUBAWARD_SEARCH_PAGE_SIZE } from "./subawardPartitions";
+import { advanceUsaspendingCursor, isUsaspendingResultWindowError, usaspendingCursorField,
+  USASPENDING_LEGACY_PAGE_BUDGET } from "./usaspendingCursor";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -154,6 +156,7 @@ export async function sweepUsaspendingCompany(
   const receipt: CompanySweepReceipt = { companyId: company.id, companyName: company.name, status: "no_awards", awards: 0, transactions: 0, triggers: 0 };
   try {
     let state = options.awardContinuation ? structuredClone(options.awardContinuation) : null;
+    if (state) Object.assign(state, usaspendingCursorField(state));
     let currentSearchPage: Awaited<ReturnType<typeof searchContractAwardsPage>> | null = null;
     if (!state) {
       const identities = await loadVerifiedFederalIdentities(company.id);
@@ -183,13 +186,32 @@ export async function sweepUsaspendingCompany(
     }
 
     if (!state.pendingAwardId) {
-      const page = currentSearchPage ?? await observePrimeRequest("continuation_award_search", () => searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs));
+      // Legacy offset cursors can be beyond the provider window. Replay the same
+      // frozen scope in sequential mode, retaining completed and excluded IDs.
+      if (state.searchAfter === undefined && state.searchPage >= USASPENDING_LEGACY_PAGE_BUDGET) {
+        state.searchPage = 1; state.searchPassFoundNew = false; state.searchAfter = null;
+        receipt.awardDone = false; return receipt;
+      }
+      let page: Awaited<ReturnType<typeof searchContractAwardsPage>>;
+      try {
+        page = currentSearchPage ?? await observePrimeRequest("continuation_award_search", () => state!.searchAfter === undefined
+          ? searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs)
+          : searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs, state!.searchAfter));
+      } catch (error) {
+        if (state.searchAfter !== undefined || !isUsaspendingResultWindowError(error)) throw error;
+        state.searchPage = 1; state.searchPassFoundNew = false; state.searchAfter = null;
+        receipt.awardDone = false; return receipt;
+      }
       const exactRows = page.rows.filter((row) => target
         ? targetAcceptsSearchRow(target, row) : normalizeName(row.recipientName) === normalizeName(state.recipientName));
       const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew,
         seenIds: [...state.seenAwardIds, ...(state.ignoredAwardIds ?? [])], pageIds: exactRows.map((row) => row.generatedId), hasNext: page.hasNext });
       const nextAward = decision.nextId ? exactRows.find((row) => row.generatedId === decision.nextId) : null;
       if (!nextAward) {
+        // Keep the terminal page's request anchor until metric finalization
+        // succeeds; a database failure must replay that exact page, not an
+        // unanchored high offset. Alias transitions reset it explicitly below.
+        if (!decision.done) advanceUsaspendingCursor(state, page.hasNext, page.nextCursor);
         state.searchPage = decision.page;
         state.searchPassFoundNew = decision.passFoundNew;
         if (decision.done) {
@@ -197,6 +219,7 @@ export async function sweepUsaspendingCompany(
             state.searchTargetIndex = (state.searchTargetIndex ?? 0) + 1;
             const next = state.searchTargets[state.searchTargetIndex];
             state.recipientName = next.query; state.searchPage = 1; state.searchPassFoundNew = false;
+            if (state.searchAfter !== undefined) state.searchAfter = null;
             state.ignoredAwardIds = [];
             state.entityId = next.identity?.entityId ?? null; state.uei = next.identity?.uei ?? null; state.recipientId = next.identity?.recipientId ?? null;
             receipt.awardDone = false; return receipt;
@@ -356,6 +379,17 @@ export interface SubawardCompanyReceipt {
 
 const SUBAWARD_ROWS_PER_STEP = 20;
 
+function partitionOrRestartSubaward(state: PublicGrowthSubawardContinuation, reason: "local_page_budget" | "provider_result_window") {
+  const window = currentSubawardWindow(state);
+  if (window.startDate === window.endDate && state.searchAfter === undefined) {
+    // Same-day searches cannot be split. Replay their exact scope using the
+    // provider pair; never construct a cursor from display dates or award IDs.
+    state.searchPage = 1; state.searchPassFoundNew = false; state.searchAfter = null;
+    return;
+  }
+  splitSubawardWindow(state, reason);
+}
+
 function subawardFields(row: any) {
   const recipientName = String(row["Sub-Awardee Name"] ?? row["Recipient Name"] ?? row.subawardee_name ?? "");
   const primeName = String(row["Prime Recipient Name"] ?? "");
@@ -406,20 +440,22 @@ export async function sweepUsaspendingSubawardsCompany(
       requirePublicGrowthTime(options.deadlineMs);
       // Old cursors may already be past the local work budget. Replay within
       // smaller date scopes while retaining every previously persisted ID.
-      if (state.searchPage > SUBAWARD_PARTITION_PAGE_BUDGET) {
-        splitSubawardWindow(state, "local_page_budget");
+      if (state.searchAfter === undefined && state.searchPage > SUBAWARD_PARTITION_PAGE_BUDGET) {
+        partitionOrRestartSubaward(state, "local_page_budget");
         continue;
       }
       const name = state.names[state.nameIndex];
       const window = currentSubawardWindow(state);
       let page: Awaited<ReturnType<typeof searchReceivedContractSubawardsPage>>;
       try {
-        page = state.searchWindows
+        page = state.searchAfter !== undefined
+          ? await searchReceivedContractSubawardsPage(name, state.searchPage, window.endDate, options.deadlineMs, window.startDate, state.searchAfter)
+          : state.searchWindows
           ? await searchReceivedContractSubawardsPage(name, state.searchPage, window.endDate, options.deadlineMs, window.startDate)
           : await searchReceivedContractSubawardsPage(name, state.searchPage, state.searchEndDate, options.deadlineMs);
       } catch (error) {
-        if (!isSubawardResultWindowError(error)) throw error;
-        splitSubawardWindow(state, "provider_result_window");
+        if (state.searchAfter !== undefined || !isSubawardResultWindowError(error)) throw error;
+        partitionOrRestartSubaward(state, "provider_result_window");
         continue;
       }
       const exactRows = page.rows.filter((row) => {
@@ -462,21 +498,24 @@ export async function sweepUsaspendingSubawardsCompany(
       // A full last budget page is never a completeness claim, even if provider
       // hit-count metadata stops there. Unprocessed page rows recur in a child
       // window; global stable IDs prevent replay from duplicating stored rows.
-      if (state.searchPage >= SUBAWARD_PARTITION_PAGE_BUDGET
+      if (state.searchAfter === undefined && !page.nextCursor && state.searchPage >= SUBAWARD_PARTITION_PAGE_BUDGET
           && (page.hasNext || (page.sourceResultCount ?? page.rows.length) >= SUBAWARD_SEARCH_PAGE_SIZE)) {
-        splitSubawardWindow(state, "local_page_budget");
+        partitionOrRestartSubaward(state, "local_page_budget");
         continue;
       }
       const decision = stableIdPageDecision({ page: state.searchPage, passFoundNew: state.searchPassFoundNew,
         seenIds: state.seenSubawardIds, pageIds: exactRows.map((row) => subawardFields(row).externalId), hasNext: page.hasNext });
+      if (!decision.nextId) advanceUsaspendingCursor(state, page.hasNext, page.nextCursor);
       state.searchPage = decision.page; state.searchPassFoundNew = decision.passFoundNew;
       if (decision.done) {
         if (state.searchWindows && (state.searchWindowIndex ?? 0) + 1 < state.searchWindows.length) {
           state.searchWindowIndex = (state.searchWindowIndex ?? 0) + 1;
           state.searchPage = 1; state.searchPassFoundNew = false;
+          if (state.searchAfter !== undefined) state.searchAfter = null;
           continue;
         }
         state.nameIndex++; state.searchPage = 1; state.searchPassFoundNew = false;
+        if (state.searchAfter !== undefined) state.searchAfter = null;
         if (state.searchWindows) state.searchWindowIndex = 0;
         if (state.nameIndex === state.names.length && state.identities && (state.identityIndex ?? 0) + 1 < state.identities.length) {
           state.identityIndex = (state.identityIndex ?? 0) + 1;

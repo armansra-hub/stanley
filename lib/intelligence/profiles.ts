@@ -17,10 +17,12 @@ export type TopicEvidence = { topic: OperatingTopic; probability: number; start:
 export type ProfileObservation = {
   id: string; source_url: string; title: string; source_kind: string; event_date: string | null; observed_at: string;
   evidence_text: string; attributes: Record<string, unknown> | null;
+  feedback_excluded?: boolean;
 };
 
 /** Evidence-backed public context. It never writes a qualification grade. */
 export function buildOperatingProfile(rows: ProfileObservation[], now = Date.now()) {
+  rows = rows.filter(row => !row.feedback_excluded);
   const topics = Object.entries(OPERATING_TOPICS).map(([id, [label]]) => {
     const sources = rows.flatMap(row => {
       const attributes = row.attributes;

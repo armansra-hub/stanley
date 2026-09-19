@@ -101,13 +101,46 @@ describe("resumable exact-company subaward history", () => {
     expect(result).toMatchObject({ status: "error", subawardDone: false, subawardContinuation: prior });
     expect(result.subawardContinuation?.searchWindows).toBeUndefined();
   });
-  it("keeps an unsplittable same-day overflow partial with its exact cursor", async () => {
+  it("keeps an unsplittable same-day overflow partial when sequential traversal cannot advance", async () => {
+    mocks.page.mockResolvedValue({ rows: [row("old")], hasNext: true });
     const prior = continuation({ searchEndDate: "2007-10-02", searchPage: 101, searchWindowIndex: 1,
       searchWindows: [{ startDate: "2007-10-01", endDate: "2007-10-01" }, { startDate: "2007-10-02", endDate: "2007-10-02" }], seenSubawardIds: ["old"] });
     const result = await sweepUsaspendingSubawardsCompany(company, { subawardContinuation: prior });
-    expect(result).toMatchObject({ status: "error", subawardDone: false, subawardContinuation: prior });
-    expect(result.error).toContain("same-day local_page_budget at 2007-10-02");
-    expect(mocks.page).not.toHaveBeenCalled(); expect(metricWrites).toHaveLength(0);
+    expect(result).toMatchObject({ status: "error", subawardDone: false, subawardContinuation: { ...prior, searchPage: 1, searchAfter: null } });
+    expect(result.error).toContain("omitted its next cursor");
+    expect(mocks.page).toHaveBeenCalledWith("Acme", 1, "2007-10-02", undefined, "2007-10-02", null);
+    expect(metricWrites).toHaveLength(0);
+  });
+  it("recovers a same-day offset overflow using provider pairs and rechecks without duplicate writes", async () => {
+    const pair = { lastRecordUniqueId: 123, lastRecordSortValue: "1191283200000" };
+    mocks.page.mockImplementation((_name, _page, _end, _deadline, _start, after) => Promise.resolve(after
+      ? { rows: [{ ...row("last"), "Sub-Award Date": "2007-10-02" }], hasNext: false }
+      : { rows: [{ ...row("old"), "Sub-Award Date": "2007-10-02" }], hasNext: true, nextCursor: pair }));
+    const prior = continuation({ searchEndDate: "2007-10-02", searchPage: 101, searchWindowIndex: 1,
+      searchWindows: [{ startDate: "2007-10-01", endDate: "2007-10-01" }, { startDate: "2007-10-02", endDate: "2007-10-02" }], seenSubawardIds: ["old"] });
+    const first = await sweepUsaspendingSubawardsCompany(company, { subawardContinuation: prior });
+    expect(first).toMatchObject({ stored: 1, subawardDone: false, subawardContinuation: {
+      searchPage: 1, searchAfter: null, searchWindowIndex: 1, seenSubawardIds: ["old", "last"],
+    } });
+    const final = await sweepUsaspendingSubawardsCompany(company, { subawardContinuation: first.subawardContinuation });
+    expect(final.subawardDone).toBe(true);
+    expect(mocks.save).toHaveBeenCalledTimes(1);
+    expect(mocks.page.mock.calls.map((call) => call[5])).toEqual([null, pair, null, pair]);
+    expect(mocks.page.mock.calls.every((call) => call[2] === "2007-10-02" && call[4] === "2007-10-02")).toBe(true);
+  });
+  it("retains the page anchor until every eligible subaward on a partially stored page completes", async () => {
+    const after = { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" };
+    const next = { lastRecordUniqueId: 122, lastRecordSortValue: "1693526400000" };
+    const records = Array.from({ length: 25 }, (_, i) => row(`S${i}`));
+    mocks.page.mockImplementation((_name, _page, _end, _deadline, _start, cursor) => Promise.resolve(cursor?.lastRecordUniqueId === 122
+      ? { rows: [], hasNext: false } : { rows: records, hasNext: true, nextCursor: next }));
+    const first = await sweepUsaspendingSubawardsCompany(company, { subawardContinuation: continuation({ searchPage: 501, searchAfter: after }) });
+    expect(first).toMatchObject({ stored: 20, subawardDone: false, subawardContinuation: { searchPage: 501, searchAfter: after } });
+    const second = await sweepUsaspendingSubawardsCompany(company, { subawardContinuation: first.subawardContinuation });
+    expect(second.stored).toBe(5);
+    expect(mocks.page.mock.calls[1][5]).toEqual(after);
+    expect(mocks.page.mock.calls[2][5]).toEqual(next);
+    expect(mocks.save).toHaveBeenCalledTimes(25);
   });
   it("binds prime and received roles to distinct verified entities and deduplicates their aliases", async () => {
     const second = "33333333-3333-4333-8333-333333333333";

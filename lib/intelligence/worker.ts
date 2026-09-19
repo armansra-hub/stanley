@@ -1,17 +1,18 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { queueCandidate } from "@/lib/db/triggers";
-import { evaluateEvidence } from "./jev";
+import { evaluateEvidence, JEV_QUESTION_VERSION } from "./jev";
+import { publishJevFinding, jevSignalType } from "./publish";
 import type { EvaluateEvidenceResult } from "./evaluation";
 import { intelligenceEnabled, INTELLIGENCE_VERSION } from "./observations";
 import { reserveJev, settleJev, secondsUntilNextMonth } from "./budget";
 import { OPERATING_CRITERIA, OPERATING_TOPICS, type OperatingTopic } from "./profiles";
+import { loadFeedbackExamples } from "./feedback";
 
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 type PartResult = { start: number; end: number; evaluation: Evaluation };
 type Job = { id: string; observation_id: string; view_id: string | null; kind: "interpret" | "view"; lease_token: string; attempts: number; result: { parts?: PartResult[] } | null };
 type Observation = { id: string; company_id: string; source_kind: string; source_url: string; title: string; evidence_text: string;
-  event_date: string | null; is_current: boolean; metadata: Record<string, unknown> };
+  event_date: string | null; observed_at: string; is_current: boolean; feedback_excluded?: boolean; metadata: Record<string, unknown> };
 
 /** Cover all retained evidence using bounded packets, preserving exact offsets.
  * Splitting by UTF-8 bytes also bounds non-ASCII input and never bisects a pair. */
@@ -35,16 +36,7 @@ export function nextRetrySeconds(attempt: number): number {
 }
 
 /** Selection is an interpretation aid, not an alternate trigger publisher. */
-export function candidateType(result: Evaluation, eventDate: string | null, now = Date.now()): string | null {
-  const a = result.attributes;
-  const allowed = new Set(["funding", "ma", "new_entity", "finance_hire", "press", "operating_change"]);
-  if (!allowed.has(a.signalType) || a.companyRelationship !== "direct" || a.companyRelevance < 0.8 || a.concreteEvent < 0.75) return null;
-  if (a.signalType === "ma" && a.isAcquirer < 0.8) return null;
-  const age = eventDate ? now - Date.parse(eventDate) : NaN;
-  if (!Number.isFinite(age) || age < 0 || age > 180 * 86_400_000) return null;
-  // Government records continue through the existing verified-entity publisher.
-  return a.signalType;
-}
+export const candidateType = jevSignalType;
 
 async function finish(job: Job, status: string, result: unknown, extra: Record<string, unknown> = {}) {
   const { data, error } = await serviceClient().rpc("intelligence_finish", {
@@ -58,7 +50,7 @@ async function runJob(job: Job, deadline: number): Promise<string> {
   const { data: raw, error } = await db.from("intelligence_observations").select("*").eq("id", job.observation_id).single();
   if (error || !raw) throw new Error("Observation unavailable");
   const observation = raw as Observation;
-  if (!observation.is_current) { await finish(job, "superseded", {}); return "superseded"; }
+  if (!observation.is_current || observation.feedback_excluded) { await finish(job, "superseded", {}); return "superseded"; }
   const { data: company, error: companyError } = await db.from("companies")
     .select("id,name,domain,netsuite_internal_id,status,record_dead,description,subindustry,ns_industry")
     .eq("id", observation.company_id).single();
@@ -71,10 +63,9 @@ async function runJob(job: Job, deadline: number): Promise<string> {
     if (!view?.active) { await finish(job, "superseded", {}); return "superseded"; }
     question = view.question;
   }
-  const { data: feedback } = await db.from("intelligence_feedback").select("reason,note")
-    .eq("company_id", observation.company_id).order("updated_at", { ascending: false }).limit(3);
-  const parts = [...(job.result?.parts ?? [])];
-  for (const packet of evidencePackets(observation.evidence_text)) {
+  const feedback = await loadFeedbackExamples(observation.company_id);
+  const parts = (job.result?.parts ?? []).filter(part => part.evaluation.questionVersion === JEV_QUESTION_VERSION);
+  for (const packet of evidencePackets(observation.evidence_text, 6000)) {
     if (parts.some((p) => p.start === packet.start && p.end === packet.end)) continue;
     if (Date.now() > deadline - 25_000) {
       await finish(job, "queued", { parts }, { p_error: "continuation", p_retry_seconds: 30 });
@@ -88,9 +79,16 @@ async function runJob(job: Job, deadline: number): Promise<string> {
     const evaluation = await evaluateEvidence({
       text: packet.text, companyName: String(company.name), companyDomain: company.domain ?? undefined,
       sourceKind: observation.source_kind, sourceUrl: observation.source_url, title: observation.title,
+      eventDate: observation.event_date ?? undefined, observedAt: observation.observed_at,
+      companyContext: evidencePackets([company.subindustry, company.ns_industry].filter(Boolean).join("; "), 600)[0]?.text,
+      surroundingContext: [
+        packet.start > 0 ? `Source introduction: ${evidencePackets(observation.evidence_text, 800)[0]?.text ?? ""}` : "",
+        packet.start > 0 ? `Immediately before this packet: ${evidencePackets(observation.evidence_text.slice(Math.max(0, packet.start - 200), packet.start), 800)[0]?.text ?? ""}` : "",
+        packet.end < observation.evidence_text.length ? `Immediately after this packet: ${evidencePackets(observation.evidence_text.slice(packet.end, packet.end + 200), 800)[0]?.text ?? ""}` : "",
+      ].filter(Boolean).join("\n"),
       sections: evidencePackets(packet.text, 1200).map(({ text }, i) => ({ id: `s${i + 1}`, text })),
       criteria: question ? [{ id: "view_match", instructions: question }] : OPERATING_CRITERIA,
-      feedbackExamples: (feedback ?? []).filter((f) => f.note).map((f) => ({ text: evidencePackets(String(f.note), 900)[0].text, correction: f.reason })),
+      feedbackExamples: feedback,
       privacy: "public", abortSignal: AbortSignal.timeout(Math.min(20_000, Math.max(1, deadline - Date.now()))),
     });
     await settleJev(reservation, evaluation.usage?.inputTokens ?? null);
@@ -122,6 +120,7 @@ async function runJob(job: Job, deadline: number): Promise<string> {
   const attributes = { ...best.evaluation.attributes,
     evidenceExcerpt: excerptStart !== null && excerptEnd !== null ? observation.evidence_text.slice(excerptStart, excerptEnd) : null, excerptStart, excerptEnd,
     model: best.evaluation.model, questionVersion: best.evaluation.questionVersion,
+    rawAnswers: best.evaluation.metadata.rawAnswers ?? null,
     analyzedCharacters: parts.reduce((n, p) => n + p.end - p.start, 0), retainedCharacters: observation.evidence_text.length,
     sourceTruncated: observation.metadata.textTruncated === true,
     // Retain distinct supported categories across sections for reusable profiles.
@@ -131,9 +130,10 @@ async function runJob(job: Job, deadline: number): Promise<string> {
         .map(([topic, probability]) => ({ topic: topic as OperatingTopic, probability, start: p.start, end: p.end }))),
   };
   if (job.kind === "interpret") {
-    const type = candidateType(best.evaluation, observation.event_date);
-    if (type) await queueCandidate(company, { type, summary: observation.title, source_name: observation.source_kind === "news" ? String(observation.metadata.sourceName ?? "Public news") : "Company website",
-      source_url: observation.source_url, signal_date: observation.event_date }, { requireReceipt: true });
+    await publishJevFinding({ company, observation, evaluation: best.evaluation,
+      passage: excerptStart !== null && excerptEnd !== null ? {
+        text: observation.evidence_text.slice(excerptStart, excerptEnd), start: excerptStart, end: excerptEnd,
+      } : null });
   }
   await finish(job, "complete", { parts, excerptStart, excerptEnd }, job.kind === "view"
     ? { p_probability: best.evaluation.criteria.view_match ?? 0 }

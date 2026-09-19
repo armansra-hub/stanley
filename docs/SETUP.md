@@ -16,6 +16,9 @@ Source, migrations, tests, configuration templates, and workflow reference code 
 | `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Database URL and server-only data access |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public Supabase client configuration where used |
 | `ANTHROPIC_API_KEY` | Anthropic SDK access |
+| `TYPESAFE_API_KEY`, `TYPESAFE_MODEL` | Direct server-only Jev access; pinned default `jev-1.13.0` |
+| `STANLEY_INTELLIGENCE_ENABLED` | Enable intelligence processing after migrations; also requires the database enable switch |
+| `TYPESAFE_PRIVATE_EXCERPTS_ENABLED` | Optional authenticated local excerpt evaluation after reviewing direct-account data handling; default false |
 | `APP_PASSWORD`, `APP_SESSION_TOKEN` | Single-user gate; blank only for controlled local development |
 | `AGENT_TOKEN`, optional `CODEX_AGENT_TOKEN` | Dedicated bridge access, separate from cron auth |
 | `CRON_SECRET`, optional `TAM_GROWTH_SWEEP_SECRET` | Scheduled worker auth |
@@ -30,7 +33,7 @@ Legacy enrichment options remain in the template; setting a key does not enable 
 
 ## Database migrations
 
-This handoff contains 57 SQL files, ending at `0055_trigger_review_boundary.sql`. Sort and track by **full basename**, not numeric prefix: `0034` and `0038` each have two migrations.
+This checkout contains 64 SQL files, ending at `0062_intelligence_feedback_and_research.sql`. Sort and track by **full basename**, not numeric prefix: `0034` and `0038` each have two migrations. Intelligence migrations are disabled by default; schema presence alone does not start collection. Migration `0062` adds reversible exact-observation feedback, bounded public/source priorities and durable focused-research attempts.
 
 Apply the reviewed ordered set to a clean development database using authorized migration tooling. Existing production has a ledger and requires catalog/schema-cache comparison before release. The historical `system/apply_migrations.py` mentioned in older instructions is external to this repository; it is not part of this checkout.
 
@@ -39,9 +42,12 @@ Apply the reviewed ordered set to a clean development database using authorized 
 ## Scheduled infrastructure
 
 - Vercel: hourly `/api/cron/daily`, defined by `vercel.json` and `lib/cron/dailyPlan.ts`. Confirm plan support for cadence and function duration on a new instance.
+- Intelligence: gated five-minute `/api/cron/intelligence` and `/api/cron/intelligence-collect`, plus fifteen-minute `/api/cron/intelligence-sources`. Jev findings publish directly without candidate review or a second model; the same cron may service existing legacy candidates separately. Monitor database capacity on the existing plan; see [Intelligence](INTELLIGENCE.md).
 - Foundations: deliberate script/POST runs for bulk data; refresh cadence must be configured separately.
 - Calendar: `/api/cron/calendar-sync` exists separately. Historical notes describe an external/pg_cron schedule; verify the actual database job.
 - Outreach: the local Codex automation service or a foreground user request starts a bounded coordinator. Live definitions, status, and private checkpoints are outside Git and are not installed by `npm ci`.
+
+The canonical local TAM grader is paused under its current handoff; deploying this cloud runtime does not resume it. Jev question contract `stanley-evidence-v2` uses public background, nearby source text and separate event/collection dates. The Intelligence page exposes retained model answers. Event-level report clustering and generated account narratives are not included in the current implementation.
 
 ## Validation and release
 

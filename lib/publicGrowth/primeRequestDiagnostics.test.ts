@@ -41,6 +41,62 @@ function timeout(mock: ReturnType<typeof vi.fn>) {
 }
 
 describe("prime request diagnostics", () => {
+  it("adopts exact provider pairs and passes them on after fully processed source pages", async () => {
+    const pair = { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" };
+    mocks.search.mockResolvedValueOnce({ rows: [{ generatedId: "other", recipientName: "Other" }], hasNext: true, nextCursor: pair })
+      .mockResolvedValueOnce({ rows: [], hasNext: false });
+    const first = await sweepUsaspendingCompany(company);
+    expect(first.awardContinuation).toMatchObject({ searchPage: 2, searchAfter: pair });
+    const final = await sweepUsaspendingCompany(company, { awardContinuation: first.awardContinuation });
+    expect(mocks.search.mock.calls[1][5]).toEqual(pair);
+    expect(mocks.search.mock.calls[1][2]).toBe(first.awardContinuation?.searchEndDate);
+    expect(final.awardDone).toBe(true);
+  });
+  it("does not advance a page cursor before its eligible award's transaction writes finish", async () => {
+    const pair = { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" };
+    const next = { lastRecordUniqueId: 122, lastRecordSortValue: "1693526400000" };
+    mocks.search.mockResolvedValue({ rows: [{ generatedId: "A1", recipientName: "Acme" }], hasNext: true, nextCursor: next });
+    timeout(mocks.transactions);
+    const prior = continuation({ searchPage: 501, searchAfter: pair });
+    const result = await sweepUsaspendingCompany(company, { awardContinuation: prior });
+    expect(result).toMatchObject({ status: "error", awardContinuation: { searchPage: 501, searchAfter: pair, pendingAwardId: "A1" } });
+    expect(result.awardContinuation?.seenAwardIds).toEqual([]);
+  });
+  it("replays a legacy over-budget cursor from its frozen scope with seen IDs retained", async () => {
+    const prior = continuation({ searchPage: 501, seenAwardIds: ["old"], ignoredAwardIds: ["unrelated"], searchPassFoundNew: true });
+    const result = await sweepUsaspendingCompany(company, { awardContinuation: prior });
+    expect(result).toMatchObject({ awardDone: false, awardContinuation: { ...prior, searchPage: 1, searchPassFoundNew: false, searchAfter: null } });
+    expect(mocks.search).not.toHaveBeenCalled();
+  });
+  it("resets the provider pair when a stable recheck begins and when moving to another alias", async () => {
+    const pair = { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" };
+    const prior = continuation({ searchPage: 501, searchAfter: pair, searchPassFoundNew: true, seenAwardIds: ["old"] });
+    const recheck = await sweepUsaspendingCompany(company, { awardContinuation: prior });
+    expect(recheck.awardContinuation).toMatchObject({ searchPage: 1, searchAfter: null, searchPassFoundNew: false });
+    const aliases = continuation({ searchAfter: pair, searchTargets: [{ query: "Acme", identity: null }, { query: "ACME", identity: null }], searchTargetIndex: 0 });
+    const next = await sweepUsaspendingCompany(company, { awardContinuation: aliases });
+    expect(next.awardContinuation).toMatchObject({ recipientName: "ACME", searchPage: 1, searchAfter: null });
+  });
+  it("retains the terminal page anchor if metric finalization fails", async () => {
+    const pair = { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" };
+    const query: any = {};
+    for (const method of ["select", "eq", "order", "limit", "gt"]) query[method] = () => query;
+    query.then = (resolve: any) => Promise.resolve({ data: null, error: { message: "metric facts unavailable" } }).then(resolve);
+    mocks.from.mockReturnValue(query);
+    const prior = continuation({ entityId: ENTITY, uei: "U1", searchPage: 501, searchAfter: pair, seenAwardIds: ["old"] });
+    const failed = await sweepUsaspendingCompany(company, { awardContinuation: prior });
+    expect(failed).toMatchObject({ status: "error", awardContinuation: { searchPage: 501, searchAfter: pair } });
+    await sweepUsaspendingCompany(company, { awardContinuation: failed.awardContinuation });
+    expect(mocks.search.mock.calls.map((call) => call[5])).toEqual([pair, pair]);
+  });
+  it("recovers an explicit legacy result-window error once, then preserves sequential failures", async () => {
+    mocks.search.mockRejectedValue(new Error("422 Unprocessable Entity: Page #51 with limit 100 is over the maximum result limit 5000. Please provide the 'last_record_sort_value' and 'last_record_unique_id' to paginate sequentially."));
+    const first = await sweepUsaspendingCompany(company, { awardContinuation: continuation({ searchPage: 51, seenAwardIds: ["old"] }) });
+    expect(first).toMatchObject({ awardDone: false, awardContinuation: { searchPage: 1, searchAfter: null, seenAwardIds: ["old"] } });
+    expect(first.error).toBeUndefined();
+    const second = await sweepUsaspendingCompany(company, { awardContinuation: first.awardContinuation });
+    expect(second).toMatchObject({ status: "error", awardContinuation: first.awardContinuation });
+  });
   it("continues beyond an initial page containing only unrelated names", async () => {
     mocks.search.mockResolvedValue({ rows: [{ generatedId: "unrelated", recipientName: "Other" }], hasNext: true });
     const result = await sweepUsaspendingCompany(company);

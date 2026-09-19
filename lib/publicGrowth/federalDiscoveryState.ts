@@ -1,6 +1,8 @@
 import type { FederalSearchTarget, VerifiedFederalIdentity } from "./federalIdentity";
+import { usaspendingCursorField, type UsaspendingSearchCursor } from "./usaspendingCursor";
 
 export interface FederalDiscoveryContinuation {
+  searchAfter?: UsaspendingSearchCursor | null;
   version: 1;
   companyId: string;
   companyIdentity: string;
@@ -44,7 +46,8 @@ export function parseFederalDiscoveryContinuation(value: unknown, companyId: str
   if (candidate !== null && (!candidate || !text(candidate.id, 500) || !text(candidate.name, 500)
       || (candidate.uei !== null && !/^[A-Z0-9]{12}$/i.test(candidate.uei)))) throw new Error("invalid discovery candidate");
   return { version: 1, companyId, companyIdentity: row.companyIdentity, searchEndDate: row.searchEndDate,
-    targets, targetIndex: row.targetIndex, page: row.page, candidate: candidate ? { ...candidate } : null, lastPageHash: row.lastPageHash };
+    targets, targetIndex: row.targetIndex, page: row.page, candidate: candidate ? { ...candidate } : null, lastPageHash: row.lastPageHash,
+    ...usaspendingCursorField(row) };
 }
 
 export function readFederalDiscoveryContinuations(cursor: Record<string, unknown>): Record<string, FederalDiscoveryContinuation> {

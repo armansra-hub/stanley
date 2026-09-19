@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION,
-  MAX_EVIDENCE_STATE_BYTES, type JevEvaluationRequest,
+  MAX_EVIDENCE_STATE_BYTES, MAX_COMPANY_CONTEXT_BYTES, MAX_SURROUNDING_CONTEXT_BYTES, MAX_RAW_ANSWERS_BYTES, type JevEvaluationRequest,
   hasPrivateExcerptAuthorization, TYPESAFE_EVALUATION_URL,
 } from "./jev";
 import type { EvaluateEvidenceInput } from "./evaluation";
@@ -50,9 +50,94 @@ describe("Jev evidence adapter", () => {
       growthRelevance: 0.6, evidenceStrength: 1, requiresResearch: 0.42,
     });
     expect(result).toMatchObject({ model: JEV_MODEL, questionVersion: JEV_QUESTION_VERSION, usage: { inputTokens: 2_300, outputTokens: 0 } });
-    expect(result.metadata).toEqual({ provider: "typesafe-direct", responseModel: JEV_MODEL, confidence: { signalType: 0.92, companyRelationship: 0.9, operationalComplexity: 0.8, growthRelevance: 0.8, evidenceStrength: 1 } });
+    expect(result.metadata).toEqual({ provider: "typesafe-direct", responseModel: JEV_MODEL, rawAnswers: response().answers,
+      confidence: { signalType: 0.92, companyRelationship: 0.9, operationalComplexity: 0.8, growthRelevance: 0.8, evidenceStrength: 1 } });
     expect(result).not.toHaveProperty("tamScore");
     expect(evaluate).toHaveBeenCalledOnce();
+  });
+
+  it("supplies public background, same-source neighboring text and distinct dates without changing the packet", async () => {
+    const context = { eventDate: "2026-09-10", observedAt: "2026-09-18T10:30:00-07:00",
+      companyContext: "Public company profile: engineering services in Texas. Source: https://example.test/about",
+      surroundingContext: "The preceding paragraph identifies Example Engineering. The following paragraph describes its Austin facility." };
+    const evaluate = vi.fn(async (request: JevEvaluationRequest) => {
+      expect(request.state).toMatchObject({ ...context, evidence: input.text, sourceUrl: input.sourceUrl });
+      expect(request.questions.companyRelationship.instructions).toContain("companyContext is public background, not proof of this event");
+      expect(request.questions.concreteEvent.instructions).toContain("observedAt is collection time, not event timing");
+      expect(request.questions.signalType.instructions).toContain("surroundingContext is nearby text from this same source");
+      expect(Buffer.byteLength(JSON.stringify(request.state))).toBeLessThanOrEqual(MAX_EVIDENCE_STATE_BYTES);
+      expect(Buffer.byteLength(JSON.stringify({ state: request.state, questions: request.questions }))).toBeLessThanOrEqual(48_000);
+      return response();
+    });
+    const result = await evaluateEvidence({ ...input, ...context }, { evaluate });
+    expect(result).toMatchObject({ ok: true, questionVersion: "stanley-evidence-v2" });
+    expect(estimateEvidenceInputTokens({ ...input, ...context })).toBeGreaterThan(estimateEvidenceInputTokens(input)!);
+    expect(evaluate).toHaveBeenCalledOnce();
+    expect(JSON.stringify(result)).not.toContain(context.companyContext);
+    expect(JSON.stringify(result)).not.toContain(context.surroundingContext);
+  });
+
+  it("never substitutes observation time for an unknown event date", async () => {
+    const evaluate = vi.fn(async (request: JevEvaluationRequest) => {
+      expect(request.state.observedAt).toBe("2026-09-18T17:30:00Z");
+      expect(request.state).not.toHaveProperty("eventDate");
+      expect(request.state).not.toHaveProperty("companyContext");
+      expect(request.state).not.toHaveProperty("surroundingContext");
+      expect(request.questions.concreteEvent.instructions).toContain("Missing dates remain unknown");
+      return response();
+    });
+    expect((await evaluateEvidence({ ...input, observedAt: "2026-09-18T17:30:00Z" }, { evaluate })).ok).toBe(true);
+  });
+
+  it.each([
+    { eventDate: "x".repeat(65) }, { observedAt: "x".repeat(65) }, { companyContext: " " },
+    { companyContext: "界".repeat(Math.ceil((MAX_COMPANY_CONTEXT_BYTES + 1) / 3)) },
+    { surroundingContext: "x".repeat(MAX_SURROUNDING_CONTEXT_BYTES + 1) },
+    { text: "x".repeat(16_000), companyContext: "x".repeat(4_000), surroundingContext: "x".repeat(4_000) },
+  ])("retains per-field and total UTF-8 limits for contextual input: %j", async patch => {
+    const evaluate = vi.fn();
+    expect(await evaluateEvidence({ ...input, ...patch }, { evaluate })).toMatchObject({ ok: false, error: { kind: "invalid_input" } });
+    expect(estimateEvidenceInputTokens({ ...input, ...patch })).toBeNull();
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it("preserves raw unknown, zero, fractional scores and distributions without recalibration or a second call", async () => {
+    const native = response();
+    native.answers.companyRelationship = { type: "choice", choice: "unknown",
+      probabilities: { direct: 0.12, related: 0.13, unrelated: 0.01, unknown: 0.74 }, confidence: 0.37 };
+    native.answers.operationalComplexity = { type: "score", score: 2.123456789,
+      probabilities: { "0": 0.1, "1": 0.1, "2": 0.6, "3": 0.2 }, legend: { "0": "None", "1": "Limited", "2": "Meaningful", "3": "Substantial" }, confidence: 0 };
+    native.answers.criterion_multi_entity = { type: "noul", noul: 0.17 };
+    const evaluate = vi.fn(async () => native);
+    const result = await evaluateEvidence({ ...input, criteria: [{ id: "multi_entity", instructions: "Does the evidence describe multiple entities?" }] }, { evaluate });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.metadata.rawAnswers).toEqual(native.answers);
+    expect(result.attributes.companyRelationship).toBe("unknown");
+    expect(result.metadata.rawAnswers?.operationalComplexity).toMatchObject({ score: 2.123456789, confidence: 0 });
+    expect(result.metadata.rawAnswers?.isAcquirer).toEqual({ type: "noul", noul: 0 });
+    expect(Buffer.byteLength(JSON.stringify(result.metadata.rawAnswers))).toBeLessThanOrEqual(MAX_RAW_ANSWERS_BYTES);
+    expect(evaluate).toHaveBeenCalledOnce();
+  });
+
+  it("copies only requested typed answer fields, excluding unexpected response echoes", async () => {
+    const native = response();
+    native.answers.unrequested = { type: "noul", noul: 1, secret: "private provider echo" };
+    native.answers.companyRelevance = { type: "noul", noul: 0.96, explanation: "private provider echo" };
+    const result = await evaluateEvidence(input, { evaluate: async () => ({ ...native, state: "private provider echo" }) });
+    expect(result.ok && result.metadata.rawAnswers?.companyRelevance).toEqual({ type: "noul", noul: 0.96 });
+    expect(result.ok && result.metadata.rawAnswers).not.toHaveProperty("unrequested");
+    expect(JSON.stringify(result)).not.toContain("private provider echo");
+  });
+
+  it.each([
+    { type: "score", score: 2.4, probabilities: { "0": 1.1 } },
+    { type: "score", score: 2.4, probabilities: { not_a_level: 0.5 } },
+    { type: "score", score: 2.4, legend: { "0": "x".repeat(1201) } },
+  ])("bounds raw native answer fields without retaining malformed provider text: %j", async answer => {
+    const result = await evaluateEvidence(input, { evaluate: async () => ({ ...response(), answers: { ...response().answers, operationalComplexity: answer } }) });
+    expect(result).toMatchObject({ ok: false, usage: { inputTokens: 2300 }, error: { kind: "invalid_response" } });
+    expect(result).not.toHaveProperty("metadata");
   });
 
   it("sends bounded criteria together, exact source text separately from the title, and disables transport retries", async () => {

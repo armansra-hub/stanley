@@ -60,6 +60,40 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("bounded federal discovery", () => {
+  it("persists and sends provider cursors while retaining cross-page unbound identity checks", async () => {
+    mocks.search.mockResolvedValueOnce({ results: [sourceRow], page_metadata: {
+      hasNext: true, last_record_unique_id: 123, last_record_sort_value: "1693526400000",
+    } }).mockResolvedValueOnce({ results: [{ ...sourceRow, generated_internal_id: "A2", "Recipient UEI": "ZZZZZZZZZZZZ" }],
+      page_metadata: { hasNext: false, last_record_unique_id: null, last_record_sort_value: "None" } });
+    const first = await discoverFederalCompany(ID);
+    expect(first).toMatchObject({ status: "in_progress", continuation: { page: 2,
+      searchAfter: { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" }, candidate: { id: "A1" } } });
+    const final = await discoverFederalCompany(ID, { continuation: first.continuation });
+    expect(final).toMatchObject({ status: "ambiguous", reason: "recipient_identity_ambiguous" });
+    const body = JSON.parse(mocks.search.mock.calls[1][1].body);
+    expect(body).toMatchObject({ last_record_unique_id: 123, last_record_sort_value: "1693526400000",
+      filters: { recipient_search_text: [company.name], time_period: [{ start_date: "2007-10-01", end_date: first.continuation?.searchEndDate }] } });
+    expect(writes).toEqual([]);
+  });
+  it("keeps a missing sequential pair partial without any enrollment writes", async () => {
+    mocks.search.mockResolvedValueOnce({ results: [sourceRow], page_metadata: {
+      hasNext: true, last_record_unique_id: 123, last_record_sort_value: "1693526400000",
+    } }).mockResolvedValueOnce({ results: [{ ...sourceRow, generated_internal_id: "A2" }], page_metadata: { hasNext: true } });
+    const first = await discoverFederalCompany(ID);
+    const second = await discoverFederalCompany(ID, { continuation: first.continuation });
+    expect(second).toMatchObject({ status: "error", historyComplete: false, continuation: first.continuation });
+    expect(writes).toEqual([]);
+  });
+  it("restarts a legacy over-budget discovery cursor without losing its prior candidate or frozen dates", async () => {
+    mocks.search.mockResolvedValue({ results: [sourceRow], page_metadata: { hasNext: true } });
+    const first = await discoverFederalCompany(ID);
+    const prior = { ...first.continuation!, page: 501 };
+    const restart = await discoverFederalCompany(ID, { continuation: prior });
+    expect(restart).toMatchObject({ status: "in_progress", sourceRequests: 0, continuation: {
+      ...prior, page: 1, lastPageHash: null, searchAfter: null,
+    } });
+    expect(writes).toEqual([]);
+  });
   it("enrolls an exact current identity and one award, without any history or signal writes", async () => {
     const start = Date.now();
     vi.spyOn(Date, "now").mockReturnValue(start);

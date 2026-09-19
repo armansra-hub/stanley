@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
 
-export const INTELLIGENCE_VERSION = "evidence-v1";
+export const INTELLIGENCE_VERSION = "evidence-v2";
 export const intelligenceEnabled = () => process.env.STANLEY_INTELLIGENCE_ENABLED === "true";
 
 export type EvidenceSection = { id: string; start: number; end: number; text: string };
@@ -54,7 +54,9 @@ export function prepareObservation(input: ObservationInput) {
   const context = { companyName: input.companyName.trim(), companyDomain: input.companyDomain ?? null, netsuiteInternalId: input.netsuiteInternalId ?? null };
   return {
     url, text, sections: evidenceSections(text), observedAt: observed.toISOString(), eventDate: event?.toISOString() ?? null,
-    sourceKey: createHash("sha256").update(`${input.sourceKind}:${url}`).digest("hex"),
+    // A publisher page found through a feed and through site discovery is one
+    // source. Context/date/body changes still produce a new observation version.
+    sourceKey: createHash("sha256").update(url).digest("hex"),
     // Context/date changes invalidate semantic reuse even when source text is identical.
     contentHash: createHash("sha256").update(JSON.stringify([text, input.title, event?.toISOString(), context])).digest("hex"),
     metadata: { ...input.metadata, ...context, retainedCharacters: text.length, sourceCharacters: normalized.length, textTruncated: normalized.length > text.length },

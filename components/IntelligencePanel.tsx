@@ -17,6 +17,7 @@ type Observation = {
   event_date: string | null;
   observed_at: string;
   attributes: {
+    [key: string]: unknown;
     signalType?: string;
     signalTypes?: string[];
     companyRelationship?: string;
@@ -26,6 +27,8 @@ type Observation = {
   } | null;
   matchProbability?: number;
   feedback?: { reason: FeedbackReason; note?: string | null } | null;
+  feedback_excluded?: boolean;
+  public_priority_weight?: number;
 };
 type IntelligenceData = {
   enabled: boolean;
@@ -85,6 +88,7 @@ function probability(value: unknown): string | null {
 
 export default function IntelligencePanel({ companyId, initialViewId }: { companyId?: string; initialViewId?: string }) {
   const [viewId, setViewId] = useState(initialViewId ?? "");
+  const [dismissed, setDismissed] = useState(false);
   const [snapshot, setSnapshot] = useState<{ key: string; data: IntelligenceData } | null>(null);
   const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
@@ -95,7 +99,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const requestId = useRef(0);
   const requestBusy = useRef(false);
-  const key = `${companyId ?? ""}:${viewId}`;
+  const key = `${companyId ?? ""}:${viewId}:${dismissed}`;
   const data = snapshot?.key === key ? snapshot.data : null;
   const views = (data ?? snapshot?.data)?.views.filter(view => view.active) ?? [];
   const selectedView = views.find(view => view.id === viewId);
@@ -109,6 +113,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
     const params = new URLSearchParams();
     if (companyId) params.set("companyId", companyId);
     if (viewId) params.set("viewId", viewId);
+    if (dismissed) params.set("dismissed", "true");
     if (offset) params.set("offset", String(offset));
     try {
       const response = await fetch(`${API}?${params}`, { cache: "no-store" });
@@ -129,7 +134,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
     } finally {
       if (current === requestId.current) { setLoading(false); requestBusy.current = false; }
     }
-  }, [companyId, viewId, key]);
+  }, [companyId, viewId, dismissed, key]);
 
   useEffect(() => {
     void load();
@@ -214,8 +219,8 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
         </div>
       </section>}
 
-      {companyId && data?.enabled && <OperatingProfile companyId={companyId} />}
-      <OperatingMatches enabled={data?.enabled === true} />
+      {companyId && data?.enabled && <OperatingProfile companyId={companyId} refreshKey={updatedAt} />}
+      <OperatingMatches enabled={data?.enabled === true} refreshKey={updatedAt} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>
         <form onSubmit={saveView} className="mt-3 space-y-3">
@@ -248,6 +253,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
               {views.map(view => <option key={view.id} value={view.id}>{view.name}</option>)}
             </select>
             {selectedView && <button type="button" onClick={() => void archiveView()} disabled={busy} className={buttonClass}>Archive view</button>}
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]"><input type="checkbox" checked={dismissed} disabled={busy} onChange={event => setDismissed(event.target.checked)} />Review dismissed evidence</label>
           </div>
         </div>
         {selectedView && <div className="mb-4 rounded-lg border bg-[var(--surface-2)] px-4 py-3 text-sm">
@@ -260,12 +266,12 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
           <span className="ml-1">· Refreshes every minute while open</span>
         </div>
         {data?.observations.length === 0 && <div className="rounded-lg border border-dashed bg-[var(--surface)] px-6 py-12 text-center">
-          <h3 className="text-lg font-medium">{viewId ? "No matching evidence yet" : "No evidence captured yet"}</h3>
+          <h3 className="text-lg font-medium">{dismissed ? "No dismissed evidence in this view" : viewId ? "No matching evidence yet" : "No evidence captured yet"}</h3>
           <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-muted)]">{viewId ? "Matches will appear as source research and this view’s background processing complete." : "The feed will fill as sources are collected and processed."}</p>
         </div>}
         <div className="space-y-4">
           {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy} onFeedback={async (reason, note) => {
-            const result = await mutate({ action: "feedback", observationId: observation.id, reason, ...(note.trim() ? { note: note.trim() } : {}) }, "Feedback saved.");
+            const result = await mutate({ action: reason === null ? "clear_feedback" : "feedback", observationId: observation.id, reason, ...(note.trim() ? { note: note.trim() } : {}) }, reason === null ? "Feedback cleared; evidence restored." : "Feedback saved.");
             return Boolean(result);
           }} />)}
         </div>
@@ -278,7 +284,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
 function EvidenceCard({ observation, busy, onFeedback }: {
   observation: Observation;
   busy: boolean;
-  onFeedback: (reason: FeedbackReason, note: string) => Promise<boolean>;
+  onFeedback: (reason: FeedbackReason | null, note: string) => Promise<boolean>;
 }) {
   const [note, setNote] = useState(observation.feedback?.note ?? "");
   const [noteOpen, setNoteOpen] = useState(false);
@@ -319,6 +325,15 @@ function EvidenceCard({ observation, busy, onFeedback }: {
         <textarea rows={2} maxLength={500} value={note} disabled={busy} onChange={event => setNote(event.target.value)} className={`${fieldClass} mt-1`} placeholder="What would make this finding more useful?" />
       </label>}
       {observation.feedback && <p className="mt-2 text-xs text-[var(--text-muted)]">Saved feedback: {feedbackOptions.find(([reason]) => reason === observation.feedback?.reason)?.[1] ?? observation.feedback.reason}{observation.feedback.note ? ` · ${observation.feedback.note}` : ""}</p>}
+      {observation.feedback && <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)]">
+        <button type="button" disabled={busy} className="text-[var(--gold)] underline" onClick={() => void onFeedback(null, "")}>Undo feedback</button>
+        <span>{observation.feedback_excluded ? "Excluded from account profiles and matching views." : "Recorded feedback adjusts public priority by at most 10%, softened by four neutral examples. TAM grades stay unchanged."}</span>
+      </div>}
+      {attributes && <details className="mt-4 rounded border p-3">
+        <summary className="cursor-pointer text-sm font-medium">Jev output</summary>
+        <p className="mt-2 text-xs text-[var(--text-muted)]">Stored Jev judgments and probabilities for the selected evidence packet, with collected topic references and coverage. These are model outputs; feedback affects ranking separately.</p>
+        <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(attributes, null, 2)}</pre>
+      </details>}
     </div>
   </article>;
 }

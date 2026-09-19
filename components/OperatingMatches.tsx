@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { OPERATING_TOPICS, type OperatingTopic } from "@/lib/intelligence/profiles";
 import type { TopicSearchResult } from "@/lib/intelligence/topicSearch";
@@ -9,16 +9,20 @@ function dated(value: string | null): string {
   return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }) : "Unknown";
 }
 
-export default function OperatingMatches({ enabled }: { enabled: boolean }) {
+export default function OperatingMatches({ enabled, refreshKey }: { enabled: boolean; refreshKey?: string | null }) {
   const [selected, setSelected] = useState<OperatingTopic[]>([]);
   const [result, setResult] = useState<TopicSearchResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
+  const requestBusy = useRef(false);
+  const searched = useRef(false);
 
-  async function search(after?: string | null) {
-    if (!selected.length || busy || !enabled) return;
+  const search = useCallback(async (after?: string | null, refresh = false) => {
+    if (!selected.length || (requestBusy.current && !refresh) || !enabled) return;
     const current = ++sequence.current;
+    requestBusy.current = true;
+    searched.current = true;
     setBusy(true); setError(null);
     const params = new URLSearchParams();
     selected.forEach(topic => params.append("topic", topic));
@@ -33,8 +37,11 @@ export default function OperatingMatches({ enabled }: { enabled: boolean }) {
       } : next);
     } catch {
       if (current === sequence.current) setError("Could not search cached operating evidence. Try again.");
-    } finally { if (current === sequence.current) setBusy(false); }
-  }
+    } finally { if (current === sequence.current) { setBusy(false); requestBusy.current = false; } }
+  }, [selected, enabled]);
+
+  useEffect(() => { if (searched.current) void search(undefined, true); }, [refreshKey, search]);
+  useEffect(() => () => { sequence.current++; }, []);
 
   return <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="operating-matches-heading">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -49,6 +56,7 @@ export default function OperatingMatches({ enabled }: { enabled: boolean }) {
       <div className="flex flex-wrap gap-2">{(Object.entries(OPERATING_TOPICS) as [OperatingTopic, readonly [string, string]][]).map(([id, [label]]) =>
         <label key={id} className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm ${selected.includes(id) ? "border-[var(--gold)] bg-[var(--surface-2)] text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>
           <input type="checkbox" checked={selected.includes(id)} onChange={event => {
+            searched.current = false;
             setSelected(prior => event.target.checked ? [...prior, id] : prior.filter(topic => topic !== id));
             setResult(null); setError(null);
           }} />{label}

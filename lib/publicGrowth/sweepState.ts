@@ -2,6 +2,7 @@ import "server-only";
 import { advanceCursorOffset } from "@/lib/cron/rotation";
 import { serviceClient } from "@/lib/supabase/server";
 import { parseSubawardPartitions, subawardDateMillis, SUBAWARD_HISTORY_START, type SubawardSearchWindow } from "./subawardPartitions";
+import { usaspendingCursorField, type UsaspendingSearchCursor } from "./usaspendingCursor";
 
 export interface PublicGrowthSweepLease {
   source: string;
@@ -97,6 +98,7 @@ export async function collectPublicGrowthKeysetPages<T extends { id: string }>(
 export const PUBLIC_GROWTH_MAX_RETRY_ATTEMPTS = 3;
 
 export interface PublicGrowthAwardContinuation {
+  searchAfter?: UsaspendingSearchCursor | null;
   version: 1;
   recipientName: string;
   searchEndDate: string;
@@ -117,6 +119,7 @@ export interface PublicGrowthAwardContinuation {
 }
 
 export interface PublicGrowthSubawardContinuation {
+  searchAfter?: UsaspendingSearchCursor | null;
   version: 1;
   companyId: string;
   entityId: string;
@@ -256,6 +259,7 @@ function optionalAwardContinuation(value: unknown, label: string): PublicGrowthA
     seenTransactionIds: uniqueStringArray(row.seenTransactionIds, `${label}.seenTransactionIds`),
     ...(row.ignoredAwardIds === undefined ? {} : { ignoredAwardIds: uniqueStringArray(row.ignoredAwardIds, `${label}.ignoredAwardIds`) }),
     ...awardTargets(row, label),
+    ...usaspendingCursorField(row),
   };
 }
 
@@ -313,6 +317,7 @@ export function parsePublicGrowthSubawardContinuation(value: unknown, label = "s
     searchPassFoundNew: row.searchPassFoundNew,
     seenSubawardIds: uniqueStringArray(row.seenSubawardIds, `${label}.seenSubawardIds`),
     ...parseSubawardPartitions(row, searchEndDate, label),
+    ...usaspendingCursorField(row),
     ...subawardIdentities(row, label),
   };
 }

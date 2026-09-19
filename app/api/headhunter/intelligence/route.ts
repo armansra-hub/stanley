@@ -3,6 +3,7 @@ import { serviceClient } from "@/lib/supabase/server";
 import { intelligenceEnabled } from "@/lib/intelligence/observations";
 import { intelligenceUiAuthorized, isUuid, sameOriginMutation, smallJson } from "@/lib/intelligence/http";
 import { runIntelligenceWorker } from "@/lib/intelligence/worker";
+import { recomputePriority } from "@/lib/db/triggers";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -15,6 +16,7 @@ export async function GET(req: NextRequest) {
   if (!intelligenceEnabled()) return NextResponse.json(empty);
   const params = req.nextUrl.searchParams;
   const companyId = params.get("companyId"), viewId = params.get("viewId");
+  const dismissed = params.get("dismissed") === "true";
   const offset = Number(params.get("offset") ?? 0);
   if ((companyId && !isUuid(companyId)) || (viewId && !isUuid(viewId)) || !Number.isInteger(offset) || offset < 0 || offset > 100_000) {
     return NextResponse.json({ error: "invalid_filter" }, { status: 400 });
@@ -27,8 +29,8 @@ export async function GET(req: NextRequest) {
     ]);
     if (status.error || views.error) throw new Error("storage_unavailable");
     let query = db.from("intelligence_observations")
-      .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,companies!inner(name,status)${viewId ? ",intelligence_view_matches!inner(probability,view_id)" : ""}`)
-      .eq("is_current", true).neq("companies.status", "removed_from_tam")
+      .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,feedback_excluded,public_priority_weight,companies!inner(name,status)${viewId ? ",intelligence_view_matches!inner(probability,view_id)" : ""}`)
+      .eq("is_current", true).eq("feedback_excluded", dismissed).neq("companies.status", "removed_from_tam")
       .order("observed_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + 49);
     if (companyId) query = query.eq("company_id", companyId);
     if (viewId) query = query.eq("intelligence_view_matches.view_id", viewId).gte("intelligence_view_matches.probability", 0.7);
@@ -77,18 +79,24 @@ export async function POST(req: NextRequest) {
       if (error) throw new Error("view_archive_failed");
       return NextResponse.json({ ok: true });
     }
-    if (body.action === "feedback" && isUuid(body.observationId)) {
+    if ((body.action === "feedback" || body.action === "clear_feedback") && isUuid(body.observationId)) {
       const reason = String(body.reason ?? "");
-      if (!["useful", "wrong_company", "old_event", "irrelevant", "not_now"].includes(reason)) return NextResponse.json({ error: "invalid_feedback" }, { status: 400 });
+      if (body.action === "feedback" && !["useful", "wrong_company", "old_event", "irrelevant", "not_now"].includes(reason)) return NextResponse.json({ error: "invalid_feedback" }, { status: 400 });
       const note = typeof body.note === "string" ? body.note.trim().slice(0, 600) : "";
       const { data: observation, error: lookupError } = await db.from("intelligence_observations").select("company_id,title").eq("id", body.observationId).single();
       if (lookupError || !observation) return NextResponse.json({ error: "observation_not_found" }, { status: 404 });
-      const { error } = await db.from("intelligence_feedback").upsert({
+      const { error } = body.action === "clear_feedback"
+        ? await db.from("intelligence_feedback").delete().eq("company_id", observation.company_id).eq("observation_id", body.observationId)
+        : await db.from("intelligence_feedback").upsert({
         company_id: observation.company_id, observation_id: body.observationId, reason,
-        note: note || String(observation.title).slice(0, 600), updated_at: new Date().toISOString(),
+        note, updated_at: new Date().toISOString(),
       }, { onConflict: "company_id,observation_id" });
       if (error) throw new Error("feedback_save_failed");
-      return NextResponse.json({ ok: true });
+      // Corrections are already atomic in storage; priority recomputation can
+      // recover on the existing recompute cron if its independent write fails.
+      let priorityUpdated = true;
+      try { await recomputePriority(observation.company_id); } catch { priorityUpdated = false; }
+      return NextResponse.json({ ok: true, priorityUpdated });
     }
     return NextResponse.json({ error: "invalid_action" }, { status: 400 });
   } catch {

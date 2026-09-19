@@ -1,6 +1,6 @@
 # Stanley architecture and decision logic
 
-Source review: 2026-09-09. This is an implementation map, not a live-state report. Configuration and receipts with dates are historical evidence.
+Source review: 2026-09-09, with direct Jev intelligence added 2026-09-18. This is an implementation map, not a live-state report. Configuration and receipts with dates are historical evidence.
 
 ## System boundaries
 
@@ -14,6 +14,11 @@ flowchart TD
   CRON[Hourly Vercel cron] --> SWEEP[Bounded source sweeps and candidate review]
   PUBLIC[Public company and government sources] --> SWEEP
   SWEEP --> DB
+  SWEEP --> E[Versioned public evidence and leased work]
+  E --> J[Direct TypeSafe Jev interpretation]
+  J --> JT[Direct Jev trigger publication]
+  JT --> DB
+  DB --> RESEARCH[Operating profiles and saved questions]
   LOCAL[Local supervised coordinator] --> CHROME[Existing authenticated Chrome tabs]
   CHROME --> SYSTEMS[NetSuite / Outlook / LinkedIn / ZoomInfo]
   LOCAL --> LEDGER[(Private local ledgers and evidence)]
@@ -48,13 +53,18 @@ Old Gold is a revival worklist with an evidence gate, not every low-scoring comp
 
 The database snapshots prior values and revalidates score writes under locks. Failure rolls the atomic batch back. See migrations `0046_complete_score_snapshots.sql` and `0050_atomic_agent_score_writes.sql`.
 
+The canonical local grader is paused under its latest handoff. Intelligence deployment does not resume it. Local evidence navigation and optional Jev excerpt annotations are available for a future coordinated grading boundary; public interpretation never supplies a grade delta.
+
 ## Public signals and human review
 
 ```mermaid
 flowchart LR
-  S[Source observation] --> I[Company identity and source checks]
+  S[Legacy source observation] --> I[Company identity and source checks]
   I --> C[Candidate and evidence validation]
   C --> T[Accepted trigger]
+  E[Versioned public source] --> J[Jev interpretation]
+  J --> P[Direct publication with source passage]
+  P --> T
   T --> R[Decayed Triggered ranking]
   R --> H[Human review or dismissal]
   H --> B[Stored review boundary]
@@ -63,17 +73,27 @@ flowchart LR
 
 Sources include company-specific Google News, websites/careers pages, transportation records, Colorado business/UCC records, DOL Form 5500, SBA files, Inc. 5000 observations, and verified government-entity/award data. An adapter's presence does not prove that its credentials, foundation data, or schedule are active.
 
-News passes a headline prefilter and queues evidence for independent final review. `lib/triggers/candidateReview.ts` requires exact-company, concrete-event, high-confidence evidence and the appropriate acquirer direction for M&A. Article-specific Google News RSS evidence supports the current fallback path; a home/search page is not event proof. URL-safety checks constrain evidence retrieval.
+With intelligence enabled, changed publisher bodies enter the Jev queue before the legacy headline filters; the redundant paid headline preclassifier is skipped. Eligible Jev findings publish directly through `lib/intelligence/publish.ts`, preserving the model's scores, native answer fields and selected source passage. They do not enter `candidateReview.ts` or receive a second model's opinion. Existing event-date, exact-account, M&A direction, freshness and explicit-exclusion routing still applies. Jev findings are labeled as interpretations, not independently verified outcomes.
+
+Legacy collectors and the intelligence-disabled news path retain their existing candidate review. `lib/triggers/candidateReview.ts` requires exact-company, concrete-event, high-confidence evidence and the appropriate acquirer direction for M&A. Article-specific Google News RSS evidence supports the existing fallback path; a home/search page is not event proof. Google wrappers do not count as a captured publisher body. URL-safety checks constrain evidence retrieval.
 
 The classifier defaults to `claude-haiku-4-5` unless `MODEL_CLASSIFY` overrides it. SDK retries are disabled in that path. A database compare-and-set counter limits classifier claims to 4,000/week and fails closed when budget state is unavailable. This call cap is not a guaranteed dollar budget independent of the configured model.
 
+When intelligence is enabled, legacy candidate review also uses leased claims, due times and atomic dollar reservations for the supported verifier model. One paid attempt uses one reservation; actual usage settles it and an unknown outcome keeps it reserved. Jev interpretation has its own reservation and direct publication incurs no second-model call. Neither application budget limits the hosting or database bill.
+
 Government evidence uses verified bindings in `lib/publicGrowth/`. Name-only Form D attachment and the legacy name-only USAspending writer are retired. See the [quarantine runbook](SIGNAL_QUARANTINE_RUNBOOK.md).
 
-`lib/triggers/config.ts` defines strengths and half-lives; `lib/db/companies.ts` computes ranking. A taxonomy entry alone does not establish that a signal is enabled or actionable.
+`lib/triggers/config.ts` defines strengths and half-lives; `lib/db/triggers.ts` computes public trigger priority. Explicit useful/not-now/old-event feedback adds a bounded, smoothed public-priority weight without changing Jev answers or TAM grades. A taxonomy entry alone does not establish that a signal is enabled or actionable.
 
 Review/dismissal stores `trigger_reviewed_through`. Both event date and detection timestamp must be strictly newer before a signal can reheat that account. Missing/invalid dates fail closed once a boundary exists. Exported leads additionally have a 14-day cooling period. This replaces the old README's claim that dismissed leads can never resurface. See `lib/triggers/freshness.ts`, `lib/db/reheat.ts`, and migration `0055_trigger_review_boundary.sql`.
 
 ## Scheduling and foundations
+
+The direct Jev engine adds five-minute interpretation/direct-publication and source-rotation routes, plus a fifteen-minute shared-feed route. Remaining interpretation-route time can service legacy candidates. Both `STANLEY_INTELLIGENCE_ENABLED=true` and the database enable switch are required. Changed observations are durable before interpretation; packet checkpoints avoid repeating compatible completed work. Contract `stanley-evidence-v2` supplies public company background, same-source surrounding text, distinct event/collection dates and evidence-linked feedback; retained raw answer distributions remain visible. One oldest due job per claim preserves background progress beside fresh-event priority. Existing source reservations and government publishers remain authoritative. See [Intelligence](INTELLIGENCE.md) for exact limits, migrations, provider terms and activation steps.
+
+`/headhunter/intelligence` provides saved natural-language questions, cross-source operating-topic matches, source evidence, expandable Jev outputs, reversible feedback and processing/spend status. Wrong-company/irrelevant decisions hide the exact observation and its associated Jev trigger; Undo restores retained results or resumes unfinished checkpoints. Company profiles reuse eight cached operating topics and distinguish sourced findings, unverified hypotheses and unknowns. Focused refresh rotates previously verified company URLs using stored attempts and leases, then reloads as processing finishes. Shared-source feedback weights retain oldest-source baseline capacity. Private local TAM annotations use a separately gated authenticated route; they never publish a grade.
+
+Exact source reuse and progressive observation cards are implemented. Event-level clustering of different reports, corroboration on a single event, generated account narratives and dedicated material-change/contradiction views remain unimplemented; the current hypotheses use three explicit templates.
 
 `vercel.json` specifies `0 * * * *` for `/api/cron/daily`. The route chooses a stage from the UTC hour and runs five requests concurrently. `lib/cron/dailyPlan.ts` has 80 requests across 16 stages. Each stage contains prime-award work, candidate review, and three ordinary sweep jobs. Receipts go to `app_events`; cursors/leases preserve progress.
 
