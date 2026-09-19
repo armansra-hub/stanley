@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     if (views.error) fail("views", views.error);
     stage = "observations";
     let query = db.from("intelligence_observations")
-      .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,feedback_excluded,public_priority_weight,companies!inner(name,status)${viewId ? ",intelligence_view_matches!inner(probability,view_id)" : ""}`)
+      .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,feedback_excluded,public_priority_weight,companies:companies!intelligence_observations_company_id_fkey!inner(name,status)${viewId ? ",intelligence_view_matches:intelligence_view_matches!intelligence_view_matches_observation_id_fkey!inner(probability,view_id)" : ""}`)
       .eq("is_current", true).eq("feedback_excluded", dismissed).neq("companies.status", "removed_from_tam")
       .order("observed_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + 49);
     if (companyId) query = query.eq("company_id", companyId);

@@ -1,7 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { feedbackExamples } from "./feedback";
+import { describe, expect, it, vi } from "vitest";
+const m = vi.hoisted(() => ({ select: vi.fn() }));
+vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: () => {
+  const chain = { select: m.select, eq: () => chain, order: () => chain, limit: async () => ({ data: [], error: null }) };
+  m.select.mockReturnValue(chain);
+  return chain;
+} }) }));
+import { feedbackExamples, loadFeedbackExamples } from "./feedback";
 
 describe("evidence-linked normal feedback", () => {
+  it("binds feedback evidence to its exact FK while preserving the response alias", async () => {
+    await expect(loadFeedbackExamples("synthetic-company")).resolves.toEqual([]);
+    expect(m.select).toHaveBeenCalledWith("reason,note,intelligence_observations:intelligence_observations!intelligence_feedback_observation_id_fkey!inner(title,evidence_text,attributes)");
+  });
   it("keeps the original evidence separate from a correction, never converting the note into source text", () => {
     const result = feedbackExamples([{ reason: "wrong_company", note: "This describes the customer.", intelligence_observations: {
       title: "A customer expansion", evidence_text: "The customer opened three branches.", attributes: { evidenceExcerpt: "The customer opened three branches." },

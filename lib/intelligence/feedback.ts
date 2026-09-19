@@ -29,7 +29,7 @@ export function feedbackExamples(rows: FeedbackRow[]) {
 
 export async function loadFeedbackExamples(companyId: string) {
   const { data, error } = await serviceClient().from("intelligence_feedback")
-    .select("reason,note,intelligence_observations!inner(title,evidence_text,attributes)")
+    .select("reason,note,intelligence_observations:intelligence_observations!intelligence_feedback_observation_id_fkey!inner(title,evidence_text,attributes)")
     .eq("company_id", companyId).order("updated_at", { ascending: false }).limit(3);
   if (error) throw new Error("feedback_examples_unavailable");
   return feedbackExamples((data ?? []) as unknown as FeedbackRow[]);

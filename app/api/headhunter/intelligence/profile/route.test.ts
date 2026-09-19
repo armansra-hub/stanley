@@ -32,6 +32,9 @@ describe("focused research state and receipts", () => {
     const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/profile?companyId=${company}`));
     expect(await response.json()).toMatchObject({ nextSources: ["https://example.test/locations"], pendingJobs: 2 });
     expect(m.calls).toContainEqual({ table: "intelligence_observations", method: "eq", args: ["feedback_excluded", false] });
+    expect(m.calls).toContainEqual({ table: "intelligence_jobs", method: "select", args: [
+      "id,intelligence_observations:intelligence_observations!intelligence_jobs_observation_id_fkey!inner(company_id)", { count: "exact", head: true },
+    ] });
     expect(m.fetch).not.toHaveBeenCalled();
   });
   it("uses a stored lease and records successful unchanged reads so the next request advances", async () => {

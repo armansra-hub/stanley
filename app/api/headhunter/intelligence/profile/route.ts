@@ -44,7 +44,7 @@ async function loadProfile(companyId: string) {
   const [attempts, pending] = await Promise.all([
     verified.length ? db.from("intelligence_research_attempts").select("source_url,next_attempt_at,last_attempt_at")
       .eq("company_id", companyId).in("source_url", verified).limit(100) : Promise.resolve({ data: [], error: null }),
-    db.from("intelligence_jobs").select("id,intelligence_observations!inner(company_id)", { count: "exact", head: true })
+    db.from("intelligence_jobs").select("id,intelligence_observations:intelligence_observations!intelligence_jobs_observation_id_fkey!inner(company_id)", { count: "exact", head: true })
       .eq("intelligence_observations.company_id", companyId).in("status", ["queued", "running"]),
   ]);
   if (attempts.error || pending.error) throw new Error("research_state_unavailable");

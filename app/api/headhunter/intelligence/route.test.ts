@@ -57,6 +57,9 @@ describe("reversible intelligence feedback API", () => {
       const index = m.calls.findIndex(call => call.table === "intelligence_observations" && call.method === "eq" && call.args[0] === "feedback_excluded");
       expect(m.calls[index].args).toEqual(["feedback_excluded", false]);
       expect(index).toBeLessThan(m.calls.findIndex(call => call.method === "range"));
+      const select = String(m.calls.find(call => call.table === "intelligence_observations" && call.method === "select")?.args[0]);
+      expect(select).toContain("companies:companies!intelligence_observations_company_id_fkey!inner(name,status)");
+      if (suffix) expect(select).toContain("intelligence_view_matches:intelligence_view_matches!intelligence_view_matches_observation_id_fkey!inner(probability,view_id)");
     }
   });
   it("provides an explicit excluded-evidence review path for Undo", async () => {
