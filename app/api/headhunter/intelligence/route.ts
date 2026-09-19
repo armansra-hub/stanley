@@ -10,7 +10,7 @@ export const maxDuration = 300;
 const empty = { enabled: false, views: [], observations: [], hasMore: false,
   spend: { usedUsd: 0, reservedUsd: 0, limitUsd: 20 }, jobs: { queued: 0, running: 0, failed: 0 },
   sourceCoverage: { complete: 0, partial: 0, failed: 0 } };
-type ReadStage = "client" | "status" | "views" | "observations" | "feedback" | "response";
+type ReadStage = "client" | "status" | "health" | "views" | "observations" | "feedback" | "response";
 
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -35,12 +35,14 @@ export async function GET(req: NextRequest) {
   try {
     const db = serviceClient();
     stage = "status";
-    const [status, views] = await Promise.all([
+    const [status, views, health] = await Promise.all([
       db.rpc("intelligence_status"),
       db.from("intelligence_views").select("id,name,question,active,backfill_complete").eq("active", true).order("created_at", { ascending: false }).limit(100),
+      db.rpc("intelligence_health"),
     ]);
     if (status.error) fail("status", status.error);
     if (views.error) fail("views", views.error);
+    if (health.error) fail("health", health.error);
     stage = "observations";
     let query = db.from("intelligence_observations")
       .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,feedback_excluded,public_priority_weight,companies:companies!intelligence_observations_company_id_fkey!inner(name,status)${viewId ? ",intelligence_view_matches:intelligence_view_matches!intelligence_view_matches_observation_id_fkey!inner(probability,view_id)" : ""}`)
@@ -66,7 +68,7 @@ export async function GET(req: NextRequest) {
       return { ...fields, company_name: (Array.isArray(account) ? account[0]?.name : account?.name) ?? "Unknown account",
         ...(matches?.length ? { matchProbability: matches[0].probability } : {}), feedback: feedbackById.get(String(row.id)) ?? null };
     });
-    return NextResponse.json({ ...status.data, enabled: intelligenceEnabled() && status.data?.enabled === true, views: views.data ?? [], observations, hasMore: observations.length === 50 });
+    return NextResponse.json({ ...status.data, health: health.data, enabled: intelligenceEnabled() && status.data?.enabled === true, views: views.data ?? [], observations, hasMore: observations.length === 50 });
   } catch {
     console.error("intelligence.read_failed", { stage, code });
     return NextResponse.json({ error: "intelligence_storage_unavailable", stage }, { status: 503 });

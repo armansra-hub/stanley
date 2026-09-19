@@ -127,7 +127,10 @@ describe("bounded federal discovery", () => {
   });
   it("labels a valid empty page as only a bounded attempt, never absence/history completion", async () => {
     mocks.search.mockResolvedValue({ results: [], page_metadata: { hasNext: false } });
-    expect(await discoverFederalCompany(ID)).toMatchObject({ status: "no_candidate", exhaustive: false, historyComplete: false, sourceRequests: 1 });
+    const contracts = await discoverFederalCompany(ID);
+    expect(contracts).toMatchObject({ status: "in_progress", continuation: { collection: "idvs", page: 1 } });
+    expect(await discoverFederalCompany(ID, { continuation: contracts.continuation })).toMatchObject({ status: "no_candidate", exhaustive: false, historyComplete: false, sourceRequests: 1 });
+    expect(JSON.parse(mocks.search.mock.calls[1][1].body).filters.award_type_codes).toContain("IDV_B");
     expect(mocks.detail).not.toHaveBeenCalled(); expect(writes).toEqual([]);
   });
   it("includes the requested sort field, as required by the observed USAspending400 response", async () => {
@@ -139,7 +142,7 @@ describe("bounded federal discovery", () => {
       expect(body.sort).toBe("Start Date");
       return { results: [], page_metadata: { hasNext: false } };
     });
-    expect(await discoverFederalCompany(ID)).toMatchObject({ status: "no_candidate", sourceRequests: 1 });
+    expect(await discoverFederalCompany(ID)).toMatchObject({ status: "in_progress", sourceRequests: 1 });
     expect(mocks.search).toHaveBeenCalledTimes(1);
     expect(writes).toEqual([]);
   });

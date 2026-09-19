@@ -7,6 +7,8 @@ import { intelligenceEnabled, INTELLIGENCE_VERSION } from "./observations";
 import { reserveJev, settleJev, secondsUntilNextMonth } from "./budget";
 import { OPERATING_CRITERIA, OPERATING_TOPICS, type OperatingTopic } from "./profiles";
 import { loadFeedbackExamples } from "./feedback";
+import { attachObservationEvent, bindEventTrigger } from "./events";
+import { queueAccountStory } from "./narratives";
 
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 type PartResult = { start: number; end: number; evaluation: Evaluation };
@@ -148,18 +150,21 @@ async function runJob(job: Job, deadline: number): Promise<string> {
         .map(([topic, probability]) => ({ topic: topic as OperatingTopic, probability, start: p.start, end: p.end }))),
   };
   if (job.kind === "interpret") {
-    await publishJevFinding({ company, observation, evaluation: best.evaluation,
+    const event = await attachObservationEvent(observation.id, attributes);
+    const publication = await publishJevFinding({ company, observation, evaluation: best.evaluation, event,
       passage: excerptStart !== null && excerptEnd !== null ? {
         text: observation.evidence_text.slice(excerptStart, excerptEnd), start: excerptStart, end: excerptEnd,
       } : null });
+    if (event && "triggerId" in publication && publication.triggerId) await bindEventTrigger(event.id, publication.triggerId);
   }
   await finish(job, "complete", { parts, excerptStart, excerptEnd }, job.kind === "view"
     ? { p_probability: best.evaluation.criteria.view_match ?? 0 }
     : { p_attributes: attributes, p_version: INTELLIGENCE_VERSION });
+  if (job.kind === "interpret") await queueAccountStory(company.id);
   return "complete";
 }
 
-export async function runIntelligenceWorker(limit = 9, deadlineMs = Date.now() + 210_000) {
+export async function runIntelligenceWorker(limit = 96, deadlineMs = Date.now() + 210_000) {
   if (!intelligenceEnabled()) return { enabled: false, processed: 0, outcomes: {} as Record<string, number> };
   return withServiceDeadline(deadlineMs, async () => {
     const db = serviceClient();
@@ -174,7 +179,9 @@ export async function runIntelligenceWorker(limit = 9, deadlineMs = Date.now() +
     }
     const outcomes: Record<string, number> = {};
     let processed = 0;
-    const bound = Math.max(1, Math.min(24, Math.floor(limit)));
+    // Capacity follows the time budget. Claim at most three immediately runnable
+    // jobs at once, but keep consuming while there is capacity for fresh evidence.
+    const bound = Number.isFinite(limit) ? Math.max(1, Math.min(192, Math.floor(limit))) : 96;
     while (processed < bound && Date.now() < deadlineMs - 30_000) {
       // Claim only immediately runnable concurrency, not an entire batch that can expire while waiting.
       const { data: claimed, error: claimError } = await db.rpc("intelligence_claim", { p_limit: Math.min(3, bound - processed) });
@@ -193,6 +200,6 @@ export async function runIntelligenceWorker(limit = 9, deadlineMs = Date.now() +
       }));
       if (outcomes.budget_deferred) break;
     }
-    return { enabled: true, processed, outcomes };
+    return { enabled: true, processed, outcomes, stoppedBy: processed >= bound ? "batch_limit" : Date.now() >= deadlineMs - 30_000 ? "deadline" : outcomes.budget_deferred ? "budget" : "queue_empty" };
   });
 }

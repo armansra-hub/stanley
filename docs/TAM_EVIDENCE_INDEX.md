@@ -17,9 +17,11 @@ python tools/tam_evidence_index.py index --id 123 --input C:/private/123.txt --s
 
 No automatic overwrite occurs. The cache key includes exact ID, source hash,
 format, deterministic model identity, index/rules version, date-order choice and
-optional `--context-sha256`. The context hash should bind the canonical rubric,
-instructions and relevant assessment context when integration is introduced.
-Changed source bytes invalidate reuse. No model response is cached or reused.
+optional `--context-sha256`. The canonical bridge binds its context hash to the
+exact evidence identity, including rubric and assessment context, plus the bridge,
+index rules and Jev question versions. Changed source bytes invalidate reuse.
+The deterministic index contains no model response; completed Jev annotations
+have a separate exact-input and model/question-bound cache.
 
 Every supplied character remains in lossless line spans. Offsets are zero-based
 Unicode codepoints and UTF-8 bytes, with exclusive ends, within the identified
@@ -27,7 +29,7 @@ document. Lines and explicitly supplied PDF pages are one-based. BOMs, CRLF,
 form feeds, Unicode and final-newline state are preserved. A plain text file has
 no asserted PDF-page mapping. No PDF extraction or corpus completeness is implied.
 
-For page pointers, the future caller can serialize its **already verified** full
+For page pointers, the canonical caller serializes its **already verified** full
 record and `pdf_page_texts` cache into this one-record envelope. `--format artifact`
 requires unique, ordered PDF pages 1 through `expected_pdf_pages`; strings are
 preserved exactly after JSON decoding. Supplemental evidence remains separate.
@@ -106,28 +108,66 @@ sample counts, outcomes, sums, medians, nearest-rank p90, fresh/reused effort,
 distinct records and distinct attempts. Identical repeated receipts are deduplicated;
 conflicting duplicates fail. Raw source receipts are bound by SHA-256. Missing
 stages are unmeasured. Parallel-stage sums are effort, not end-to-end elapsed time
-or grades per hour. No production timing inputs were inspected for this change;
-there is no claimed grader throughput improvement yet.
+or grades per hour. The runner now writes these stage receipts directly from its
+monotonic clock. Live grading is paused, so reader/validator throughput remains
+unmeasured with this integration.
 
-## Future canonical integration boundary — not enabled
+## Canonical integration installed; grading remains paused
 
-Read-only source inspection found the narrow insertion point in the current
-private `C:/Users/Arman Sra/Documents/Stanley/tools/run_tam_single_record.py`:
-the normal claimed-record path calls `local_preflight(internal_id)` around line
-2224, attaches current context and identity-review evidence, then computes
-`evidence_identity` and checkpoints `local_evidence_verified`. After those existing
-checks, the same caller could explicitly pass the already loaded full text/pages
-to this helper before `get_or_run_reader` around line 2244. Do not integrate in
-the accepted-publication recovery path, which should preserve validated reuse.
+The private `C:/Users/Arman Sra/Documents/Stanley/tools/run_tam_single_record.py`
+now calls `prepare_evidence_navigation` after its existing claimed-record
+`local_preflight`, saved-search supplement and identity-context attachment.
+`tools/tam_navigation_bridge.py` consumes that complete in-memory package. It
+reuses the existing PDF page-text cache and performs no PDF extraction, corpus
+scan, claim or network call. Its private files live under the existing round's
+`grading/navigation/<exact-id>/<hash>/`; there is no second grading queue.
 
-The full input source comes from `tam_record_core.trusted_package`, including its
-existing verified PDF text cache; do not extract another PDF package. The reader
-and validator prompt builders are in `tam_record_core.py` around lines 572 and 589.
-Future optional navigation metadata must be added equally alongside unchanged
-complete evidence and must not become a filter, synopsis or validator substitute.
-Model/instruction reuse bindings must change deliberately if their prompts change.
+The compact navigation block supplies original line/character/page pointers and
+source-date mentions equally to both complete evidence prompts. Numeric dates
+remain unresolved unless an explicit date order was supplied. Category matches
+are not facts or grades. The full raw record, every numbered page, supplements,
+rubric and independent validator are preserved. Navigation failure falls back to
+the existing complete evidence instead of becoming another grading gate.
 
-Integrate only at an approved, drained canonical boundary. The latest reviewed
-handoff dated 2026-09-18 22:46 UTC records the user's pause and unresolved original
-claims; this helper neither resumes that work nor resolves those claims. No
-canonical source, control, checkpoint, queue or handoff was changed.
+New model evidence identities include the navigation hash. Eligible completed
+pre-integration reader artifacts retain their existing identity and reuse path,
+avoiding another model pass solely to add navigation. Accepted-publication
+recovery remains on the existing readback-only path and never invokes navigation
+preparation or a model. The coordinator, claim fences and publisher are unchanged.
+
+Preparation also creates bounded `jev-request-NNNN.json` files with selected
+source lines and adjacent context. It **never transmits them**. The explicit
+annotation command above can use the stored references and write its result to
+the corresponding `jev-result-NNNN.json`. Only a completed output with a matching
+request/index/exact-ID/model/question binding and completed output-hash receipt is
+reused. Raw provider output remains in `provider_result`; no second model checks it.
+Private endpoint enablement and a dedicated existing agent token are still
+required for an actual dispatch.
+
+On the next separately authorized grading resume, the ordinary canonical path
+uses the installed helper automatically for fresh records. The latest reviewed
+handoff's pause and unresolved network-timeout claims remain intact. Installation
+occurred after an authoritative OS check found zero grading processes. No control,
+checkpoint, membership, claim, grade or scheduler state changed for this build.
+
+## Measured offline preparation and recovery benefit
+
+One already captured, previously completed exact record was used locally without
+a model call, claim, publication or private transmission: 85,595 record characters
+and 18 cached PDF pages containing 84,979 characters. Fresh navigation preparation
+took **418.8 ms**; three cached runs took **13.28, 13.26 and 13.78 ms**, a **31.5×**
+reduction in this preparation stage. This saves about 0.41 seconds on reuse for
+that record; it is not a claim that grades finish 31.5× faster.
+
+The private receipt is
+`research/jev-ai/tam-navigation-benchmark-20260919/benchmark.json` in the canonical
+workspace. `tools/benchmark_tam_navigation.py` reproduces the measurement with
+explicit capture, capture hash, PDF text cache, context hash and a new output
+directory. It verifies the existing source hashes without printing CRM content.
+
+Targeted offline tests cover lossless character/page pointers, cache reuse and
+source/context invalidation, corrupted-cache recovery, raw Jev result reuse,
+identical complete-evidence prompt coverage, retained existing model-artifact
+reuse, accepted-publication recovery isolation and the canonical rubric/claim
+contracts. A stale lease test fixture was updated to include the already-required
+0058 claim fields; no claim validation was weakened.

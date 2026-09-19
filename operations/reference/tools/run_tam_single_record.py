@@ -17,22 +17,29 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from pathlib import Path
+from datetime import datetime, timezone
+from uuid import UUID
 from typing import Any, BinaryIO, Callable
 
 try:
     from tools import tam_record_core as core
+    from tools import tam_navigation_bridge as navigation_bridge
 except ModuleNotFoundError:  # Direct execution: python tools/<this-file>.py
     import tam_record_core as core
+    import tam_navigation_bridge as navigation_bridge
 
 
 RUN_SLUG = "ars-bs-tam-current"
 ACTOR_KEY = "codex-single-record-v1"
 CONTROL_MODE = "checkpointed-single-record"
+PARALLEL_CONTROL_MODE = "checkpointed-parallel-records"
+PIPELINE_SLOT: int | None = None
 CLAIM_LEASE_SECONDS = 1_800
 POOL_ROOT = (
     core.WORKSPACE
@@ -66,10 +73,41 @@ PDF_INVENTORY_SUMMARY = PDF_INVENTORY.with_name("pdf_inventory_summary.json")
 PDF_INVENTORY_SUMMARY_SHA256 = (
     "150499766df9ad39cc66451426cf561dcf3db7e04c5b4c325af806df106cd657"
 )
+ROUND_CONTEXT: dict[str, Any] | None = None
+ACTIVE_REVIEW: dict[str, str] | None = None
+
+
+def configure_canonical_round(path: Path | None, *, require_ready: bool = True) -> None:
+    """Select a successor through the canonical contract, never a parallel queue."""
+    global RUN_SLUG, POOL_ROOT, FINAL_ROOT, CHECKPOINT_PATH, ROUND_CONTEXT
+    try:
+        from tools.tam_grading_round import canonical_context_path, load_round_context
+    except ModuleNotFoundError:
+        from tam_grading_round import canonical_context_path, load_round_context
+    selected = path or canonical_context_path()
+    if selected is None:
+        return
+    try:
+        context = load_round_context(selected, require_ready=require_ready)
+        core.configure_round(context)
+    except (RuntimeError, ValueError, KeyError, OSError) as error:
+        raise RunnerBlocked(f"canonical grading round rejected: {error}") from error
+    ROUND_CONTEXT = context
+    RUN_SLUG = context["run_slug"]
+    artifact_root = Path(context["artifact_root"])
+    POOL_ROOT = artifact_root / "grading"
+    FINAL_ROOT = artifact_root / "finals"
+    CHECKPOINT_PATH = POOL_ROOT / "single_record_checkpoint.json"
+    # SingleRunnerLock deliberately remains the existing global workflow lock,
+    # so a legacy and successor process cannot grade concurrently.
 
 
 class RunnerBlocked(RuntimeError):
     """A fail-closed, persisted blocker rather than a retry instruction."""
+
+
+class HeartbeatRpcFetchFailed(RunnerBlocked):
+    """The exact server-reported heartbeat RPC fetch failure, outcome unknown."""
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -96,10 +134,36 @@ def load_control(path: Path = core.AUTOMATION_CONTROL) -> dict[str, Any]:
     return tam
 
 
-def require_enabled(path: Path = core.AUTOMATION_CONTROL) -> dict[str, Any]:
+def require_enabled(path: Path = core.AUTOMATION_CONTROL, *, pipeline_slot: int | None = None) -> dict[str, Any]:
     tam = load_control(path)
     if tam.get("enabled") is not True:
         raise RunnerBlocked("TAM regrade is disabled in automation-control.json")
+    if pipeline_slot is not None:
+        if type(pipeline_slot) is not int or pipeline_slot not in (1, 2, 3):
+            raise RunnerBlocked("parallel pipeline slot must be 1, 2, or 3")
+        if ROUND_CONTEXT is None:
+            raise RunnerBlocked("parallel pipelines require an explicit canonical successor round")
+        if tam.get("mode") != PARALLEL_CONTROL_MODE or tam.get("maxConcurrentRecords") != 3:
+            raise RunnerBlocked("parallel pipelines require the explicitly authorized three-record control mode")
+        ref = tam.get("parallelAuthorization")
+        if not isinstance(ref, dict) or not isinstance(ref.get("path"), str):
+            raise RunnerBlocked("parallel execution authorization is missing")
+        authorization_path = (core.WORKSPACE / ref["path"]).resolve()
+        if not authorization_path.is_relative_to(core.WORKSPACE.resolve()):
+            raise RunnerBlocked("parallel authorization escaped workspace")
+        raw = authorization_path.read_bytes()
+        if core.sha256_bytes(raw) != ref.get("sha256"):
+            raise RunnerBlocked("parallel execution authorization changed")
+        authorization = json.loads(raw)
+        expected = {"approved": True, "runSlug": RUN_SLUG,
+                    "contextSha256": ROUND_CONTEXT["context_sha256"],
+                    "maxConcurrentRecords": 3, "eachRecordSerialReaderThenValidator": True}
+        if (not isinstance(authorization, dict) or any(authorization.get(k) != v for k, v in expected.items())
+                or authorization.get("approved") is not True
+                or authorization.get("eachRecordSerialReaderThenValidator") is not True
+                or type(authorization.get("maxConcurrentRecords")) is not int):
+            raise RunnerBlocked("parallel execution authorization does not match this round")
+        return tam
     if tam.get("mode") != CONTROL_MODE:
         raise RunnerBlocked(
             "TAM control mode must be checkpointed-single-record"
@@ -159,6 +223,69 @@ class SingleRunnerLock(AbstractContextManager["SingleRunnerLock"]):
             self.handle = None
 
 
+@contextmanager
+def record_execution_lock(internal_id: str):
+    """Three fixed slots, exact-ID exclusivity, and legacy/parallel exclusion."""
+    slots = POOL_ROOT / "pipeline_locks"
+    if PIPELINE_SLOT is None:
+        # A serial invocation owns the global gate throughout its full record.
+        # Reserving every slot also refuses an already-running parallel mode.
+        with SingleRunnerLock(), ExitStack() as held:
+            for slot in (1, 2, 3):
+                held.enter_context(SingleRunnerLock(slots / f"slot-{slot}.lock"))
+            yield
+        return
+    with ExitStack() as held:
+        # Only local lock contention is retried, before any claim/model work.
+        # This is a short admission gate, never an API or model retry.
+        gate = None
+        for attempt in range(101):
+            candidate = SingleRunnerLock(LOCK_PATH)
+            try:
+                candidate.__enter__()
+                gate = candidate
+                break
+            except RunnerBlocked:
+                if attempt == 100:
+                    raise
+                time.sleep(0.05)
+        assert gate is not None
+        try:
+            held.enter_context(SingleRunnerLock(slots / f"slot-{PIPELINE_SLOT}.lock"))
+            held.enter_context(SingleRunnerLock(slots / "records" / f"{internal_id}.lock"))
+        finally:
+            gate.__exit__(None, None, None)
+        yield
+
+
+def configure_record_execution(internal_id: str, pipeline_slot: int | None) -> None:
+    """Opt-in execution isolation; evidence and the canonical publish root stay shared."""
+    global PIPELINE_SLOT, CHECKPOINT_PATH, ACTOR_KEY
+    if pipeline_slot is None:
+        return
+    if ROUND_CONTEXT is None or type(pipeline_slot) is not int or pipeline_slot not in (1, 2, 3):
+        raise RunnerBlocked("a configured successor and slot 1..3 are required")
+    internal_id = exact_internal_id(internal_id)
+    if internal_id not in ROUND_CONTEXT["evidence_index"]:
+        raise RunnerBlocked("parallel worker exact ID is not in current membership")
+    PIPELINE_SLOT = pipeline_slot
+    CHECKPOINT_PATH = POOL_ROOT / "checkpoints" / f"{internal_id}.json"
+    ACTOR_KEY = f"codex-tam-slot-{pipeline_slot}"
+
+
+def require_recovery_slot(previous: dict[str, Any], internal_id: str) -> None:
+    if (PIPELINE_SLOT is not None and previous.get("exactId") == internal_id
+            and previous.get("status") in {"working", "pending_action", "publish_accepted"}
+            and (previous.get("executionSlot") != PIPELINE_SLOT or previous.get("actorKey") != ACTOR_KEY)):
+        raise RunnerBlocked("in-flight recovery must retain its exact execution slot and actor")
+
+
+def record_codex_home() -> Path:
+    if PIPELINE_SLOT is None:
+        return core.prepare_codex_home()
+    return core.prepare_codex_home(execution_scope=f"slot-{PIPELINE_SLOT}")
+
+
 def checkpoint(
     internal_id: str,
     status: str,
@@ -175,6 +302,13 @@ def checkpoint(
             and isinstance(existing.get("claimToken"), str)
         ):
             details["claimToken"] = existing["claimToken"]
+    existing = load_checkpoint()
+    if (existing.get("exactId") == internal_id and existing.get("runSlug") == RUN_SLUG
+            and existing.get("actorKey") == ACTOR_KEY):
+        for key in ("claimIdentity", "claimGeneration", "coordinationPhase",
+                    "publishRequestStarted", "heartbeatRecovery"):
+            if key not in details and key in existing and (status != "complete" or key == "heartbeatRecovery"):
+                details[key] = existing[key]
     value = {
         "schema": "tam-checkpointed-single-record",
         "version": 1,
@@ -184,6 +318,8 @@ def checkpoint(
         "status": status,
         "stage": stage,
         "updatedAt": core.utc_now(),
+        **({"executionSlot": PIPELINE_SLOT} if PIPELINE_SLOT is not None else {}),
+        **(ACTIVE_REVIEW or {}),
         **details,
     }
     core.atomic_json(CHECKPOINT_PATH, value)
@@ -305,6 +441,16 @@ def request_json_once(
             value = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         detail = error.read(4000).decode("utf-8", errors="replace")
+        try:
+            decoded_error = json.loads(detail)
+        except (ValueError, TypeError):
+            decoded_error = None
+        if (method == "POST" and route == "/api/cron/tam-coordination"
+                and isinstance(body, dict) and body.get("action") == "heartbeat"
+                and body.get("status") == "working"
+                and isinstance(body.get("claimToken"), str) and error.code == 409
+                and decoded_error == {"error": "TAM actor/claim heartbeat failed: TypeError: fetch failed"}):
+            raise HeartbeatRpcFetchFailed("heartbeat RPC fetch failed; acceptance unknown") from error
         raise RunnerBlocked(
             f"{route} returned HTTP {error.code}: {detail}"
         ) from error
@@ -331,6 +477,174 @@ def coordination_post(
     )
 
 
+def coordination_checkpoint(internal_id: str, **updates: Any) -> dict[str, Any]:
+    """Preserve pending publication/artifact fields while recording heartbeat phase."""
+    previous = load_checkpoint()
+    if (previous.get("exactId") != internal_id or previous.get("runSlug") != RUN_SLUG
+            or previous.get("actorKey") != ACTOR_KEY):
+        raise RunnerBlocked("heartbeat checkpoint identity mismatch")
+    value = {**previous, **updates, "updatedAt": core.utc_now()}
+    core.atomic_json(CHECKPOINT_PATH, value)
+    return value
+
+
+def heartbeat_time(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise RunnerBlocked("heartbeat timestamp missing")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise RunnerBlocked("heartbeat timestamp invalid") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise RunnerBlocked("heartbeat timestamp has no timezone")
+    return parsed
+
+
+def heartbeat_uuid(value: Any) -> str:
+    try:
+        if not isinstance(value, str) or str(UUID(value)) != value:
+            raise ValueError()
+    except ValueError as error:
+        raise RunnerBlocked("heartbeat identity UUID invalid") from error
+    return value
+
+
+def preclaim_run_identity(result: dict[str, Any], internal_id: str) -> str:
+    """Use the existing actor-only ACK for run identity, never claim ownership."""
+    actor = result.get("actor") if isinstance(result, dict) else None
+    if (not isinstance(actor, dict) or "claim" not in result or result["claim"] is not None
+            or actor.get("actor_key") != ACTOR_KEY or actor.get("status") != "working"
+            or actor.get("current_work") != f"claim NetSuite ID {internal_id}"):
+        raise RunnerBlocked("preclaim actor heartbeat acknowledgment mismatch")
+    return heartbeat_uuid(actor.get("run_id"))
+
+
+def claim_fence(record: dict[str, Any], internal_id: str, token: str) -> dict[str, Any]:
+    """Validate only fields actually returned by the 0058 atomic claim RPC."""
+    heartbeat_uuid(token)
+    generation = record.get("claim_generation")
+    if (record.get("netsuite_internal_id") != internal_id or record.get("pdf_status") != "verified"
+            or record.get("grade_status") != "reading" or record.get("claim_actor") != ACTOR_KEY
+            or record.get("last_actor") != ACTOR_KEY or record.get("claim_token") != token
+            or type(generation) is not int or generation < 1):
+        raise RunnerBlocked("atomic claim identity/state invalid")
+    company = heartbeat_uuid(record.get("company_id"))
+    seed = None
+    if ROUND_CONTEXT is not None:
+        seed = heartbeat_uuid(ROUND_CONTEXT.get("checkpoint_seed_id"))
+        entry = (ROUND_CONTEXT.get("evidence_index") or {}).get(internal_id)
+        if (ROUND_CONTEXT.get("run_slug") != RUN_SLUG or not isinstance(entry, dict)
+                or entry.get("company_id") != company):
+            raise RunnerBlocked("atomic claim differs from canonical round/company")
+    started = heartbeat_time(record.get("claim_heartbeat_at"))
+    expiry = heartbeat_time(record.get("claim_expires_at"))
+    if expiry <= datetime.now(timezone.utc) or expiry <= started:
+        raise RunnerBlocked("atomic claim lease expired or invalid")
+    return {"runSlug": RUN_SLUG, "seedId": seed, "companyId": company,
+            "exactId": internal_id, "actorKey": ACTOR_KEY, "claimGeneration": generation,
+            "claimTokenSha256": hashlib.sha256(token.encode("utf-8")).hexdigest()}
+
+
+def claim_identity(record: dict[str, Any], internal_id: str, token: str, run_id: str) -> dict[str, Any]:
+    # Current admission is enforced by 0058 under the atomic claim row lock.
+    # Seed/company expectations come from the already hash-validated local round.
+    return {**claim_fence(record, internal_id, token), "runId": heartbeat_uuid(run_id)}
+
+
+def verify_heartbeat_ownership_readback(record: dict[str, Any], baseline: dict[str, Any]) -> None:
+    """A GET confirms the original fence; it cannot supply or replace ownership."""
+    expected = {"run_id": baseline["runId"], "checkpoint_seed_id": baseline["seedId"],
+                "company_id": baseline["companyId"], "netsuite_internal_id": baseline["exactId"],
+                "claim_actor": baseline["actorKey"], "last_actor": baseline["actorKey"],
+                "claim_generation": baseline["claimGeneration"], "grade_status": "reading", "pdf_status": "verified"}
+    if (any(record.get(key) != value for key,value in expected.items())
+            or record.get("is_current") is not True or record.get("membership_status") == "removed"
+            or type(record.get("claim_generation")) is not int):
+        raise RunnerBlocked("heartbeat ownership readback changed")
+    started = heartbeat_time(record.get("claim_heartbeat_at"))
+    expiry = heartbeat_time(record.get("claim_expires_at"))
+    if expiry <= datetime.now(timezone.utc) or expiry <= started:
+        raise RunnerBlocked("heartbeat ownership readback lease invalid")
+
+
+def validate_heartbeat_ack(result: dict[str, Any], baseline: dict[str, Any], action: dict[str, Any]) -> None:
+    actor, acknowledged = result.get("actor"), result.get("claim")
+    if not isinstance(actor, dict) or not isinstance(acknowledged, dict):
+        raise RunnerBlocked("heartbeat acknowledgment missing actor/claim")
+    if (actor.get("run_id") != baseline["runId"] or actor.get("actor_key") != baseline["actorKey"]
+            or actor.get("status") != action["status"] or actor.get("current_work") != action["currentWork"]
+            or acknowledged.get("netsuite_internal_id") != baseline["exactId"]
+            or acknowledged.get("claim_actor") != baseline["actorKey"]
+            or type(acknowledged.get("claim_generation")) is not int
+            or acknowledged.get("claim_generation") != baseline["claimGeneration"]):
+        raise RunnerBlocked("heartbeat acknowledgment identity mismatch")
+    start = heartbeat_time(acknowledged.get("claim_heartbeat_at"))
+    expiry = heartbeat_time(acknowledged.get("claim_expires_at"))
+    if expiry <= datetime.now(timezone.utc) or expiry <= start:
+        raise RunnerBlocked("heartbeat acknowledgment lease invalid")
+
+
+def heartbeat_claim_once_with_readback(secret: str, bypass: str, internal_id: str,
+                                       action: dict[str, Any]) -> None:
+    previous = load_checkpoint()
+    baseline = previous.get("claimIdentity")
+    if (not isinstance(baseline, dict) or baseline.get("runSlug") != RUN_SLUG
+            or baseline.get("exactId") != internal_id or baseline.get("actorKey") != ACTOR_KEY
+            or type(baseline.get("claimGeneration")) is not int or baseline["claimGeneration"] < 1
+            or type(previous.get("claimGeneration")) is not int
+            or baseline.get("claimGeneration") != previous.get("claimGeneration")
+            or baseline.get("claimTokenSha256") != hashlib.sha256(action["claimToken"].encode("utf-8")).hexdigest()):
+        raise RunnerBlocked("heartbeat atomic-claim baseline missing or changed")
+    heartbeat_uuid(baseline.get("runId"))
+    heartbeat_uuid(baseline.get("companyId"))
+    if baseline.get("seedId") is not None:
+        heartbeat_uuid(baseline["seedId"])
+    if ROUND_CONTEXT is not None:
+        entry = (ROUND_CONTEXT.get("evidence_index") or {}).get(internal_id)
+        if (ROUND_CONTEXT.get("run_slug") != RUN_SLUG or baseline.get("seedId") != ROUND_CONTEXT.get("checkpoint_seed_id")
+                or not isinstance(entry, dict) or baseline.get("companyId") != entry.get("company_id")):
+            raise RunnerBlocked("heartbeat canonical round/company changed")
+    prior = previous.get("heartbeatRecovery")
+    if prior is not None and (not isinstance(prior, dict) or not isinstance(prior.get("claimIdentity"), dict)):
+        raise RunnerBlocked("heartbeat recovery receipt malformed")
+    if (isinstance(prior, dict) and prior["claimIdentity"] == baseline
+            and prior.get("status") != "acknowledged"):
+        raise RunnerBlocked("unresolved heartbeat recovery requires explicit reconciliation")
+    coordination_checkpoint(internal_id, coordinationPhase="heartbeat_started")
+    try:
+        result = coordination_post(secret, bypass, action)
+    except HeartbeatRpcFetchFailed:
+        prior = previous.get("heartbeatRecovery")
+        if prior is not None and not isinstance(prior, dict):
+            raise RunnerBlocked("heartbeat recovery receipt malformed")
+        if isinstance(prior, dict) and prior.get("claimIdentity") == baseline:
+            raise RunnerBlocked("one heartbeat recovery already consumed for this claim")
+        recovery = {"claimIdentity": baseline, "stage": action["metadata"]["stage"],
+                    "failureClass": "rpc_fetch_failed_acceptance_unknown", "status": "readback_started",
+                    "originalRequestSha256": hashlib.sha256(canonical_bytes(action)).hexdigest(),
+                    "recoveryPostsStarted": 0}
+        coordination_checkpoint(internal_id, heartbeatRecovery=recovery)
+        query = urllib.parse.urlencode({"view": "records", "run": RUN_SLUG, "id": internal_id, "limit": "1"})
+        response = request_json_once("GET", f"/api/cron/tam-coordination?{query}", secret, bypass)
+        rows = response.get("records")
+        if (type(response.get("total")) is not int or response["total"] != 1
+                or not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict)):
+            raise RunnerBlocked("heartbeat exact ownership readback malformed")
+        verify_heartbeat_ownership_readback(rows[0], baseline)
+        recovery = {**recovery, "status": "recovery_post_started", "recoveryPostsStarted": 1,
+                    "readbackClaimHeartbeatAt": rows[0]["claim_heartbeat_at"],
+                    "readbackClaimExpiresAt": rows[0]["claim_expires_at"]}
+        coordination_checkpoint(internal_id, heartbeatRecovery=recovery)
+        # One identical, SQL-token-fenced renewal only. No recursive recovery or generic retry.
+        result = coordination_post(secret, bypass, action)
+        validate_heartbeat_ack(result, baseline, action)
+        coordination_checkpoint(internal_id, heartbeatRecovery={**recovery, "status": "acknowledged"},
+                                coordinationPhase="heartbeat_confirmed")
+        return
+    validate_heartbeat_ack(result, baseline, action)
+    coordination_checkpoint(internal_id, coordinationPhase="heartbeat_confirmed")
+
+
 def heartbeat(
     secret: str,
     bypass: str,
@@ -338,7 +652,7 @@ def heartbeat(
     status: str,
     stage: str,
     claim_token: str | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     action: dict[str, Any] = {
         "action": "heartbeat",
         "runSlug": RUN_SLUG,
@@ -353,6 +667,8 @@ def heartbeat(
             "exactId": internal_id,
             "stage": stage,
             "modelConcurrency": 1,
+            **({"modelConcurrencyScope": "one_exact_record", "maximumConcurrentRecordPipelines": 3}
+               if PIPELINE_SLOT is not None else {}),
         },
     }
     if claim_token is not None:
@@ -361,11 +677,10 @@ def heartbeat(
             "claimToken": claim_token,
             "leaseSeconds": CLAIM_LEASE_SECONDS,
         })
-    coordination_post(
-        secret,
-        bypass,
-        action,
-    )
+    if claim_token is not None and status == "working":
+        heartbeat_claim_once_with_readback(secret, bypass, internal_id, action)
+    else:
+        return coordination_post(secret, bypass, action)
 
 
 def claim(
@@ -404,6 +719,7 @@ def claim(
         raise RunnerBlocked("coordination claim has the wrong lease actor")
     if not isinstance(record.get("claim_token"), str):
         raise RunnerBlocked("coordination claim returned no fencing token")
+    claim_fence(record, internal_id, record["claim_token"])
     return record
 
 
@@ -439,6 +755,17 @@ def evidence_identity(internal_id: str, package: dict[str, Any]) -> dict[str, An
         "recordTextSha256": package["record_text_sha256"],
         "recordTextCharacters": len(package["record_text"]),
     }
+    if ROUND_CONTEXT is not None:
+        identity.update({
+            "roundContextSha256": ROUND_CONTEXT["context_sha256"],
+            "assessmentDate": ROUND_CONTEXT["assessment_date"],
+            "rubricVersion": ROUND_CONTEXT["rubric_version"],
+            "rubricSha256": ROUND_CONTEXT["rubric_sha256"],
+            "captureSha256": core.sha256_file(package["capture_path"]),
+            "capturedAt": package["capture"]["captured_at_utc"],
+            "sourceSnapshotSha256": package["capture"]["snapshot_sha256"],
+            "evidencePolicy": ROUND_CONTEXT["evidence_policy"],
+        })
     if package.get("supplemental_company_context") is not None:
         supplemental_bytes = canonical_bytes(
             package["supplemental_company_context"]
@@ -449,7 +776,449 @@ def evidence_identity(internal_id: str, package: dict[str, Any]) -> dict[str, An
         identity["supplementalCompanyContextCharacters"] = len(
             supplemental_bytes
         )
+    if package.get("identity_review") is not None:
+        identity["reviewedFactsSha256"] = package["identity_review"]["factsSha256"]
+    if package.get("evidence_navigation") is not None:
+        identity["evidenceNavigationSha256"] = core.sha256_bytes(
+            navigation_bridge.indexer.encoded(package["evidence_navigation"])
+        )
     return identity
+
+
+def _review_json(raw: bytes) -> dict[str, Any]:
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise RunnerBlocked("duplicate review JSON key")
+            value[key] = item
+        return value
+    value = json.loads(raw, object_pairs_hook=unique)
+    if not isinstance(value, dict):
+        raise RunnerBlocked("review JSON must be an object")
+    return value
+
+
+def _review_ref(ref: Any, *, preserved: Path | None = None) -> tuple[Path, bytes]:
+    if not isinstance(ref, dict) or set(ref) != {"path", "sha256"}:
+        raise RunnerBlocked("invalid review artifact reference")
+    digest = ref["sha256"]
+    if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise RunnerBlocked("invalid review artifact SHA")
+    name = ref["path"]
+    if not isinstance(name, str) or not name or Path(name).is_absolute():
+        raise RunnerBlocked("review reference must be workspace-relative")
+    path = (core.WORKSPACE / name).resolve()
+    if not path.is_relative_to(core.WORKSPACE.resolve()):
+        raise RunnerBlocked("review reference escaped workspace")
+    selected = preserved if preserved is not None and preserved.is_file() else path
+    raw = selected.read_bytes()
+    if core.sha256_bytes(raw) != digest:
+        raise RunnerBlocked("review artifact hash mismatch")
+    return path, raw
+
+
+def _review_time(value: Any) -> None:
+    if not isinstance(value, str) or "T" not in value:
+        raise RunnerBlocked("review timestamp must be timezone-aware")
+    try:
+        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise RunnerBlocked("invalid review timestamp") from error
+    if stamp.utcoffset() is None:
+        raise RunnerBlocked("review timestamp must be timezone-aware")
+
+
+def inherited_admission_path(internal_id: str) -> Path:
+    return POOL_ROOT / "reviews" / internal_id / "inherited_admission.json"
+
+
+def inherited_artifact_inventory(internal_id: str, previous: dict[str, Any]) -> list[str]:
+    """Exact-ID grading metadata only; never open another lead's evidence."""
+    found = ["checkpoint"] if previous else []
+    for folder in ("holds", "published", "candidates", "reader_raw", "validator_raw", "validated", "logs"):
+        for path in (POOL_ROOT / folder).glob(internal_id + ".*"):
+            if path.is_file():
+                found.append(path.relative_to(POOL_ROOT).as_posix())
+    if (POOL_ROOT / "oversized" / internal_id).exists():
+        found.append("oversized/" + internal_id)
+    for name, field in (("publish_queue.jsonl", "netsuiteInternalId"), ("final_assessments.jsonl", "exact_id")):
+        if find_jsonl_record(FINAL_ROOT / name, field, internal_id) is not None:
+            found.append(name)
+    return sorted(found)
+
+
+def load_inherited_identity_review(review: dict[str, Any], path: Path, raw: bytes,
+        internal_id: str, previous: dict[str, Any], revision_root: Path,
+        approval_raw: bytes, source_documents: dict) -> dict[str, Any]:
+    # v2 is exclusively the canonical inherited hold's first September assessment.
+    prior = review["prior"]
+    if not isinstance(prior, dict) or set(prior) != {"initialization", "seedManifest", "inheritedHolds"}:
+        raise RunnerBlocked("inherited review requires canonical seed authority references")
+    # Recheck live canonical local sources, not an arbitrary review-supplied copy.
+    mission = _review_json((core.WORKSPACE / "stanley-source/stanley-main/config/tam-regrade-mission.json").read_bytes())
+    active = mission.get("activeGradingRound") or {}
+    seed_id = ROUND_CONTEXT["checkpoint_seed_id"]
+    if (active.get("runSlug") != RUN_SLUG or active.get("checkpointSeedId") != seed_id
+            or prior["initialization"] != active.get("initializationReadback")):
+        raise RunnerBlocked("inherited initialization is not canonical")
+    bound = {key: _review_ref(ref) for key, ref in prior.items()}
+    initialized = _review_json(bound["initialization"][1])
+    manifest = _review_json(bound["seedManifest"][1])
+    old_holds = _review_json(bound["inheritedHolds"][1])
+    board = initialized.get("board") or {}
+    run = board.get("run") or {}
+    seed = board.get("checkpointSeed") or {}
+    source = manifest.get("sourceHashes") or {}
+    counts = manifest.get("expectedCounts") or {}
+    cohorts = manifest.get("cohortHashes") or {}
+    heartbeat_uuid(seed_id)
+    heartbeat_uuid(run.get("id"))
+    if (initialized.get("verified") is not True or initialized.get("checkpoint_seed_id") != seed_id
+            or initialized.get("count") != ROUND_CONTEXT["membership_count"]
+            or run.get("slug") != RUN_SLUG or run.get("completed_checkpoint_seed_id") != seed_id
+            or seed.get("id") != seed_id or seed.get("status") != "complete"
+            or seed.get("run_id") != run.get("id")
+            or prior["seedManifest"] != {"path": seed.get("manifest_object_path"), "sha256": seed.get("manifest_sha256")}
+            or manifest.get("schema") != "tam-successor-checkpoint-manifest" or manifest.get("version") != 1
+            or manifest.get("runSlug") != RUN_SLUG
+            or source.get("membership") != core.MEMBERSHIP_SHA256
+            or source.get("evidenceIndex") != ROUND_CONTEXT["evidence_index_reference"]["sha256"]
+            or source.get("oldHolds") != prior["inheritedHolds"]["sha256"]
+            or seed.get("expected_counts") != counts or seed.get("cohort_hashes") != cohorts
+            or counts.get("currentTotal") != ROUND_CONTEXT["membership_count"]):
+        raise RunnerBlocked("inherited completed seed authority differs")
+    rows = old_holds.get("records")
+    if (not isinstance(rows, list) or old_holds.get("offset") != 0
+            or type(old_holds.get("total")) is not int or old_holds["total"] != len(rows)):
+        raise RunnerBlocked("inherited hold metadata is incomplete")
+    current = ROUND_CONTEXT["evidence_index"]
+    selected = {}
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RunnerBlocked("inherited hold metadata is malformed")
+        key = row.get("netsuite_internal_id")
+        if (not isinstance(key, str) or exact_internal_id(key) != key or key in seen
+                or row.get("grade_status") != "hold" or row.get("is_current") is not True):
+            raise RunnerBlocked("inherited hold metadata is not an exact old hold")
+        seen.add(key)
+        if key in current:
+            reason = row.get("hold_reason")
+            if (row.get("company_id") != current[key]["company_id"]
+                    or not isinstance(reason, str) or not 0 < len(reason.strip()) <= 2000):
+                raise RunnerBlocked("inherited hold company or reason differs")
+            selected[key] = row
+    # Initializer uses canonical membership order, not sorted IDs or index order.
+    membership_raw = Path(ROUND_CONTEXT["membership_path"]).read_bytes()
+    if core.sha256_bytes(membership_raw) != core.MEMBERSHIP_SHA256:
+        raise RunnerBlocked("inherited canonical membership changed")
+    ids = [str(row["Internal ID"]).strip() for row in csv.DictReader(membership_raw.decode("utf-8-sig").splitlines())]
+    if len(ids) != len(set(ids)) or set(ids) != set(current):
+        raise RunnerBlocked("inherited exact current membership differs")
+    held_ids = [key for key in ids if key in selected]
+    cohort_sha = core.sha256_bytes("".join(key + "\n" for key in held_ids).encode())
+    if (internal_id not in selected or type(counts.get("activeHold")) is not int or counts.get("activeHold") != len(held_ids)
+            or cohorts.get("activeHold") != cohort_sha):
+        raise RunnerBlocked("record is not in the canonical inherited hold cohort")
+    row = selected[internal_id]
+    # Match initializer raw_json, which includes UTF-8 and a trailing newline.
+    row_sha = core.sha256_bytes((json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode())
+    context_sha = core.sha256_bytes(raw)
+    admission = {"schema": "tam-inherited-first-assessment-admission", "version": 1,
+        "runSlug": RUN_SLUG, "runId": run["id"], "seedId": seed_id,
+        "exactId": internal_id, "companyId": review["companyId"], "recoveryCohort": "active_hold",
+        "inheritedRowSha256": row_sha, "cohortSha256": cohort_sha,
+        "reviewContextSha256": context_sha, "reviewedFactsSha256": review["factsSha256"],
+        "actorKey": ACTOR_KEY, "executionSlot": PIPELINE_SLOT,
+        "authority": prior, "initialGradingArtifacts": []}
+    admission_sha = core.sha256_bytes(canonical_bytes(admission))
+    admission_path = inherited_admission_path(internal_id)
+    if admission_path.exists():
+        if admission_path.read_bytes() != canonical_bytes(admission):
+            raise RunnerBlocked("inherited admission cannot change context, facts, source or slot")
+        if previous and (previous.get("exactId") != internal_id
+                or previous.get("reviewContextSha256") != context_sha
+                or previous.get("reviewedFactsSha256") != review["factsSha256"]
+                or previous.get("inheritedAdmissionSha256") != admission_sha):
+            raise RunnerBlocked("inherited recovery lost its exact admission binding")
+        if previous.get("status") == "complete":
+            raise RunnerBlocked("inherited first assessment already completed")
+    elif inherited_artifact_inventory(internal_id, previous):
+        raise RunnerBlocked("inherited first assessment already has September grading artifacts")
+    binding = {"factsSha256": review["factsSha256"], "reviewContextSha256": context_sha,
+               "inheritedAdmissionSha256": admission_sha}
+    manifest_path = revision_root / "binding.json"
+    if manifest_path.exists() and manifest_path.read_bytes() != canonical_bytes(binding):
+        raise RunnerBlocked("same-facts inherited binding conflicts")
+    result = {"document": review, "path": path, "raw": raw, "sha256": context_sha,
+        "root": revision_root, "binding": binding, "priorBytes": bound, "approvalBytes": approval_raw,
+        "sourceDocuments": list(source_documents.values()), "inheritedAdmission": admission,
+        "inheritedHoldReason": row["hold_reason"].strip()}
+    state_path = revision_root / "inherited_preflight.json"
+    if state_path.exists():
+        state = _review_json(state_path.read_bytes())
+        first_claim = state.get("claimIdentity")
+        last_claim = previous.get("claimIdentity")
+        fence = {"runSlug": RUN_SLUG, "runId": run["id"], "seedId": seed_id,
+                 "companyId": review["companyId"], "exactId": internal_id, "actorKey": ACTOR_KEY}
+        if (state.get("admissionSha256") != admission_sha or state.get("status") != "claimed"
+                or not isinstance(first_claim, dict) or not isinstance(last_claim, dict)
+                or any(first_claim.get(k) != v or last_claim.get(k) != v for k, v in fence.items())
+                or type(first_claim.get("claimGeneration")) is not int or first_claim["claimGeneration"] < 1
+                or type(last_claim.get("claimGeneration")) is not int
+                or last_claim["claimGeneration"] < first_claim["claimGeneration"]):
+            raise RunnerBlocked("inherited first-claim preflight requires explicit reconciliation")
+        proof = revision_root / "inherited_preflight_verified.json"
+        if core.sha256_file(proof) != state.get("readbackSha256"):
+            raise RunnerBlocked("inherited preflight readback proof changed")
+        result["inheritedClaimed"] = True
+    elif previous or inherited_artifact_inventory(internal_id, {}):
+        raise RunnerBlocked("inherited artifacts lack first-claim proof")
+    return result
+
+
+def inherited_first_claim_preflight(review: dict[str, Any] | None, secret: str, bypass: str) -> None:
+    if not review or "inheritedAdmission" not in review or review.get("inheritedClaimed"):
+        return
+    admission = review["inheritedAdmission"]
+    state_path = review["root"] / "inherited_preflight.json"
+    if state_path.exists():
+        raise RunnerBlocked("inherited preflight cannot be automatically retried")
+    state = {"admissionSha256": review["binding"]["inheritedAdmissionSha256"], "status": "read_started"}
+    core.atomic_json(state_path, state)
+    checkpoint(admission["exactId"], "pending_action", "inherited_metadata_read")
+    row = published_record_readback(secret, bypass, admission["exactId"])
+    expected = {"netsuite_internal_id": admission["exactId"], "company_id": admission["companyId"],
+        "run_id": admission["runId"], "checkpoint_seed_id": admission["seedId"],
+        "recovery_cohort": "active_hold", "grade_status": "hold", "pdf_status": "verified",
+        "is_current": True, "hold_reason": review["inheritedHoldReason"], "validation_status": "pending"}
+    absent = ("final_score", "grade_provenance_sha256", "grade_provenance_object_path",
+              "grade_provenance_canonical_json", "validated_at", "graded_at", "published_at", "publication_origin",
+              "claim_actor", "claim_started_at", "claim_heartbeat_at", "claim_expires_at")
+    if (any(row.get(key) != value for key, value in expected.items())
+            or row.get("is_current") is not True or row.get("membership_status") not in {"new", "overlap"}
+            or (row.get("checkpoint_source_hashes") or {}).get("hold_file_sha256") != admission["inheritedRowSha256"]
+            or row.get("grade_provenance") != {} or any(key not in row or row[key] is not None for key in absent)):
+        raise RunnerBlocked("live inherited hold metadata or unpublished state differs")
+    proof = {"admissionSha256": state["admissionSha256"], "verifiedAt": core.utc_now(),
+             "expected": expected, "inheritedRowSha256": admission["inheritedRowSha256"],
+             "noFinalProvenance": True, "responseSha256": core.sha256_bytes(canonical_bytes(row))}
+    proof_path = review["root"] / "inherited_preflight_verified.json"
+    with proof_path.open("xb") as stream:
+        stream.write(canonical_bytes(proof)); stream.flush(); os.fsync(stream.fileno())
+    state.update(status="verified", readbackSha256=core.sha256_file(proof_path))
+    core.atomic_json(state_path, state)
+
+
+def inherited_claim_transition(review: dict[str, Any] | None, status: str) -> None:
+    if not review or "inheritedAdmission" not in review or review.get("inheritedClaimed"):
+        return
+    path = review["root"] / "inherited_preflight.json"
+    state = _review_json(path.read_bytes())
+    if state.get("status") != {"claim_started": "verified", "claimed": "claim_started"}[status]:
+        raise RunnerBlocked("inherited first-claim journal is out of order")
+    if state.get("admissionSha256") != review["binding"]["inheritedAdmissionSha256"]:
+        raise RunnerBlocked("inherited first-claim admission changed")
+    state["status"] = status
+    if status == "claimed":
+        state["claimIdentity"] = load_checkpoint()["claimIdentity"]
+    core.atomic_json(path, state)
+def load_identity_review(path: Path | None, internal_id: str, include_hold: bool,
+                         previous: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate reviewed facts and old full-read receipts before any claim.
+
+    Approval authenticates the locally reviewed bytes, not the truth of arbitrary
+    web text. The operator must independently approve the factual attribution.
+    """
+    pending = previous.get("exactId") == internal_id and previous.get("status") in {
+        "working", "pending_action", "publish_accepted"}
+    review_bound = (previous.get("exactId") == internal_id and previous.get("status") != "complete"
+                   and ("reviewedFactsSha256" in previous or "reviewContextSha256" in previous))
+    if path is None:
+        if inherited_admission_path(internal_id).exists() and previous.get("status") != "complete":
+            raise RunnerBlocked("inherited assessment requires its same review context")
+        if review_bound:
+            raise RunnerBlocked("unfinished correction requires its same review context")
+        return None
+    if ROUND_CONTEXT is None or not include_hold:
+        raise RunnerBlocked("review context requires canonical round and --include-hold")
+    path = path.resolve()
+    if not path.is_relative_to(core.WORKSPACE.resolve()):
+        raise RunnerBlocked("review context escaped workspace")
+    raw = path.read_bytes()
+    if len(raw) > 100_000:
+        raise RunnerBlocked("review context exceeds bounded factual input")
+    review = _review_json(raw)
+    required = {"schema", "version", "runSlug", "exactId", "companyId", "roundContextSha256",
+                "baseEvidence", "prior", "facts", "factsSha256", "preparedBy", "approval"}
+    if set(review) != required or review["schema"] != "tam-exact-identity-review" or type(review["version"]) is not int or review["version"] not in (1, 2):
+        raise RunnerBlocked("unsupported identity review schema")
+    entry = ROUND_CONTEXT["evidence_index"].get(internal_id)
+    if (not entry or review["runSlug"] != RUN_SLUG or review["exactId"] != internal_id
+            or review["companyId"] != entry["company_id"]
+            or review["roundContextSha256"] != ROUND_CONTEXT["context_sha256"]):
+        raise RunnerBlocked("review exact identity/context mismatch")
+    base = review["baseEvidence"]
+    expected = {"runSlug": RUN_SLUG, "exactId": internal_id,
+                "snapshotSha256": core.SNAPSHOT_SHA256, "membershipSha256": core.MEMBERSHIP_SHA256,
+                "roundContextSha256": ROUND_CONTEXT["context_sha256"],
+                "pdfSha256": entry["pdf_sha256"], "pdfPageCount": entry["pdf_pages"],
+                "recordTextSha256": entry["record_text_sha256"], "captureSha256": entry["capture_sha256"],
+                "sourceSnapshotSha256": entry["source_snapshot_sha256"]}
+    if not isinstance(base, dict) or "reviewedFactsSha256" in base or any(base.get(k) != v for k, v in expected.items()):
+        raise RunnerBlocked("review frozen evidence mismatch")
+    facts = review["facts"]
+    if not isinstance(facts, list) or not 1 <= len(facts) <= 20:
+        raise RunnerBlocked("review needs 1..20 independently reviewed attribution facts")
+    facts_sha = core.sha256_bytes(canonical_bytes(facts))
+    if review["factsSha256"] != facts_sha:
+        raise RunnerBlocked("review facts SHA mismatch")
+    revision_root = POOL_ROOT / "reviews" / internal_id / facts_sha[:16]
+    source_documents = {}
+    source_bytes = 0
+    for fact in facts:
+        if not isinstance(fact, dict) or set(fact) != {"statement", "sourceUrl", "source", "observedAt"}:
+            raise RunnerBlocked("review facts may contain only factual attribution and source fields")
+        if not isinstance(fact["statement"], str) or not 1 <= len(fact["statement"].strip()) <= 4000:
+            raise RunnerBlocked("review fact is empty or oversized")
+        if not isinstance(fact["sourceUrl"], str):
+            raise RunnerBlocked("review source URL must be text")
+        url = urllib.parse.urlsplit(fact["sourceUrl"])
+        if url.scheme != "https" or not url.hostname or url.username or url.password:
+            raise RunnerBlocked("review source must be an HTTPS public citation")
+        _review_time(fact["observedAt"])
+        _, source_raw = _review_ref(fact["source"])
+        source_key = canonical_bytes(fact["source"])
+        if source_key not in source_documents:
+            source_bytes += len(source_raw)
+            if len(source_raw) > 200_000 or source_bytes > 500_000:
+                raise RunnerBlocked("review source text exceeds bounded full-read input")
+            try:
+                source_text = source_raw.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise RunnerBlocked("review sources require preserved UTF-8 text") from error
+            source_documents[source_key] = {"source": fact["source"], "text": source_text}
+    if len({canonical_bytes(f) for f in facts}) != len(facts):
+        raise RunnerBlocked("duplicate review facts")
+    _, approval_raw = _review_ref(review["approval"])
+    approval = _review_json(approval_raw)
+    binding = {k: v for k, v in review.items() if k != "approval"}
+    approval_expected = {"schema": "tam-exact-identity-review-approval", "version": 1,
+        "status": "approved_factual_identity_review", "runSlug": RUN_SLUG, "exactId": internal_id,
+        "companyId": entry["company_id"], "roundContextSha256": ROUND_CONTEXT["context_sha256"],
+        "factsSha256": facts_sha, "contextBindingSha256": core.sha256_bytes(canonical_bytes(binding)),
+        "identityResolutionVerified": True, "noScoringInstructions": True}
+    if (set(approval) != set(approval_expected) | {"reviewedBy", "reviewedAt"}
+            or any(approval.get(k) != v for k, v in approval_expected.items())
+            or type(approval.get("version")) is not int
+            or approval.get("identityResolutionVerified") is not True or approval.get("noScoringInstructions") is not True
+            or not isinstance(review["preparedBy"], str) or not review["preparedBy"].strip()
+            or not isinstance(approval["reviewedBy"], str) or not approval["reviewedBy"].strip()
+            or approval["reviewedBy"].strip().casefold() == review["preparedBy"].strip().casefold()):
+        raise RunnerBlocked("independent factual review approval does not bind exact context")
+    _review_time(approval["reviewedAt"])
+    if review["version"] == 2:
+        return load_inherited_identity_review(review, path, raw, internal_id, previous,
+                                              revision_root, approval_raw, source_documents)
+    prior = review["prior"]
+    if not isinstance(prior, dict) or set(prior) != {"hold", "candidate", "candidateReceipt", "validator", "validatorReceipt"}:
+        raise RunnerBlocked("review must bind all prior held artifacts and receipts")
+    bound = {key: _review_ref(ref, preserved=revision_root / "original" / f"{key}.json")
+             for key, ref in prior.items()}
+    if bound["hold"][0] != (POOL_ROOT / "holds" / f"{internal_id}.json").resolve():
+        raise RunnerBlocked("review prior hold is not the canonical exact hold")
+    for role, folder, artifact in (("reader", "candidates", "candidate"), ("validator", "validator_raw", "validator")):
+        artifact_path, artifact_raw = bound[artifact]
+        receipt_path, receipt_raw = bound[artifact + "Receipt"]
+        value = _review_json(artifact_raw)
+        receipt = _review_json(receipt_raw)
+        if (not artifact_path.is_relative_to((POOL_ROOT / folder).resolve())
+                or not artifact_path.name.startswith(internal_id + ".")
+                or receipt_path != artifact_receipt_path(artifact_path)
+                or value.get("exact_id") != internal_id
+                or receipt.get("schema") != "tam-full-evidence-model-artifact" or receipt.get("version") != 1
+                or receipt.get("role") != role or receipt.get("evidence") != base
+                or receipt.get("artifactSha256") != core.sha256_bytes(artifact_raw)
+                or receipt.get("candidateSha256") != (prior["candidate"]["sha256"] if role == "validator" else None)
+                or receipt.get("completeRawEvidenceCoverage") is not True
+                or receipt.get("modelConcurrency") != 1):
+            raise RunnerBlocked("review prior full-read receipt mismatch")
+        if role == "validator" and value.get("validation_status") != "hold":
+            raise RunnerBlocked("review requires a genuine prior validator hold")
+    hold = _review_json(bound["hold"][1])
+    if (hold.get("exact_id") != internal_id or (hold.get("validation") or {}).get("status") != "hold"
+            or hold.get("candidate_file_sha256") != prior["candidate"]["sha256"]
+            or hold.get("pdf_sha256") != entry["pdf_sha256"]
+            or hold.get("record_text_sha256") != entry["record_text_sha256"]):
+        raise RunnerBlocked("prior canonical hold does not bind candidate and evidence")
+    context_sha = core.sha256_bytes(raw)
+    if (pending or review_bound) and (previous.get("reviewedFactsSha256") != facts_sha or previous.get("reviewContextSha256") != context_sha):
+        raise RunnerBlocked("unfinished correction cannot change its review context")
+    # Same facts have one durable namespace; a new timestamp/approval cannot force
+    # another read. Conflicting wrapper bytes stop instead of overwriting caches.
+    manifest_path = revision_root / "binding.json"
+    binding_receipt = {"factsSha256": facts_sha, "reviewContextSha256": context_sha}
+    if manifest_path.is_file() and _review_json(manifest_path.read_bytes()) != binding_receipt:
+        raise RunnerBlocked("same-facts correction binding conflicts")
+    return {"document": review, "path": path, "raw": raw, "sha256": context_sha,
+            "root": revision_root, "binding": binding_receipt, "priorBytes": bound,
+            "approvalBytes": approval_raw, "sourceDocuments": list(source_documents.values())}
+
+
+def preserve_identity_review(review: dict[str, Any], previous: dict[str, Any]) -> None:
+    def exclusive(path: Path, raw: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file():
+            if path.read_bytes() != raw:
+                raise RunnerBlocked("immutable correction before-image conflicts")
+            return
+        with path.open("xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+    root = review["root"]
+    for name, (_, raw) in review["priorBytes"].items():
+        exclusive(root / "original" / f"{name}.json", raw)
+    exclusive(root / "context.json", review["raw"])
+    exclusive(root / "approval.json", review["approvalBytes"])
+    for index, fact in enumerate(review["document"]["facts"]):
+        exclusive(root / "sources" / f"{index:02d}.bin", _review_ref(fact["source"])[1])
+    prior_checkpoint = root / "original" / "checkpoint.json"
+    if not prior_checkpoint.exists():
+        exclusive(prior_checkpoint, canonical_bytes(previous))
+    for log in (POOL_ROOT / "logs").glob(review["document"]["exactId"] + ".single_*.log"):
+        preserved_log = root / "original" / "logs" / log.name
+        if not preserved_log.exists():
+            exclusive(preserved_log, log.read_bytes())
+    exclusive(root / "binding.json", canonical_bytes(review["binding"]))
+    if "inheritedAdmission" in review:
+        exclusive(inherited_admission_path(review["document"]["exactId"]), canonical_bytes(review["inheritedAdmission"]))
+
+
+def attach_identity_review(package: dict[str, Any], internal_id: str, review: dict[str, Any] | None) -> None:
+    if review is None:
+        return
+    if evidence_identity(internal_id, package) != review["document"]["baseEvidence"]:
+        raise RunnerBlocked("fresh package differs from reviewed base evidence")
+    def archived(relative: str, digest: str) -> dict[str, str]:
+        return {"path": (review["root"] / relative).resolve().relative_to(core.WORKSPACE.resolve()).as_posix(), "sha256": digest}
+    package["identity_review"] = {"schema": "tam-exact-identity-review-evidence", "version": 1,
+        "exactId": internal_id, "companyId": review["document"]["companyId"],
+        "factsSha256": review["document"]["factsSha256"], "facts": review["document"]["facts"],
+        "context": archived("context.json", review["sha256"]),
+        "approval": archived("approval.json", review["document"]["approval"]["sha256"]),
+        "prior": {key: archived(f"original/{key}.json", ref["sha256"]) for key, ref in review["document"]["prior"].items()},
+        "sourceArchives": [{"original": fact["source"], "preserved": archived(f"sources/{index:02d}.bin", fact["source"]["sha256"])}
+                           for index, fact in enumerate(review["document"]["facts"])],
+        "sourceDocuments": review["sourceDocuments"]}
+
+
+def role_logs(internal_id: str, package: dict[str, Any]) -> Path:
+    review = package.get("identity_review")
+    if review is None:
+        return POOL_ROOT / "logs"
+    return POOL_ROOT / "reviews" / internal_id / review["factsSha256"][:16] / "logs"
 
 
 def attach_live_company_context(
@@ -462,13 +1231,56 @@ def attach_live_company_context(
     not call the retired agent-read bridge to decorate evidence with mutable
     company fields.
     """
-    _ = internal_id, package
+    if ROUND_CONTEXT is None:
+        return
+    entry = ROUND_CONTEXT["evidence_index"][internal_id]
+    supplement = entry.get("supplement_path")
+    if not supplement:
+        return
+    path = (core.WORKSPACE / supplement).resolve()
+    if not path.is_relative_to(core.WORKSPACE.resolve()):
+        raise RunnerBlocked("Supplement path escapes workspace")
+    raw = path.read_bytes()
+    if core.sha256_bytes(raw) != entry.get("supplement_sha256"):
+        raise RunnerBlocked("Exact saved-search supplement changed")
+    value = json.loads(raw)
+    if str(value.get("internal_id")) != internal_id:
+        raise RunnerBlocked("Saved-search supplement belongs to another lead")
+    if not isinstance(value.get("table_rows"), list) or not value["table_rows"]:
+        raise RunnerBlocked("Saved-search supplement has no complete rows")
+    if any(str(row.get("INTERNAL ID", "")).strip() != internal_id for row in value["table_rows"]):
+        raise RunnerBlocked("Saved-search supplement mixes exact IDs")
+    # Read only after the exact coordination claim. Keep every column and
+    # duplicate occurrence; these are dated CRM notes, not old model judgments.
+    package["supplemental_company_context"] = value
 
 
 def evidence_key(internal_id: str, package: dict[str, Any]) -> str:
     return hashlib.sha256(
         canonical_bytes(evidence_identity(internal_id, package))
     ).hexdigest()
+
+
+def prepare_evidence_navigation(internal_id: str, package: dict[str, Any]) -> dict[str, Any]:
+    """Install additive navigation only after the canonical claimed preflight.
+
+    A matching completed legacy reader retains its original prompt/evidence
+    identity so an interrupted record can reuse eligible reader/validator work.
+    Accepted-publication recovery never invokes this helper.
+    """
+    identity = evidence_identity(internal_id, package)
+    legacy = POOL_ROOT / "candidates" / f"{internal_id}.{evidence_key(internal_id, package)}.json"
+    if reusable_artifact(legacy, identity, "reader", None) is not None:
+        return {"status": "preserved_existing_model_artifacts", "private_requests_sent": 0}
+    try:
+        return navigation_bridge.prepare_package(
+            internal_id, package, evidence=identity, root=POOL_ROOT / "navigation"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        # Navigation is an accelerator, never a new grading/publication gate.
+        # Authoritative full evidence and existing validation still govern.
+        package.pop("evidence_navigation", None)
+        return {"status": "navigation_unavailable_full_evidence_retained", "private_requests_sent": 0}
 
 
 def artifact_receipt_path(artifact_path: Path) -> Path:
@@ -517,6 +1329,8 @@ def write_artifact_receipt(
             "candidateSha256": candidate_sha256,
             "completeRawEvidenceCoverage": True,
             "modelConcurrency": 1,
+            **({"modelConcurrencyScope": "one_exact_record", "maximumConcurrentRecordPipelines": 3}
+               if PIPELINE_SLOT is not None else {}),
             "readMode": mode,
         },
     )
@@ -557,8 +1371,17 @@ def serial_chunk_reports(
     segments = core.chunk_segments(
         package, maximum_characters=maximum_characters
     )
-    chunk_root = POOL_ROOT / "oversized" / internal_id / role
+    chunk_scope = role if ROUND_CONTEXT is None else f"{role}-{evidence_key(internal_id, package)[:16]}"
+    chunk_root = POOL_ROOT / "oversized" / internal_id / chunk_scope
     chunk_root.mkdir(parents=True, exist_ok=True)
+    if ROUND_CONTEXT is not None:
+        scope_path = chunk_root / "evidence_identity.json"
+        scope_identity = evidence_identity(internal_id, package)
+        if scope_path.is_file():
+            if json.loads(scope_path.read_bytes()) != scope_identity:
+                raise RunnerBlocked("Chunk evidence or assessment context changed")
+        else:
+            core.atomic_json(scope_path, scope_identity)
     reports: list[dict[str, Any]] = []
     for segment in segments:
         output_path = chunk_root / f"chunk_{segment['index']:03d}.json"
@@ -674,6 +1497,8 @@ def get_or_run_reader(
         artifact_path, identity, "reader", None
     )
     if candidate is not None:
+        if ROUND_CONTEXT is not None:
+            candidate = core.with_display_contract(candidate, digest_field="chronological_digest")
         core.validate_candidate(
             internal_id,
             package,
@@ -681,14 +1506,14 @@ def get_or_run_reader(
             require_display_contract=False,
         )
         return candidate, artifact_path, True
-    codex_home = core.prepare_codex_home()
+    codex_home = record_codex_home()
     candidate, mode = run_role(
         internal_id=internal_id,
         role="reader",
         package=package,
         candidate=None,
         artifact_path=artifact_path,
-        logs=POOL_ROOT / "logs",
+        logs=role_logs(internal_id, package),
         codex_home=codex_home,
         model=args.reader_model,
         effort=args.reader_effort,
@@ -696,6 +1521,8 @@ def get_or_run_reader(
         maximum_prompt_characters=args.max_prompt_characters,
         chunk_characters=args.chunk_characters,
     )
+    if ROUND_CONTEXT is not None:
+        candidate = core.with_display_contract(candidate, digest_field="chronological_digest")
     core.validate_candidate(
         internal_id,
         package,
@@ -704,6 +1531,24 @@ def get_or_run_reader(
     )
     write_artifact_receipt(artifact_path, identity, "reader", None, mode)
     return candidate, artifact_path, False
+
+
+def validator_artifact_path(internal_id: str, evidence_sha256: str, candidate_sha256: str) -> Path:
+    """Use one full digest for successor filenames, retaining both receipt pins.
+
+    Concatenating two 64-character hashes exceeded Windows MAX_PATH once the
+    model output temporary suffix was appended. The receipt still binds the
+    complete evidence identity and candidate SHA independently.
+    """
+    if ROUND_CONTEXT is None:
+        filename = f"{internal_id}.{evidence_sha256}.{candidate_sha256}.json"
+    else:
+        combined = hashlib.sha256(canonical_bytes({
+            "evidenceSha256": evidence_sha256,
+            "candidateSha256": candidate_sha256,
+        })).hexdigest()
+        filename = f"{internal_id}.{combined}.json"
+    return POOL_ROOT / "validator_raw" / filename
 
 
 def get_or_run_validator(
@@ -716,11 +1561,7 @@ def get_or_run_validator(
     identity = evidence_identity(internal_id, package)
     key = evidence_key(internal_id, package)
     candidate_sha256 = core.sha256_file(candidate_path)
-    artifact_path = (
-        POOL_ROOT
-        / "validator_raw"
-        / f"{internal_id}.{key}.{candidate_sha256}.json"
-    )
+    artifact_path = validator_artifact_path(internal_id, key, candidate_sha256)
     validation = reusable_artifact(
         artifact_path,
         identity,
@@ -733,14 +1574,14 @@ def get_or_run_validator(
         )
         core.validate_final(internal_id, package, validation)
         return validation, artifact_path, True
-    codex_home = core.prepare_codex_home()
+    codex_home = record_codex_home()
     validation, mode = run_role(
         internal_id=internal_id,
         role="validator",
         package=package,
         candidate=candidate,
         artifact_path=artifact_path,
-        logs=POOL_ROOT / "logs",
+        logs=role_logs(internal_id, package),
         codex_home=codex_home,
         model=args.validator_model,
         effort=args.validator_effort,
@@ -769,7 +1610,37 @@ def write_jsonl_atomic(path: Path, record: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def find_jsonl_record(
+@contextmanager
+def staging_read_lock():
+    """Share the stager's short local lock so Windows readers cannot block replace."""
+    FINAL_ROOT.mkdir(parents=True, exist_ok=True)
+    lock = FINAL_ROOT / ".stage.lock"
+    acquired = False
+    for attempt in range(101):
+        try:
+            lock.mkdir()
+            acquired = True
+            break
+        except FileExistsError:
+            if attempt == 100:
+                raise RunnerBlocked("timed out waiting for canonical staging read lock")
+            time.sleep(0.1)
+    try:
+        yield
+    finally:
+        if acquired:
+            lock.rmdir()
+
+
+def find_jsonl_record(path: Path, field: str, expected: str) -> dict[str, Any] | None:
+    if (PIPELINE_SLOT is not None and path.parent.resolve() == FINAL_ROOT.resolve()
+            and path.name in {"publish_queue.jsonl", "final_assessments.jsonl"}):
+        with staging_read_lock():
+            return _find_jsonl_record(path, field, expected)
+    return _find_jsonl_record(path, field, expected)
+
+
+def _find_jsonl_record(
     path: Path,
     field: str,
     expected: str,
@@ -801,10 +1672,11 @@ def find_jsonl_record(
 def archive_superseded_hold(
     internal_id: str,
     *,
-    pool_root: Path = POOL_ROOT,
+    pool_root: Path | None = None,
 ) -> dict[str, Any] | None:
     """Move a stale hold into immutable history after exact publish success."""
 
+    pool_root = POOL_ROOT if pool_root is None else pool_root
     hold_path = pool_root / "holds" / f"{internal_id}.json"
     if not hold_path.is_file():
         return None
@@ -842,8 +1714,10 @@ def stage_one(validated_path: Path, internal_id: str) -> dict[str, Any]:
         "--actor-key",
         ACTOR_KEY,
         "--lock-attempts",
-        "1",
+        "100" if PIPELINE_SLOT is not None else "1",
     ]
+    if PIPELINE_SLOT is not None:
+        command.extend(["--return-exact-payload", internal_id])
     result = subprocess.run(
         command,
         cwd=core.WORKSPACE,
@@ -859,13 +1733,15 @@ def stage_one(validated_path: Path, internal_id: str) -> dict[str, Any]:
     manifest = json.loads(result.stdout)
     if manifest.get("status") == "conflict":
         raise RunnerBlocked("canonical staging reported a final conflict")
-    payload = find_jsonl_record(
-        FINAL_ROOT / "publish_queue.jsonl",
-        "netsuiteInternalId",
-        internal_id,
+    payload = manifest.get("exact_publish_payload") if PIPELINE_SLOT is not None else find_jsonl_record(
+        FINAL_ROOT / "publish_queue.jsonl", "netsuiteInternalId", internal_id,
     )
     if not isinstance(payload, dict):
         raise RunnerBlocked("canonical staging produced no exact publish payload")
+    if PIPELINE_SLOT is not None and (payload.get("netsuiteInternalId") != internal_id
+                                     or payload.get("runSlug") != RUN_SLUG
+                                     or payload.get("actorKey") != ACTOR_KEY):
+        raise RunnerBlocked("canonical staging returned another exact record/actor")
     return payload
 
 
@@ -1070,7 +1946,7 @@ def local_preflight(internal_id: str) -> dict[str, Any]:
             raise RunnerBlocked(f"required TAM runner file is missing: {required}")
     package = core.trusted_package(internal_id)
     capture_snapshot = str(package["capture"].get("snapshot_sha256") or "")
-    if capture_snapshot != core.SNAPSHOT_SHA256:
+    if ROUND_CONTEXT is None and capture_snapshot != core.SNAPSHOT_SHA256:
         require_reconciled_overlap_package(internal_id, package)
     return package
 
@@ -1258,10 +2134,18 @@ def recover_accepted_publish(
 
 
 def run_one(args: argparse.Namespace) -> dict[str, Any]:
+    global ACTIVE_REVIEW
     internal_id = exact_internal_id(args.id)
-    require_enabled()
-    with SingleRunnerLock():
+    configure_record_execution(internal_id, getattr(args, "pipeline_slot", None))
+    require_enabled(pipeline_slot=PIPELINE_SLOT)
+    with record_execution_lock(internal_id):
         previous = load_checkpoint()
+        require_recovery_slot(previous, internal_id)
+        review = load_identity_review(getattr(args, "review_context", None), internal_id, args.include_hold, previous)
+        ACTIVE_REVIEW = review["binding"].copy() if review else None
+        if ACTIVE_REVIEW is not None:
+            ACTIVE_REVIEW["reviewedFactsSha256"] = ACTIVE_REVIEW.pop("factsSha256")
+            preserve_identity_review(review, previous)
         claim_token = (
             str(previous.get("claimToken"))
             if previous.get("exactId") == internal_id
@@ -1277,6 +2161,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
         ):
             package = local_preflight(internal_id)
             attach_live_company_context(internal_id, package)
+            attach_identity_review(package, internal_id, review)
             return recover_accepted_publish(
                 internal_id=internal_id,
                 package=package,
@@ -1284,13 +2169,19 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 secret=secret,
                 bypass=bypass,
             )
+        inherited_first_claim_preflight(review, secret, bypass)
         identity: dict[str, Any] = {"exactId": internal_id}
         claimed = False
         publish_accepted = False
         stage = "claim"
+        timings = navigation_bridge.StageTimings(POOL_ROOT / "stage_timings", internal_id)
         try:
             try:
-                heartbeat(secret, bypass, internal_id, "working", "claim")
+                actor_ack = heartbeat(secret, bypass, internal_id, "working", "claim")
+                if not isinstance(actor_ack, dict):
+                    raise RunnerBlocked("preclaim actor heartbeat acknowledgment missing")
+                preclaim_run_id = preclaim_run_identity(actor_ack, internal_id)
+                inherited_claim_transition(review, "claim_started")
                 claimed_record = claim(
                     secret,
                     bypass,
@@ -1322,7 +2213,10 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 resumedClaim=bool(claimed_record.get("resumed")),
                 reclaimedClaim=bool(claimed_record.get("reclaimed")),
                 claimToken=claim_token,
+                claimGeneration=claimed_record["claim_generation"],
+                claimIdentity=claim_identity(claimed_record, internal_id, claim_token, preclaim_run_id),
             )
+            inherited_claim_transition(review, "claimed")
             # A previous interrupted invocation may already have persisted a
             # durable local blocker.  If this actor resumes that same lease,
             # reconcile it to the coordination hold immediately; do not reopen
@@ -1356,8 +2250,12 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                     heartbeat=heartbeat_result,
                 )
             stage = "local_evidence"
+            timings.start("preparation")
             package = local_preflight(internal_id)
             attach_live_company_context(internal_id, package)
+            attach_identity_review(package, internal_id, review)
+            navigation_preparation = prepare_evidence_navigation(internal_id, package)
+            timings.finish(reused=navigation_preparation.get("reused", False))
             identity = evidence_identity(internal_id, package)
             checkpoint(
                 internal_id,
@@ -1365,7 +2263,10 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 "local_evidence_verified",
                 evidence=identity,
                 claimToken=claim_token,
+                navigationPreparation=navigation_preparation,
+                stageTimingsPath=str(timings.path),
             )
+            stage = "heartbeat_started"
             heartbeat(
                 secret,
                 bypass,
@@ -1376,7 +2277,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
             )
 
             stage = "reader"
-            candidate, candidate_path, reader_reused = get_or_run_reader(
+            candidate, candidate_path, reader_reused = timings.call("reader", get_or_run_reader,
                 internal_id, package, args
             )
             candidate_sha256 = core.sha256_file(candidate_path)
@@ -1390,6 +2291,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 artifactReused=reader_reused,
             )
 
+            stage = "heartbeat_started"
             heartbeat(
                 secret,
                 bypass,
@@ -1401,7 +2303,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
 
             stage = "validator"
             validation, validation_path, validator_reused = (
-                get_or_run_validator(
+                timings.call("validator", get_or_run_validator,
                     internal_id,
                     package,
                     candidate,
@@ -1454,6 +2356,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 )
 
             stage = "canonical_staging"
+            timings.start("staging")
             validation_key = hashlib.sha256(
                 canonical_bytes(
                     {
@@ -1504,6 +2407,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 claim_token,
             )
             verify_publish_payload(payload, record)
+            timings.finish(reused=validated_reused)
             payload_sha256 = hashlib.sha256(canonical_bytes(payload)).hexdigest()
             checkpoint(
                 internal_id,
@@ -1517,9 +2421,10 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 validatedPath=str(validated_path),
                 validatedArtifactReused=validated_reused,
                 publishPayloadSha256=payload_sha256,
+                publishRequestStarted=False,
             )
 
-            stage = "publish"
+            stage = "heartbeat_started"
             if claim_token is None:
                 raise RunnerBlocked("coordination publish has no fencing token")
             heartbeat(
@@ -1530,6 +2435,9 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 "publish",
                 claim_token,
             )
+            stage = "publish"
+            timings.start("publication")
+            coordination_checkpoint(internal_id, coordinationPhase="publish_started", publishRequestStarted=True)
             publish_result = publish_once(secret, bypass, payload)
             publish_accepted = True
             checkpoint(
@@ -1548,6 +2456,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
             )
             verify_published_readback(live, payload)
             event = verify_publish_event(secret, bypass, payload)
+            timings.finish()
             published_path = POOL_ROOT / "published" / f"{internal_id}.json"
             core.atomic_json(
                 published_path,
@@ -1569,6 +2478,8 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 "complete",
                 "published_readback_verified",
                 evidence=identity,
+                navigationPreparation=navigation_preparation,
+                stageTimingsPath=str(timings.path),
                 finalScore=record["final_score"],
                 candidatePath=str(candidate_path),
                 candidateSha256=candidate_sha256,
@@ -1586,9 +2497,28 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 heartbeat=heartbeat_result,
             )
         except Exception as error:
+            timings.finish("failed")
             if stage == "coordination_required_unavailable":
                 raise RunnerBlocked(str(error)) from error
             detail = f"{type(error).__name__}: {error}"
+            if publish_accepted:
+                # An acknowledged publication must remain on the readback-only
+                # recovery path, including when its first checkpoint write failed.
+                checkpoint(
+                    internal_id,
+                    "publish_accepted",
+                    "readback",
+                    evidence=identity,
+                    validatedPath=str(validated_path),
+                    publishPayloadSha256=payload_sha256,
+                    publishResponse=publish_result,
+                    publishAccepted=True,
+                    blocker={"kind": "accepted_publication_readback_failed",
+                             "stage": stage, "detail": detail},
+                )
+                raise RunnerBlocked(
+                    "Publication was accepted; exact readback recovery is required."
+                ) from error
             # Any reader/validator/staging failure before an accepted publish is
             # not safe to retry implicitly: its exact ID must leave the canonical
             # queue until a human can resolve the evidence defect. Persist a
@@ -1596,7 +2526,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
             # result was never produced.
             hold_path: Path | None = None
             if (
-                stage in {"reader", "validator", "canonical_staging", "publish"}
+                stage in {"reader", "validator", "canonical_staging", "publish", "heartbeat_started"}
                 and not publish_accepted
             ):
                 try:
@@ -1625,6 +2555,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                         "validator",
                         "canonical_staging",
                         "publish",
+                        "heartbeat_started",
                     }:
                         release = set_grade_status_once(
                             secret,
@@ -1632,7 +2563,8 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                             internal_id,
                             claim_token,
                             "hold",
-                            f"Validated locally; {stage} blocked: {detail}",
+                            (f"Coordination heartbeat blocked before publication: {detail}" if stage == "heartbeat_started"
+                             else f"Validated locally; {stage} blocked: {detail}"),
                         )
                     else:
                         release = set_grade_status_once(
@@ -1654,11 +2586,14 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 "blocked",
                 stage,
                 evidence=identity,
-                blocker={"kind": "single_attempt_failed", "detail": detail},
+                blocker={"kind": "heartbeat_coordination_failed" if stage == "heartbeat_started"
+                         else "single_attempt_failed", "detail": detail},
                 holdPath=str(hold_path) if hold_path else None,
                 coordinationRelease=release,
                 publishAccepted=publish_accepted,
-                retryAttempted=False,
+                retryAttempted=isinstance(load_checkpoint().get("heartbeatRecovery"), dict)
+                    and load_checkpoint()["heartbeatRecovery"].get("claimIdentity") == load_checkpoint().get("claimIdentity")
+                    and load_checkpoint()["heartbeatRecovery"].get("recoveryPostsStarted") == 1,
             )
             raise RunnerBlocked(json.dumps(result, ensure_ascii=True)) from error
 
@@ -1670,6 +2605,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     )
     parser.add_argument("--id", help="one exact numeric NetSuite Internal ID")
+    parser.add_argument("--round-context", type=Path,
+                        help="canonical successor context; defaults to the mission's active round")
+    parser.add_argument("--review-context", type=Path,
+                        help="independently approved exact-ID attribution facts; requires --include-hold")
+    parser.add_argument("--pipeline-slot", type=int, choices=(1, 2, 3),
+                        help="explicitly authorized concurrent exact-ID pipeline slot; default remains serial")
     parser.add_argument(
         "--include-hold",
         action="store_true",
@@ -1719,6 +2660,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="inspect local guards only; never claim, call a model, or publish",
     )
     args = parser.parse_args(argv)
+    if args.review_context is not None and (not args.include_hold or args.self_check):
+        parser.error("--review-context requires --include-hold and one exact record")
     if args.model is not None:
         args.reader_model = args.model
         args.validator_model = args.model
@@ -1746,6 +2689,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    try:
+        configure_canonical_round(args.round_context, require_ready=not args.self_check)
+    except RunnerBlocked as error:
+        print(json.dumps({"status": "blocked", "error": str(error)}), file=sys.stderr)
+        return 2
     if args.self_check:
         print(json.dumps(self_check(), indent=2, sort_keys=True))
         return 0

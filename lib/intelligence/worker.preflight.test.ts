@@ -28,6 +28,25 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("worker predispatch budget handling", () => {
+  it("continues beyond the old small batch while claiming only immediate concurrency", async () => {
+    observation.is_current = false;
+    let remaining = 60;
+    mocks.rpc.mockImplementation(async (name: string, args: { p_limit?: number }) => {
+      if (name !== "intelligence_claim") return { data: true, error: null };
+      const size = Math.min(remaining, args.p_limit ?? 0);
+      remaining -= size;
+      return { data: Array.from({ length: size }, (_, i) => ({ id: `job-${remaining+i}`, observation_id: "obs", kind: "interpret", lease_token: "lease", attempts: 1, result: null })), error: null };
+    });
+    expect(await runIntelligenceWorker(60)).toMatchObject({ processed: 60, outcomes: { superseded: 60 }, stoppedBy: "batch_limit" });
+    const claims = mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_claim");
+    expect(claims).toHaveLength(20);
+    expect(claims.every(([, args]) => args.p_limit <= 3)).toBe(true);
+    expect(mocks.reserve).not.toHaveBeenCalled();
+  });
+  it("does not claim jobs without enough function time to execute them", async () => {
+    expect(await runIntelligenceWorker(192, Date.now() + 1000)).toMatchObject({ processed: 0, stoppedBy: "deadline" });
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_claim")).toBe(false);
+  });
   it("rejects malformed assembled input before reserving a paid call", async () => {
     observation.title = "x".repeat(2001);
     expect(await runIntelligenceWorker(1)).toMatchObject({ outcomes: { invalid_input: 1 } });

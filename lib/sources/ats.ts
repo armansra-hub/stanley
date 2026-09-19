@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { companyPageUrl, discoverSiteLinks, htmlToVisibleText, sameCompanySite } from "./siteDiscovery";
 
@@ -16,7 +17,7 @@ import { companyPageUrl, discoverSiteLinks, htmlToVisibleText, sameCompanySite }
  */
 
 export type AtsType = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "recruitee" | "workable" | "wizehire";
-export interface AtsJob { title: string; description: string; url: string; location: string; date: string | null }
+export interface AtsJob { id?: string; title: string; description: string; url: string; location: string; date: string | null }
 
 async function fetchText(url: string, ms = 7000, companyBase?: string): Promise<string | null> {
   try {
@@ -92,6 +93,8 @@ export interface AtsJobBatch {
   nextOffset: number | null;
   complete: boolean;
   status: "complete" | "partial" | "unavailable";
+  snapshotKey?: string;
+  expectedTotal?: number;
 }
 
 function jobDate(value: unknown): string | null {
@@ -101,13 +104,15 @@ function jobDate(value: unknown): string | null {
 }
 
 function normalizeJob(type: AtsType, token: string, j: any): AtsJob {
-  if (type === "greenhouse") return { title: String(j.title ?? ""), description: htmlToText(j.content ?? ""), url: String(j.absolute_url ?? ""), location: String(j.location?.name ?? ""), date: jobDate(j.updated_at) };
-  if (type === "lever") return { title: String(j.text ?? ""), description: htmlToText([j.descriptionPlain ?? j.description ?? "", ...(Array.isArray(j.lists) ? j.lists.map((list: any) => `${list.text ?? ""} ${list.content ?? ""}`) : []), j.additionalPlain ?? j.additional ?? ""].join(" ")), url: String(j.hostedUrl ?? ""), location: String(j.categories?.location ?? ""), date: jobDate(j.createdAt) };
-  if (type === "ashby") return { title: String(j.title ?? ""), description: htmlToText(j.descriptionPlain ?? j.descriptionHtml ?? ""), url: String(j.jobUrl ?? j.applyUrl ?? ""), location: String(j.location ?? j.locationName ?? ""), date: jobDate(j.publishedAt ?? j.updatedAt) };
-  if (type === "smartrecruiters") return { title: String(j.name ?? ""), description: htmlToText(Object.values(j.jobAd?.sections ?? {}).map((section: any) => section?.text ?? "").join(" ")), url: `https://jobs.smartrecruiters.com/${token}/${encodeURIComponent(String(j.id ?? ""))}`, location: String(j.location?.city ?? ""), date: jobDate(j.releasedDate ?? j.createdOn) };
-  if (type === "recruitee") return { title: String(j.title ?? ""), description: htmlToText(j.description ?? ""), url: String(j.careers_url ?? j.url ?? ""), location: String(j.location ?? ""), date: jobDate(j.published_at) };
-  if (type === "workable") return { title: String(j.title ?? ""), description: htmlToText(j.description ?? ""), url: String(j.url ?? j.shortlink ?? ""), location: String(j.location?.location_str ?? j.city ?? ""), date: jobDate(j.published_on ?? j.created_at) };
-  return { title: String(j.title ?? ""), description: htmlToText(j.snippet ?? ""), url: String(j.url ?? ""), location: String(j.location ?? ""), date: null };
+  const id = j.id ?? j.shortcode ?? j.jobId ?? j.slug;
+  const identity = id == null || String(id).length > 250 ? {} : { id: String(id) };
+  if (type === "greenhouse") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.content ?? ""), url: String(j.absolute_url ?? ""), location: String(j.location?.name ?? ""), date: jobDate(j.updated_at) };
+  if (type === "lever") return { ...identity, title: String(j.text ?? ""), description: htmlToText([j.descriptionPlain ?? j.description ?? "", ...(Array.isArray(j.lists) ? j.lists.map((list: any) => `${list.text ?? ""} ${list.content ?? ""}`) : []), j.additionalPlain ?? j.additional ?? ""].join(" ")), url: String(j.hostedUrl ?? ""), location: String(j.categories?.location ?? ""), date: jobDate(j.createdAt) };
+  if (type === "ashby") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.descriptionPlain ?? j.descriptionHtml ?? ""), url: String(j.jobUrl ?? j.applyUrl ?? ""), location: String(j.location ?? j.locationName ?? ""), date: jobDate(j.publishedAt ?? j.updatedAt) };
+  if (type === "smartrecruiters") return { ...identity, title: String(j.name ?? ""), description: htmlToText(Object.values(j.jobAd?.sections ?? {}).map((section: any) => section?.text ?? "").join(" ")), url: `https://jobs.smartrecruiters.com/${token}/${encodeURIComponent(String(j.id ?? ""))}`, location: String(j.location?.city ?? ""), date: jobDate(j.releasedDate ?? j.createdOn) };
+  if (type === "recruitee") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.description ?? ""), url: String(j.careers_url ?? j.url ?? ""), location: String(j.location ?? ""), date: jobDate(j.published_at) };
+  if (type === "workable") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.description ?? ""), url: String(j.url ?? j.shortlink ?? ""), location: String(j.location?.location_str ?? j.city ?? ""), date: jobDate(j.published_on ?? j.created_at) };
+  return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.snippet ?? ""), url: String(j.url ?? ""), location: String(j.location ?? ""), date: null };
 }
 
 /**
@@ -130,6 +135,9 @@ export async function fetchAtsJobsBatch(type: AtsType, token: string, options: {
   let offset = start;
   let complete = false;
   let succeeded = false;
+  let expectedTotal: number | undefined;
+  let snapshotKey: string | undefined;
+  let inconsistent = false;
   try {
     if (type === "lever" || type === "smartrecruiters") {
       for (let page = 0; page < maxPages && out.length < maxJobs && Date.now() < deadline; page++) {
@@ -144,13 +152,17 @@ export async function fetchAtsJobsBatch(type: AtsType, token: string, options: {
         for (const row of rows.slice(0, limit)) {
           const job = normalizeJob(type, token, row);
           const key = job.url || `${job.title}|${job.location}`;
-          if (seen.has(key)) continue;
+          if (seen.has(key)) { inconsistent = true; continue; }
           seen.add(key); out.push(job); added++;
         }
         // Providers ignoring pagination must not loop or falsely claim completion.
         if (rows.length > 0 && added === 0) break;
         offset += Math.min(rows.length, limit);
         const total = type === "smartrecruiters" && Number.isSafeInteger(d?.totalFound) && d.totalFound >= 0 ? d.totalFound : null;
+        if (total != null) {
+          if (expectedTotal !== undefined && total !== expectedTotal) inconsistent = true;
+          expectedTotal = total;
+        }
         if ((total == null && rows.length < limit) || (total != null && offset >= total)) { complete = true; break; }
         if (!rows.length) break; // an advertised remainder was not returned
       }
@@ -177,13 +189,17 @@ export async function fetchAtsJobsBatch(type: AtsType, token: string, options: {
       }
       if (!Array.isArray(rows)) return unavailable;
       succeeded = true;
+      expectedTotal = rows.length;
+      snapshotKey = createHash("sha256").update(JSON.stringify(rows.map((row: any) => normalizeJob(type, token, row)).sort((a: AtsJob, b: AtsJob) => (a.id ?? a.url).localeCompare(b.id ?? b.url)))).digest("hex");
       const slice = rows.slice(start, start + maxJobs);
       for (const row of slice) out.push(normalizeJob(type, token, row));
       offset = start + slice.length;
       complete = offset >= rows.length;
     }
   } catch { /* isolated */ }
-  return { jobs: out.filter((job) => job.title), nextOffset: complete ? null : offset, complete, status: complete ? "complete" : succeeded ? "partial" : "unavailable" };
+  if (inconsistent || out.some((job) => !job.title || !job.url)) complete = false;
+  if (complete && expectedTotal === undefined) expectedTotal = offset;
+  return { jobs: out.filter((job) => job.title), nextOffset: complete ? null : offset, complete, status: complete ? "complete" : succeeded ? "partial" : "unavailable", ...(snapshotKey ? { snapshotKey } : {}), ...(expectedTotal !== undefined ? { expectedTotal } : {}) };
 }
 
 /** Compatibility wrapper; callers needing complete coverage persist nextOffset. */

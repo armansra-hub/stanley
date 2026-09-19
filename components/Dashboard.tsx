@@ -1,4 +1,5 @@
 "use client";
+import FederalAwardLifecycle from "./FederalAwardLifecycle";
 import FederalIdentityContext from "@/components/FederalIdentityContext";
 import { federalAwardLabel, type FederalCoverage, type RelatedFederalEntity } from "@/lib/publicGrowth/federalPresentation";
 
@@ -1512,6 +1513,7 @@ type PublicGrowthDetail = {
   federalCoverage?: FederalCoverage;
   contractMetrics: Record<string, unknown> | null;
   contractRevenueByYear: Array<{ year: number; obligated: number; deobligated: number; transactions: number }>;
+  contractActions?: Array<Record<string, unknown>>;
   awards: Array<Record<string, unknown>>;
   naicsSize: Array<Record<string, unknown>>;
   headcount: Array<Record<string, unknown>>;
@@ -1681,8 +1683,9 @@ function DetailDrawer({
                   <CappedList items={rankedAwards} renderItem={(a, i) => (
                     <div key={`award-${i}`} className="rounded border p-2 text-xs" style={{ borderColor: "var(--border)" }}>
                       <div className="font-semibold">{obligatedDollars(a.award_ceiling)} ceiling · {obligatedDollars(a.total_obligations)} obligated</div>
-                      <div className="text-[var(--text-muted)]">{federalAwardLabel(a.award_type)} · {String(publicGrowth.entities.find((entity) => entity.id === a.government_entity_id)?.legal_name ?? "Verified recipient")}</div>
+                      <div className="text-[var(--text-muted)]">{federalAwardLabel(a)} · {String(publicGrowth.entities.find((entity) => entity.id === a.government_entity_id)?.legal_name ?? "Verified recipient")}</div>
                       <div className="text-[var(--text-muted)]">{String(a.awarding_agency ?? "Federal award")}{a.award_id ? ` · ${String(a.award_id)}` : ""}{a.start_date ? ` · ${fmt(String(a.start_date))}` : ""}</div>
+                      <FederalAwardLifecycle award={a} />
                       {a.description ? <p className="mt-1 text-[var(--text-muted)]">{String(a.description)}</p> : null}
                       {a.source_url ? <a href={String(a.source_url)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">USAspending ↗</a> : null}
                       {a.parent_award_id ? <a href={`https://www.usaspending.gov/award/${encodeURIComponent(String(a.parent_award_id))}/latest`} target="_blank" rel="noreferrer" className="ml-3 mt-1 inline-block text-[var(--accent)] hover:underline">Parent award reference ↗</a> : null}
@@ -1690,6 +1693,16 @@ function DetailDrawer({
                   )} />
                   </div>
                 </details>
+                {(publicGrowth.contractActions?.length ?? 0) > 0 && <details className="mt-2">
+                  <summary className="cursor-pointer text-[10px] font-semibold uppercase text-[var(--text-muted)]">Recent contract actions (up to 50)</summary>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">Signed obligation changes and source-reported modifications. A zero-dollar action does not establish new funding or exercise of an option.</p>
+                  <CappedList items={publicGrowth.contractActions ?? []} renderItem={(action, i) => <div key={String(action.id ?? i)} className="border-t py-2 text-xs" style={{ borderColor: "var(--border)" }}>
+                    <div>{String(action.action_date ?? "Date unavailable")} · {String(action.award_id ?? "Award")}{action.modification_number ? ` · modification ${String(action.modification_number)}` : ""}</div>
+                    <div className="font-medium">{obligatedDollars(action.federal_action_obligation)} obligation change · {String(action.action_type ?? "Action type unavailable")}</div>
+                    {action.description ? <p className="text-[var(--text-muted)]">{String(action.description)}</p> : null}
+                    {action.source_url ? <a href={String(action.source_url)} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">Source action history ↗</a> : null}
+                  </div>} />
+                </details>}
               </div>
             )}
             {publicGrowth.headcount.length > 0 && (

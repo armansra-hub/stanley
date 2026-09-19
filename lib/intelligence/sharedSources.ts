@@ -135,10 +135,11 @@ function databaseStore(): SharedSourceStore {
       let cursor: string | null = null;
       for (let page = 0; page < 20; page++) {
         let query = db.from("companies").select("id,name,domain,netsuite_internal_id,state,city").contains("lists", ["netsuite_tam"])
-          .neq("status", "tam_duplicate").order("id").limit(1_000);
+          .neq("status", "tam_duplicate").neq("status", "removed_from_tam")
+          .not("lists", "cs", "{tam_duplicate}").not("netsuite_internal_id", "is", null).order("id").limit(1_000);
         if (cursor) query = query.gt("id", cursor);
         const { data, error } = await query; check(error);
-        result.push(...(data ?? []));
+        result.push(...(data ?? []).filter(account => /^[0-9]+$/.test(account.netsuite_internal_id ?? "")));
         if ((data?.length ?? 0) < 1_000) return result;
         cursor = data![data!.length - 1].id;
       }
@@ -176,7 +177,7 @@ export async function runSharedSources(deps: Dependencies = {}) {
   const deadline = now() + 210_000;
   // The oldest source retains a baseline slot independent of feedback.
   for (const entry of ranked) {
-    if (result.claimed >= 3 || now() >= deadline) break;
+    if (result.claimed >= 10 || now() >= deadline - 10_000) break;
     const source = await store.claim(entry.source.id);
     if (!source) continue;
     result.claimed++;
@@ -196,7 +197,9 @@ export async function runSharedSources(deps: Dependencies = {}) {
           result.failed++;
         }
       }
-      for (const item of await store.pending(source, 20)) {
+      // Give every due feed a bounded turn before one high-volume publisher
+      // consumes the whole invocation. Pending article bodies remain durable.
+      for (const item of await store.pending(source, 8)) {
         if (now() >= deadline) break;
         try {
           let payload = item.payload;

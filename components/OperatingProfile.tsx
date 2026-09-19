@@ -1,11 +1,15 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { buildOperatingProfile } from "@/lib/intelligence/profiles";
-type Result = { company: { name: string; subindustry: string | null }; profile: ReturnType<typeof buildOperatingProfile>; nextSources: string[]; pendingJobs: number };
+import type { readAtsHiringContext } from "@/lib/intelligence/atsLifecycle";
+import AccountHiring from "./AccountHiring";
+import type { ResearchRankingResult } from "@/lib/intelligence/researchRanking";
+type Result = { company: { name: string; subindustry: string | null }; profile: ReturnType<typeof buildOperatingProfile>; nextSources: string[]; pendingJobs: number; hiring?: Awaited<ReturnType<typeof readAtsHiringContext>> | null };
 export default function OperatingProfile({ companyId, refreshKey }: { companyId: string; refreshKey?: string | null }) {
   const [data, setData] = useState<Result | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [ranking, setRanking] = useState<ResearchRankingResult | null>(null);
   const pending = useRef(0);
   const activeCompany = useRef<string | null>(companyId);
   const request = useRef(0);
@@ -27,7 +31,7 @@ export default function OperatingProfile({ companyId, refreshKey }: { companyId:
   useEffect(() => {
     activeCompany.current = companyId;
     pending.current = 0;
-    setData(null); setMessage(""); setBusy(false);
+    setData(null); setMessage(""); setBusy(false); setRanking(null);
     return () => { activeCompany.current = null; request.current++; };
   }, [companyId]);
   useEffect(() => {
@@ -55,6 +59,7 @@ export default function OperatingProfile({ companyId, refreshKey }: { companyId:
     {data.profile.hypotheses.map((hypothesis, index) => <p key={index} className="mt-3 rounded border border-[var(--gold)] p-3 text-sm"><strong>Working hypothesis — unverified: </strong>{hypothesis.text}</p>)}
     {!!data.profile.unknowns.length && <p className="mt-4 text-sm text-[var(--text-muted)]"><strong>Still unknown: </strong>{data.profile.unknowns.join("; ")}.</p>}
     <p className="mt-2 text-xs text-[var(--text-muted)]">{data.profile.coverage.interpreted} of {data.profile.coverage.observations} current sources interpreted.</p>
+    <AccountHiring hiring={data.hiring} />
     {data.pendingJobs > 0 && <p role="status" className="mt-2 text-xs text-[var(--text-muted)]">{data.pendingJobs} evidence updates pending. This profile refreshes as processing finishes.</p>}
     {data.nextSources.length > 0 && <button disabled={busy} className="mt-4 rounded border px-3 py-2 text-sm disabled:opacity-50" onClick={async () => {
       setBusy(true); setMessage("");
@@ -63,6 +68,7 @@ export default function OperatingProfile({ companyId, refreshKey }: { companyId:
         if (!response.ok) throw new Error();
         const result = await response.json();
         if (activeCompany.current !== companyId) return;
+        setRanking(result.ranking ?? null);
         pending.current = result.outcomes.filter((outcome: string) => outcome === "queued").length;
         setMessage(`${result.sources} sources checked. ${pending.current} updates queued; ${result.outcomes.filter((outcome: string) => outcome === "source_failed").length} unavailable. New evidence appears here automatically.`);
         await reload();
@@ -70,5 +76,6 @@ export default function OperatingProfile({ companyId, refreshKey }: { companyId:
       finally { if (activeCompany.current === companyId) setBusy(false); }
     }}>{busy ? "Researching…" : "Refresh sources for research gaps"}</button>}
     {message && <p role="status" className="mt-2 text-sm">{message}</p>}
+    {ranking?.providerUsed && <details className="mt-3 rounded border p-3 text-xs"><summary className="cursor-pointer">Jev research selection · original output</summary><p className="mt-2 text-[var(--text-muted)]">Jev rates which supplied links to read next. This is research usefulness, not buying intent.</p><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify(ranking, null, 2)}</pre></details>}
   </section>;
 }

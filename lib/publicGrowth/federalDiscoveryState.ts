@@ -3,6 +3,7 @@ import { usaspendingCursorField, type UsaspendingSearchCursor } from "./usaspend
 
 export interface FederalDiscoveryContinuation {
   searchAfter?: UsaspendingSearchCursor | null;
+  collection?: "contracts" | "idvs";
   version: 1;
   companyId: string;
   companyIdentity: string;
@@ -43,10 +44,12 @@ export function parseFederalDiscoveryContinuation(value: unknown, companyId: str
     return { query: target.query, identity: identity(target.identity) };
   });
   const candidate = row.candidate;
+  if (row.collection !== undefined && row.collection !== "contracts" && row.collection !== "idvs") throw new Error("invalid discovery collection");
   if (candidate !== null && (!candidate || !text(candidate.id, 500) || !text(candidate.name, 500)
       || (candidate.uei !== null && !/^[A-Z0-9]{12}$/i.test(candidate.uei)))) throw new Error("invalid discovery candidate");
   return { version: 1, companyId, companyIdentity: row.companyIdentity, searchEndDate: row.searchEndDate,
     targets, targetIndex: row.targetIndex, page: row.page, candidate: candidate ? { ...candidate } : null, lastPageHash: row.lastPageHash,
+    ...(row.collection === undefined ? {} : { collection: row.collection }),
     ...usaspendingCursorField(row) };
 }
 

@@ -4,7 +4,8 @@ import { pickAtsForRotation, setAtsChecked, setErpFlags, recordTrigger, recomput
 import { detectAts, fetchAtsJobsBatch, scanJob, type AtsType } from "@/lib/sources/ats";
 import { isCareerEvidenceUrl, isFinanceHireEligible } from "@/lib/triggers/signalIntegrity";
 import { enqueueObservation } from "@/lib/intelligence/observations";
-import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
+import { writeSourceState } from "@/lib/intelligence/sourceState";
+import { applyAtsBatch, enqueuePendingAtsPatterns, atsJobIdentity, prepareAtsJob, readAtsKnownJobs, readAtsScan } from "@/lib/intelligence/atsLifecycle";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -52,22 +53,29 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
 
         // 2) Poll + scan.
         const sourceKey = `ats:${type}:${token}`;
-        const state = intelligenceEnabled ? await readSourceState(c.id, sourceKey) : null;
-        const offset = typeof state?.cursor?.offset === "number" ? state.cursor.offset : 0;
+        const cursor = intelligenceEnabled ? await readAtsScan(c.id, sourceKey) : { scanId: null, offset: 0 };
+        const offset = cursor.offset;
         const batch = await fetchAtsJobsBatch(type as AtsType, token, { offset, maxJobs: intelligenceEnabled ? 150 : 60 });
         const jobs = batch.jobs;
+        const knownJobs = intelligenceEnabled ? await readAtsKnownJobs(c.id, sourceKey, jobs.filter((job) => isCareerEvidenceUrl(job.url))) : new Map();
+        const preparedJobs = [];
         let incumbent: "quickbooks" | "erp" | null = null;
         let financeCount = 0;
         for (const j of jobs) {
           if (!isCareerEvidenceUrl(j.url)) continue;
           const scan = scanJob(j.title, j.description);
           if (intelligenceEnabled) {
-            await enqueueObservation({
+            const known = knownJobs.get(atsJobIdentity(sourceKey, j));
+            const prepared = prepareAtsJob(sourceKey, j, known);
+            preparedJobs.push(prepared);
+            if (!known || known.content_hash !== prepared.content_hash) await enqueueObservation({
               companyId: c.id, companyName: c.name, companyDomain: c.domain,
               sourceKind: "job", sourceUrl: j.url, title: j.title,
               text: `${j.title}${j.location ? ` — ${j.location}` : ""}\n${j.description}`,
               eventDate: j.date,
-              metadata: { atsType: type, atsToken: token, isClientPlacement: scan.isClientPlacement, jobDateKind: type === "greenhouse" ? "updated" : "published_or_created", descriptionAvailable: Boolean(j.description) },
+              metadata: { atsType: type, atsToken: token, atsJobKey: prepared.job_key, atsRoleCategories: prepared.categories,
+                listingChange: known ? "changed" : "first_observed", isClientPlacement: scan.isClientPlacement,
+                jobDateKind: type === "greenhouse" ? "updated" : "published_or_created", descriptionAvailable: Boolean(j.description) },
             });
           }
           // Recruiting delivery work and client placements are not an in-house
@@ -92,9 +100,13 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
           touched.add(c.id); // recompute (QB boosts, ERP suppresses)
         }
         if (intelligenceEnabled) {
+          const lifecycle = await applyAtsBatch(c.id, sourceKey, cursor, batch, preparedJobs);
+          if (!lifecycle.accepted) return; // another invocation advanced this exact cursor
+          await enqueuePendingAtsPatterns(c, sourceKey, type as AtsType, token);
           await writeSourceState(c.id, sourceKey, {
-            cursor: batch.nextOffset == null ? null : { offset: batch.nextOffset },
-            complete: batch.complete,
+            cursor: lifecycle.nextOffset == null ? null : { offset: lifecycle.nextOffset, scanId: lifecycle.complete ? null : lifecycle.scanId },
+            complete: lifecycle.complete === true,
+            ...(lifecycle.restart ? { error: "ATS board changed during pagination; restarting complete scan" } : {}),
             ...(batch.status === "unavailable" ? { error: "ATS retrieval unavailable; prior offset retained" } : {}),
           });
         }

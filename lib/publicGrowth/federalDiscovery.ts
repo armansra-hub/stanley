@@ -2,7 +2,7 @@ import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
 import { fetchJson, PublicGrowthDeadlineError, requirePublicGrowthTime } from "./http";
 import { decideIdentityMatch, normalizeName } from "./identity";
-import { awardUrl, compactAward, fetchAwardDetail } from "./usaspending";
+import { awardUrl, compactAward, fetchAwardDetail, IDV_CODES, type FederalAwardCollection } from "./usaspending";
 import { stableHash } from "./storage";
 import { assertFrozenFederalIdentities, federalSearchTargets, loadVerifiedFederalIdentities,
   matchesFederalIdentifiers, targetAcceptsSearchRow, type VerifiedFederalIdentity } from "./federalIdentity";
@@ -28,6 +28,7 @@ export interface FederalDiscoveryReceipt {
   mayHaveWritten: boolean;
   failureClass?: string;
   httpStatus?: number;
+  searchEndDate?: string;
   entityId?: string;
   awardId?: string;
   continuation?: FederalDiscoveryContinuation;
@@ -58,10 +59,10 @@ async function currentCompany(id: string) {
 const companyIdentity = (c: any) => stableHash([c.id, c.name, c.domain, c.website_raw, c.city, c.state, c.netsuite_internal_id]);
 
 // A bounded discovery read validates source shape and paired sequential cursors.
-async function searchPage(name: string, page: number, endDate: string, deadlineMs: number, searchAfter?: UsaspendingSearchAfter) {
+async function searchPage(name: string, page: number, endDate: string, deadlineMs: number, searchAfter?: UsaspendingSearchAfter, collection: FederalAwardCollection = "contracts") {
   const data = await fetchJson<any>(SEARCH_URL, {
     method: "POST", redirect: "error", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ filters: { recipient_search_text: [name], award_type_codes: ["A", "B", "C", "D"],
+    body: JSON.stringify({ filters: { recipient_search_text: [name], award_type_codes: collection === "idvs" ? IDV_CODES : ["A", "B", "C", "D"],
       time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
     fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page, sort: "Start Date", order: "desc",
     ...usaspendingCursorRequest(searchAfter) }),
@@ -138,7 +139,7 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
   let state: FederalDiscoveryContinuation | undefined;
   const receipt = (status: FederalDiscoveryReceipt["status"], reason: string, extra: Partial<FederalDiscoveryReceipt> = {}): FederalDiscoveryReceipt => ({
     companyId, status, reason, stage, elapsedMs: Math.max(0, Date.now() - started), sourceRequests,
-    verified: status === "matched", historyComplete: false, exhaustive: false, mayHaveWritten,
+    searchEndDate: state?.searchEndDate, verified: status === "matched", historyComplete: false, exhaustive: false, mayHaveWritten,
     ...(state && status !== "matched" && status !== "no_candidate" ? { continuation: structuredClone(state) } : {}), ...extra,
   });
   try {
@@ -162,7 +163,7 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
       }
       sourceRequests++;
       let page: Awaited<ReturnType<typeof searchPage>>;
-      try { page = await searchPage(target.query, state.page, state.searchEndDate, deadline, state.searchAfter); }
+      try { page = await searchPage(target.query, state.page, state.searchEndDate, deadline, state.searchAfter, state.collection); }
       catch (error) {
         if (state.searchAfter !== undefined || !isUsaspendingResultWindowError(error)) throw error;
         state.page = 1; state.lastPageHash = null; state.searchAfter = null;
@@ -190,7 +191,11 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
           if (state.searchAfter !== undefined) state.searchAfter = null;
           return receipt("in_progress", "next_verified_alias");
         }
-        return receipt("no_candidate", "no_qualifying_candidate_in_search_window");
+        if (state.collection !== "idvs") {
+          state.collection = "idvs"; state.targetIndex = 0; state.page = 1; state.lastPageHash = null; state.searchAfter = null;
+          return receipt("in_progress", "searching_contract_vehicles");
+        }
+        return receipt("no_candidate", "no_qualifying_candidate_in_contract_and_idv_search_window");
       }
       const selected = state.candidate;
       stage = "award_detail"; requirePublicGrowthTime(deadline); sourceRequests++;
@@ -246,7 +251,9 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
             award_ceiling: award.awardCeiling, current_award_amount: award.currentAwardAmount, total_obligations: award.totalObligations,
             source_url: award.sourceUrl, source_updated_at: award.sourceUpdatedAt, observed_at: new Date().toISOString(),
             payload_hash: stableHash(award), evidence: { discovery: true, solicitationIdentifier: award.solicitationIdentifier,
-              offersReceived: award.offersReceived, extentCompeted: award.extentCompeted, setAside: award.setAside } };
+              offersReceived: award.offersReceived, extentCompeted: award.extentCompeted, setAside: award.setAside,
+              awardCategory: award.awardCategory, awardTypeCode: award.awardTypeCode, signedDate: award.signedDate,
+              orderingEndDate: award.orderingEndDate, optionSchedule: "not_provided_by_source" } };
           await insertPreserving("federal_awards", payload, "generated_award_id");
           stored = await existingAward(award.generatedAwardId, verifiedEntity);
           if (!stored) fail("award_readback_missing");

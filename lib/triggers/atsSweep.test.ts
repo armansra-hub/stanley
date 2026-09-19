@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sweepAts } from "./atsSweep";
+import { prepareAtsJob } from "@/lib/intelligence/atsLifecycle";
 
 const mocks = vi.hoisted(() => ({
   pick: vi.fn(), checked: vi.fn(), flags: vi.fn(), trigger: vi.fn(), priority: vi.fn(),
-  detect: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), read: vi.fn(), write: vi.fn(),
+  detect: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), read: vi.fn(), write: vi.fn(), known: vi.fn(), apply: vi.fn(), patterns: vi.fn(),
 }));
 vi.mock("@/lib/db/triggers", () => ({ pickAtsForRotation: mocks.pick, setAtsChecked: mocks.checked, setErpFlags: mocks.flags, recordTrigger: mocks.trigger, recomputePriority: mocks.priority }));
 vi.mock("@/lib/sources/ats", async (original) => ({ ...await original<typeof import("@/lib/sources/ats")>(), detectAts: mocks.detect, fetchAtsJobsBatch: mocks.fetch }));
-vi.mock("@/lib/intelligence/observations", () => ({ enqueueObservation: mocks.enqueue }));
-vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: mocks.read, writeSourceState: mocks.write }));
+vi.mock("@/lib/intelligence/observations", async (original) => ({ ...await original<typeof import("@/lib/intelligence/observations")>(), enqueueObservation: mocks.enqueue }));
+vi.mock("@/lib/intelligence/sourceState", () => ({ writeSourceState: mocks.write }));
+vi.mock("@/lib/intelligence/atsLifecycle", async (original) => ({ ...await original<typeof import("@/lib/intelligence/atsLifecycle")>(), readAtsScan: mocks.read, readAtsKnownJobs: mocks.known, applyAtsBatch: mocks.apply, enqueuePendingAtsPatterns: mocks.patterns }));
 vi.mock("./rotationBatches", () => ({ rotationBatches: async function* (load: (size: number) => Promise<unknown[]>) { yield await load(12); } }));
 
 const company = { id: "company-1", name: "Acme Logistics", domain: "acme.com", ats_type: "lever", ats_token: "acme", record_dead: false, description: null, subindustry: null, ns_industry: null };
@@ -24,7 +26,10 @@ beforeEach(() => {
   mocks.priority.mockResolvedValue(undefined);
   mocks.fetch.mockResolvedValue({ jobs: [job], nextOffset: null, complete: true, status: "complete" });
   mocks.enqueue.mockResolvedValue({ id: "observation-1", queued: true });
-  mocks.read.mockResolvedValue({ cursor: null, lastSuccessAt: null });
+  mocks.read.mockResolvedValue({ scanId: null, offset: 0 });
+  mocks.known.mockResolvedValue(new Map());
+  mocks.apply.mockImplementation(async (_company, _key, _cursor, batch) => ({ accepted: true, complete: batch.complete, scanId: "scan-1", nextOffset: batch.nextOffset }));
+  mocks.patterns.mockResolvedValue(undefined);
   mocks.write.mockResolvedValue(undefined);
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -40,12 +45,12 @@ describe("ATS collection integration", () => {
   });
 
   it("resumes the stored offset and saves continuation only after evidence storage", async () => {
-    mocks.read.mockResolvedValue({ cursor: { offset: 150 }, lastSuccessAt: null });
+    mocks.read.mockResolvedValue({ scanId: "scan-1", offset: 150 });
     mocks.fetch.mockResolvedValue({ jobs: [job], nextOffset: 300, complete: false, status: "partial" });
     await sweepAts(1);
     expect(mocks.fetch).toHaveBeenCalledWith("lever", "acme", { offset: 150, maxJobs: 150 });
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "job", sourceUrl: job.url, eventDate: job.date }));
-    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", { cursor: { offset: 300 }, complete: false });
+    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", { cursor: { offset: 300, scanId: "scan-1" }, complete: false });
     expect(mocks.enqueue.mock.invocationCallOrder[0]).toBeLessThan(mocks.write.mock.invocationCallOrder[0]);
     // The broader operating role receives semantic interpretation, not a regex
     // trigger or an unsupported persistent incumbent update.
@@ -57,14 +62,39 @@ describe("ATS collection integration", () => {
     mocks.enqueue.mockRejectedValue(new Error("storage unavailable"));
     await sweepAts(1);
     expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.apply).not.toHaveBeenCalled();
     expect(mocks.checked).toHaveBeenCalledWith("company-1", {});
   });
 
+  it("does not re-interpret unchanged descriptions when only the provider timestamp changes", async () => {
+    const prepared = prepareAtsJob("ats:lever:acme", job);
+    mocks.known.mockResolvedValue(new Map([[prepared.job_key, prepared]]));
+    mocks.fetch.mockResolvedValue({ jobs: [{ ...job, date: "2026-09-18T00:00:00.000Z" }], nextOffset: null, complete: true, status: "complete" });
+    await sweepAts(1);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.apply).toHaveBeenCalledOnce();
+  });
+
+  it("does not overwrite the checkpoint when another invocation advanced the scan", async () => {
+    mocks.apply.mockResolvedValue({ accepted: false, reason: "cursor_changed" });
+    await sweepAts(1);
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.patterns).not.toHaveBeenCalled();
+  });
+
+  it("retains durable pattern work when its observation dispatch fails after scan persistence", async () => {
+    mocks.patterns.mockRejectedValue(new Error("observation unavailable"));
+    await sweepAts(1);
+    expect(mocks.apply).toHaveBeenCalledOnce();
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.apply.mock.invocationCallOrder[0]).toBeLessThan(mocks.patterns.mock.invocationCallOrder[0]);
+  });
+
   it("retains the prior offset and records a provider failure as incomplete", async () => {
-    mocks.read.mockResolvedValue({ cursor: { offset: 150 }, lastSuccessAt: null });
+    mocks.read.mockResolvedValue({ scanId: "scan-1", offset: 150 });
     mocks.fetch.mockResolvedValue({ jobs: [], nextOffset: 150, complete: false, status: "unavailable" });
     await sweepAts(1);
-    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", expect.objectContaining({ cursor: { offset: 150 }, complete: false, error: expect.any(String) }));
+    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", expect.objectContaining({ cursor: { offset: 150, scanId: "scan-1" }, complete: false, error: expect.any(String) }));
   });
 
   it("retains client-placement attribution without assigning its systems to the recruiter", async () => {

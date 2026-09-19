@@ -2,10 +2,12 @@ import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { recomputePriority } from "@/lib/db/triggers";
 import { decideIdentityMatch, normalizeName } from "./identity";
-import { compactSamEntity, sbaProfileUrl, searchSamEntities } from "./sam";
+import { compactSamEntity, sbaProfileUrl, searchSamEntitiesPage } from "./sam";
 import { recordPublicGrowthTriggersBulk, saveCompanyGovernmentMatch, saveGovernmentEntity, stableHash } from "./storage";
 import { loadRecurringTamBatch, loadTamBatch, type PublicGrowthCompanyScope } from "./usaspendingSweep";
 import { takeRecurringBatch } from "./sweepState";
+import { parseSamEntityContinuation, samBindingMatches, type SamEntityContinuation, type SamEntityTarget } from "./samEntityState";
+import { PublicGrowthDeadlineError, requirePublicGrowthTime } from "./http";
 import type { DerivedGrowthEvent, TamIdentity } from "./types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -109,27 +111,66 @@ export async function ingestSamExtractObservations(rows: SamExtractObservationIn
   };
 }
 
-export async function sweepSamCompany(company: TamIdentity) {
-  const receipt = { companyId: company.id, companyName: company.name, status: "not_found", entities: 0, naics: 0, triggers: 0, error: undefined as string | undefined };
+export async function sweepSamCompany(company: TamIdentity, options: { samContinuation?: SamEntityContinuation; deadlineMs?: number } = {}) {
+  const receipt = { companyId: company.id, companyName: company.name, status: "not_found", entities: 0, naics: 0, triggers: 0,
+    error: undefined as string | undefined, samDone: false, samContinuation: undefined as SamEntityContinuation | undefined };
   try {
+    requirePublicGrowthTime(options.deadlineMs);
     const db = serviceClient();
-    const { data: linked, error: linkedError } = await db.from("company_government_matches").select("government_entities(uei)").eq("company_id", company.id).eq("match_status", "verified");
-    if (linkedError) throw new Error(`SAM verified-link load failed: ${linkedError.message}`);
-    const linkedUeis = (linked ?? []).map((x: any) => x.government_entities?.uei).filter(Boolean);
-    const rows = linkedUeis.length ? (await Promise.all(linkedUeis.map((uei: string) => searchSamEntities({ uei })))).flat() : await searchSamEntities({ legalBusinessName: company.name });
-    for (const row of rows) {
+    const { data: linked, error: linkedError } = await db.from("company_government_matches")
+      .select("government_entity_id,government_entities(uei,cage_code)").eq("company_id", company.id).eq("match_status", "verified").limit(101);
+    if (linkedError || !Array.isArray(linked) || linked.length > 100) throw new Error("SAM verified-link load failed or exceeded supported scope");
+    const bindings = linked.map((row: any) => ({ entityId: String(row.government_entity_id),
+      uei: row.government_entities?.uei ?? null, cageCode: row.government_entities?.cage_code ?? null }));
+    let state = options.samContinuation ? parseSamEntityContinuation(options.samContinuation, company.id) : null;
+    if (!state) {
+      const targets: SamEntityTarget[] = bindings.flatMap((binding) => [
+        ...(binding.uei ? [{ query: { uei: binding.uei }, binding }] : []),
+        ...(binding.cageCode ? [{ query: { cageCode: binding.cageCode }, binding }] : []),
+      ]);
+      // Retrieve additional legitimate recipients even after one is bound.
+      targets.push({ query: { legalBusinessName: company.name } }, { query: { dbaName: company.name } });
+      state = parseSamEntityContinuation({ version: 1, companyId: company.id, targets, targetIndex: 0, page: 0, lastPageHash: null }, company.id);
+    }
+    receipt.samContinuation = state;
+    for (const target of state.targets) {
+      if (target.binding) {
+        const current = bindings.find((binding) => binding.entityId === target.binding!.entityId);
+        if (!current || target.binding.uei && current.uei !== target.binding.uei || target.binding.cageCode && current.cageCode !== target.binding.cageCode) throw new Error("frozen SAM entity binding changed");
+      } else if (normalizeName(target.query.legalBusinessName ?? target.query.dbaName ?? "") !== normalizeName(company.name)) throw new Error("frozen SAM company name changed");
+    }
+    const target = state.targets[state.targetIndex];
+    const page = await searchSamEntitiesPage(target.query, state.page, options.deadlineMs);
+    const hash = stableHash(page.rows);
+    if (page.hasNext && (!page.rows.length || hash === state.lastPageHash)) throw new Error("SAM entity pagination did not advance");
+    for (const row of page.rows) {
+      requirePublicGrowthTime(options.deadlineMs);
       const sam = compactSamEntity(row);
-      if (!sam.legalName || (linkedUeis.length === 0 && normalizeName(sam.legalName) !== normalizeName(company.name) && normalizeName(sam.dbaName) !== normalizeName(company.name))) continue;
-      const decision = decideIdentityMatch(company, { legalName: sam.legalName, dbaName: sam.dbaName, domain: sam.domain, city: sam.city, state: sam.state, uei: sam.uei, cageCode: sam.cageCode });
+      if (!sam.legalName || (!sam.uei && !sam.cageCode)) continue;
+      if (target.binding && !samBindingMatches(target.binding, sam)) throw new Error("SAM source identifiers conflict with verified binding");
+      if (!target.binding && normalizeName(sam.legalName) !== normalizeName(company.name) && normalizeName(sam.dbaName) !== normalizeName(company.name)) continue;
+      const existingBinding = target.binding ?? bindings.find((binding) => samBindingMatches(binding, sam));
+      const decision = existingBinding ? { status: "verified" as const, method: "verified_identifier", confidence: 1,
+        evidence: { verifiedEntityId: existingBinding.entityId, uei: sam.uei, cageCode: sam.cageCode } }
+        : decideIdentityMatch(company, { legalName: sam.legalName, dbaName: sam.dbaName, domain: sam.domain, city: sam.city, state: sam.state, uei: sam.uei, cageCode: sam.cageCode });
       const entityId = await saveGovernmentEntity({ uei: sam.uei, cage_code: sam.cageCode, legal_name: sam.legalName, dba_name: sam.dbaName, website: sam.website, domain: sam.domain, address_line1: sam.address, city: sam.city, state: sam.state, postal_code: sam.postalCode, country_code: sam.countryCode, registration_status: sam.registrationStatus, registration_date: sam.registrationDate, expiration_date: sam.expirationDate, entity_start_date: sam.entityStartDate, parent_uei: sam.parentUei, parent_name: sam.parentName, source: "SAM.gov", source_url: `https://sam.gov/entity/${encodeURIComponent(sam.uei ?? sam.cageCode ?? sam.legalName)}/coreData`, source_updated_at: sam.lastUpdateDate, evidence: { psc: sam.psc, businessTypes: sam.businessTypes } });
-      await saveCompanyGovernmentMatch(company.id, entityId, decision);
+      if (existingBinding && entityId !== existingBinding.entityId) throw new Error("SAM entity storage binding changed");
+      if (!existingBinding) await saveCompanyGovernmentMatch(company.id, entityId, decision);
       receipt.entities++;
       if (decision.status !== "verified") { receipt.status = "ambiguous"; continue; }
       receipt.status = "matched"; receipt.naics += sam.naics.length; receipt.triggers += await saveNaicsAndDerive(entityId, company.id, sam);
     }
     if (receipt.triggers) await recomputePriority(company.id);
+    // Commit only after all entity and NAICS writes on the page succeeded.
+    if (page.hasNext) {
+      if (state.page >= 999) throw new Error("SAM source result window requires a narrower query");
+      state.page++; state.lastPageHash = hash;
+    } else if (state.targetIndex + 1 < state.targets.length) {
+      state.targetIndex++; state.page = 0; state.lastPageHash = null;
+    } else { receipt.samDone = true; receipt.samContinuation = undefined; }
     return receipt;
   } catch (error) {
+    if (error instanceof PublicGrowthDeadlineError && receipt.samContinuation) return receipt;
     return { ...receipt, status: "error", error: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -139,6 +180,7 @@ export async function sweepSamTamBatch(
   offset: number,
   scope: PublicGrowthCompanyScope = "tam",
   afterCompanyId: string | null = null,
+  deadlineMs?: number,
 ) {
   const recurring = scope === "verified"
     ? await loadRecurringTamBatch("sam-entity", limit + 1, afterCompanyId)
@@ -146,6 +188,10 @@ export async function sweepSamTamBatch(
   const recurringWindow = recurring ? takeRecurringBatch(recurring, limit) : null;
   const companies = recurringWindow ? recurringWindow.rows : await loadTamBatch(limit, offset);
   const receipts = [];
-  for (const company of companies) receipts.push(await sweepSamCompany(company));
-  return { source: "sam-entity", offset, checked: companies.length, nextOffset: offset + companies.length, done: recurringWindow ? recurringWindow.done : companies.length < limit, ...(recurringWindow ? { advanceCursor: false, cursorPatch: { afterCompanyId: recurringWindow.done ? null : companies.at(-1)?.id ?? null } } : {}), matched: receipts.filter((r) => r.status === "matched").length, ambiguous: receipts.filter((r) => r.status === "ambiguous").length, errors: receipts.filter((r) => r.status === "error").length, entities: receipts.reduce((s, r) => s + r.entities, 0), naics: receipts.reduce((s, r) => s + r.naics, 0), triggers: receipts.reduce((s, r) => s + r.triggers, 0), receipts };
+  for (const company of companies) {
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) break;
+    receipts.push(await sweepSamCompany(company, { deadlineMs }));
+  }
+  const attempted = companies.slice(0, receipts.length);
+  return { source: "sam-entity", offset, checked: attempted.length, nextOffset: offset + attempted.length, done: attempted.length === companies.length && (recurringWindow ? recurringWindow.done : companies.length < limit), ...(recurringWindow ? { advanceCursor: false, cursorPatch: { afterCompanyId: recurringWindow.done && attempted.length === companies.length ? null : attempted.at(-1)?.id ?? afterCompanyId } } : {}), matched: receipts.filter((r) => r.status === "matched").length, ambiguous: receipts.filter((r) => r.status === "ambiguous").length, errors: receipts.filter((r) => r.status === "error").length, entities: receipts.reduce((s, r) => s + r.entities, 0), naics: receipts.reduce((s, r) => s + r.naics, 0), triggers: receipts.reduce((s, r) => s + r.triggers, 0), receipts };
 }

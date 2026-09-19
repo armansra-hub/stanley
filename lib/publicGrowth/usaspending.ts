@@ -7,6 +7,8 @@ import { usaspendingCursorRequest, usaspendingNextCursor, type UsaspendingSearch
 
 const API = "https://api.usaspending.gov/api/v2";
 const CONTRACT_CODES = ["A", "B", "C", "D"];
+export const IDV_CODES = ["IDV_A", "IDV_B", "IDV_B_A", "IDV_B_B", "IDV_B_C", "IDV_C", "IDV_D", "IDV_E"];
+export type FederalAwardCollection = "contracts" | "idvs";
 
 export interface RecipientSuggestion { recipient_name: string; uei: string | null; duns: string | null }
 
@@ -25,6 +27,7 @@ export interface AwardSearchRow {
   awardAmount: number;
   startDate: string | null;
   endDate: string | null;
+  lastDateToOrder?: string | null;
   description: string;
   awardingAgency: string;
   awardingSubagency: string;
@@ -43,6 +46,7 @@ function awardSearchRow(x: any): AwardSearchRow {
     generatedId: String(x.generated_internal_id ?? x.generated_unique_award_id ?? ""), awardId: String(x["Award ID"] ?? ""),
     recipientName: String(x["Recipient Name"] ?? ""), recipientUei: x["Recipient UEI"] ? String(x["Recipient UEI"]) : null,
     awardAmount: Number(x["Award Amount"] ?? 0), startDate: x["Start Date"] ?? null, endDate: x["End Date"] ?? null,
+    lastDateToOrder: typeof x["Last Date to Order"] === "string" && /^\d{4}-\d{2}-\d{2}/.test(x["Last Date to Order"]) ? x["Last Date to Order"].slice(0, 10) : null,
     description: String(x.Description ?? ""), awardingAgency: String(x["Awarding Agency"] ?? ""), awardingSubagency: String(x["Awarding Sub Agency"] ?? ""),
     fundingAgency: String(x["Funding Agency"] ?? ""), fundingSubagency: String(x["Funding Sub Agency"] ?? ""),
   };
@@ -56,10 +60,11 @@ export async function searchContractAwardsPage(
   limit = 100,
   deadlineMs?: number,
   searchAfter?: UsaspendingSearchAfter,
+  collection: FederalAwardCollection = "contracts",
 ): Promise<AwardSearchPage> {
   const body = {
-    filters: { recipient_search_text: [recipient], award_type_codes: CONTRACT_CODES, time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
-    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Award Amount", "Awarding Agency", "Awarding Sub Agency", "Funding Agency", "Funding Sub Agency", "Description", "Start Date", "End Date"],
+    filters: { recipient_search_text: [recipient], award_type_codes: collection === "idvs" ? IDV_CODES : CONTRACT_CODES, time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
+    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Award Amount", "Awarding Agency", "Awarding Sub Agency", "Funding Agency", "Funding Sub Agency", "Description", "Start Date", collection === "idvs" ? "Last Date to Order" : "End Date"],
     limit: Math.max(1, Math.min(100, Math.trunc(limit))), page: Math.max(1, Math.trunc(page)), sort: "Start Date", order: "desc",
     ...usaspendingCursorRequest(searchAfter),
   };
@@ -192,6 +197,8 @@ export function compactAward(detail: any) {
     generatedAwardId: String(detail.generated_unique_award_id ?? ""), awardId: String(detail.piid ?? ""),
     parentAwardId: detail.parent_award?.generated_unique_award_id ? String(detail.parent_award.generated_unique_award_id) : null,
     awardType: String(detail.type_description ?? detail.type ?? ""), description: String(detail.description ?? ""),
+    awardTypeCode: String(detail.type ?? ""),
+    awardCategory: detail.category === "idv" || /^IDV_/.test(String(detail.type ?? "")) ? "idv" : "contract",
     recipient: { legalName: String(recipient.recipient_name ?? ""), uei: recipient.recipient_uei ? String(recipient.recipient_uei) : null,
       parentUei: recipient.parent_recipient_uei ? String(recipient.parent_recipient_uei) : null, parentName: recipient.parent_recipient_name ? String(recipient.parent_recipient_name) : null,
       address: location.address_line1 ?? null, city: location.city_name ?? null, state: location.state_code ?? null, postalCode: location.zip5 ?? null, countryCode: location.location_country_code ?? null,
@@ -206,6 +213,10 @@ export function compactAward(detail: any) {
     startDate: detail.period_of_performance?.start_date ?? detail.date_signed ?? null,
     endDate: detail.period_of_performance?.end_date ?? null,
     potentialEndDate: detail.period_of_performance?.potential_end_date?.slice?.(0, 10) ?? null,
+    signedDate: detail.date_signed?.slice?.(0, 10) ?? null,
+    // Ordering dates are carried from the explicitly named IDV search field;
+    // a performance end alone is not substituted for a last-date-to-order.
+    orderingEndDate: detail.last_date_to_order?.slice?.(0, 10) ?? null,
     sourceUpdatedAt: detail.period_of_performance?.last_modified_date ?? null,
     awardCeiling: Number(detail.base_and_all_options ?? 0),
     currentAwardAmount: Number(detail.base_exercised_options ?? 0),

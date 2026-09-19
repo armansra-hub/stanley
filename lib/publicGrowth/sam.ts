@@ -1,6 +1,7 @@
 import "server-only";
 import { fetchJson } from "./http";
 import { normalizeDomain } from "./identity";
+import type { SamEntityQuery } from "./samEntityState";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -13,12 +14,25 @@ function apiKey(): string {
   return value;
 }
 
-export async function searchSamEntities(query: { uei?: string; legalBusinessName?: string }): Promise<any[]> {
-  const params = new URLSearchParams({ api_key: apiKey(), includeSections: "entityRegistration,coreData,assertions,repsAndCerts", size: "10" });
+export async function searchSamEntitiesPage(query: SamEntityQuery, page = 0, deadlineMs?: number): Promise<{ rows: any[]; hasNext: boolean }> {
+  if (!Number.isInteger(page) || page < 0 || page > 999 || Object.values(query).filter(Boolean).length !== 1) throw new Error("invalid SAM entity query");
+  const params = new URLSearchParams({ api_key: apiKey(), includeSections: "entityRegistration,coreData,assertions", size: "10", page: String(page) });
   if (query.uei) params.set("ueiSAM", query.uei);
+  else if (query.cageCode) params.set("cageCode", query.cageCode);
   else if (query.legalBusinessName) params.set("legalBusinessName", query.legalBusinessName);
-  const data = await fetchJson<any>(`${ENTITY_API}?${params.toString()}`, {}, 25_000);
-  return data.entityData ?? [];
+  else if (query.dbaName) params.set("dbaName", query.dbaName);
+  const data = await fetchJson<any>(`${ENTITY_API}?${params.toString()}`, {}, 25_000, 1, deadlineMs);
+  if (!Array.isArray(data?.entityData) || data.entityData.length > 10) throw new Error("SAM entity page omitted records");
+  // Do not follow provider links carrying credentials. Replay the frozen query
+  // with the next zero-based page; a full page gets an explicit terminal read.
+  return { rows: data.entityData, hasNext: data.entityData.length === 10 || Boolean(data.links?.nextLink) };
+}
+
+/** Compatibility reader for bounded one-page consumers. Recurring uses the page API. */
+export async function searchSamEntities(query: SamEntityQuery): Promise<any[]> {
+  const page = await searchSamEntitiesPage(query);
+  if (page.hasNext) throw new Error("SAM entity lookup requires paginated continuation");
+  return page.rows;
 }
 
 export function compactSamEntity(row: any) {
@@ -27,7 +41,7 @@ export function compactSamEntity(row: any) {
   const naics = Array.isArray(goods.naicsList) ? goods.naicsList : [];
   const psc = Array.isArray(goods.pscList) ? goods.pscList : [];
   return {
-    uei: reg.ueiSAM ?? null, cageCode: reg.cageCode ?? null, legalName: reg.legalBusinessName ?? "", dbaName: reg.dbaName ?? core.generalInformation?.entityDivisionName ?? info.entityDivisionName ?? null,
+    uei: typeof reg.ueiSAM === "string" && /^[A-Z0-9]{12}$/i.test(reg.ueiSAM) ? reg.ueiSAM.toUpperCase() : null, cageCode: typeof reg.cageCode === "string" && /^[A-Z0-9]{5}$/i.test(reg.cageCode) ? reg.cageCode.toUpperCase() : null, legalName: reg.legalBusinessName ?? "", dbaName: reg.dbaName ?? core.generalInformation?.entityDivisionName ?? info.entityDivisionName ?? null,
     registrationStatus: reg.registrationStatus ?? null, registrationDate: reg.registrationDate ?? reg.activationDate ?? null,
     expirationDate: reg.registrationExpirationDate ?? reg.expirationDate ?? null, entityStartDate: info.entityStartDate ?? null,
     website: info.entityURL ?? null, domain: normalizeDomain(info.entityURL), address: address.addressLine1 ?? null,

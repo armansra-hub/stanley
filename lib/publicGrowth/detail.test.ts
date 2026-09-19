@@ -53,6 +53,8 @@ describe("Form5500 public detail history guard", () => {
     expect(result.relatedEntities[0].awards.map((row) => row.id)).toEqual(["parent-award"]);
     expect(result.relatedEntities[0].relationships[0]).toMatchObject({ relationship: "reported_parent", directEntityId: "direct", reportingUei: direct.uei });
     expect(result.contractRevenueByYear[0].obligated).toBe(10);
+    expect(result.contractActions).toHaveLength(1);
+    expect(result.contractActions[0]).toMatchObject({ federal_award_id: "direct-award", federal_action_obligation: 10 });
     expect(result.contractMetrics?.obligations_365d).toBe(10);
     expect(result.federalCoverage).toMatchObject({ status: "direct_awards", directAwardCount: 1, historyComplete: false });
   });

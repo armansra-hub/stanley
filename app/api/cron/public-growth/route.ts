@@ -1,3 +1,4 @@
+import { saveFederalCoverageReceipts } from "@/lib/publicGrowth/federalCoverageStore";
 import { NextRequest, NextResponse } from "next/server";
 import { logEvent } from "@/lib/db/events";
 import {
@@ -70,7 +71,7 @@ async function runCompanyRetryBatch(
     }
     try {
       const receipt = source === "sam-entity"
-        ? await sweepSamCompany(company)
+        ? await sweepSamCompany(company, { samContinuation: entry.samContinuation, deadlineMs })
         : source === "usaspending-subawards"
           ? await sweepUsaspendingSubawardsCompany(company, { subawardContinuation: entry.subawardContinuation, deadlineMs })
           : await sweepUsaspendingCompanySteps(company, {
@@ -275,7 +276,7 @@ async function run(req: NextRequest) {
           receipts: [receipt], advanceCursor: false,
         };
       })(exactCompany)
-      : source === "sam-entity" ? await sweepSamTamBatch(n, offset, companyScope, afterCompanyId)
+      : source === "sam-entity" ? await sweepSamTamBatch(n, offset, companyScope, afterCompanyId, sourceDeadlineMs)
         : source === "sam-opportunities" ? await sweepSamOpportunities(days, offset, opportunityLimit, {
           cursor: lease.cursor.samOpportunityCursor, deadlineMs: sourceDeadlineMs,
           checkpoint: (cursor) => checkpointPublicGrowthSweep(lease, { samOpportunityCursor: cursor }),
@@ -330,6 +331,7 @@ async function run(req: NextRequest) {
         historiesIncomplete: receipts.filter((row) => row.awardDone === false || row.subawardDone === false).length,
       };
     }
+    await saveFederalCoverageReceipts(source, Array.isArray(result.receipts) ? result.receipts : []);
     const nextCursor = await completePublicGrowthSweep(lease, result);
     const { cursorPatch: _cursorPatch, advanceCursor: _advanceCursor, ...publicResult } = result;
     void _cursorPatch; void _advanceCursor;

@@ -23,6 +23,33 @@ function fixture() {
 }
 
 describe("direct Jev publication", () => {
+  it("keeps one event card across reports without changing the original source or Jev answers", async () => {
+    const deps = fixture();
+    const event = { id: "event1", company_id: company.id, event_type: "press", title: observation.title,
+      event_date: observation.event_date, primary_source_url: observation.source_url, trigger_id: null, evidence_count: 1, revision: 1, updated_at: observation.observed_at };
+    const findEvent = vi.fn(async () => deps.getSaved());
+    await publishJevFinding({ ...input(), event }, { ...deps, findEvent });
+    const original = structuredClone(deps.getSaved());
+    const syndicated = input(); syndicated.observation.id = "20000000-0000-4000-8000-000000000002";
+    syndicated.observation.source_url = "https://publisher.example.com/expansion";
+    const second = await publishJevFinding({ ...syndicated, event }, { ...deps, findEvent });
+    expect(second.status).toBe("already_published");
+    expect(deps.record).toHaveBeenCalledOnce();
+    expect(deps.getSaved()).toEqual(original);
+    expect(deps.getSaved().source_url).toBe(observation.source_url);
+  });
+  it("reads the winning event after a concurrent insert loses the unique event key", async () => {
+    const winner = fixture();
+    const event = { id: "event1", company_id: company.id, event_type: "press", title: observation.title,
+      event_date: observation.event_date, primary_source_url: observation.source_url, trigger_id: null, evidence_count: 2, revision: 2, updated_at: observation.observed_at };
+    await publishJevFinding({ ...input(), event }, { ...winner, findEvent: async () => winner.getSaved() });
+    const request = input(); request.observation.id = "20000000-0000-4000-8000-000000000003"; request.observation.source_url = "https://publisher.example.com/second";
+    const losing = fixture(); losing.find.mockResolvedValue(null); losing.record.mockResolvedValue(false);
+    const findEvent = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(winner.getSaved());
+    expect((await publishJevFinding({ ...request, event }, { ...losing, findEvent })).status).toBe("already_published");
+    expect(losing.record).toHaveBeenCalledOnce();
+    expect(winner.getSaved().metadata.jevFinding.observationId).toBe(observation.id);
+  });
   it("publishes raw Jev attributes and scores, model version and exact passage without second-model review", async () => {
     const deps = fixture();
     expect(await publishJevFinding(input(), deps)).toMatchObject({ status: "published", triggerId: "trigger1" });

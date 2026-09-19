@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import Link from "next/link";
 import OperatingProfile from "./OperatingProfile";
 import OperatingMatches from "./OperatingMatches";
+import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceHealth";
+import AccountIntelligence from "./AccountIntelligence";
+import AccountLookalikes from "./AccountLookalikes";
 
 type FeedbackReason = "useful" | "wrong_company" | "old_event" | "irrelevant" | "not_now";
 type SavedView = { id: string; name: string; question: string; active: boolean; backfill_complete: boolean };
@@ -38,6 +41,7 @@ type IntelligenceData = {
   spend: { usedUsd: number; reservedUsd: number; limitUsd: number };
   jobs: { queued: number; running: number; failed: number };
   sourceCoverage: { complete: number; partial: number; failed: number };
+  health?: IntelligenceHealthData;
 };
 
 const API = "/api/headhunter/intelligence";
@@ -219,7 +223,10 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
         </div>
       </section>}
 
+      {data?.health && <IntelligenceHealth health={data.health} />}
       {companyId && data?.enabled && <OperatingProfile companyId={companyId} refreshKey={updatedAt} />}
+      {companyId && data?.enabled && <AccountIntelligence key={`story:${companyId}`} companyId={companyId} refreshKey={updatedAt} />}
+      {companyId && data?.enabled && <AccountLookalikes key={`similar:${companyId}`} companyId={companyId} refreshKey={updatedAt} />}
       <OperatingMatches enabled={data?.enabled === true} refreshKey={updatedAt} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>

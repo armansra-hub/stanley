@@ -1,3 +1,4 @@
+vi.mock("@/lib/publicGrowth/federalCoverageStore", () => ({ saveFederalCoverageReceipts: vi.fn() }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";

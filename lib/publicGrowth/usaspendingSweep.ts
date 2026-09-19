@@ -30,6 +30,7 @@ export interface CompanySweepReceipt {
   awardContinuation?: PublicGrowthAwardContinuation;
   error?: string;
   requestDiagnostic?: PrimeRequestDiagnostic;
+  searchEndDate?: string;
 }
 
 type PrimeRequestOperation = "recipient_autocomplete" | "initial_award_search" | "continuation_award_search" | "award_detail" | "award_transactions";
@@ -74,7 +75,7 @@ export async function loadStoredContractFacts(entityId: string, deadlineMs?: num
   const storedAwards = await collectPublicGrowthKeysetPages<any>(async (afterId, limit) => {
     requirePublicGrowthTime(deadlineMs);
     let query = db.from("federal_awards")
-      .select("id,generated_award_id,start_date,end_date,award_ceiling,current_award_amount,total_obligations,awarding_agency")
+      .select("id,generated_award_id,start_date,end_date,award_ceiling,current_award_amount,total_obligations,awarding_agency,evidence")
       .eq("government_entity_id", entityId)
       .order("id", { ascending: true })
       .limit(limit);
@@ -83,7 +84,10 @@ export async function loadStoredContractFacts(entityId: string, deadlineMs?: num
     if (error) throw new Error(`stored award metrics load failed: ${error.message}`);
     return data ?? [];
   }, { pageSize: STORED_METRIC_PAGE_SIZE, maxRows: STORED_METRIC_MAX_ROWS });
-  const awards: AwardFact[] = storedAwards.map((award: any) => ({ generatedAwardId: String(award.generated_award_id), startDate: award.start_date, endDate: award.end_date, awardCeiling: Number(award.award_ceiling ?? 0), currentAwardAmount: Number(award.current_award_amount ?? 0), totalObligations: Number(award.total_obligations ?? 0), awardingAgency: award.awarding_agency }));
+  // Vehicle ceilings are capacity, not additional funded orders. Keep them out
+  // of contract-size/activity metrics while retaining their own transactions.
+  const awards: AwardFact[] = storedAwards.filter((award: any) => award.evidence?.awardCategory !== "idv" && !String(award.generated_award_id).startsWith("CONT_IDV_"))
+    .map((award: any) => ({ generatedAwardId: String(award.generated_award_id), startDate: award.start_date, endDate: award.end_date, awardCeiling: Number(award.award_ceiling ?? 0), currentAwardAmount: Number(award.current_award_amount ?? 0), totalObligations: Number(award.total_obligations ?? 0), awardingAgency: award.awarding_agency }));
   const transactions: TransactionFact[] = [];
   const ids = storedAwards.map((award: any) => String(award.id));
   const generatedById = new Map(storedAwards.map((award: any) => [String(award.id), String(award.generated_award_id)]));
@@ -194,7 +198,9 @@ export async function sweepUsaspendingCompany(
       }
       let page: Awaited<ReturnType<typeof searchContractAwardsPage>>;
       try {
-        page = currentSearchPage ?? await observePrimeRequest("continuation_award_search", () => state!.searchAfter === undefined
+        page = currentSearchPage ?? await observePrimeRequest("continuation_award_search", () => state!.collection === "idvs"
+          ? searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs, state!.searchAfter, "idvs")
+          : state!.searchAfter === undefined
           ? searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs)
           : searchContractAwardsPage(state!.recipientName, state!.searchPage, state!.searchEndDate, AWARD_SEARCH_PAGE_SIZE, options.deadlineMs, state!.searchAfter));
       } catch (error) {
@@ -224,6 +230,18 @@ export async function sweepUsaspendingCompany(
             state.entityId = next.identity?.entityId ?? null; state.uei = next.identity?.uei ?? null; state.recipientId = next.identity?.recipientId ?? null;
             receipt.awardDone = false; return receipt;
           }
+          if (state.collection !== "idvs") {
+            // Same frozen company/identities/date window, separate provider
+            // collection. Never carry a contracts search_after into IDVs.
+            state.collection = "idvs"; state.searchTargetIndex = 0;
+            const first = state.searchTargets?.[0];
+            if (first) {
+              state.recipientName = first.query; state.entityId = first.identity?.entityId ?? null;
+              state.uei = first.identity?.uei ?? null; state.recipientId = first.identity?.recipientId ?? null;
+            }
+            state.searchPage = 1; state.searchPassFoundNew = false; state.searchAfter = null; state.ignoredAwardIds = [];
+            receipt.awardDone = false; return receipt;
+          }
           if (state.entityId || state.searchTargets?.some((entry) => entry.identity)) {
             const entityIds = [...new Set([...(state.entityId ? [state.entityId] : []), ...(state.searchTargets ?? []).flatMap((entry) => entry.identity ? [entry.identity.entityId] : [])])];
             const stored = { awards: [] as AwardFact[], transactions: [] as TransactionFact[], agencies: [] as string[] };
@@ -244,7 +262,7 @@ export async function sweepUsaspendingCompany(
             if (receipt.triggers) await recomputePriority(company.id);
             receipt.status = "matched";
           }
-          receipt.awardDone = true; delete receipt.awardContinuation;
+          receipt.searchEndDate = state.searchEndDate; receipt.awardDone = true; delete receipt.awardContinuation;
           return receipt;
         }
         receipt.status = state.entityId ? "matched" : "no_awards";
@@ -252,6 +270,7 @@ export async function sweepUsaspendingCompany(
       }
       if (state.seenAwardIds.length >= 25_000) throw new Error("award continuation reached the supported 25000-ID bound");
       state.pendingAwardId = nextAward.generatedId;
+      state.pendingOrderingEndDate = nextAward.lastDateToOrder ?? null;
       state.transactionPage = 1; state.transactionPassFoundNew = false; state.seenTransactionIds = [];
       state.searchPassFoundNew = true; receipt.awardContinuation = state;
     }
@@ -259,6 +278,7 @@ export async function sweepUsaspendingCompany(
     const pendingAwardId = state.pendingAwardId;
     if (!pendingAwardId) throw new Error("USAspending continuation omitted its pending award");
     const seed = compactAward(await observePrimeRequest("award_detail", () => fetchAwardDetail(pendingAwardId, 1, options.deadlineMs)));
+    if (state.collection === "idvs" && state.pendingOrderingEndDate) seed.orderingEndDate = state.pendingOrderingEndDate;
     if (seed.generatedAwardId !== pendingAwardId) throw new Error("award detail differs from requested stable ID");
     if (state.entityId && !matchesFederalIdentifiers(
       { uei: state.uei, recipientId: state.recipientId },
@@ -316,15 +336,17 @@ export async function sweepUsaspendingCompany(
     else awardComplete = true;
 
     if (awardComplete) {
+      const isVehicle = seed.awardCategory === "idv" || seed.generatedAwardId.startsWith("CONT_IDV_");
       const awardEvent = {
         family: "federal_contract", type: "federal_award", dedupeKey: `usaspending:award:${seed.generatedAwardId}`,
         strength: seed.totalObligations >= 10_000_000 ? 92 : seed.totalObligations >= 1_000_000 ? 84 : 72,
-        summary: `${seed.startDate ? `Awarded ${seed.startDate}. ` : ""}${seed.awardingAgency ? `${seed.awardingAgency}: ` : ""}${Math.round(seed.awardCeiling).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} ceiling; ${Math.round(seed.totalObligations).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} obligated — ${seed.description || seed.awardId}`,
-        signalDate: seed.startDate, metadata: { awardId: seed.awardId, generatedAwardId: seed.generatedAwardId, ceiling: seed.awardCeiling, obligations: seed.totalObligations, currentAwardAmount: seed.currentAwardAmount, valueKind: "ceiling_vs_obligations", agency: seed.awardingAgency, subagency: seed.awardingSubagency, office: seed.awardingOffice, naics: seed.naicsCode, psc: seed.pscCode, endDate: seed.endDate },
+        summary: `${isVehicle ? "Contract vehicle; potential ordering capacity. " : ""}${seed.signedDate ? `Signed ${seed.signedDate}. ` : seed.startDate ? `Starts ${seed.startDate}. ` : ""}${seed.awardingAgency ? `${seed.awardingAgency}: ` : ""}${Math.round(seed.awardCeiling).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} ceiling; ${Math.round(seed.totalObligations).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} obligated — ${seed.description || seed.awardId}`,
+        signalDate: seed.signedDate ?? seed.startDate, metadata: { awardId: seed.awardId, generatedAwardId: seed.generatedAwardId, ceiling: seed.awardCeiling, obligations: seed.totalObligations, currentAwardAmount: seed.currentAwardAmount, valueKind: "ceiling_vs_obligations", agency: seed.awardingAgency, subagency: seed.awardingSubagency, office: seed.awardingOffice, naics: seed.naicsCode, psc: seed.pscCode, endDate: seed.endDate, potentialEndDate: seed.potentialEndDate, signedDate: seed.signedDate, orderingEndDate: seed.orderingEndDate, awardCategory: isVehicle ? "idv" : "contract", parentAwardId: seed.parentAwardId },
       };
       if (await recordPublicGrowthTrigger(company.id, awardEvent, "USAspending", sourceUrl, decision.confidence)) receipt.triggers++;
       state.seenAwardIds = [...new Set([...state.seenAwardIds, seed.generatedAwardId])];
       state.pendingAwardId = null; state.transactionPage = 1; state.transactionPassFoundNew = false; state.seenTransactionIds = [];
+      state.pendingOrderingEndDate = null;
       receipt.awards = 1;
     }
     if (receipt.triggers) await recomputePriority(company.id);
@@ -373,6 +395,7 @@ export interface SubawardCompanyReceipt {
   triggers: number;
   status: "not_linked" | "linked" | "error";
   subawardDone: boolean;
+  searchEndDate?: string;
   subawardContinuation?: PublicGrowthSubawardContinuation;
   error?: string;
 }
@@ -550,7 +573,7 @@ export async function sweepUsaspendingSubawardsCompany(
     if (metricError) throw new Error(`subaward metric upsert failed: ${metricError.message}`);
     requirePublicGrowthTime(options.deadlineMs);
     await recomputePriority(company.id);
-    receipt.subawardDone = true; delete receipt.subawardContinuation;
+    receipt.searchEndDate = state.searchEndDate; receipt.subawardDone = true; delete receipt.subawardContinuation;
     return receipt;
   } catch (error) {
     if (error instanceof PublicGrowthDeadlineError && state) return receipt;

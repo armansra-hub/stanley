@@ -22,9 +22,15 @@ export interface FederalCoverage {
   pendingIdentityCount: number;
   registrationCount: number;
   latestAwardObservedAt: string | null;
-  historyComplete: false;
+  historyComplete: boolean;
+  sources?: FederalSourceCoverage[];
   relatedEntitiesTruncated: boolean;
   gaps: string[];
+}
+export interface FederalSourceCoverage {
+  source: string; status: "unsearched" | "partial" | "complete" | "no_match" | "ambiguous" | "failed";
+  scope: string; searched_from: string | null; searched_through: string | null;
+  last_attempted_at: string | null; last_completed_at: string | null;
 }
 
 const nonblank = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
@@ -73,23 +79,46 @@ export function bindRelatedFederalEntities(direct: FederalRow[], candidates: Fed
 }
 
 export function federalAwardLabel(awardType: unknown): string {
-  const type = String(awardType ?? "").trim();
+  const row = awardType && typeof awardType === "object" ? awardType as FederalRow : null;
+  const evidence = row?.evidence && typeof row.evidence === "object" ? row.evidence as FederalRow : {};
+  const type = String(row ? evidence.awardTypeCode || row.award_type || "" : awardType ?? "").trim();
   if (/^IDV(?:_|\b)|indefinite[ -]delivery vehicle|blanket purchase agreement|government[ -]wide acquisition|federal supply schedule/i.test(type)) return "Contract vehicle (IDV)";
   if (/delivery order|task order|BPA call/i.test(type)) return "Order / call";
   if (/^[A-D]$/.test(type)) return "Contract award";
   return type || "Federal award";
 }
 
-export function federalCoverage(entities: FederalRow[], pending: FederalRow[], awards: FederalRow[], relatedEntitiesTruncated = false): FederalCoverage {
+/** Source facts only: potential options are never represented as exercised work. */
+export function federalLifecycleFacts(award: FederalRow): string[] {
+  const evidence = award.evidence && typeof award.evidence === "object" ? award.evidence as FederalRow : {};
+  const isVehicle = evidence.awardCategory === "idv" || String(award.generated_award_id ?? "").startsWith("CONT_IDV_");
+  const facts: string[] = [];
+  const date = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : null;
+  if (date(evidence.signedDate)) facts.push(`Signed ${date(evidence.signedDate)}`);
+  if (date(award.start_date)) facts.push(`${isVehicle ? "Vehicle begins" : "Performance starts"} ${date(award.start_date)}`);
+  if (isVehicle) {
+    if (date(evidence.orderingEndDate)) facts.push(`Last date to order ${date(evidence.orderingEndDate)}`);
+    if (date(award.end_date)) facts.push(`Reported vehicle period end ${date(award.end_date)}`);
+    facts.push("Vehicle ceiling is potential ordering capacity; funded orders are separate awards.");
+  } else if (date(award.end_date)) facts.push(`Current performance end ${date(award.end_date)}`);
+  if (date(award.potential_end_date)) facts.push(`Potential end including options ${date(award.potential_end_date)}; future options are not confirmed exercised.`);
+  if (award.current_award_amount !== null && award.current_award_amount !== undefined && Number.isFinite(Number(award.current_award_amount))) {
+    facts.push(`${Number(award.current_award_amount).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} base plus exercised options; obligations show committed funding.`);
+  }
+  if (evidence.optionSchedule === "not_provided_by_source") facts.push("Individual option-period dates are not supplied by this source.");
+  return facts;
+}
+
+export function federalCoverage(entities: FederalRow[], pending: FederalRow[], awards: FederalRow[], relatedEntitiesTruncated = false, sources: FederalSourceCoverage[] = []): FederalCoverage {
   const registrations = entities.filter((entity) => nonblank(entity.registration_status));
   const dates = awards.map((award) => award.observed_at).filter((value): value is string => nonblank(value) && Number.isFinite(Date.parse(value)))
     .sort((a, b) => Date.parse(b) - Date.parse(a));
   return { status: awards.length ? "direct_awards" : registrations.length ? "registration_only" : entities.length ? "verified_identity_only"
     : pending.length ? "identity_review" : "no_verified_match", directAwardCount: awards.length,
     registrationCount: registrations.length, pendingIdentityCount: pending.length, latestAwardObservedAt: dates[0] ?? null,
-    historyComplete: false, relatedEntitiesTruncated,
-    gaps: ["Stored award history is partial; missing records do not establish an absence of federal business.",
-      "Contract vehicles (IDVs), awards before October 2007, and state/local contracts are not comprehensively collected."] };
+    historyComplete: entities.length > 0 && ["usaspending", "usaspending-subawards"].every((source) => sources.some((row) => row.source === source && row.status === "complete")), sources, relatedEntitiesTruncated,
+    gaps: ["Completion applies only to the named source scope and frozen search dates; missing records do not establish an absence of federal business.",
+      "USAspending contract and vehicle collection covers source records from October 2007 onward; earlier awards, undisclosed records and state/local awards are outside that source scope."] };
 }
 
 export const FEDERAL_STATUS_TEXT: Record<FederalCoverage["status"], { label: string; detail: string }> = {

@@ -8,6 +8,7 @@ import { isPublishableTriggerForCompany } from "@/lib/triggers/signalIntegrity";
 import { canonicalEvidenceUrl } from "./observations";
 import type { EvaluateEvidenceResult, EvidenceAttributes, RawEvaluationAnswer } from "./evaluation";
 import { readTriggerSourceEvidence, type TriggerSourceEvidence } from "./triggerEvidence";
+import type { IntelligenceEvent } from "./events";
 
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 export type JevPublicationCompany = { id: string; name: string; status?: string; record_dead?: boolean | null; description?: string | null; subindustry?: string | null; ns_industry?: string | null };
@@ -19,6 +20,7 @@ export type JevFindingReceipt = {
   provider: "typesafe-direct"; responseModel?: string; confidence: Record<string, number>;
   rawAnswers?: Record<string, RawEvaluationAnswer>;
   usage: { inputTokens: number | null; outputTokens: number | null } | null;
+  eventId?: string;
 };
 export type JevPublicationReceipt = { status: "published" | "already_published"; triggerId: string; operationKey: string } |
   { status: "not_eligible"; reason: string; triggerId?: string };
@@ -40,7 +42,7 @@ function probabilityMap(value: Record<string, number> | undefined, limit: number
   return Object.fromEntries(entries);
 }
 
-function findingReceipt(input: { observation: JevPublicationObservation; evaluation: Evaluation; passage: { start: number; end: number; text: string } }): JevFindingReceipt {
+function findingReceipt(input: { observation: JevPublicationObservation; evaluation: Evaluation; passage: { start: number; end: number; text: string }; eventId?: string }): JevFindingReceipt {
   const { observation, evaluation, passage } = input;
   if (!evaluation.model || evaluation.model.length > 120 || !evaluation.questionVersion || evaluation.questionVersion.length > 120
     || SCORES.some((key) => !Number.isFinite(evaluation.attributes[key]) || evaluation.attributes[key] < 0 || evaluation.attributes[key] > 1)) throw new Error("Invalid Jev publication result");
@@ -66,6 +68,7 @@ function findingReceipt(input: { observation: JevPublicationObservation; evaluat
     model: evaluation.model, questionVersion: evaluation.questionVersion, attributes, criteria, confidence, provider: "typesafe-direct", usage,
     ...(rawAnswers ? { rawAnswers } : {}),
     ...(evaluation.metadata.responseModel ? { responseModel: evaluation.metadata.responseModel.slice(0, 120) } : {}) };
+  if (input.eventId) receipt.eventId = input.eventId;
   // Allow the adapter's 32 KB native answers plus bounded routing/receipt fields.
   if (Buffer.byteLength(JSON.stringify(receipt), "utf8") > 48_000) throw new Error("Jev publication metadata exceeds bound");
   return receipt;
@@ -76,6 +79,7 @@ type TriggerReceipt = { id: string; company_id: string; type: string; source_url
 type Dependencies = {
   record?: (companyId: string, trigger: TriggerInput & { jevFinding: JevFindingReceipt }) => Promise<boolean>;
   find?: (companyId: string, url: string) => Promise<TriggerReceipt | null>;
+  findEvent?: (companyId: string, eventId: string) => Promise<TriggerReceipt | null>;
   reheat?: (companyId: string, type: string, url: string, date: string | null) => Promise<unknown>;
   priority?: (companyId: string) => Promise<unknown>;
   now?: () => number;
@@ -88,11 +92,19 @@ async function readReceipt(companyId: string, url: string): Promise<TriggerRecei
   return data;
 }
 
+async function readEventReceipt(companyId: string, eventId: string): Promise<TriggerReceipt | null> {
+  const { data, error } = await serviceClient().from("triggers").select("id,company_id,type,source_url,signal_date,summary,source_name,metadata")
+    .eq("company_id", companyId).eq("metadata->jevFinding->>eventId", eventId).maybeSingle();
+  if (error) throw new Error("Jev event publication readback failed");
+  return data;
+}
+
 /** Direct publication of Jev's interpretation. No candidate queue, generative model, or independent review. */
 export async function publishJevFinding(input: { company: JevPublicationCompany; observation: JevPublicationObservation; evaluation: Evaluation;
-  passage: { start: number; end: number; text: string } | null }, deps: Dependencies = {}): Promise<JevPublicationReceipt> {
+  passage: { start: number; end: number; text: string } | null; event?: IntelligenceEvent | null }, deps: Dependencies = {}): Promise<JevPublicationReceipt> {
   const { company, observation, evaluation, passage } = input;
   if (company.id !== observation.company_id) throw new Error("Jev publication account mismatch");
+  if (input.event && input.event.company_id !== company.id) throw new Error("Jev event account mismatch");
   if (!observation.is_current || company.status === "removed_from_tam") return { status: "not_eligible", reason: "superseded" };
   // Any government capture continues through the verified entity pipeline, including a model mislabel.
   if (observation.source_kind === "government") return { status: "not_eligible", reason: "government_publisher_required" };
@@ -103,18 +115,28 @@ export async function publishJevFinding(input: { company: JevPublicationCompany;
   if (!readTriggerSourceEvidence({ intelligenceEvidence: evidence }) || observation.evidence_text.slice(passage.start, passage.end) !== passage.text) throw new Error("Jev publication source passage mismatch");
   const url = canonicalEvidenceUrl(observation.source_url);
   const sourceName = observation.source_kind === "job" ? "Jev · ATS job posting" : observation.source_kind === "website" ? "Jev · Company website" : "Jev · Public news";
-  const finding = findingReceipt({ observation, evaluation, passage });
+  const finding = findingReceipt({ observation, evaluation, passage, eventId: input.event?.id });
   const trigger = { type, summary: observation.title.slice(0, 280), source_name: sourceName, source_url: url,
     signal_date: observation.event_date, intelligenceEvidence: evidence, jevFinding: finding };
   if (!isPublishableTriggerForCompany(trigger, company)) return { status: "not_eligible", reason: "source_or_company_policy" };
   const find = deps.find ?? readReceipt;
-  const existing = await find(company.id, url);
+  const findEvent = deps.findEvent ?? readEventReceipt;
+  const existing = (input.event ? await findEvent(company.id, input.event.id) : null) ?? await find(company.id, url);
   let inserted = false;
   if (!existing) inserted = await (deps.record ?? recordTrigger)(company.id, trigger);
   // recordTrigger's false means either dedupe or failure. Only exact persisted state resolves that ambiguity.
-  const saved = existing ?? await find(company.id, url);
-  if (!saved || saved.company_id !== company.id || saved.source_url !== url) throw new Error("Jev publication has no exact source receipt");
+  const saved = existing ?? (input.event ? await findEvent(company.id, input.event.id) : null) ?? await find(company.id, url);
+  if (!saved || saved.company_id !== company.id) throw new Error("Jev publication has no exact source receipt");
   const savedFinding = saved.metadata?.jevFinding as Partial<JevFindingReceipt> | undefined;
+  // The database's unique account/event key resolves simultaneous syndicated
+  // reports. Keep the first published report, source and raw interpretation;
+  // the event binding adds all later reports as additional source context.
+  if (input.event && savedFinding?.eventId === input.event.id && savedFinding.operationKey !== finding.operationKey) {
+    if (!isPublishableTriggerForCompany(saved, company)) return { status: "not_eligible", reason: "source_or_company_policy", triggerId: saved.id };
+    await (deps.priority ?? recomputePriority)(company.id);
+    return { status: "already_published", triggerId: saved.id, operationKey: savedFinding.operationKey ?? finding.operationKey };
+  }
+  if (saved.source_url !== url) throw new Error("Jev publication has no exact source receipt");
   if (savedFinding?.operationKey !== finding.operationKey) {
     // A pre-existing article owns the established source dedupe key. Preserve it and leave this raw result on its observation.
     if (existing || !inserted) return { status: "not_eligible", reason: "source_already_recorded", triggerId: saved.id };

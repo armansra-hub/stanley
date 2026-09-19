@@ -25,13 +25,13 @@ describe("federal activity provenance and coverage display", () => {
     expect(result[0].relationships[0].relationship).toBe("reported_parent");
     expect(result[1].relationships[0].relationship).toBe("reported_child");
   });
-  it("labels stored IDVs and order references without claiming an IDV collection feed", () => {
+  it("labels IDVs and order references while distinguishing the collected source scope from exhaustive coverage", () => {
     expect(federalAwardLabel("IDV_B")).toBe("Contract vehicle (IDV)");
     expect(federalAwardLabel("Blanket Purchase Agreement")).toBe("Contract vehicle (IDV)");
     expect(federalAwardLabel("BPA CALL")).toBe("Order / call");
     const coverage = federalCoverage([], [], []);
     expect(coverage.status).toBe("no_verified_match"); expect(coverage.historyComplete).toBe(false);
-    expect(coverage.gaps.join(" ")).toContain("not comprehensively collected");
+    expect(coverage.gaps.join(" ")).toContain("outside that source scope");
   });
   it("renders direct vs related evidence, registration status, source dates and partial coverage distinctly", () => {
     const entity = { ...direct, registration_status: "Expired", expiration_date: "2025-01-01" };

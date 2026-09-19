@@ -3,6 +3,7 @@ import { advanceCursorOffset } from "@/lib/cron/rotation";
 import { serviceClient } from "@/lib/supabase/server";
 import { parseSubawardPartitions, subawardDateMillis, SUBAWARD_HISTORY_START, type SubawardSearchWindow } from "./subawardPartitions";
 import { usaspendingCursorField, type UsaspendingSearchCursor } from "./usaspendingCursor";
+import { parseSamEntityContinuation, type SamEntityContinuation } from "./samEntityState";
 
 export interface PublicGrowthSweepLease {
   source: string;
@@ -99,6 +100,8 @@ export const PUBLIC_GROWTH_MAX_RETRY_ATTEMPTS = 3;
 
 export interface PublicGrowthAwardContinuation {
   searchAfter?: UsaspendingSearchCursor | null;
+  /** Absent legacy cursors finish contracts before starting the IDV phase. */
+  collection?: "contracts" | "idvs";
   version: 1;
   recipientName: string;
   searchEndDate: string;
@@ -109,6 +112,7 @@ export interface PublicGrowthAwardContinuation {
   uei: string | null;
   recipientId: string | null;
   pendingAwardId: string | null;
+  pendingOrderingEndDate?: string | null;
   transactionPage: number;
   transactionPassFoundNew: boolean;
   seenTransactionIds: string[];
@@ -146,6 +150,7 @@ export interface PublicGrowthRetryEntry {
   /** Exact frozen-search and per-award transaction checkpoint. */
   awardContinuation: PublicGrowthAwardContinuation | null;
   subawardContinuation?: PublicGrowthSubawardContinuation;
+  samContinuation?: SamEntityContinuation;
 }
 
 export interface PublicGrowthDeadLetter {
@@ -159,6 +164,7 @@ export interface PublicGrowthDeadLetter {
   occurrences: number;
   awardContinuation: PublicGrowthAwardContinuation | null;
   subawardContinuation?: PublicGrowthSubawardContinuation;
+  samContinuation?: SamEntityContinuation;
 }
 
 export interface PublicGrowthRetryState extends Record<string, unknown> {
@@ -175,6 +181,8 @@ export interface PublicGrowthCompanyOutcome {
   awardDone?: boolean;
   subawardContinuation?: PublicGrowthSubawardContinuation;
   subawardDone?: boolean;
+  samContinuation?: SamEntityContinuation;
+  samDone?: boolean;
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -243,6 +251,9 @@ function optionalAwardContinuation(value: unknown, label: string): PublicGrowthA
   if (typeof row.searchPassFoundNew !== "boolean" || typeof row.transactionPassFoundNew !== "boolean") {
     throw new Error(`${label} pass flags must be boolean`);
   }
+  if (row.collection !== undefined && row.collection !== "contracts" && row.collection !== "idvs") throw new Error(`${label} has invalid award collection`);
+  if (row.pendingOrderingEndDate !== undefined && row.pendingOrderingEndDate !== null && (typeof row.pendingOrderingEndDate !== "string"
+    || !/^\d{4}-\d{2}-\d{2}$/.test(row.pendingOrderingEndDate) || !Number.isFinite(Date.parse(row.pendingOrderingEndDate)))) throw new Error(`${label} has invalid ordering date`);
   return {
     version: 1,
     recipientName: boundedString(row.recipientName, `${label}.recipientName`),
@@ -259,6 +270,8 @@ function optionalAwardContinuation(value: unknown, label: string): PublicGrowthA
     seenTransactionIds: uniqueStringArray(row.seenTransactionIds, `${label}.seenTransactionIds`),
     ...(row.ignoredAwardIds === undefined ? {} : { ignoredAwardIds: uniqueStringArray(row.ignoredAwardIds, `${label}.ignoredAwardIds`) }),
     ...awardTargets(row, label),
+    ...(row.collection === undefined ? {} : { collection: row.collection }),
+    ...(row.pendingOrderingEndDate === undefined ? {} : { pendingOrderingEndDate: row.pendingOrderingEndDate as string | null }),
     ...usaspendingCursorField(row),
   };
 }
@@ -322,20 +335,25 @@ export function parsePublicGrowthSubawardContinuation(value: unknown, label = "s
   };
 }
 
-function subawardContinuationField(row: { companyId: unknown; subawardContinuation?: unknown }, label: string) {
-  if (row.subawardContinuation == null) return {};
-  const continuation = parsePublicGrowthSubawardContinuation(row.subawardContinuation, `${label}.subawardContinuation`);
-  if (continuation.companyId !== row.companyId) throw new Error(`${label} continuation belongs to another company`);
-  return { subawardContinuation: continuation };
+function sourceContinuationFields(row: { companyId: unknown; subawardContinuation?: unknown; samContinuation?: unknown }, label: string) {
+  const extra: { subawardContinuation?: PublicGrowthSubawardContinuation; samContinuation?: SamEntityContinuation } = {};
+  if (row.subawardContinuation != null) {
+    const continuation = parsePublicGrowthSubawardContinuation(row.subawardContinuation, `${label}.subawardContinuation`);
+    if (continuation.companyId !== row.companyId) throw new Error(`${label} continuation belongs to another company`);
+    extra.subawardContinuation = continuation;
+  }
+  if (row.samContinuation != null) extra.samContinuation = parseSamEntityContinuation(row.samContinuation, String(row.companyId));
+  return extra;
 }
 
 function hasPendingHistory(row: PublicGrowthCompanyOutcome): boolean {
-  return row.awardDone === false || row.subawardDone === false;
+  return row.awardDone === false || row.subawardDone === false || row.samDone === false;
 }
 
 function requireHistoryContinuation(row: PublicGrowthCompanyOutcome) {
   if (row.awardDone === false && row.awardContinuation === undefined) throw new Error(`partial award receipt lacks a durable continuation for ${row.companyId}`);
   if (row.subawardDone === false && row.subawardContinuation === undefined) throw new Error(`partial subaward receipt lacks a durable continuation for ${row.companyId}`);
+  if (row.samDone === false && row.samContinuation === undefined) throw new Error(`partial SAM receipt lacks a durable continuation for ${row.companyId}`);
 }
 
 function parseRetryEntry(value: unknown, label: string): PublicGrowthRetryEntry {
@@ -358,7 +376,7 @@ function parseRetryEntry(value: unknown, label: string): PublicGrowthRetryEntry 
     firstFailedAt,
     lastError,
     awardContinuation: optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) ?? null,
-    ...subawardContinuationField(row as { companyId: unknown; subawardContinuation?: unknown }, label),
+    ...sourceContinuationFields(row as { companyId: unknown; subawardContinuation?: unknown }, label),
   };
 }
 
@@ -383,7 +401,7 @@ function parseDeadLetter(value: unknown, label: string): PublicGrowthDeadLetter 
     resolvedAt: row.resolvedAt == null ? null : exactTimestamp(row.resolvedAt, `${label}.resolvedAt`),
     occurrences,
     awardContinuation: optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) ?? null,
-    ...subawardContinuationField(row as { companyId: unknown; subawardContinuation?: unknown }, label),
+    ...sourceContinuationFields(row as { companyId: unknown; subawardContinuation?: unknown }, label),
   };
 }
 
@@ -435,14 +453,16 @@ function normalizedOutcome(row: PublicGrowthCompanyOutcome, label: string): Publ
     throw new Error(`${label}.awardDone must be boolean when present`);
   }
   if (row.subawardDone !== undefined && typeof row.subawardDone !== "boolean") throw new Error(`${label}.subawardDone must be boolean when present`);
-  if (row.awardContinuation != null && row.subawardContinuation != null) throw new Error(`${label} cannot mix prime and subaward continuations`);
+  if (row.samDone !== undefined && typeof row.samDone !== "boolean") throw new Error(`${label}.samDone must be boolean when present`);
+  if ([row.awardContinuation, row.subawardContinuation, row.samContinuation].filter((value) => value != null).length > 1) throw new Error(`${label} cannot mix source continuations`);
   return {
     companyId,
     status,
     ...(status === "error" ? { error: exactFailure(row.error, `${label}.error`) } : {}),
     ...(row.awardDone !== undefined ? { awardDone: row.awardDone } : {}),
     ...(row.subawardDone !== undefined ? { subawardDone: row.subawardDone } : {}),
-    ...subawardContinuationField(row, label),
+    ...(row.samDone !== undefined ? { samDone: row.samDone } : {}),
+    ...sourceContinuationFields(row, label),
     ...(optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) !== undefined
       ? { awardContinuation: optionalAwardContinuation(row.awardContinuation, `${label}.awardContinuation`) }
       : {}),
@@ -494,7 +514,7 @@ export function queuePublicGrowthMainFailures(
         firstFailedAt: timestamp,
         lastError: row.error as string,
         awardContinuation: row.awardContinuation ?? null,
-        ...subawardContinuationField(row, "main failure"),
+        ...sourceContinuationFields(row, "main failure"),
       });
       queued++;
       continue;
@@ -510,7 +530,7 @@ export function queuePublicGrowthMainFailures(
         firstFailedAt: null,
         lastError: null,
         awardContinuation: row.awardContinuation ?? null,
-        ...subawardContinuationField(row, "main continuation"),
+        ...sourceContinuationFields(row, "main continuation"),
       });
       queued++;
       continuations++;
@@ -558,7 +578,8 @@ export function applyPublicGrowthRetryOutcomes(
         || current.firstFailedAt !== row.firstFailedAt
         || current.lastError !== row.lastError
         || JSON.stringify(current.awardContinuation) !== JSON.stringify(row.awardContinuation)
-        || JSON.stringify(current.subawardContinuation) !== JSON.stringify(row.subawardContinuation)) {
+        || JSON.stringify(current.subawardContinuation) !== JSON.stringify(row.subawardContinuation)
+        || JSON.stringify(current.samContinuation) !== JSON.stringify(row.samContinuation)) {
       throw new Error(`planned retry no longer matches durable state for ${row.companyId}`);
     }
   }
@@ -576,7 +597,7 @@ export function applyPublicGrowthRetryOutcomes(
         firstFailedAt: null,
         lastError: null,
         awardContinuation: outcome.awardContinuation ?? null,
-        ...subawardContinuationField(outcome, "retry continuation"),
+        ...sourceContinuationFields(outcome, "retry continuation"),
       });
       continue;
     }
@@ -595,7 +616,7 @@ export function applyPublicGrowthRetryOutcomes(
         firstFailedAt: current.firstFailedAt ?? timestamp,
         lastError: outcome.error as string,
         awardContinuation: outcome.awardContinuation ?? current.awardContinuation,
-        ...subawardContinuationField({ companyId: outcome.companyId, subawardContinuation: outcome.subawardContinuation ?? current.subawardContinuation }, "retry failure"),
+        ...sourceContinuationFields({ companyId: outcome.companyId, subawardContinuation: outcome.subawardContinuation ?? current.subawardContinuation, samContinuation: outcome.samContinuation ?? current.samContinuation }, "retry failure"),
       });
       continue;
     }
@@ -612,7 +633,7 @@ export function applyPublicGrowthRetryOutcomes(
       resolvedAt: null,
       occurrences: (prior?.occurrences ?? 0) + 1,
       awardContinuation: outcome.awardContinuation ?? current.awardContinuation,
-      ...subawardContinuationField({ companyId: outcome.companyId, subawardContinuation: outcome.subawardContinuation ?? current.subawardContinuation }, "dead letter"),
+      ...sourceContinuationFields({ companyId: outcome.companyId, subawardContinuation: outcome.subawardContinuation ?? current.subawardContinuation, samContinuation: outcome.samContinuation ?? current.samContinuation }, "dead letter"),
     };
     if (priorIndex >= 0) deadLetters[priorIndex] = deadLetter;
     else deadLetters.push(deadLetter);

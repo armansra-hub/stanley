@@ -1,3 +1,4 @@
+import { saveFederalCoverageReceipts } from "@/lib/publicGrowth/federalCoverageStore";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
@@ -441,6 +442,7 @@ async function run(req: NextRequest) {
       reason: rateLimited ? "provider_rate_limited" : remaining.length ? "runtime_budget"
         : readbackHeld.size ? "bounded_selection_finished_with_unresolved_readback_holds"
         : skippedHeldCompanyIds.length ? "bounded_selection_finished_with_strategy_holds" : "bounded_attempts_finished" };
+    await saveFederalCoverageReceipts("federal-discovery", outcomes);
     await completePublicGrowthSweep(lease, { ...receipt, done: attemptCycleComplete, advanceCursor: false, mode: "main+retry",
       cursorPatch: { afterCompanyId: receipt.afterCompanyId, lastDiscoveryReceipt: receipt,
         ...(!rateLimited && outcomes.length ? { discoveryRateLimitStreak: 0 } : {}) } });

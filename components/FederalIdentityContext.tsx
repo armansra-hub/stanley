@@ -1,4 +1,5 @@
 import React from "react";
+import FederalAwardLifecycle from "./FederalAwardLifecycle";
 import { FEDERAL_STATUS_TEXT, federalAwardLabel, type FederalCoverage, type FederalRow, type RelatedFederalEntity } from "@/lib/publicGrowth/federalPresentation";
 
 const date = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value))
@@ -40,8 +41,9 @@ export default function FederalIdentityContext({ entities, pendingEntities, rela
         {awards.length ? <details className="mt-2">
           <summary className="cursor-pointer">Stored related-entity awards ({awards.length}{awardsTruncated ? "+" : ""})</summary>
           {awards.map((award) => <div key={String(award.id)} className="mt-2 border-t pt-1" style={{ borderColor: "var(--border)" }}>
-            <div>{federalAwardLabel(award.award_type)} · {money(award.total_obligations)} obligated · {money(award.award_ceiling)} ceiling</div>
+            <div>{federalAwardLabel(award)} · {money(award.total_obligations)} obligated · {money(award.award_ceiling)} ceiling</div>
             <div className="text-[var(--text-muted)]">{String(award.awarding_agency ?? "Agency unavailable")} · {date(award.start_date)}</div>
+            <FederalAwardLifecycle award={award} />
             {award.source_url ? <a href={String(award.source_url)} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">Related-entity award source ↗</a> : null}
           </div>)}
           {awardsTruncated && <p className="mt-1 text-[var(--text-muted)]">Showing the 20 most recent stored awards for this related entity.</p>}
@@ -49,7 +51,16 @@ export default function FederalIdentityContext({ entities, pendingEntities, rela
       </div>)}
     </details>}
     <details className="mt-2 text-[var(--text-muted)]">
-      <summary className="cursor-pointer">Federal coverage: partial</summary>
+      <summary className="cursor-pointer">Federal coverage: {coverage.historyComplete ? "source histories complete" : "partial"}</summary>
+      {["federal-discovery", "usaspending", "usaspending-subawards", "sam-entity"].map((source) => {
+        const row = coverage.sources?.find((entry) => entry.source === source);
+        const label = { "federal-discovery": "Recipient discovery", usaspending: "Contracts, vehicles and transactions", "usaspending-subawards": "Reported subawards", "sam-entity": "SAM registration" }[source];
+        return <p className="mt-1" key={source}>{label}: {row?.status.replaceAll("_", " ") ?? "unsearched"}
+          {row?.searched_through ? ` · search through ${row.searched_through}` : ""}
+          {row?.last_attempted_at ? ` · last attempted ${date(row.last_attempted_at)}` : ""}
+          {row?.scope ? <span className="block">{row.scope}</span> : null}
+        </p>;
+      })}
       {coverage.gaps.map((gap) => <p className="mt-1" key={gap}>{gap}</p>)}
       <p className="mt-1">Registration and historical awards do not establish a new business event. Fresh events appear separately in signals.</p>
       {coverage.relatedEntitiesTruncated && <p className="mt-1">Related-company context is limited to the first 20 supported entities.</p>}

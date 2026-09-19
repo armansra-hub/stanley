@@ -41,6 +41,19 @@ function timeout(mock: ReturnType<typeof vi.fn>) {
 }
 
 describe("prime request diagnostics", () => {
+  it("persists a vehicle and its ordering date through the existing award and transaction path", async () => {
+    const id = "CONT_IDV_TEST_9700";
+    mocks.search.mockResolvedValue({ rows: [{ generatedId: id, recipientName: "Acme", lastDateToOrder: "2030-02-01" }], hasNext: false });
+    mocks.detail.mockResolvedValue({ generatedAwardId: id, awardId: "TEST", awardCategory: "idv", awardTypeCode: "IDV_B", awardType: "IDC",
+      recipient: { legalName: "Acme", uei: "U1", recipientId: "R1" }, businessSizeStatus: "unknown",
+      awardCeiling: 1000000, totalObligations: 0, currentAwardAmount: 0 });
+    mocks.transactions.mockResolvedValue({ rows: [], hasNext: false }); mocks.saveTransactions.mockResolvedValue(0);
+    const result = await sweepUsaspendingCompany(company, { awardContinuation: continuation({ collection: "idvs" }) });
+    expect(result).toMatchObject({ status: "matched", awards: 1, awardDone: false, awardContinuation: { collection: "idvs", seenAwardIds: [id], pendingAwardId: null } });
+    expect(mocks.award.mock.calls[0][1]).toMatchObject({ awardCategory: "idv", orderingEndDate: "2030-02-01", totalObligations: 0 });
+    const queued = queuePublicGrowthMainFailures({}, [result], 0);
+    expect(queued.cursorPatch.retryQueue[0].awardContinuation?.collection).toBe("idvs");
+  });
   it("adopts exact provider pairs and passes them on after fully processed source pages", async () => {
     const pair = { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" };
     mocks.search.mockResolvedValueOnce({ rows: [{ generatedId: "other", recipientName: "Other" }], hasNext: true, nextCursor: pair })
@@ -50,7 +63,11 @@ describe("prime request diagnostics", () => {
     const final = await sweepUsaspendingCompany(company, { awardContinuation: first.awardContinuation });
     expect(mocks.search.mock.calls[1][5]).toEqual(pair);
     expect(mocks.search.mock.calls[1][2]).toBe(first.awardContinuation?.searchEndDate);
-    expect(final.awardDone).toBe(true);
+    expect(final.awardDone).toBe(false);
+    expect(final.awardContinuation).toMatchObject({ collection: "idvs", searchPage: 1, searchAfter: null });
+    const complete = await sweepUsaspendingCompany(company, { awardContinuation: final.awardContinuation });
+    expect(complete.awardDone).toBe(true);
+    expect(mocks.search.mock.calls[2][6]).toBe("idvs");
   });
   it("does not advance a page cursor before its eligible award's transaction writes finish", async () => {
     const pair = { lastRecordUniqueId: 123, lastRecordSortValue: "1693526400000" };
@@ -83,7 +100,7 @@ describe("prime request diagnostics", () => {
     for (const method of ["select", "eq", "order", "limit", "gt"]) query[method] = () => query;
     query.then = (resolve: any) => Promise.resolve({ data: null, error: { message: "metric facts unavailable" } }).then(resolve);
     mocks.from.mockReturnValue(query);
-    const prior = continuation({ entityId: ENTITY, uei: "U1", searchPage: 501, searchAfter: pair, seenAwardIds: ["old"] });
+    const prior = continuation({ collection: "idvs", entityId: ENTITY, uei: "U1", searchPage: 501, searchAfter: pair, seenAwardIds: ["old"] });
     const failed = await sweepUsaspendingCompany(company, { awardContinuation: prior });
     expect(failed).toMatchObject({ status: "error", awardContinuation: { searchPage: 501, searchAfter: pair } });
     await sweepUsaspendingCompany(company, { awardContinuation: failed.awardContinuation });
@@ -195,9 +212,10 @@ describe("prime request diagnostics", () => {
     expect(result.requestDiagnostic).toEqual({ operation: "recipient_autocomplete", elapsedMs: 0, failureClass, httpStatus });
     expect(result.error?.startsWith((error as Error).message)).toBe(true);
   });
-  it("leaves successful no-award output and request count unchanged", async () => {
+  it("requires both contracts and vehicles before reporting a completed no-award scope", async () => {
     const result = await sweepUsaspendingCompany(company);
-    expect(result).toMatchObject({ status: "no_awards", awardDone: true, awards: 0, transactions: 0, triggers: 0 });
+    expect(result).toMatchObject({ status: "no_awards", awardDone: false, awards: 0, transactions: 0, triggers: 0 });
+    expect(result.awardContinuation?.collection).toBe("idvs");
     expect(result.requestDiagnostic).toBeUndefined(); expect(mocks.autocomplete).toHaveBeenCalledTimes(1); expect(mocks.search).toHaveBeenCalledTimes(1);
   });
 });
