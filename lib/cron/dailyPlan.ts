@@ -25,9 +25,8 @@ export const DAILY_STAGE_SIZE = 5;
  * 60-second retry budget. Main pages continue within the remaining request budget.
  * These are explicit eligible-set budgets, not full-TAM discovery or proof that
  * every deep history completed; source receipts retain continuation debt.
- * SAM entity
- * API lookups are not scheduled because they cannot succeed without a key; the
- * official monthly public extract remains the keyless high-volume source.
+ * SAM entity API refresh has a separate small allocation below; the official
+ * monthly public extract remains the keyless high-volume source.
  *
  * This hourly recurrence revisits already verified identities. The separate
  * /api/cron/federal-discovery schedule walks current TAM companies without a
@@ -55,6 +54,21 @@ export const PUBLIC_GROWTH_RECURRING_COVERAGE = [
     targetCycleHours: 48,
   },
 ] as const;
+
+/**
+ * Supplemental refresh through the existing source lease/cursor, now that the
+ * production SAM key is configured. GSA's lowest personal-key entitlement is
+ * ten requests/day (https://open.gsa.gov/api/entity-api/). One company page per
+ * 16-hour rotation requires at most two entity requests in any 24-hour window;
+ * the worker saves pagination/alias continuation for later source invocations.
+ * This is not a full-population completion budget or a claim about key quota.
+ */
+export const SAM_ENTITY_RECURRING_REFRESH = {
+  path: "/api/cron/public-growth?source=sam-entity&scope=verified&n=1",
+  stage: 15,
+  batchSize: 1,
+  rotationHours: 16,
+} as const;
 
 const PUBLIC_GROWTH_PATHS = [
   "/api/cron/public-growth?source=sam-opportunities&days=31&limit=1000",
@@ -109,10 +123,10 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
   ];
   if (ordinaryPaths.length !== 40) throw new Error(`daily cron expected 40 ordinary paths, received ${ordinaryPaths.length}`);
 
-  // Prime awards and candidate verification run in every hourly stage. This
-  // prevents same-source lease collisions, removes the manual review backlog,
-  // and leaves three slots for broad-source rotation. One of those slots goes
-  // to subawards on alternating stages, including the cyclic stage-14-to-0 gap.
+  // Prime awards run every hour. Candidate verification retains 15 hourly
+  // slots, with one slot assigned to the bounded SAM API supplement. Three
+  // slots remain for broad-source rotation; one goes to subawards on alternating
+  // stages, including the cyclic stage-14-to-0 gap.
   const prime = PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending")!;
   const subawards = PUBLIC_GROWTH_RECURRING_COVERAGE.find((target) => target.source === "usaspending-subawards")!;
   let ordinaryOffset = 0;
@@ -123,7 +137,9 @@ export function buildDailyWavePaths(_dayIndex?: number): string[] {
     ordinaryOffset += count;
     return [
       `${prime.path}&wave=${stage}`,
-      `/api/cron/review-candidates?n=25&wave=${stage}`,
+      stage === SAM_ENTITY_RECURRING_REFRESH.stage
+        ? SAM_ENTITY_RECURRING_REFRESH.path
+        : `/api/cron/review-candidates?n=25&wave=${stage}`,
       ...subawardPaths,
       ...ordinary,
     ];

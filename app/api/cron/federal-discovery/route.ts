@@ -1,6 +1,7 @@
 import { saveFederalCoverageReceipts } from "@/lib/publicGrowth/federalCoverageStore";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { serviceClient } from "@/lib/supabase/server";
 import { discoverFederalCompany } from "@/lib/publicGrowth/federalDiscovery";
 import { parseFederalDiscoveryContinuation, readFederalDiscoveryContinuations,
@@ -33,7 +34,7 @@ type ReadbackHold = {
 };
 
 // Only an explicitly reviewed state transition may create this hold. This route
-// never converts a fresh in-flight fence, clears a hold, or resolves its debt.
+// never converts a fresh fence into a hold, clears a hold, or resolves its debt.
 function readbackHold(cursor: Record<string, unknown>): ReadbackHold | null {
   const raw = cursor.discoveryReadbackHold;
   if (raw === undefined) return null;
@@ -168,6 +169,87 @@ function counter(value: unknown): number {
   return Number(value);
 }
 
+/**
+ * A complete, saved no-write retry wave can finish its checkpoint without
+ * replaying the provider. Missing/uncertain journals retain the original stop.
+ * Restrict this to retries so no main-selection keyset must be reconstructed.
+ */
+async function resumeJournaledRetrySearch(lease: PublicGrowthSweepLease, hold: ReadbackHold | null) {
+  const ids = lease.cursor.discoveryInFlight;
+  const eventId = lease.cursor.discoveryInFlightEventId;
+  const priorResume = lease.cursor.discoveryLastJournalResume as { eventId?: unknown } | undefined;
+  const uncertain = lease.cursor.discoveryUncertainOutcomes;
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > CONCURRENCY
+      || ids.some((id) => typeof id !== "string" || !UUID.test(id) || id !== id.toLowerCase())
+      || new Set(ids).size !== ids.length || typeof eventId !== "string" || !UUID.test(eventId)
+      || priorResume?.eventId === eventId
+      || (uncertain != null && (!Array.isArray(uncertain) || uncertain.length > 0))) return null;
+  const timeouts = strategyTimeouts(lease.cursor);
+  const held = new Set([...heldCompanies(timeouts), ...(hold?.companyIds ?? [])].map((id) => id.toLowerCase()));
+  const retries = readPublicGrowthRetryState(lease.cursor);
+  const planned = ids.map((id) => retries.retryQueue.find((row) => row.companyId === id));
+  if (ids.some((id) => held.has(id)) || planned.some((row) => !row)) return null;
+
+  const { data: event, error } = await serviceClient().from("app_events")
+    .select("id,module,kind,entity_type,meta").eq("id", eventId).maybeSingle();
+  if (error) throw new Error("discovery resume journal read failed");
+  const meta = event?.meta;
+  const holdSummary = { unresolvedReadbackCompanyIds: hold?.companyIds ?? [],
+    unresolvedReadbackCompanies: hold?.companyIds.length ?? 0,
+    readbackHoldStatus: hold?.status ?? null, readbackHoldReason: hold?.reason ?? null };
+  if (event?.id !== eventId || event.module !== "headhunter" || event.kind !== "federal.discovery.attempts"
+      || event.entity_type !== "cron" || !meta || meta.source !== SOURCE || meta.requestStrategy !== REQUEST_STRATEGY
+      || meta.coverageVerified !== false || meta.historyComplete !== false
+      || !isDeepStrictEqual(meta.newStrategyHeldCompanyIds, [])
+      || meta.strategyHoldReason !== "second_identical_request_timeout"
+      || meta.heldStrategyCompanies !== heldCompanies(timeouts).size
+      || Object.entries(holdSummary).some(([key, value]) => !isDeepStrictEqual(meta[key], value))
+      || typeof meta.attemptedAt !== "string" || !Number.isFinite(Date.parse(meta.attemptedAt))
+      || Date.parse(meta.attemptedAt) > Date.now()
+      || planned.some((row) => Date.parse(row!.lastAttemptedAt) > Date.parse(meta.attemptedAt))
+      || !Array.isArray(meta.attemptedCompanies) || meta.attemptedCompanies.length !== ids.length) return null;
+
+  const continuations = readFederalDiscoveryContinuations(lease.cursor);
+  const wave: Outcome[] = [];
+  for (let index = 0; index < ids.length; index++) {
+    const row = meta.attemptedCompanies[index];
+    if (!row || row.companyId !== ids[index] || row.status !== "in_progress" || row.stage !== "award_search"
+        || !["candidate_search_continues", "searching_contract_vehicles", "next_verified_alias"].includes(row.reason)
+        || row.mayHaveWritten !== false || row.verified !== false || row.historyComplete !== false || row.exhaustive !== false
+        || row.sourceRequests !== 1 || !Number.isFinite(row.elapsedMs) || row.elapsedMs < 0
+        || (row.httpStatus != null && row.httpStatus !== 200)) return null;
+    try { continuations[row.companyId] = parseFederalDiscoveryContinuation(row.continuation, row.companyId); }
+    catch { return null; }
+    wave.push(row as Outcome);
+  }
+  const resumedIds = new Set<string>(ids);
+  const patch = applyPublicGrowthRetryOutcomes(lease.cursor, planned.filter((row) => row !== undefined),
+    wave.map(debtOutcome), meta.attemptedAt).cursorPatch;
+  // Shared retry parsing normalizes timestamps/extensions. Unrelated debt and
+  // held evidence must retain their exact stored representation on this repair.
+  const preserveUnrelated = <T extends { companyId: string }>(key: "retryQueue" | "deadLetters", rows: T[]): T[] => {
+    const original = new Map(((lease.cursor[key] ?? []) as T[]).map((row) => [row.companyId, row]));
+    return rows.map((row) => !resumedIds.has(row.companyId) && original.has(row.companyId)
+      ? structuredClone(original.get(row.companyId)!) : row);
+  };
+  patch.retryQueue = preserveUnrelated("retryQueue", patch.retryQueue);
+  patch.deadLetters = preserveUnrelated("deadLetters", patch.deadLetters);
+  const resumedAt = new Date().toISOString();
+  const receipt = { source: SOURCE, status: "journaled_retry_search_resumed", checked: 0, mainChecked: 0, retryChecked: 0,
+    resumedAttempts: wave.length, resumedJournalId: eventId, resumedCompanyIds: ids,
+    sourceRequests: 0, journaledSourceRequests: wave.length, providerReplay: false,
+    afterCompanyId: publicGrowthAfterCompanyId(lease.cursor), pendingSearches: Object.keys(continuations).length,
+    retryRemaining: patch.retryQueue.length, ...holdSummary,
+    historyComplete: false, attemptCycleComplete: false, coverageVerified: false };
+  await checkpointPublicGrowthSweep(lease, { ...patch, discoveryContinuations: continuations,
+    discoveryInFlight: [], discoveryInFlightEventId: null,
+    discoveryAttemptsTotal: counter(lease.cursor.discoveryAttemptsTotal) + wave.length,
+    discoveryLastJournalResume: { eventId, companyIds: ids, attemptedAt: meta.attemptedAt, resumedAt },
+    lastDiscoveryOutcomes: wave, lastDiscoveryAttemptedAt: meta.attemptedAt, lastDiscoveryReceipt: receipt });
+  await completePublicGrowthSweep(lease, { ...receipt, done: false, advanceCursor: false, mode: "retry" });
+  return receipt;
+}
+
 async function inspectState() {
   try {
     const { data, error } = await serviceClient().from("public_growth_sweep_state")
@@ -244,6 +326,8 @@ async function run(req: NextRequest) {
     }
     const inFlight = lease.cursor.discoveryInFlight ?? [];
     if (!Array.isArray(inFlight) || inFlight.length > 0) {
+      const resumed = await resumeJournaledRetrySearch(lease, unresolvedHold);
+      if (resumed) return NextResponse.json(resumed);
       await failPublicGrowthSweep(lease, new Error("interrupted_discovery_requires_readback"));
       return NextResponse.json({ source: SOURCE, status: "interrupted_attempt_requires_readback", checked: 0, coverageVerified: false }, { status: 409 });
     }
@@ -339,16 +423,18 @@ async function run(req: NextRequest) {
           id: eventId, module: "headhunter", kind: "federal.discovery.attempts", entity_type: "cron",
           summary: `Federal discovery: ${wave.length} bounded company attempts`, meta,
         }).select("id,meta").single();
-        const signature = (rows: Outcome[]) => JSON.stringify(rows.map((row) => [row.companyId, row.status,
+        // JSONB preserves values and array order, but not object key order.
+        // Compare the exact nested continuation structurally after readback.
+        const signature = (rows: Outcome[]) => rows.map((row) => [row.companyId, row.status,
           row.reason, row.stage, row.sourceRequests, row.elapsedMs, row.verified, row.historyComplete, row.exhaustive,
-          row.httpStatus ?? null, row.mayHaveWritten, row.continuation ?? null]));
+          row.httpStatus ?? null, row.mayHaveWritten, row.continuation ?? null]);
         if (eventError || event?.id !== eventId || !Array.isArray(event.meta?.attemptedCompanies)
             || event.meta.coverageVerified !== false || event.meta.historyComplete !== false || event.meta.requestStrategy !== REQUEST_STRATEGY
             || JSON.stringify(event.meta.newStrategyHeldCompanyIds) !== JSON.stringify(newlyHeldCompanyIds)
             || event.meta.strategyHoldReason !== meta.strategyHoldReason || event.meta.heldStrategyCompanies !== meta.heldStrategyCompanies
             || event.meta.skippedHeldCount !== meta.skippedHeldCount
             || Object.entries(readbackSummary).some(([key, value]) => JSON.stringify(event.meta[key]) !== JSON.stringify(value))
-            || signature(event.meta.attemptedCompanies) !== signature(wave)) {
+            || !isDeepStrictEqual(signature(event.meta.attemptedCompanies), signature(wave))) {
           throw new Error("discovery attempt journal not verified");
         }
       }

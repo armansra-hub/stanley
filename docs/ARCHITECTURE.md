@@ -95,7 +95,7 @@ The direct Jev engine adds five-minute interpretation/direct-publication and sou
 
 Exact source reuse and progressive observation cards are implemented. Event-level clustering of different reports, corroboration on a single event, generated account narratives and dedicated material-change/contradiction views remain unimplemented; the current hypotheses use three explicit templates.
 
-`vercel.json` specifies `0 * * * *` for `/api/cron/daily`. The route chooses a stage from the UTC hour and runs five requests concurrently. `lib/cron/dailyPlan.ts` has 80 requests across 16 stages. Each stage contains prime-award work, candidate review, and three ordinary sweep jobs. Receipts go to `app_events`; cursors/leases preserve progress.
+`vercel.json` specifies `0 * * * *` for `/api/cron/daily`. The route chooses a stage from the UTC hour and runs five requests concurrently. `lib/cron/dailyPlan.ts` has 80 requests across 16 stages. Each stage contains prime-award work and three ordinary sweep jobs. The remaining slot runs candidate review in 15 stages and one verified-company SAM entity page in the final stage, supplementing bulk public extracts within the free API allocation. Receipts go to `app_events`; cursors/leases preserve progress.
 
 The manifest has coverage targets, including broad-TAM rotation and verified federal-recipient revisits. Outages, missing evidence, exhausted budgets, missing foundations, and provider latency can prevent those targets. Read actual receipts and cursors before declaring coverage complete.
 

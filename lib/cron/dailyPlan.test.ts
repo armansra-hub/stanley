@@ -6,6 +6,7 @@ import {
   DAILY_STAGE_SIZE,
   isGetCompatibleDailyPath,
   PUBLIC_GROWTH_RECURRING_COVERAGE,
+  SAM_ENTITY_RECURRING_REFRESH,
 } from "./dailyPlan";
 
 function pathsFor(paths: string[], pathname: string) {
@@ -33,8 +34,8 @@ describe("daily cron plan", () => {
     expect(pathsFor(paths, "/api/cron/cosos")).toHaveLength(1);
     expect(pathsFor(paths, "/api/cron/ats")).toHaveLength(12);
     expect(pathsFor(paths, "/api/cron/signals")).toHaveLength(0);
-    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(26);
-    expect(pathsFor(paths, "/api/cron/review-candidates")).toHaveLength(16);
+    expect(pathsFor(paths, "/api/cron/public-growth")).toHaveLength(27);
+    expect(pathsFor(paths, "/api/cron/review-candidates")).toHaveLength(15);
     expect(paths).toContain("/api/cron/reconcile-hidden");
 
     const triggerCoverage = pathsFor(paths, "/api/cron/triggers")
@@ -82,10 +83,10 @@ describe("daily cron plan", () => {
     for (let day = 0; day < 5; day++) {
       const publicPaths = pathsFor(buildDailyWavePaths(day), "/api/cron/public-growth");
       const sources = publicPaths.map((path) => new URL(path, "https://local").searchParams.get("source"));
-      expect(new Set(sources)).toEqual(new Set(["usaspending", "usaspending-subawards", "sam-opportunities", "revenue"]));
+      expect(new Set(sources)).toEqual(new Set(["usaspending", "usaspending-subawards", "sam-entity", "sam-opportunities", "revenue"]));
       expect(sources.filter((source) => source === "usaspending")).toHaveLength(16);
       expect(sources.filter((source) => source === "usaspending-subawards")).toHaveLength(8);
-      expect(sources).toHaveLength(26);
+      expect(sources).toHaveLength(27);
     }
   });
 
@@ -132,16 +133,35 @@ describe("daily cron plan", () => {
     }
   });
 
-  it("runs exactly one prime-award worker and one reviewer in every hourly stage", () => {
+  it("preserves hourly prime awards and 15 reviewer slots around the SAM refresh", () => {
     const paths = buildDailyWavePaths(0);
     for (let offset = 0; offset < paths.length; offset += 5) {
       const stage = paths.slice(offset, offset + 5);
       const prime = stage.filter((path) => new URL(path, "https://local").searchParams.get("source") === "usaspending");
       expect(prime).toHaveLength(1);
       expect(stage[0]).toBe(prime[0]);
-      expect(pathsFor(stage, "/api/cron/review-candidates")).toHaveLength(1);
-      expect(stage[1]).toBe(pathsFor(stage, "/api/cron/review-candidates")[0]);
+      const samStage = offset / DAILY_STAGE_SIZE === SAM_ENTITY_RECURRING_REFRESH.stage;
+      expect(pathsFor(stage, "/api/cron/review-candidates")).toHaveLength(samStage ? 0 : 1);
+      expect(stage[1]).toBe(samStage
+        ? SAM_ENTITY_RECURRING_REFRESH.path
+        : pathsFor(stage, "/api/cron/review-candidates")[0]);
     }
+  });
+
+  it("bounds supplemental SAM calls while resuming the managed verified-source cursor", () => {
+    const paths = buildDailyWavePaths();
+    const sam = paths.map((path) => new URL(path, "https://local"))
+      .filter((url) => url.searchParams.get("source") === "sam-entity");
+    expect(sam).toHaveLength(1);
+    expect(sam[0].searchParams.get("scope")).toBe("verified");
+    expect(sam[0].searchParams.get("n")).toBe("1");
+    expect(sam[0].searchParams.has("offset")).toBe(false);
+    expect(sam[0].searchParams.has("companyId")).toBe(false);
+    expect(SAM_ENTITY_RECURRING_REFRESH.rotationHours).toBe(paths.length / DAILY_STAGE_SIZE);
+    // One page per selected company; no same-invocation main + retry double run.
+    const maximumDailyEntityRequests = Math.ceil(24 / SAM_ENTITY_RECURRING_REFRESH.rotationHours)
+      * sam.length * SAM_ENTITY_RECURRING_REFRESH.batchSize;
+    expect(maximumDailyEntityRequests).toBe(2);
   });
 
   it("uses source-specific bounded budgets against explicit recurring eligible sets", () => {

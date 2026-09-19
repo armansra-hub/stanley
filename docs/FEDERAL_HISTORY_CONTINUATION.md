@@ -219,3 +219,65 @@ Validation: 54 targeted TypeScript tests passed, TypeScript compilation passed, 
 scenarios covering due ordering, quiet-account return, incomplete/error fallback,
 board identity changes, global disable, repeated reservation, other-source
 preservation and service-only permissions.
+
+## Supplemental SAM API refresh
+
+Production configuration now contains `SAM_API_KEY` (presence checked without
+reading or exporting its value). The hourly daily dispatcher assigns one of its
+existing 80 slots to `public-growth?source=sam-entity&scope=verified&n=1` every
+16 hours. This replaces one of 16 candidate-review waves; the other 15 remain,
+and prime awards, subawards, website, ATS, news and maintenance allocations stay
+unchanged. The source uses its existing lease, verified identity selection,
+managed cursor and durable UEI/CAGE/legal-name/DBA page continuations. It runs
+either one main company page or one due retry page, with one provider attempt.
+
+The [official GSA Entity API documentation](https://open.gsa.gov/api/entity-api/)
+lists a lowest personal-key entitlement of 10 requests per day; higher limits
+depend on the account role. Key presence alone does not establish that role.
+This schedule contributes at most two entity API requests in a rolling 24-hour
+window under normal hourly dispatch. Other SAM consumers and manual invocations
+still consume their own quota, so this is an allocation, not an account-wide
+quota guarantee. Provider failures retain the existing source retry receipts.
+
+This is a supplemental incremental refresh, not a claim of fast API coverage
+across every company. The monthly public-extract ingestion remains the bulk SAM
+path; USAspending discovery and award-history cadence are unchanged. No new
+scheduler, paid API, identity policy, TAM membership or grading path is added.
+
+Validation: ten daily-manifest tests cover the 80-child limit, the single bounded
+SAM slot, verified managed-cursor parameters, retained source allocations and
+the maximum normal scheduled entity request count.
+
+## Saved discovery-page journal continuation
+
+The September 19 runtime receipt exposed a serialization bug: a four-company
+retry wave saved valid `in_progress` outcomes with `mayHaveWritten=false`, then
+the route rejected its own journal because nested continuation object keys came
+back in JSONB order. PostgreSQL explicitly
+[does not preserve JSONB object-key order](https://www.postgresql.org/docs/current/datatype-json.html).
+The journal comparison now uses structural equality: values and array order
+still must match, while object-key order has no effect. A regression reproduced
+the original HTTP 500 before this change.
+
+The same existing leased route can finish a narrowly defined interrupted
+checkpoint. It reads only the attempt journal referenced by the current fence,
+requires the same ordered IDs still in the retry queue, validated saved search
+continuations, unchanged hold metadata and exclusively known no-write
+`in_progress` search outcomes. Missing journals, mixed outcomes, possible writes,
+held accounts, malformed continuations and main-selection fences remain blocked.
+
+One fenced checkpoint saves the pending pages, applies the successful retry
+outcomes, credits those previously uncredited attempts once, clears the exact
+fence and records the consumed journal ID. It preserves the main cursor, the
+original unresolved four-company hold, strategy history and unrelated debt,
+including raw evidence extensions. The route then returns immediately with zero
+new provider requests and a separate count for resumed historical attempts. It
+does not create another attempt journal. The next normal scheduled invocation
+continues from the saved pages. A completion failure after the checkpoint cannot
+credit or replay that journal again.
+
+Targeted tests cover reordered JSONB, actual changed-value rejection, exact-wave
+resume and continuation, preserved hold/debt, refusal cases, lease-checkpoint
+failure and completion failure after the atomic checkpoint. This handles saved
+no-write retry progress; it does not resolve uncertain enrollment outcomes or
+declare federal coverage complete.
