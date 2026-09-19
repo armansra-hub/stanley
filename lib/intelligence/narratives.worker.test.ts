@@ -13,9 +13,10 @@ const source: StoryEvidence = { id: "source", company_id: company.id, content_ha
 const story = { overview: [{ text: "The company opened an Austin distribution center.", citations: [source.id] }],
   developments: [], hypotheses: [], contradictions: [], unknowns: ["Current systems"] };
 type Call = { table: string; filters: unknown[][]; patch?: Record<string, unknown> };
-let job: Record<string, unknown>, calls: Call[], stale: boolean;
+let job: Record<string, unknown>, calls: Call[], stale: boolean, evidence: StoryEvidence;
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubEnv("ANTHROPIC_API_KEY", "synthetic-test-key"); calls = []; stale = false;
+  evidence = source;
   job = { company_id: company.id, desired_hash: storyEvidenceHash(company, [source]), lease_token: "lease", attempts: 1,
     force_requested: true, checkpoint: null };
   let claimed = false;
@@ -27,7 +28,7 @@ beforeEach(() => {
     for (const method of ["select", "eq", "gt", "not", "order", "limit"]) query[method] = (...args: unknown[]) => { call.filters.push([method, ...args]); return query; };
     query.update = (patch: Record<string, unknown>) => { call.patch = patch; return query; };
     const result = () => ({ data: table === "companies" ? company : table === "intelligence_observations"
-      ? call.filters.some(filter => filter[0] === "eq" && filter[1] === "is_current" && filter[2] === false) ? [] : [source]
+      ? call.filters.some(filter => filter[0] === "eq" && filter[1] === "is_current" && filter[2] === false) ? [] : [evidence]
       : call.patch ? stale ? null : { company_id: company.id } : null, error: null });
     query.single = query.maybeSingle = async () => result();
     query.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve);
@@ -79,6 +80,34 @@ describe("budgeted resumable account writing", () => {
     expect(await runAccountStoryWorker(1)).toMatchObject({ outcomes: { superseded: 1 } });
     expect(mocks.reserve).not.toHaveBeenCalled();
     expect(mocks.rpc).toHaveBeenCalledWith("intelligence_story_enqueue", expect.objectContaining({ p_hash: storyEvidenceHash(company, [source]) }));
+  });
+  it("does not turn an unpromising automatic dirty wakeup into a paid writing job", async () => {
+    evidence = { ...source, event_date: "2020-01-01" };
+    job.desired_hash = "0".repeat(64); job.force_requested = false;
+    expect(await runAccountStoryWorker(1)).toMatchObject({ outcomes: { superseded: 1 } });
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_story_enqueue")).toBe(false);
+    expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+  });
+  it("checks current eligibility before spending on an automatic real-hash job that aged in the queue", async () => {
+    evidence = { ...source, event_date: "2020-01-01" };
+    job.desired_hash = storyEvidenceHash(company, [evidence]); job.force_requested = false;
+    expect(await runAccountStoryWorker(1)).toMatchObject({ outcomes: { not_promising: 1 } });
+    expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_story_finish", expect.objectContaining({ p_status: "superseded", p_error: "not_promising" }));
+    expect(evidence.attributes).toBe(source.attributes);
+  });
+  it("still honors a manual story request for historical-only evidence", async () => {
+    evidence = { ...source, event_date: "2020-01-01" };
+    job.desired_hash = storyEvidenceHash(company, [evidence]);
+    expect(await runAccountStoryWorker(1)).toMatchObject({ outcomes: { complete: 1 } });
+    expect(mocks.generate).toHaveBeenCalledOnce();
+  });
+  it("finishes an already-paid automatic checkpoint even when the account is no longer promising", async () => {
+    evidence = { ...source, event_date: "2020-01-01" };
+    job.desired_hash = storyEvidenceHash(company, [evidence]); job.force_requested = false;
+    job.checkpoint = { hash: job.desired_hash, story, observationIds: [source.id], coverage: {}, model: ACCOUNT_WRITER_MODEL };
+    expect(await runAccountStoryWorker(1)).toMatchObject({ outcomes: { complete: 1 } });
+    expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
   });
   it("does not retry malformed writing automatically or run a semantic reviewer", async () => {
     mocks.generate.mockResolvedValue({ content: [{ type: "text", text: "{" }], usage: { input_tokens: 1000, output_tokens: 1 } });

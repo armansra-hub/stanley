@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sweepWebsites } from "./websiteSweep";
 import type { SiteScan } from "@/lib/sources/website";
+import { websiteChangeHistory } from "./adaptiveRevisit";
 
 const mocks = vi.hoisted(() => ({
   pick: vi.fn(), checked: vi.fn(), attempted: vi.fn(), parent: vi.fn(), trigger: vi.fn(), priority: vi.fn(), status: vi.fn(), config: vi.fn(),
@@ -95,5 +96,48 @@ describe("website evidence collection integration", () => {
     expect(mocks.trigger).toHaveBeenCalled();
     expect(mocks.write).not.toHaveBeenCalled();
     expect(mocks.checked).not.toHaveBeenCalled();
+  });
+
+  it("extends quiet revisits only after successful capture and returns changed pages to hourly", async () => {
+    const previousHashes = websiteChangeHistory(null, scan().pages).hashes;
+    mocks.read.mockResolvedValue({ cursor: { pageHashes: previousHashes, revisit: { version: 1, quietRuns: 2 } }, lastSuccessAt: null });
+    await sweepWebsites(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "website", expect.objectContaining({ complete: true,
+      cursor: expect.objectContaining({ revisit: expect.objectContaining({ outcome: "quiet", intervalHours: 8, quietRuns: 3 }) }) }));
+    mocks.site.mockResolvedValue({ ...scan(), pages: [{ ...scan().pages[0], contentHash: "changed-model" }] });
+    await sweepWebsites(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "website", expect.objectContaining({
+      cursor: expect.objectContaining({ revisit: expect.objectContaining({ outcome: "changed", intervalHours: 1, quietRuns: 0 }) }) }));
+  });
+
+  it("keeps failed or unfinished capture hourly and remembers changes across its backlog", async () => {
+    mocks.read.mockResolvedValue({ cursor: { pageHashes: websiteChangeHistory(null, scan().pages).hashes,
+      changedSinceComplete: true, revisit: { version: 1, quietRuns: 4 } }, lastSuccessAt: null });
+    mocks.enqueue.mockRejectedValueOnce(new Error("storage unavailable"));
+    await sweepWebsites(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "website", expect.objectContaining({ complete: false,
+      cursor: expect.objectContaining({ changedSinceComplete: true, revisit: expect.objectContaining({ outcome: "incomplete", intervalHours: 1, quietRuns: 4 }) }) }));
+    await sweepWebsites(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "website", expect.objectContaining({ complete: true,
+      cursor: expect.objectContaining({ changedSinceComplete: false, revisit: expect.objectContaining({ outcome: "changed", intervalHours: 1, quietRuns: 0 }) }) }));
+  });
+
+  it("retains a failed discovered page in the source cursor even when another page succeeds", async () => {
+    const missing = "https://acme.com/news/temporarily-unavailable";
+    mocks.site.mockResolvedValue({ ...scan(), discoveredUrls: [articleUrl, missing],
+      coverage: { ...scan().coverage, attemptedUrls: [articleUrl, missing], failedUrls: [missing] } });
+    await sweepWebsites(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "website", expect.objectContaining({ complete: false,
+      cursor: expect.objectContaining({ pendingUrls: [missing], revisit: expect.objectContaining({ outcome: "incomplete", intervalHours: 1 }) }) }));
+  });
+
+  it("clears a confirmed absent backlog URL without storing an invented evidence page", async () => {
+    const missing = "https://acme.com/news/removed-page";
+    mocks.read.mockResolvedValue({ cursor: { knownUrls: [missing], pendingUrls: [missing] }, lastSuccessAt: null });
+    mocks.fetch.mockResolvedValue({ status: 410, finalUrl: missing, body: "Gone", contentType: "text/html" });
+    await sweepWebsites(1);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "website", expect.objectContaining({ complete: true,
+      cursor: expect.objectContaining({ pendingUrls: [], verifiedUrls: [articleUrl] }) }));
   });
 });

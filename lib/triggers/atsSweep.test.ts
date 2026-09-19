@@ -4,12 +4,12 @@ import { prepareAtsJob } from "@/lib/intelligence/atsLifecycle";
 
 const mocks = vi.hoisted(() => ({
   pick: vi.fn(), checked: vi.fn(), flags: vi.fn(), trigger: vi.fn(), priority: vi.fn(),
-  detect: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), read: vi.fn(), write: vi.fn(), known: vi.fn(), apply: vi.fn(), patterns: vi.fn(),
+  detect: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), read: vi.fn(), sourceRead: vi.fn(), write: vi.fn(), known: vi.fn(), apply: vi.fn(), patterns: vi.fn(),
 }));
 vi.mock("@/lib/db/triggers", () => ({ pickAtsForRotation: mocks.pick, setAtsChecked: mocks.checked, setErpFlags: mocks.flags, recordTrigger: mocks.trigger, recomputePriority: mocks.priority }));
 vi.mock("@/lib/sources/ats", async (original) => ({ ...await original<typeof import("@/lib/sources/ats")>(), detectAts: mocks.detect, fetchAtsJobsBatch: mocks.fetch }));
 vi.mock("@/lib/intelligence/observations", async (original) => ({ ...await original<typeof import("@/lib/intelligence/observations")>(), enqueueObservation: mocks.enqueue }));
-vi.mock("@/lib/intelligence/sourceState", () => ({ writeSourceState: mocks.write }));
+vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: mocks.sourceRead, writeSourceState: mocks.write }));
 vi.mock("@/lib/intelligence/atsLifecycle", async (original) => ({ ...await original<typeof import("@/lib/intelligence/atsLifecycle")>(), readAtsScan: mocks.read, readAtsKnownJobs: mocks.known, applyAtsBatch: mocks.apply, enqueuePendingAtsPatterns: mocks.patterns }));
 vi.mock("./rotationBatches", () => ({ rotationBatches: async function* (load: (size: number) => Promise<unknown[]>) { yield await load(12); } }));
 
@@ -27,6 +27,7 @@ beforeEach(() => {
   mocks.fetch.mockResolvedValue({ jobs: [job], nextOffset: null, complete: true, status: "complete" });
   mocks.enqueue.mockResolvedValue({ id: "observation-1", queued: true });
   mocks.read.mockResolvedValue({ scanId: null, offset: 0 });
+  mocks.sourceRead.mockResolvedValue({ cursor: null, lastSuccessAt: null });
   mocks.known.mockResolvedValue(new Map());
   mocks.apply.mockImplementation(async (_company, _key, _cursor, batch) => ({ accepted: true, complete: batch.complete, scanId: "scan-1", nextOffset: batch.nextOffset }));
   mocks.patterns.mockResolvedValue(undefined);
@@ -50,7 +51,7 @@ describe("ATS collection integration", () => {
     await sweepAts(1);
     expect(mocks.fetch).toHaveBeenCalledWith("lever", "acme", { offset: 150, maxJobs: 150 });
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "job", sourceUrl: job.url, eventDate: job.date }));
-    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", { cursor: { offset: 300, scanId: "scan-1" }, complete: false });
+    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", { cursor: expect.objectContaining({ offset: 300, scanId: "scan-1", revisit: expect.objectContaining({ outcome: "incomplete", intervalHours: 1 }) }), complete: false });
     expect(mocks.enqueue.mock.invocationCallOrder[0]).toBeLessThan(mocks.write.mock.invocationCallOrder[0]);
     // The broader operating role receives semantic interpretation, not a regex
     // trigger or an unsupported persistent incumbent update.
@@ -94,7 +95,7 @@ describe("ATS collection integration", () => {
     mocks.read.mockResolvedValue({ scanId: "scan-1", offset: 150 });
     mocks.fetch.mockResolvedValue({ jobs: [], nextOffset: 150, complete: false, status: "unavailable" });
     await sweepAts(1);
-    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", expect.objectContaining({ cursor: { offset: 150, scanId: "scan-1" }, complete: false, error: expect.any(String) }));
+    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", expect.objectContaining({ cursor: expect.objectContaining({ offset: 150, scanId: "scan-1", revisit: expect.objectContaining({ outcome: "incomplete", intervalHours: 1 }) }), complete: false, error: expect.any(String) }));
   });
 
   it("retains client-placement attribution without assigning its systems to the recruiter", async () => {
@@ -111,8 +112,22 @@ describe("ATS collection integration", () => {
     await sweepAts(1);
     expect(mocks.fetch).toHaveBeenCalledWith("lever", "acme", { offset: 0, maxJobs: 60 });
     expect(mocks.read).not.toHaveBeenCalled();
+    expect(mocks.sourceRead).not.toHaveBeenCalled();
     expect(mocks.write).not.toHaveBeenCalled();
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(mocks.trigger).toHaveBeenCalled();
+  });
+
+  it("adapts from the completed whole-board summary and resets on an expired listing", async () => {
+    mocks.sourceRead.mockResolvedValue({ cursor: { revisit: { version: 1, quietRuns: 2 } }, lastSuccessAt: null });
+    const summary = { baseline: false, newJobs: 0, changedJobs: 0, reopenedJobs: 0, expiredJobs: 0 };
+    mocks.apply.mockResolvedValue({ accepted: true, complete: true, nextOffset: null, summary });
+    await sweepAts(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "ats:lever:acme", expect.objectContaining({ complete: true,
+      cursor: { revisit: expect.objectContaining({ outcome: "quiet", quietRuns: 3, intervalHours: 8 }) } }));
+    mocks.apply.mockResolvedValue({ accepted: true, complete: true, nextOffset: null, summary: { ...summary, expiredJobs: 1 } });
+    await sweepAts(1);
+    expect(mocks.write).toHaveBeenLastCalledWith(company.id, "ats:lever:acme", expect.objectContaining({
+      cursor: { revisit: expect.objectContaining({ outcome: "changed", quietRuns: 0, intervalHours: 1 }) } }));
   });
 });

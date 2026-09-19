@@ -13,6 +13,7 @@ import {
 export const JEV_MODEL = "jev-1.13.0";
 export const TYPESAFE_EVALUATION_URL = "https://api.typesafe.ai/v1/systemone";
 export const JEV_QUESTION_VERSION = "stanley-evidence-v2";
+export const JEV_PUBLIC_SCALE_QUESTION_VERSION = "stanley-public-scale-v1";
 export const MAX_EVIDENCE_STATE_BYTES = 24_000;
 export const MAX_COMPANY_CONTEXT_BYTES = 4_000;
 export const MAX_SURROUNDING_CONTEXT_BYTES = 4_000;
@@ -106,6 +107,12 @@ function questionsFor(input: EvaluateEvidenceInput): Record<string, Question> {
     },
     requiresResearch: { type: "noul", instructions: grounding + "Is material context missing or ambiguous such that additional source research would help establish company identity, what changed, or its operating implications?" },
   };
+  if (input.publicScaleContext !== undefined) {
+    const relativeScale = " Use publicScaleContext only as cited public baseline context. Assess the materiality of this new development relative to the company's explicitly supported existing footprint, operating model and size at the relevant date. An additional location for a two-location operator may be more material than the same addition for a 200-location operator, but do not infer either denominator. An acquisition is not automatically a large share of the buyer's business. Missing or historical-only scale remains unknown; do not invent revenue, employees, location/entity totals, ratios or currentness. Public context does not itself prove that this new event occurred, and counterparty scale is not the target company's scale.";
+    questions.operationalComplexity.instructions += relativeScale;
+    questions.growthRelevance.instructions += relativeScale;
+    questions.requiresResearch.instructions += " When relative materiality cannot be established because the company's current baseline footprint or scale is missing, that is an explicit research gap; do not fill it from assumed company size.";
+  }
   for (const criterion of input.criteria ?? []) {
     questions[`criterion_${criterion.id}`] = { type: "noul", instructions: grounding + criterion.instructions };
   }
@@ -129,6 +136,7 @@ function record(value: unknown): Record<string, unknown> | null {
 function prepare(input: EvaluateEvidenceInput): { state: Record<string, string>; questions: Record<string, Question> } | null {
   if (!input || typeof input.text !== "string" || !input.text.trim()) return null;
   if (input.privacy !== undefined && input.privacy !== "public" && input.privacy !== "private_excerpt") return null;
+  if (input.publicScaleContext !== undefined && input.privacy === "private_excerpt") return null;
   if (input.criteria !== undefined && !Array.isArray(input.criteria)) return null;
   if ((input.criteria?.length ?? 0) > MAX_SEMANTIC_CRITERIA) return null;
   const ids = new Set<string>();
@@ -148,6 +156,7 @@ function prepare(input: EvaluateEvidenceInput): { state: Record<string, string>;
   for (const [key, limit] of [
     ["eventDate", 64], ["observedAt", 64],
     ["companyContext", MAX_COMPANY_CONTEXT_BYTES], ["surroundingContext", MAX_SURROUNDING_CONTEXT_BYTES],
+    ["publicScaleContext", 3200],
   ] as const) {
     const value = input[key];
     if (value === undefined) continue;
@@ -329,7 +338,8 @@ async function directEvaluate(request: JevEvaluationRequest, fetcher: typeof fet
 
 export async function evaluateEvidence(input: EvaluateEvidenceInput, dependencies: JevDependencies = {}): Promise<EvaluateEvidenceResult> {
   const configuredModel = process.env.TYPESAFE_MODEL?.trim() || JEV_MODEL;
-  const base = { model: PINNED_JEV_MODEL.test(configuredModel) ? configuredModel : JEV_MODEL, questionVersion: JEV_QUESTION_VERSION };
+  const base = { model: PINNED_JEV_MODEL.test(configuredModel) ? configuredModel : JEV_MODEL,
+    questionVersion: input?.publicScaleContext !== undefined ? JEV_PUBLIC_SCALE_QUESTION_VERSION : JEV_QUESTION_VERSION };
   // Local rejection proves no billable dispatch. Unknown provider/transport
   // outcomes still retain null usage and the conservative reservation.
   const zeroUsage: EvaluationUsage = { inputTokens: 0, outputTokens: 0 };

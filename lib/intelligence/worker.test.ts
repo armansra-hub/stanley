@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { evidencePackets, candidateType, nextRetrySeconds, workerEvidenceInput } from "./worker";
 import { estimateEvidenceInputTokens } from "./jev";
 import type { EvaluateEvidenceResult } from "./evaluation";
+import { buildPublicScaleContext } from "./publicContext";
 
 const result = { ok: true, model: "test", questionVersion: "v1", usage: null, metadata: { provider: "typesafe-direct" }, criteria: {},
   attributes: { signalType: "ma", companyRelationship: "direct", companyRelevance: 0.95, concreteEvent: 0.96,
@@ -9,6 +10,19 @@ const result = { ok: true, model: "test", questionVersion: "v1", usage: null, me
 } as Extract<EvaluateEvidenceResult, { ok: true }>;
 
 describe("complete bounded evidence packets", () => {
+  it("supplies attributed scale context separately from the event and leaves absent scale explicit", () => {
+    const observation = { evidence_text: "Acme opened an Austin facility.", source_kind: "website", source_url: "https://acme.test/news",
+      title: "New facility", event_date: null, observed_at: "2026-09-18T23:00:00Z" };
+    const context = buildPublicScaleContext("company", [{ id: "baseline", company_id: "company", source_kind: "website",
+      source_url: "https://acme.test/about", title: "About", evidence_text: "Acme operates two facilities.", event_date: "2026-09-01",
+      observed_at: "2026-09-18", is_current: true, attributes: { companyRelationship: "direct", companyRelevance: .95 } }]);
+    const input = workerEvidenceInput(observation, { name: "Acme" }, evidencePackets(observation.evidence_text)[0], null, [], context);
+    expect(input.text).toBe(observation.evidence_text);
+    expect(input.publicScaleContext).toContain("two facilities");
+    expect(input.publicScaleContext).toContain("https://acme.test/about");
+    expect(input.publicScaleContext).toContain("remain unknown unless");
+    expect(estimateEvidenceInputTokens(input)).not.toBeNull();
+  });
   it("prepares a short single-packet page without empty optional neighboring context", () => {
     const observation = { evidence_text: "Acme opened an Austin facility.", source_kind: "company_news", source_url: "https://acme.test/news",
       title: "New facility", event_date: null, observed_at: "2026-09-18T23:00:00Z" };

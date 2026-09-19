@@ -15,7 +15,8 @@ These are selected actual files from the operator's canonical Stanley workspace,
 | `tools/mmtt_state_fast.py` | Bounded MMTT batch queries |
 | `tools/run_tam_single_record.py` | Explicit-ID claim, complete reader/validator passes, publish/readback |
 | `tools/tam_record_core.py` | Evidence validation, prompts, model invocation, provenance |
-| `tools/tam_navigation_bridge.py`, `tools/tam_evidence_index.py`, `tools/tam_jev_annotations.py` | Local lossless navigation/cache, exact excerpt preparation, optional explicit annotations and stage timing |
+| `tools/tam_navigation_bridge.py`, `tools/tam_evidence_index.py`, `tools/tam_jev_annotations.py` | Local lossless navigation/cache, source amount/date arithmetic, bounded readiness-gated Jev annotations and stage timing |
+| `tools/tam_public_context.py` | Public source dates compared locally with canonical last substantive interaction, after completed publication/readback |
 | `tools/stage_tam_final_grades.py` | Deterministic final staging and conflicts |
 | `tools/tam_v9_*_schema.json` | Structured reader, independent validator, and oversized-chunk outputs |
 | `tests/` | Existing synthetic render-guard regression tests |

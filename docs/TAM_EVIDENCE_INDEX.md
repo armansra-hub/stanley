@@ -54,11 +54,19 @@ including negation and counterparty context. They do not establish current
 software, budget viability, a human interaction, opportunity status or a grade.
 Both complete reader and independent complete validator remain mandatory.
 
+The v2 index also preserves original amount spans and uses decimal arithmetic for
+explicit monthly/annual amounts, including written thousand/million multipliers.
+An annual amount is divided by twelve; an unperiodized amount has no monthly
+equivalent. Bare `$` remains an unspecified dollar currency. Comparisons retain
+both source locations and compare only matching currency labels; they do not
+identify either amount as the buyer's budget or assign affordability. Explicit
+source dates are sorted and compared with the canonical assessment date in code.
+
 The deterministic helper's `evaluate_private_candidates` hook remains disabled;
 the optional client is a separate `tools/tam_jev_annotations.py` command. It binds
 the index SHA-256 and exact Internal ID, accepts explicit `document_id:line`
 references (including the surrounding context the caller selects), and prepares
-locally by default. Only `--evaluate` transmits those bounded excerpts through
+locally by default. Its `--evaluate` option transmits those bounded excerpts through
 Stanley's authenticated, budgeted private endpoint. It uses a dedicated
 `CODEX_AGENT_TOKEN` or `AGENT_TOKEN` already supplied by the caller; it does not
 read credential files or send the complete index. The endpoint requires the
@@ -119,7 +127,7 @@ now calls `prepare_evidence_navigation` after its existing claimed-record
 `local_preflight`, saved-search supplement and identity-context attachment.
 `tools/tam_navigation_bridge.py` consumes that complete in-memory package. It
 reuses the existing PDF page-text cache and performs no PDF extraction, corpus
-scan, claim or network call. Its private files live under the existing round's
+scan or claim. Its private files live under the existing round's
 `grading/navigation/<exact-id>/<hash>/`; there is no second grading queue.
 
 The compact navigation block supplies original line/character/page pointers and
@@ -135,14 +143,36 @@ avoiding another model pass solely to add navigation. Accepted-publication
 recovery remains on the existing readback-only path and never invokes navigation
 preparation or a model. The coordinator, claim fences and publisher are unchanged.
 
-Preparation also creates bounded `jev-request-NNNN.json` files with selected
-source lines and adjacent context. It **never transmits them**. The explicit
-annotation command above can use the stored references and write its result to
-the corresponding `jev-result-NNNN.json`. Only a completed output with a matching
+Preparation creates bounded `jev-request-NNNN.json` files with selected source
+lines and adjacent context. The canonical runner supplies its already-loaded
+dedicated agent token and may automatically dispatch at most **two packets** at
+this claimed-record boundary. First it makes an authenticated, content-free
+`POST {}` readiness probe: the existing route returns `invalid_excerpt` only
+after both the intelligence and private-excerpt enablement gates have passed.
+An unavailable/disabled route receives no CRM content and preparation continues.
+There is no new credential flow. `TAM_JEV_ANNOTATIONS_ENABLED=false` in the local
+runner environment disables dispatch; standalone helper/benchmark calls have no
+token and remain offline. Each request is at most 12,000 UTF-8 bytes/40 original
+source lines; surrounding lines are included within those bounds.
+
+The result is saved as `jev-result-NNNN.json`. Only a completed output with a matching
 request/index/exact-ID/model/question binding and completed output-hash receipt is
 reused. Raw provider output remains in `provider_result`; no second model checks it.
-Private endpoint enablement and a dedicated existing agent token are still
-required for an actual dispatch.
+Native `metadata.rawAnswers` is copied unchanged to the navigation block. Pending
+or uncertain paid attempts are never automatically replayed. The first automatic
+preparation freezes its navigation snapshot, so later source readiness/annotation
+availability cannot invalidate an already completed reader for the same evidence.
+Changed source/rubric/question versions create a new cache identity.
+
+**Activation dependency:** production `TYPESAFE_PRIVATE_EXCERPTS_ENABLED=true`
+requires the existing direct TypeSafe data-handling attestation described in
+`lib/intelligence/jev.ts`, alongside global intelligence enablement and the
+existing agent token. Until that server flag is enabled, the installed canonical
+dispatch path is operationally unavailable and only deterministic navigation is
+used. Development made no live private request. The release owner has since
+reviewed the direct-account terms and saved the production flag; it takes effect
+on the next Git deployment. A content-free readiness probe can confirm that
+deployment without transmitting CRM evidence.
 
 On the next separately authorized grading resume, the ordinary canonical path
 uses the installed helper automatically for fresh records. The latest reviewed
@@ -150,14 +180,37 @@ handoff's pause and unresolved network-timeout claims remain intact. Installatio
 occurred after an authoritative OS check found zero grading processes. No control,
 checkpoint, membership, claim, grade or scheduler state changed for this build.
 
+## Local public-evidence versus CRM comparison
+
+After canonical publication and its record/event readback have completed, the
+runner makes one optional read through
+`GET /api/agent/intelligence/context?internalId=<exact-id>`. The route uses the
+existing agent authentication, requires one unambiguous current-TAM match and
+returns at most the latest 100 current public observations, with partial coverage
+explicit. It does not refresh sources, call a model, accept CRM text or write data.
+
+`tools/tam_public_context.py` compares source-reported event dates against the
+already-completed validator's last substantive human-interaction date. It retains
+the canonical interaction summary locally, labels public developments before/on/
+after that date, retains related/unknown account relationships and keeps missing
+event or CRM dates unknown. Collection dates never substitute for event dates.
+The report preserves excerpts/URLs and lives under the same canonical round's
+`grading/public_context/<exact-id>/`; `latest.json` points to its hash-bound report.
+No CRM content leaves the computer through this public read. Neither the report
+nor its output enters the grader, changes the grade, delays publication, or
+claims an old objection has been reversed. Public endpoint failure is recorded
+as unavailable without blocking grading. Accepted-publication recovery is unchanged.
+
 ## Measured offline preparation and recovery benefit
 
-One already captured, previously completed exact record was used locally without
+A v1 offline preparation benchmark used one already captured, previously completed exact record without
 a model call, claim, publication or private transmission: 85,595 record characters
 and 18 cached PDF pages containing 84,979 characters. Fresh navigation preparation
 took **418.8 ms**; three cached runs took **13.28, 13.26 and 13.78 ms**, a **31.5×**
 reduction in this preparation stage. This saves about 0.41 seconds on reuse for
-that record; it is not a claim that grades finish 31.5× faster.
+that record; it is not a claim that grades finish 31.5× faster. The subsequent v2
+amount arithmetic and optional dispatch path are covered by synthetic tests;
+that original benchmark does not measure live annotation or grading latency.
 
 The private receipt is
 `research/jev-ai/tam-navigation-benchmark-20260919/benchmark.json` in the canonical

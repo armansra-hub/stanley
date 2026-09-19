@@ -27,6 +27,9 @@ export interface EvaluateEvidenceInput {
   observedAt?: string;
   /** Caller-supplied public company background, not private CRM notes or proof of this event. */
   companyContext?: string;
+  /** Cited public baseline passages for account-relative materiality.
+   * Absent for the private-excerpt v2 contract; never private CRM size fields. */
+  publicScaleContext?: string;
   /** Verbatim nearby text from this same source, supplied by the caller for attribution. */
   surroundingContext?: string;
   privacy?: "public" | "private_excerpt";

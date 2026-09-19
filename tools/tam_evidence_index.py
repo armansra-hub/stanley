@@ -15,12 +15,13 @@ import statistics
 import sys
 import time
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 VERSION = 1
 MODEL = "none-deterministic"
-RULES_VERSION = "lexical-navigation-v1"
+RULES_VERSION = "lexical-navigation-v2"
 MAX_SOURCE_BYTES = 32 * 1024 * 1024
 STAGES = ("preparation", "reader", "validator", "staging", "publication")
 PATTERNS = {
@@ -33,6 +34,8 @@ PATTERNS = {
 MONTH = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
 DATE_PATTERN = re.compile(
     rf"\b(?:\d{{4}}-\d{{2}}-\d{{2}}|\d{{1,2}}/\d{{1,2}}/\d{{4}}|{MONTH}\s+\d{{1,2}},?\s+\d{{4}}|\d{{1,2}}\s+{MONTH}\s+\d{{4}})\b", re.I)
+AMOUNT_PATTERN = re.compile(r"(?P<currency>USD\s*\$?|US\$|\$)\s*(?P<value>\d[\d,]*(?:\.\d+)?)(?:\s*(?P<multiplier>thousand|million|[kKmM])\b)?", re.I)
+PERIOD_PATTERN = re.compile(r"^\s*(?:/\s*|per\s+)?(?P<period>months?|mo\b|monthly|years?|yr\b|annually|annual)\b", re.I)
 
 
 def digest(raw: bytes) -> str:
@@ -43,7 +46,8 @@ def encoded(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
-RULES_SHA256 = digest(encoded({"version": RULES_VERSION, "patterns": PATTERNS, "dates": DATE_PATTERN.pattern}))
+RULES_SHA256 = digest(encoded({"version": RULES_VERSION, "patterns": PATTERNS, "dates": DATE_PATTERN.pattern,
+                              "amounts": AMOUNT_PATTERN.pattern, "periods": PERIOD_PATTERN.pattern}))
 
 
 def need(condition: bool, message: str) -> None:
@@ -114,6 +118,29 @@ def normalized_date(raw: str, date_order: str) -> tuple[str | None, str]:
     return None, "invalid_calendar_date"
 
 
+def amount_mentions(line, span):
+    values = []
+    for match in AMOUNT_PATTERN.finditer(line):
+        value = Decimal(match["value"].replace(",", ""))
+        multiplier = (match["multiplier"] or "").lower()
+        value *= 1000000 if multiplier in ("m", "million") else 1000 if multiplier in ("k", "thousand") else 1
+        period_match = PERIOD_PATTERN.match(line[match.end():])
+        token = period_match["period"].lower() if period_match else ""
+        period = "month" if token.startswith("mo") else "year" if token else None
+        end = match.end() + (period_match.end() if period_match else 0)
+        # A naked dollar sign does not establish USD. No period means no
+        # monthly conversion, even if an amount resembles typical pricing.
+        currency = "USD" if match["currency"].upper().startswith("US") else "$-unspecified"
+        monthly = value if period == "month" else value / 12 if period == "year" else None
+        values.append({"raw": line[match.start():end], "amount": str(value), "currency": currency,
+                       "period": period, "monthly_equivalent": str(monthly) if monthly is not None else None,
+                       "span": {**span, "start": span["start"] + match.start(), "end": span["start"] + end,
+                                "utf8_start": span["utf8_start"] + len(line[:match.start()].encode("utf-8")),
+                                "utf8_end": span["utf8_start"] + len(line[:end].encode("utf-8"))},
+                       "interpretation": "source_amount_only_not_confirmed_budget_or_affordability"})
+    return values
+
+
 def build_index(raw: bytes, *, internal_id: str, source_sha256: str, source_format: str = "text",
                 context_sha256: str | None = None, date_order: str = "unspecified") -> dict[str, Any]:
     exact_id(internal_id)
@@ -126,7 +153,7 @@ def build_index(raw: bytes, *, internal_id: str, source_sha256: str, source_form
     binding = {"internal_id": internal_id, "source_sha256": source_sha256, "source_format": source_format,
                "model": MODEL, "version": VERSION, "rules_sha256": RULES_SHA256,
                "context_sha256": context_sha256, "date_order": date_order}
-    indexed, candidates, dates = [], [], []
+    indexed, candidates, dates, amounts = [], [], [], []
     for document in documents:
         text = document["text"]
         lines, start, byte_start = [], 0, 0
@@ -135,6 +162,7 @@ def build_index(raw: bytes, *, internal_id: str, source_sha256: str, source_form
             span = {"document_id": document["id"], "page": document["page"], "line": number,
                     "start": start, "end": end, "utf8_start": byte_start, "utf8_end": byte_end}
             lines.append({**span, "text": line})
+            amounts.extend(amount_mentions(line, span))
             line_dates = []
             for match in DATE_PATTERN.finditer(line):
                 normalized, status = normalized_date(match.group(), date_order)
@@ -165,7 +193,7 @@ def build_index(raw: bytes, *, internal_id: str, source_sha256: str, source_form
             "offset_units": "zero_based_unicode_codepoints_and_utf8_bytes_end_exclusive",
             "page_mapping": "caller_supplied_pdf_documents" if any(d["page"] is not None for d in documents) else "unavailable",
             "semantic_client": {"enabled": False, "model": MODEL}, "source_byte_count": len(raw),
-            "documents": indexed, "date_mentions": dates, "candidates": candidates}
+            "documents": indexed, "date_mentions": dates, "amount_mentions": amounts, "candidates": candidates}
 
 
 def evaluate_private_candidates(*_args: Any, **_kwargs: Any) -> None:

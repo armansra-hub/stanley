@@ -101,6 +101,33 @@ describe("website career evidence redirects", () => {
     const scan = await fetchSiteSignals("acme.com", "Acme", { maxPages: 3 });
     expect(scan.coverage.attemptedUrls).toHaveLength(3);
     expect(scan.coverage.remainingUrls.length).toBeGreaterThan(0);
+    expect(scan.coverage.failedUrls).toHaveLength(2);
     expect(scan.pages.every((page) => page.url.startsWith("https://acme.com"))).toBe(true);
+  });
+
+  it("reports failed request URLs separately from successful redirected pages", async () => {
+    guardedFetch.mockImplementation(async input => {
+      const url = String(input);
+      if (url === "https://acme.com") return response('<a href="/news">News</a><a href="/about">About</a>', "https://www.acme.com/");
+      if (url.endsWith("/news")) return { ...response("unavailable", url), status: 503 };
+      if (url.endsWith("/about")) return response("<main>About the business.</main>", "https://acme.com/company/about-us");
+      return response("<main>Company information.</main>", url);
+    });
+    const scan = await fetchSiteSignals("acme.com", "Acme", { maxPages: 4 });
+    expect(scan.coverage.failedUrls).toEqual(["https://www.acme.com/news"]);
+    expect(scan.coverage.succeededUrls).toContain("https://acme.com/company/about-us");
+    expect(scan.coverage.failedUrls).not.toContain("https://www.acme.com/about");
+  });
+
+  it("does not turn confirmed missing fallback paths into a permanent failure backlog", async () => {
+    guardedFetch.mockImplementation(async input => {
+      const url = String(input);
+      return url === "https://acme.com" ? response("<main>Acme business website.</main>", url)
+        : { ...response("Not found", url), status: 404 };
+    });
+    const scan = await fetchSiteSignals("acme.com", "Acme");
+    expect(scan.coverage.failedUrls).toEqual([]);
+    expect(scan.discoveredUrls).toEqual([]);
+    expect(scan.pages).toHaveLength(1);
   });
 });

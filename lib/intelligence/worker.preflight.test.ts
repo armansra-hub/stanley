@@ -5,7 +5,10 @@ vi.mock("./observations", () => ({ intelligenceEnabled: () => true, INTELLIGENCE
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("./budget", () => ({ reserveJev: mocks.reserve, settleJev: mocks.settle, secondsUntilNextMonth: () => 60 }));
 vi.mock("./publish", () => ({ publishJevFinding: vi.fn(), jevSignalType: vi.fn() }));
+vi.mock("./events", () => ({ attachObservationEvent: async () => null, bindEventTrigger: vi.fn() }));
+vi.mock("./narratives", () => ({ queueAccountStory: async () => true }));
 import { runIntelligenceWorker } from "./worker";
+import { buildPublicScaleContext } from "./publicContext";
 
 let observation: Record<string, unknown>;
 beforeEach(() => {
@@ -56,5 +59,23 @@ describe("worker predispatch budget handling", () => {
     vi.stubEnv("TYPESAFE_MODEL", "invalid-model");
     expect(await runIntelligenceWorker(1)).toMatchObject({ outcomes: { invalid_request: 1 } });
     expect(mocks.reserve).toHaveBeenCalledOnce(); expect(mocks.settle).toHaveBeenCalledWith("reservation", 0);
+  });
+  it.each(["stanley-evidence-v2", "stanley-public-scale-v1"])("resumes paid %s results without reinterpreting them or rereading the baseline", async (questionVersion) => {
+    const nativeAnswer = { type: "score", score: 2 };
+    const evaluation = { ok: true, questionVersion, model: "jev-1.13.0", usage: { inputTokens: 500, outputTokens: 30 },
+      attributes: { companyRelationship: "direct", companyRelevance: .96, concreteEvent: .9, operationalComplexity: .5,
+        signalType: "new_entity", evidenceSectionId: "s1" }, criteria: {}, metadata: { rawAnswers: { operationalComplexity: nativeAnswer } } };
+    const savedContext = buildPublicScaleContext("company", []);
+    const savedResult = { parts: [{ start: 0, end: (observation.evidence_text as string).length, evaluation }],
+      ...(questionVersion === "stanley-public-scale-v1" ? { publicScaleContext: savedContext } : {}) };
+    mocks.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_claim"
+      ? [{ id: "job", observation_id: "obs", kind: "interpret", lease_token: "lease", attempts: 2, result: savedResult }] : true, error: null }));
+    expect(await runIntelligenceWorker(1)).toMatchObject({ outcomes: { complete: 1 } });
+    expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.settle).not.toHaveBeenCalled();
+    expect(mocks.from.mock.calls.filter(([table]) => table === "intelligence_observations")).toHaveLength(1);
+    const completed = mocks.rpc.mock.calls.find(([name]) => name === "intelligence_finish")![1];
+    expect(completed.p_result.parts).toEqual(savedResult.parts);
+    expect(completed.p_attributes.rawAnswers.operationalComplexity).toEqual(nativeAnswer);
+    expect(completed.p_result.publicScaleContext).toEqual(questionVersion === "stanley-public-scale-v1" ? savedContext : undefined);
   });
 });

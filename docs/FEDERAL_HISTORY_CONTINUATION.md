@@ -87,6 +87,9 @@ additional legitimate recipients. Name matches still require source identity
 evidence; CAGE/UEI bindings reject conflicting secondary identifiers. Public
 registration is distinct from awarded work. No new paid source is required;
 SAM's existing API key remains necessary.
+The production integration settings showed `SAM_API_KEY` present on September 19;
+this verifies configuration presence, without exposing its value or asserting a
+successful source call.
 
 One invocation reads one zero-based 10-row page. The exact query and current page
 survive successful continuations, failures and dead letters through the existing
@@ -180,3 +183,39 @@ Association candidate returned HTML rather than RSS. Neither endpoint is
 enabled merely because its URL resembles a feed. Statewide CA/TX contract-award
 ledgers remain outside these announcement sources; the registry descriptions
 say so explicitly.
+
+## Adaptive website and ATS revisit cadence
+
+Migration 0069 keeps `reserve_company_rotation` as the sole reservation owner for
+these sources. Its ATS/site branches consult revisit history in the existing
+`intelligence_source_state.cursor`; other source branches are unchanged. No new
+queue, scheduler, company membership or AI review is introduced.
+
+New baselines and changed evidence target another scan after one hour. Successful
+quiet scans progressively target two, four, eight, then 24 hours. Website changes
+compare each page with its own prior meaningful-content hash; changing the page
+batch does not itself count as a change. Up to 200 hashed URL keys are retained,
+and a change seen while working through pending pages survives until completion.
+ATS uses only an accepted complete-board lifecycle summary, including new,
+changed, reopened and expired listings. A silent partial page never establishes
+a quiet board. Unknown/detection-only boards retain existing hourly eligibility.
+
+Incomplete scans, provider errors and evidence-storage failures do not earn a
+longer interval. Website request failures retain exact pending URLs; successful
+redirects remain successful. Confirmed 404/410 responses clear absent-page retry
+work without creating an evidence page. Missing, malformed or stale cadence
+metadata falls back to the existing hourly rotation.
+
+Only due rows are reserved, still never-checked/oldest-checked first, so quiet
+accounts regain priority when their bounded delay expires. The existing row-lock
+reservation remains atomic; a 10-minute attempt guard also prevents an active
+bounded run from being reselected at an hourly boundary. Explicit positive-offset
+manual recovery is unchanged. The global intelligence switch disables the new
+backoff. Actual latency depends on cron capacity; the intervals are eligibility
+targets, not per-account realtime guarantees.
+
+Validation: 54 targeted TypeScript tests passed, TypeScript compilation passed, and
+`scripts/tests/adaptive-source-revisit-migration.mjs` passed 10 isolated PGlite
+scenarios covering due ordering, quiet-account return, incomplete/error fallback,
+board identity changes, global disable, repeated reservation, other-source
+preservation and service-only permissions.

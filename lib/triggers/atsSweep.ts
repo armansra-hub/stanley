@@ -4,8 +4,9 @@ import { pickAtsForRotation, setAtsChecked, setErpFlags, recordTrigger, recomput
 import { detectAts, fetchAtsJobsBatch, scanJob, type AtsType } from "@/lib/sources/ats";
 import { isCareerEvidenceUrl, isFinanceHireEligible } from "@/lib/triggers/signalIntegrity";
 import { enqueueObservation } from "@/lib/intelligence/observations";
-import { writeSourceState } from "@/lib/intelligence/sourceState";
+import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
 import { applyAtsBatch, enqueuePendingAtsPatterns, atsJobIdentity, prepareAtsJob, readAtsKnownJobs, readAtsScan } from "@/lib/intelligence/atsLifecycle";
+import { atsRevisitOutcome, nextRevisit } from "./adaptiveRevisit";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -53,6 +54,7 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
 
         // 2) Poll + scan.
         const sourceKey = `ats:${type}:${token}`;
+        const sourceState = intelligenceEnabled ? await readSourceState(c.id, sourceKey) : null;
         const cursor = intelligenceEnabled ? await readAtsScan(c.id, sourceKey) : { scanId: null, offset: 0 };
         const offset = cursor.offset;
         const batch = await fetchAtsJobsBatch(type as AtsType, token, { offset, maxJobs: intelligenceEnabled ? 150 : 60 });
@@ -104,7 +106,10 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
           if (!lifecycle.accepted) return; // another invocation advanced this exact cursor
           await enqueuePendingAtsPatterns(c, sourceKey, type as AtsType, token);
           await writeSourceState(c.id, sourceKey, {
-            cursor: lifecycle.nextOffset == null ? null : { offset: lifecycle.nextOffset, scanId: lifecycle.complete ? null : lifecycle.scanId },
+            cursor: {
+              ...(lifecycle.nextOffset == null ? {} : { offset: lifecycle.nextOffset, scanId: lifecycle.complete ? null : lifecycle.scanId }),
+              revisit: nextRevisit(sourceState?.cursor?.revisit, atsRevisitOutcome(lifecycle.complete === true, lifecycle.summary)),
+            },
             complete: lifecycle.complete === true,
             ...(lifecycle.restart ? { error: "ATS board changed during pagination; restarting complete scan" } : {}),
             ...(batch.status === "unavailable" ? { error: "ATS retrieval unavailable; prior offset retained" } : {}),

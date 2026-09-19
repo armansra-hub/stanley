@@ -30,9 +30,11 @@ from typing import Any, BinaryIO, Callable
 try:
     from tools import tam_record_core as core
     from tools import tam_navigation_bridge as navigation_bridge
+    from tools import tam_public_context as public_context
 except ModuleNotFoundError:  # Direct execution: python tools/<this-file>.py
     import tam_record_core as core
     import tam_navigation_bridge as navigation_bridge
+    import tam_public_context as public_context
 
 
 RUN_SLUG = "ars-bs-tam-current"
@@ -1261,7 +1263,7 @@ def evidence_key(internal_id: str, package: dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def prepare_evidence_navigation(internal_id: str, package: dict[str, Any]) -> dict[str, Any]:
+def prepare_evidence_navigation(internal_id: str, package: dict[str, Any], *, agent_token: str = "", bypass: str = "") -> dict[str, Any]:
     """Install additive navigation only after the canonical claimed preflight.
 
     A matching completed legacy reader retains its original prompt/evidence
@@ -1274,7 +1276,9 @@ def prepare_evidence_navigation(internal_id: str, package: dict[str, Any]) -> di
         return {"status": "preserved_existing_model_artifacts", "private_requests_sent": 0}
     try:
         return navigation_bridge.prepare_package(
-            internal_id, package, evidence=identity, root=POOL_ROOT / "navigation"
+            internal_id, package, evidence=identity, root=POOL_ROOT / "navigation",
+            dispatch=({"token": agent_token, "bypass": bypass}
+                      if agent_token and os.environ.get("TAM_JEV_ANNOTATIONS_ENABLED", "true").lower() == "true" else None),
         )
     except (OSError, ValueError, KeyError, TypeError):
         # Navigation is an accelerator, never a new grading/publication gate.
@@ -2254,7 +2258,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
             package = local_preflight(internal_id)
             attach_live_company_context(internal_id, package)
             attach_identity_review(package, internal_id, review)
-            navigation_preparation = prepare_evidence_navigation(internal_id, package)
+            navigation_preparation = prepare_evidence_navigation(internal_id, package, agent_token=secret, bypass=bypass)
             timings.finish(reused=navigation_preparation.get("reused", False))
             identity = evidence_identity(internal_id, package)
             checkpoint(
@@ -2473,6 +2477,13 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
             heartbeat_result = heartbeat_once_noncritical(
                 secret, bypass, internal_id, "idle", "complete"
             )
+            # Publication/readback are already complete. This separate local
+            # research artifact sends only the exact ID, never CRM evidence,
+            # and cannot change or delay the grade's publication.
+            context_comparison = public_context.refresh_comparison(
+                internal_id, validation, validator_sha256=validator_sha256,
+                root=POOL_ROOT / "public_context", token=secret, bypass=bypass,
+            )
             return checkpoint(
                 internal_id,
                 "complete",
@@ -2480,6 +2491,7 @@ def run_one(args: argparse.Namespace) -> dict[str, Any]:
                 evidence=identity,
                 navigationPreparation=navigation_preparation,
                 stageTimingsPath=str(timings.path),
+                publicContextComparison=context_comparison,
                 finalScore=record["final_score"],
                 candidatePath=str(candidate_path),
                 candidateSha256=candidate_sha256,

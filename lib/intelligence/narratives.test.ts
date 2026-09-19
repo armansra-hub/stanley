@@ -11,6 +11,16 @@ const good = { overview: [{ text: "The company lists two service centers.", cita
   hypotheses: [{ text: "Coordination across service centers may require shared reporting; friction is unverified.", citations: ["one"] }],
   contradictions: [], unknowns: ["Current accounting system"] };
 describe("sourced account story input", () => {
+  it("pairs new developments with source-grounded footprint instead of assuming relative scale", () => {
+    const baseline = { ...row, evidence_text: `${"Company introduction. ".repeat(80)}We operate two facilities with 85 employees.` };
+    const event = { ...row, id: "event", source_url: "https://example.test/news/third-facility",
+      evidence_text: "The company opened a third facility.", attributes: { ...row.attributes, signalType: "press", evidenceExcerpt: "The company opened a third facility." } };
+    const result = buildStoryRequest(company, [event, baseline]);
+    expect(result.sources.find(source => source.id === row.id)?.passages.join(" ")).toContain("two facilities with 85 employees");
+    expect(result.system).toContain("Cite both the new development and the baseline");
+    expect(result.system).toContain("acquisition-relative size remain explicitly unknown");
+    expect(result.system).toContain("never rescore");
+  });
   it("preserves supplied judgments and contextualizes source history without a review prompt", () => {
     const result = buildStoryRequest(company, [row, { ...row, id: "old", is_current: false, evidence_text: "We operate one Austin service center." }]);
     expect(result.sources.map(source => source.id)).toEqual(["one", "old"]);

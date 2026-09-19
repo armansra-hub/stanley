@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sys
 from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.error import HTTPError
 
 try:
     from .tam_evidence_index import read_explicit, write_new, exact_id, digest, need
@@ -51,15 +52,36 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def evaluate(prepared, token, transport=None):
+def request_once(payload, token, bypass=""):
+    """One fixed-origin request; neither source text nor auth is logged."""
+    need(bool(token), "dedicated agent token required")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "x-agent-name": "codex"}
+    if bypass:
+        headers["x-vercel-protection-bypass"] = bypass
+    request = Request(ENDPOINT, data=json.dumps(payload).encode(), method="POST", headers=headers)
+    try:
+        response = build_opener(NoRedirect()).open(request, timeout=30)
+    except HTTPError as error:
+        response = error
+    with response:
+        body = response.read(262145)
+        need(len(body) <= 262144, "response too large")
+        return response.code, json.loads(body)
+
+
+def route_ready(token, bypass="", transport=None):
+    """No private text or model request: body validation follows both enablement gates."""
+    try:
+        status, result = (transport or request_once)({}, token, bypass)
+        return status == 400 and result == {"error": "invalid_excerpt"}
+    except Exception:
+        return False
+
+
+def evaluate(prepared, token, transport=None, *, bypass=""):
     need(bool(token), "dedicated agent token required")
     if transport is None:
-        request = Request(ENDPOINT, data=json.dumps(prepared["payload"]).encode(), method="POST",
-                          headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "x-agent-name": "codex"})
-        with build_opener(NoRedirect()).open(request, timeout=30) as response:
-            body = response.read(262145)
-            need(len(body) <= 262144, "response too large")
-            result = json.loads(body)
+        _status, result = request_once(prepared["payload"], token, bypass)
     else:
         result = transport(prepared["payload"])
     need(isinstance(result, dict) and result.get("ok") is True, "annotation unavailable")

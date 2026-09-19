@@ -48,8 +48,8 @@
     {
       "workspace_relative_source": "tools/run_tam_single_record.py",
       "repository_path": "operations/reference/tools/run_tam_single_record.py",
-      "sha256": "66c240e25a7455fb44641a01dcafa375f62acb999609a4a01aaab57aed04a638",
-      "normalized_sha256": "66c240e25a7455fb44641a01dcafa375f62acb999609a4a01aaab57aed04a638",
+      "sha256": "4ef4b432a8461fba2c38574a38a269811c79b29096a15e7f5e681a453251c4b9",
+      "normalized_sha256": "4ef4b432a8461fba2c38574a38a269811c79b29096a15e7f5e681a453251c4b9",
       "refreshed_on": "2026-09-19"
     },
     {
@@ -98,22 +98,22 @@
     {
       "workspace_relative_source": "tools/tam_navigation_bridge.py",
       "repository_path": "operations/reference/tools/tam_navigation_bridge.py",
-      "sha256": "d5f324b550c19f959c57f8aa4670815e70526af864f992bbfabde6b820c676fa",
-      "normalized_sha256": "d5f324b550c19f959c57f8aa4670815e70526af864f992bbfabde6b820c676fa",
+      "sha256": "944c588f2acfe6879b75eebf45225d8f2197007aa93c87d853c6002f69450031",
+      "normalized_sha256": "944c588f2acfe6879b75eebf45225d8f2197007aa93c87d853c6002f69450031",
       "refreshed_on": "2026-09-19"
     },
     {
       "workspace_relative_source": "tools/tam_evidence_index.py",
       "repository_path": "operations/reference/tools/tam_evidence_index.py",
-      "sha256": "d103fe7d7754a32d1711e97f2db25d40706d7b8b0b41e71e4e8be840015ab95d",
-      "normalized_sha256": "d103fe7d7754a32d1711e97f2db25d40706d7b8b0b41e71e4e8be840015ab95d",
+      "sha256": "5e026a5273f4aea5cb8c48d254bdc57b06728ac31fa1036b4aeb0d78256fc401",
+      "normalized_sha256": "5e026a5273f4aea5cb8c48d254bdc57b06728ac31fa1036b4aeb0d78256fc401",
       "refreshed_on": "2026-09-19"
     },
     {
       "workspace_relative_source": "tools/tam_jev_annotations.py",
       "repository_path": "operations/reference/tools/tam_jev_annotations.py",
-      "sha256": "8fa9309c354c072e24479c102f814ff8d0c3a2c91dc23e472fc520ebbe899323",
-      "normalized_sha256": "8fa9309c354c072e24479c102f814ff8d0c3a2c91dc23e472fc520ebbe899323",
+      "sha256": "8bb51a8457b522bd5bd4747f03fb80d75910e79fa17993f4382f9df4eb2789a7",
+      "normalized_sha256": "8bb51a8457b522bd5bd4747f03fb80d75910e79fa17993f4382f9df4eb2789a7",
       "refreshed_on": "2026-09-19"
     },
     {
@@ -128,6 +128,27 @@
       "repository_path": "operations/reference/tests/test_tam_single_record.py",
       "sha256": "cdc89fcc2114ce17bfd00561f5a96ca2d631136c4564a09c4a756e1bf29f6d13",
       "normalized_sha256": "cdc89fcc2114ce17bfd00561f5a96ca2d631136c4564a09c4a756e1bf29f6d13",
+      "refreshed_on": "2026-09-19"
+    },
+    {
+      "workspace_relative_source": "tools/tam_public_context.py",
+      "repository_path": "operations/reference/tools/tam_public_context.py",
+      "sha256": "23e143640ffd7a0a2d5e3f3f93a6239e8b4134d4226b08c0e577188d0bc4c32a",
+      "normalized_sha256": "23e143640ffd7a0a2d5e3f3f93a6239e8b4134d4226b08c0e577188d0bc4c32a",
+      "refreshed_on": "2026-09-19"
+    },
+    {
+      "workspace_relative_source": "tools/tests/test_tam_navigation_dispatch.py",
+      "repository_path": "operations/reference/tests/test_tam_navigation_dispatch.py",
+      "sha256": "898cd54428bbdc376513851b847b76ae1084f1115241f3f59d52dd2877fb6809",
+      "normalized_sha256": "898cd54428bbdc376513851b847b76ae1084f1115241f3f59d52dd2877fb6809",
+      "refreshed_on": "2026-09-19"
+    },
+    {
+      "workspace_relative_source": "tools/tests/test_tam_public_context.py",
+      "repository_path": "operations/reference/tests/test_tam_public_context.py",
+      "sha256": "146553abdb3323c7c892162d5a882e89edfce00dbebbc2b866b36e0652c4a4e2",
+      "normalized_sha256": "146553abdb3323c7c892162d5a882e89edfce00dbebbc2b866b36e0652c4a4e2",
       "refreshed_on": "2026-09-19"
     }
   ]

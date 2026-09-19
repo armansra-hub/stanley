@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION,
+  evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION,
   MAX_EVIDENCE_STATE_BYTES, MAX_COMPANY_CONTEXT_BYTES, MAX_SURROUNDING_CONTEXT_BYTES, MAX_RAW_ANSWERS_BYTES, type JevEvaluationRequest,
   hasPrivateExcerptAuthorization, TYPESAFE_EVALUATION_URL,
 } from "./jev";
@@ -39,6 +39,33 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("Jev evidence adapter", () => {
+  it("uses cited public footprint only for first-pass relative materiality and preserves native judgments", async () => {
+    const publicScaleContext = 'Public source https://example.test/about, dated 2026-09-01: "Example Engineering operates two facilities and employs 85 people." Missing current revenue remains unknown.';
+    const evaluate = vi.fn(async (request: JevEvaluationRequest) => {
+      expect(request.state.publicScaleContext).toBe(publicScaleContext);
+      expect(request.questions.operationalComplexity.instructions).toContain("relative to the company's explicitly supported existing footprint");
+      expect(request.questions.growthRelevance.instructions).toContain("do not infer either denominator");
+      expect(request.questions.requiresResearch.instructions).toContain("explicit research gap");
+      return response();
+    });
+    const result = await evaluateEvidence({ ...input, publicScaleContext, privacy: "public" }, { evaluate });
+    expect(result).toMatchObject({ ok: true, questionVersion: JEV_PUBLIC_SCALE_QUESTION_VERSION });
+    if (result.ok) expect(result.metadata.rawAnswers).toEqual(response().answers);
+    expect(evaluate).toHaveBeenCalledOnce();
+  });
+  it("keeps private annotations on their existing v2 contract and rejects mixed public scale input", async () => {
+    vi.stubEnv("TYPESAFE_PRIVATE_EXCERPTS_ENABLED", "true");
+    const evaluate = vi.fn(async (request: JevEvaluationRequest) => {
+      expect(request.state).not.toHaveProperty("publicScaleContext");
+      expect(request.questions.operationalComplexity.instructions).not.toContain("two-location operator");
+      return response();
+    });
+    expect(await evaluateEvidence({ ...input, privacy: "private_excerpt" }, { evaluate })).toMatchObject({ ok: true, questionVersion: JEV_QUESTION_VERSION });
+    expect(await evaluateEvidence({ ...input, privacy: "private_excerpt", publicScaleContext: "Mixed context" }, { evaluate }))
+      .toMatchObject({ ok: false, error: { kind: "invalid_input" }, usage: { inputTokens: 0 } });
+    expect(evaluate).toHaveBeenCalledOnce();
+    expect(estimateEvidenceInputTokens({ ...input, publicScaleContext: "x".repeat(3201) })).toBeNull();
+  });
   it("normalizes typed answers without treating probability as a grade or losing zero", async () => {
     const evaluate = vi.fn(async () => response());
     const result = await evaluateEvidence(input, { evaluate });

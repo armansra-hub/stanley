@@ -12,6 +12,7 @@ import { enqueueObservation, intelligenceEnabled } from "@/lib/intelligence/obse
 import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
 import { companyPageUrl, sameCompanySite, sitePageEvidence } from "@/lib/sources/siteDiscovery";
 import { fetchPublicHttpText } from "./urlSafety";
+import { nextRevisit, websiteChangeHistory } from "./adaptiveRevisit";
 
 const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now() - new Date(d).getTime()) / 86_400_000; return a >= 0 && a < 180; };
 
@@ -59,7 +60,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           : await fetchSiteSignals(c.domain, c.name);
         let captureFailed = stateReadFailed;
         const fetchedPending: string[] = [];
-        const failedPending: string[] = [];
+        const failedPending: string[] = [...(scan.coverage.failedUrls ?? [])];
         if (captureEnabled) {
           // Reserve three slots for the prior backlog. Homepage discovery alone
           // must not keep selecting the same first few newsroom links forever.
@@ -68,6 +69,9 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           await Promise.all(pending.map(async url => {
             try {
               const response = await fetchPublicHttpText(url, { timeoutMs: 3500, maxBytes: 1_000_000 });
+              if ((response.status === 404 || response.status === 410) && sameCompanySite(response.finalUrl, base)) {
+                fetchedPending.push(url); return; // confirmed absence is not an endless retry failure
+              }
               if (response.status < 200 || response.status >= 300 || !sameCompanySite(response.finalUrl, base)) throw new Error("Website page unavailable");
               const page = sitePageEvidence(response.body, response.finalUrl);
               if (!page.text.trim()) throw new Error("Website page has no evidence");
@@ -143,9 +147,16 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
             ? urls([...priorPending, ...scan.discoveredUrls])
             : urls([...priorPending.filter(url => !attempted.has(url)), ...newlyDiscovered.filter(url => !attempted.has(url)), ...failedPending]);
           const incomplete = captureFailed || failedPending.length > 0;
+          const complete = !incomplete && pending.length === 0;
+          const changes = websiteChangeHistory(state?.cursor?.pageHashes, scan.pages.filter(page => page.text.trim()));
+          const changedSinceComplete = changes.outcome === "changed" || state?.cursor?.changedSinceComplete === true || touched;
+          const revisit = nextRevisit(state?.cursor?.revisit,
+            !complete ? "incomplete" : changedSinceComplete ? "changed" : changes.outcome);
           await writeSourceState(c.id, sourceKey, {
-            cursor: { knownUrls: allKnown, verifiedUrls, pendingUrls: pending, attemptedPages: scan.coverage.attemptedUrls.length + fetchedPending.length + failedPending.length, retainedPages: scan.pages.length },
-            complete: !incomplete && pending.length === 0,
+            cursor: { knownUrls: allKnown, verifiedUrls, pendingUrls: pending, attemptedPages: scan.coverage.attemptedUrls.length + fetchedPending.length + failedPending.length, retainedPages: scan.pages.length,
+              pageHashes: captureFailed ? state?.cursor?.pageHashes ?? {} : changes.hashes,
+              changedSinceComplete: !complete && changedSinceComplete, revisit },
+            complete,
             ...(incomplete ? { error: "Website evidence capture incomplete; saved pages will be retried" } : {}),
           });
           if (!captureFailed) await setSiteChecked(c.id, fingerprint);

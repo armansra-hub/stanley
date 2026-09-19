@@ -20,7 +20,7 @@ import { companyPageUrl, discoverSiteLinks, htmlAttributes, htmlToVisibleText, s
 // they required only the phrase, never evidence of an actual event.
 
 // Raw HTML (case preserved) — for parent-name capture + RSS-link discovery.
-interface FetchedPage { html: string; finalUrl: string }
+interface FetchedPage { html: string; finalUrl: string; status: number | null }
 
 async function fetchPage(url: string, ms = 7000): Promise<FetchedPage> {
   try {
@@ -30,9 +30,9 @@ async function fetchPage(url: string, ms = 7000): Promise<FetchedPage> {
       accept: "text/html,application/xhtml+xml,application/xml,text/xml;q=0.9",
     });
     return response.status >= 200 && response.status < 300
-      ? { html: response.body, finalUrl: response.finalUrl }
-      : { html: "", finalUrl: response.finalUrl };
-  } catch { return { html: "", finalUrl: url }; }
+      ? { html: response.body, finalUrl: response.finalUrl, status: response.status }
+      : { html: "", finalUrl: response.finalUrl, status: response.status };
+  } catch { return { html: "", finalUrl: url, status: null }; }
 }
 const cleanHtml = htmlToVisibleText;
 
@@ -76,7 +76,7 @@ export interface SiteScan {
   financeRoles: FinanceRoleHit[];
   pages: SitePageEvidence[];
   discoveredUrls: string[];
-  coverage: { attemptedUrls: string[]; succeededUrls: string[]; remainingUrls: string[] };
+  coverage: { attemptedUrls: string[]; succeededUrls: string[]; remainingUrls: string[]; failedUrls?: string[] };
 }
 
 /** Bounded link/sitemap discovery, with legacy paths only as fallbacks. */
@@ -84,8 +84,9 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
   const base = `https://${domain.replace(/\/+$/, "")}`;
   const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, Math.min(10, Math.floor(options.maxPages!))) : 8;
   const attemptedUrls = [base];
+  const failedUrls: string[] = [];
   const homePage = await fetchPage(base, 5000);
-  const empty: SiteScan = { growth: [], parent: null, feedUrl: null, financeRoles: [], pages: [], discoveredUrls: [], coverage: { attemptedUrls, succeededUrls: [], remainingUrls: [] } };
+  const empty: SiteScan = { growth: [], parent: null, feedUrl: null, financeRoles: [], pages: [], discoveredUrls: [], coverage: { attemptedUrls, succeededUrls: [], remainingUrls: [], failedUrls: [base] } };
   if (!homePage.html || !sameCompanySite(homePage.finalUrl, base)) return empty;
   const pages = [homePage];
   const candidates = new Map<string, string>();
@@ -125,16 +126,20 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
   }
   const firstWave = [...new Set([...chosen, ...candidates.keys()])].slice(0, Math.min(5, maxPages - 1));
   attemptedUrls.push(...firstWave);
-  for (const page of await Promise.all(firstWave.map((url) => fetchPage(url, 4000)))) {
+  for (const { url, page } of await Promise.all(firstWave.map(async (url) => ({ url, page: await fetchPage(url, 4000) })))) {
     if (page.html && sameCompanySite(page.finalUrl, base)) pages.push(page);
+    else if (page.status === 404 || page.status === 410) candidates.delete(url);
+    else failedUrls.push(url);
   }
   for (const page of pages.slice(1)) {
     for (const link of discoverSiteLinks(page.html, page.finalUrl)) add(link.url, link.kind);
   }
   const nextWave = [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)).slice(0, Math.max(0, maxPages - attemptedUrls.length));
   attemptedUrls.push(...nextWave);
-  for (const page of await Promise.all(nextWave.map((url) => fetchPage(url, 3500)))) {
+  for (const { url, page } of await Promise.all(nextWave.map(async (url) => ({ url, page: await fetchPage(url, 3500) })))) {
     if (page.html && sameCompanySite(page.finalUrl, base)) pages.push(page);
+    else if (page.status === 404 || page.status === 410) candidates.delete(url);
+    else failedUrls.push(url);
   }
   const evidence = [...new Map(pages.map((page) => [page.finalUrl, sitePageEvidence(page.html, page.finalUrl)])).values()];
   const rawText = evidence.filter((page) => !isCareerEvidenceUrl(page.url)).map((page) => page.text).join(" ");
@@ -171,6 +176,6 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
     parent: detectParent([homeText, ...evidence.filter((page) => sitePageKind(page.url) === "about").map((page) => page.text)].join(" ")),
     feedUrl: pages.map((page) => findFeedUrl(page.html, page.finalUrl)).find(Boolean) ?? null,
     financeRoles, pages: evidence, discoveredUrls: [...candidates.keys()],
-    coverage: { attemptedUrls, succeededUrls: evidence.map((page) => page.url), remainingUrls: [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)) },
+    coverage: { attemptedUrls, succeededUrls: evidence.map((page) => page.url), remainingUrls: [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)), failedUrls },
   };
 }
