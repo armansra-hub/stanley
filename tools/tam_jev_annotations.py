@@ -15,6 +15,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 from tam_evidence_index import read_explicit, write_new, exact_id, digest, need
 
 ENDPOINT = "https://jarvis-sable-eta.vercel.app/api/agent/intelligence/evaluate"
+QUESTION_VERSION = "stanley-evidence-v2"
 CRITERIA = [
     {"id": "substantive_interaction", "instructions": "Does this excerpt contain a substantive human exchange about the prospect's own business situation? Generic unanswered cadence, no-answer calls, marketing invitations and automated notices alone do not establish a human exchange."},
     {"id": "systems_evidence", "instructions": "Does a clearly attributable statement describe the prospect's actual current business systems or a specific planned systems change? Distinguish the prospect's statements from a seller's hypothesis or template."},
@@ -36,7 +37,7 @@ def prepare(raw, pinned_hash, internal_id, references, model="jev-1.13.0"):
     text = "\n".join(f"[{reference}] {line['text']}" for reference, line in zip(references, selected))
     need(len(text.encode("utf-8")) <= 12000, "excerpt exceeds endpoint capacity")
     binding = {"internal_id": internal_id, "index_sha256": pinned_hash, "source_sha256": value["binding"]["source_sha256"],
-               "references": references, "model": model, "question_version": "stanley-evidence-v1", "criteria": CRITERIA}
+               "references": references, "model": model, "question_version": QUESTION_VERSION, "criteria": CRITERIA}
     cache_key = hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
     return {"schema": "tam-jev-excerpt-request", "version": 1, "binding": binding, "cache_key": cache_key,
             "spans": selected, "payload": {"text": text, "criteria": CRITERIA}}

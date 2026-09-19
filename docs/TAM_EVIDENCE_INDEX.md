@@ -68,7 +68,10 @@ python tools/tam_jev_annotations.py --index C:/private/123.index.json --index-sh
 
 Add `--evaluate` and use a new output path for an explicitly selected live
 annotation. Output and cache identity bind evidence, exact ID, selected lines,
-model version and questions. Before transmitting, the client records a local
+model version and questions. The helper currently pins `jev-1.13.0` and
+`stanley-evidence-v2`, matching the TypeScript endpoint adapter; older question
+versions have different cache identities and cannot be accepted as v2 results.
+Before transmitting, the client records a local
 pending request receipt. An uncertain result cannot be blindly retried at the
 same path. The annotations identify navigation priorities, never dates, amounts,
 grades or validation results. Both complete reads remain required. No private
