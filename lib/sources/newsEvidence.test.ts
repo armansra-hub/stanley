@@ -24,4 +24,10 @@ describe("public publisher resolution", () => {
     expect(publisherArticleLinks('<a href="https://other.com/news/acme">Story</a>', item.publisher_url)).toEqual([]);
     expect(publisherArticleLinks('<a href="https://publisher.com/news/one">One</a><a href="https://publisher.com/news/two">Two</a>', item.publisher_url)).toEqual([]);
   });
+  it("labels article-host structured identity as publisher context, never the prospect", async () => {
+    fetch.mockResolvedValue({ body: `<script type="application/ld+json">{"@type":"Organization","name":"Publisher","url":"https://publisher.com","address":{"addressLocality":"Boston"}}</script><article>${"Acme announced a services contract. ".repeat(6)}</article>`, status: 200, finalUrl: "https://publisher.com/news/acme", contentType: "text/html" });
+    const result = await readNewsEvidence({ ...item, source_url: "https://publisher.com/news/acme" });
+    expect(result.metadata).toMatchObject({ publisherIdentity: { names: ["Publisher"], addresses: [{ city: "Boston" }], sourceUrl: "https://publisher.com/news/acme" } });
+    expect(result.metadata).not.toHaveProperty("companyIdentity");
+  });
 });

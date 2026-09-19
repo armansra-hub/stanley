@@ -55,6 +55,7 @@ export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_
       if (final.pathname.replace(/\/+$/, "").length < 2 || page.text.length < 160) { failure = "empty_body"; continue; }
       return { sourceUrl: page.url, text: page.text, metadata: { evidenceKind: "article_body", articleBodyAvailable: true,
         feedUrl: item.source_url, publisherUrl: item.publisher_url ?? null, sourceDates: page.sourceDates, textTruncated: page.truncated,
+        ...(page.companyIdentity ? { publisherIdentity: page.companyIdentity } : {}),
         eventDateBasis: "feed_publication", publisherResolution: resolutionMethod }, bodyAvailable: true, error: null };
     } catch (error) { failure = sourceErrorCode(error); }
   }

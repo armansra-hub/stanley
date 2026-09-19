@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
+import { decodeEntities, htmlAttributes, extractSiteText, extractCompanyIdentity, type SiteCompanyIdentity } from "./siteContent";
+export { decodeEntities, htmlAttributes } from "./siteContent";
 
 export type SitePageKind = "news" | "careers" | "about" | "locations" | "services";
 export interface DiscoveredSiteLink { url: string; kind: SitePageKind; label: string }
@@ -15,23 +17,7 @@ export interface SitePageEvidence {
   contentHash: string;
   sourceDates: SiteDateReference[];
   truncated: boolean;
-}
-
-export function decodeEntities(value: string): string {
-  return value.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt|nbsp);/gi, (match, entity: string) => {
-    const named: Record<string, string> = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " " };
-    if (entity[0] !== "#") return named[entity.toLowerCase()] ?? match;
-    const code = entity[1].toLowerCase() === "x" ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
-    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : " ";
-  });
-}
-
-export function htmlAttributes(tag: string): Record<string, string> {
-  const attributes: Record<string, string> = {};
-  for (const match of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)) {
-    attributes[match[1].toLowerCase()] = decodeEntities(match[2] ?? match[3] ?? match[4] ?? "");
-  }
-  return attributes;
+  companyIdentity?: SiteCompanyIdentity;
 }
 
 /** Keep company identity attached to the supplied domain, including its subdomains. */
@@ -108,10 +94,8 @@ export function htmlToVisibleText(html: string): string {
 
 /** Stable content excludes navigation/footer chrome; dates retain their source kind. */
 export function sitePageEvidence(html: string, url: string): SitePageEvidence {
-  const meaningful = html
-    .replace(/<(script|style|noscript|svg|template|nav|header|footer|aside|form)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
-  const body = meaningful.match(/<(?:main|article)\b[^>]*>([\s\S]*?)<\/(?:main|article)\s*>/i)?.[1] ?? meaningful;
-  const text = htmlToVisibleText(body);
+  const text = extractSiteText(html);
+  const companyIdentity = extractCompanyIdentity(html, url, candidate => sameCompanySite(candidate, url));
   const sourceDates: SiteDateReference[] = [];
   const add = (value: string | undefined, kind: SiteDateReference["kind"], source: string) => {
     // Accept explicit source dates, including labeled prose. Never interpret an
@@ -142,5 +126,6 @@ export function sitePageEvidence(html: string, url: string): SitePageEvidence {
     url, title: htmlToVisibleText(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").slice(0, 300),
     text: text.slice(0, 24_000), contentHash: createHash("sha256").update(text).digest("hex"),
     sourceDates: sourceDates.slice(0, 12), truncated: text.length > 24_000,
+    ...(companyIdentity ? { companyIdentity } : {}),
   };
 }

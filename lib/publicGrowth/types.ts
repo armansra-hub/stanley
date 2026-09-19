@@ -2,6 +2,8 @@ export const PARTICIPANT_THRESHOLDS = [50, 100, 250, 500, 1_000] as const;
 export const PARTICIPANT_GROWTH_THRESHOLDS = [25, 50, 100] as const;
 export const REVENUE_THRESHOLDS = [10_000_000, 20_000_000, 30_000_000, 40_000_000, 50_000_000, 100_000_000] as const;
 
+export type CompanyIdentityAddress = import("@/lib/companyIdentity").IdentityAddress;
+
 export interface TamIdentity {
   id: string;
   name: string;
@@ -9,6 +11,8 @@ export interface TamIdentity {
   website_raw?: string | null;
   city?: string | null;
   state?: string | null;
+  legalNames?: string[];
+  addresses?: CompanyIdentityAddress[];
 }
 
 export interface GovernmentIdentityCandidate {
@@ -17,13 +21,16 @@ export interface GovernmentIdentityCandidate {
   domain?: string | null;
   city?: string | null;
   state?: string | null;
+  addressLine1?: string | null;
+  postalCode?: string | null;
+  countryCode?: string | null;
   uei?: string | null;
   cageCode?: string | null;
 }
 
 export interface IdentityDecision {
   status: "verified" | "pending" | "rejected";
-  method: "domain" | "exact_name_address" | "exact_name_state" | "name_only" | "conflict" | "none";
+  method: "domain" | "domain_only" | "exact_name_address" | "exact_name_city_state" | "exact_name_state" | "name_only" | "conflict" | "none";
   confidence: number;
   evidence: Record<string, unknown>;
 }
@@ -83,4 +90,3 @@ export interface DerivedGrowthEvent {
   signalDate: string | null;
   metadata: Record<string, unknown>;
 }
-

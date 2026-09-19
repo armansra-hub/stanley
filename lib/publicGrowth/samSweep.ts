@@ -1,7 +1,8 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
+import { enrichCompanyIdentity } from "@/lib/companyIdentity";
 import { recomputePriority } from "@/lib/db/triggers";
-import { decideIdentityMatch, normalizeName } from "./identity";
+import { companyIdentityNames, decideIdentityMatch, normalizeName } from "./identity";
 import { compactSamEntity, sbaProfileUrl, searchSamEntitiesPage } from "./sam";
 import { recordPublicGrowthTriggersBulk, saveCompanyGovernmentMatch, saveGovernmentEntity, stableHash } from "./storage";
 import { loadRecurringTamBatch, loadTamBatch, type PublicGrowthCompanyScope } from "./usaspendingSweep";
@@ -67,15 +68,17 @@ export async function ingestSamExtractObservations(rows: SamExtractObservationIn
   if (error) throw new Error(`SAM extract TAM load failed: ${error.message}`);
   const byId = new Map((companies ?? []).map((company: TamIdentity) => [company.id, company]));
   const receipts = await Promise.all(rows.map(async (row) => {
-    const company = byId.get(row.companyId);
-    if (!company) {
+    const baseCompany = byId.get(row.companyId);
+    if (!baseCompany) {
       return { companyId: row.companyId, status: "not_in_tam", entities: 0, naics: 0, triggers: 0 };
     }
     try {
+      const company = row.matchMethod === "uei" || row.matchMethod === "cage" ? baseCompany : await enrichCompanyIdentity(baseCompany);
       const sam = row.sam;
       const deterministic = decideIdentityMatch(company, {
         legalName: sam.legalName, dbaName: sam.dbaName, domain: sam.domain,
         city: sam.city, state: sam.state, uei: sam.uei, cageCode: sam.cageCode,
+        addressLine1: sam.address, postalCode: sam.postalCode, countryCode: sam.countryCode,
       });
       const decision = row.matchMethod === "uei" || row.matchMethod === "cage"
         ? { status: "verified" as const, method: row.matchMethod, confidence: 1, evidence: { ...deterministic.evidence, identifierMatch: row.matchMethod } }
@@ -116,6 +119,8 @@ export async function sweepSamCompany(company: TamIdentity, options: { samContin
     error: undefined as string | undefined, samDone: false, samContinuation: undefined as SamEntityContinuation | undefined };
   try {
     requirePublicGrowthTime(options.deadlineMs);
+    company = await enrichCompanyIdentity(company);
+    const names = companyIdentityNames(company), knownNames = names.map(normalizeName);
     const db = serviceClient();
     const { data: linked, error: linkedError } = await db.from("company_government_matches")
       .select("government_entity_id,government_entities(uei,cage_code)").eq("company_id", company.id).eq("match_status", "verified").limit(101);
@@ -129,7 +134,7 @@ export async function sweepSamCompany(company: TamIdentity, options: { samContin
         ...(binding.cageCode ? [{ query: { cageCode: binding.cageCode }, binding }] : []),
       ]);
       // Retrieve additional legitimate recipients even after one is bound.
-      targets.push({ query: { legalBusinessName: company.name } }, { query: { dbaName: company.name } });
+      targets.push(...names.flatMap((name) => [{ query: { legalBusinessName: name } }, { query: { dbaName: name } }]));
       state = parseSamEntityContinuation({ version: 1, companyId: company.id, targets, targetIndex: 0, page: 0, lastPageHash: null }, company.id);
     }
     receipt.samContinuation = state;
@@ -137,7 +142,7 @@ export async function sweepSamCompany(company: TamIdentity, options: { samContin
       if (target.binding) {
         const current = bindings.find((binding) => binding.entityId === target.binding!.entityId);
         if (!current || target.binding.uei && current.uei !== target.binding.uei || target.binding.cageCode && current.cageCode !== target.binding.cageCode) throw new Error("frozen SAM entity binding changed");
-      } else if (normalizeName(target.query.legalBusinessName ?? target.query.dbaName ?? "") !== normalizeName(company.name)) throw new Error("frozen SAM company name changed");
+      } else if (!knownNames.includes(normalizeName(target.query.legalBusinessName ?? target.query.dbaName ?? ""))) throw new Error("frozen SAM company name changed");
     }
     const target = state.targets[state.targetIndex];
     const page = await searchSamEntitiesPage(target.query, state.page, options.deadlineMs);
@@ -148,11 +153,12 @@ export async function sweepSamCompany(company: TamIdentity, options: { samContin
       const sam = compactSamEntity(row);
       if (!sam.legalName || (!sam.uei && !sam.cageCode)) continue;
       if (target.binding && !samBindingMatches(target.binding, sam)) throw new Error("SAM source identifiers conflict with verified binding");
-      if (!target.binding && normalizeName(sam.legalName) !== normalizeName(company.name) && normalizeName(sam.dbaName) !== normalizeName(company.name)) continue;
+      if (!target.binding && !knownNames.includes(normalizeName(sam.legalName)) && !knownNames.includes(normalizeName(sam.dbaName))) continue;
       const existingBinding = target.binding ?? bindings.find((binding) => samBindingMatches(binding, sam));
       const decision = existingBinding ? { status: "verified" as const, method: "verified_identifier", confidence: 1,
         evidence: { verifiedEntityId: existingBinding.entityId, uei: sam.uei, cageCode: sam.cageCode } }
-        : decideIdentityMatch(company, { legalName: sam.legalName, dbaName: sam.dbaName, domain: sam.domain, city: sam.city, state: sam.state, uei: sam.uei, cageCode: sam.cageCode });
+        : decideIdentityMatch(company, { legalName: sam.legalName, dbaName: sam.dbaName, domain: sam.domain, city: sam.city, state: sam.state,
+          addressLine1: sam.address, postalCode: sam.postalCode, countryCode: sam.countryCode, uei: sam.uei, cageCode: sam.cageCode });
       const entityId = await saveGovernmentEntity({ uei: sam.uei, cage_code: sam.cageCode, legal_name: sam.legalName, dba_name: sam.dbaName, website: sam.website, domain: sam.domain, address_line1: sam.address, city: sam.city, state: sam.state, postal_code: sam.postalCode, country_code: sam.countryCode, registration_status: sam.registrationStatus, registration_date: sam.registrationDate, expiration_date: sam.expirationDate, entity_start_date: sam.entityStartDate, parent_uei: sam.parentUei, parent_name: sam.parentName, source: "SAM.gov", source_url: `https://sam.gov/entity/${encodeURIComponent(sam.uei ?? sam.cageCode ?? sam.legalName)}/coreData`, source_updated_at: sam.lastUpdateDate, evidence: { psc: sam.psc, businessTypes: sam.businessTypes } });
       if (existingBinding && entityId !== existingBinding.entityId) throw new Error("SAM entity storage binding changed");
       if (!existingBinding) await saveCompanyGovernmentMatch(company.id, entityId, decision);

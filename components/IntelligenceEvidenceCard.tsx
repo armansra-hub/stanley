@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import IntelligenceClassification from "./IntelligenceClassification";
 export type FeedbackReason = "useful" | "wrong_company" | "old_event" | "irrelevant" | "not_now";
 export type Observation = {
   id: string;
@@ -93,6 +94,7 @@ export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount }: {
       <span className="rounded border px-2 py-1 text-[var(--text-muted)]">{attributes ? relationshipLabel : "Not yet interpreted"}</span>
       {attributes && typeof attributes.requiresResearch === "number" && attributes.requiresResearch >= 0.7 && <span className="rounded border px-2 py-1 text-[var(--gold)]">More context needed</span>}
     </div>
+    <IntelligenceClassification attributes={attributes} />
     <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[var(--text-muted)]">
       <div><dt className="inline">Event: </dt><dd className="inline text-[var(--text)]">{dateLabel(observation.event_date)} <span className="text-[var(--text-muted)]">· {ageLabel(observation.event_date)}</span></dd></div>
       <div><dt className="inline">Captured: </dt><dd className="inline">{dateLabel(observation.observed_at, true)}</dd></div>

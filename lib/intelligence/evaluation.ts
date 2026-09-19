@@ -7,6 +7,10 @@ export const EVIDENCE_SIGNAL_TYPES = [
 
 export type EvidenceSignalType = typeof EVIDENCE_SIGNAL_TYPES[number];
 export type CompanyRelationship = "direct" | "related" | "unrelated" | "unknown";
+export const EVIDENCE_CONTENT_CLASSES = ["actual_company_development", "evergreen_profile", "editorial_coverage", "client_work", "holiday_greeting", "promotional_content", "incidental_mention", "unknown"] as const;
+export const EVIDENCE_COMPANY_ROLES = ["subject", "publisher", "service_provider", "customer", "partner", "namesake", "unknown"] as const;
+export const EVIDENCE_CONTRACT_ACTIVITIES = ["commercial_award", "government_award", "bid_opportunity", "bid_submission", "registration", "existing_contract_delivery", "none", "unknown"] as const;
+export const EVIDENCE_OPERATING_CHANGE_TYPES = ["business_model", "service_launch", "billing_or_finance_process", "systems_change", "expansion", "contract_award", "closure_or_wind_down", "downsizing", "restructuring", "brand_transition", "other", "none", "unknown"] as const;
 
 export interface SemanticCriterion {
   id: string;
@@ -23,15 +27,22 @@ export interface EvaluateEvidenceInput {
   title?: string;
   /** Source-reported event timing, preserved as supplied; never default to collection time. */
   eventDate?: string;
+  /** How the collector obtained eventDate; publication timing is not necessarily event timing. */
+  eventDateBasis?: string;
+  /** Bounded source-reported date references, kept distinct from collection time. */
+  sourceDateContext?: string;
   /** When this source was collected, distinct from the date of its described event. */
   observedAt?: string;
   /** Caller-supplied public company background, not private CRM notes or proof of this event. */
   companyContext?: string;
+  /** Authorized business identity (including relevant NetSuite record header
+   * addresses), not CRM notes and not evidence that this development occurred. */
+  companyIdentityContext?: string;
   /** Cited public baseline passages for account-relative materiality.
    * Absent for the private-excerpt v2 contract; never private CRM size fields. */
   publicScaleContext?: string;
   /** Narrow public territory pack. Private excerpts retain their original contract. */
-  questionPack?: "business-services-v1";
+  questionPack?: "business-services-v1" | "business-services-v2";
   /** Collector-declared content boundary; a headline is never passed as a full article. */
   evidenceKind?: string;
   /** Verbatim nearby text from this same source, supplied by the caller for attribution. */
@@ -48,6 +59,11 @@ export interface EvaluateEvidenceInput {
 export interface EvidenceAttributes {
   signalType: EvidenceSignalType;
   companyRelationship: CompanyRelationship;
+  /** Native first-pass choices in business-services-v2; absent on older paid contracts. */
+  contentClass?: typeof EVIDENCE_CONTENT_CLASSES[number];
+  companyRole?: typeof EVIDENCE_COMPANY_ROLES[number];
+  contractActivity?: typeof EVIDENCE_CONTRACT_ACTIVITIES[number];
+  operatingChangeType?: typeof EVIDENCE_OPERATING_CHANGE_TYPES[number];
   /** A supplied section supporting the principal finding, or null when none was selected. */
   evidenceSectionId: string | null;
   /** Model probabilities and normalized rubric positions, not measured accuracy. */

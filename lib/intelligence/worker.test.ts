@@ -10,6 +10,20 @@ const result = { ok: true, model: "test", questionVersion: "v1", usage: null, me
 } as Extract<EvaluateEvidenceResult, { ok: true }>;
 
 describe("complete bounded evidence packets", () => {
+  it("gives new v2 packets authorized identity and publication-date provenance while keeping v1 unchanged", () => {
+    const observation = { evidence_text: "Company closes its current publication.", source_kind: "website", source_url: "https://publisher.com/news",
+      title: "Holiday message", event_date: "2026-07-04", observed_at: "2026-09-19", metadata: { eventDateBasis: "page_publication",
+        sourceDates: [{ kind: "published", value: "2026-07-04", source: "article:published_time" }], researchTopics: ["investor_reporting"] } };
+    const packet = evidencePackets(observation.evidence_text)[0];
+    const input = workerEvidenceInput(observation, { name: "Publisher", subindustry: "Publishing" }, packet, null, [], undefined, "business-services-v2", "Authorized company identity: Minneapolis, MN");
+    expect(input).toMatchObject({ questionPack: "business-services-v2", eventDateBasis: "page_publication", companyIdentityContext: "Authorized company identity: Minneapolis, MN" });
+    expect(JSON.parse(input.sourceDateContext!)).toEqual(observation.metadata.sourceDates);
+    expect(input.criteria?.slice(0, 4).map(c => c.id)).toEqual(["project_delivery", "multi_entity", "multi_location", "investor_reporting"]);
+    expect(estimateEvidenceInputTokens(input)).not.toBeNull();
+    const legacy = workerEvidenceInput(observation, { name: "Publisher" }, packet, null, [], undefined, "business-services-v1", "Never included");
+    expect(legacy.questionPack).toBe("business-services-v1");
+    expect(legacy).not.toHaveProperty("companyIdentityContext"); expect(legacy).not.toHaveProperty("eventDateBasis");
+  });
   it("supplies attributed scale context separately from the event and leaves absent scale explicit", () => {
     const observation = { evidence_text: "Acme opened an Austin facility.", source_kind: "website", source_url: "https://acme.test/news",
       title: "New facility", event_date: null, observed_at: "2026-09-18T23:00:00Z" };
@@ -38,6 +52,18 @@ describe("complete bounded evidence packets", () => {
       const input = workerEvidenceInput(observation, { name: "Acme", domain: "acme.test", subindustry: "Engineering" }, packet, null, []);
       expect(input.surroundingContext?.length).toBeGreaterThan(0);
       expect(estimateEvidenceInputTokens(input)).not.toBeNull();
+    }
+  });
+  it("retains full evidence with bounded identity, scale and source dates in the v2 request ceiling", () => {
+    const observation = { evidence_text: "Acme describes its finance process and work.\n".repeat(400), source_kind: "website", source_url: "https://acme.com/news",
+      title: "Operating update", event_date: "2026-09-18", observed_at: "2026-09-19", metadata: { eventDateBasis: "page_publication",
+        sourceDates: Array.from({ length: 12 }, () => ({ kind: "published", value: "2026-09-18T00:00:00Z", source: "article:published_time" })) } };
+    const context = { ...buildPublicScaleContext("company", []), text: "Public source baseline. ".repeat(130) };
+    for (const packet of evidencePackets(observation.evidence_text, 6000)) {
+      const request = workerEvidenceInput(observation, { name: "Acme", subindustry: "Management Consulting" }, packet, null, [], context, "business-services-v2", "Authorized identity context. ".repeat(130));
+      expect(request.text).toBe(packet.text);
+      const sizeInfo = Object.fromEntries(Object.entries(request).map(([key, value]) => [key, Buffer.byteLength(JSON.stringify(value) ?? "")]));
+      expect(estimateEvidenceInputTokens(request), JSON.stringify(sizeInfo)).not.toBeNull();
     }
   });
   it("covers Unicode and long text exactly without split surrogate pairs", () => {

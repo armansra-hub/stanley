@@ -11,6 +11,9 @@ describe("verified federal retrieval identities", () => {
     expect(federalSearchTargets("Unrelated CRM label", [identity])).toEqual([identity.uei, identity.legalName, identity.dbaName]
       .map((query) => ({ query, identity })));
     expect(federalSearchTargets("Acme", [])).toEqual([{ query: "Acme", identity: null }]);
+    expect(federalSearchTargets("Acme Brand", [], ["Acme Legal LLC", "Acme Legal, Inc."])).toEqual([
+      { query: "Acme Brand", identity: null }, { query: "Acme Legal LLC", identity: null },
+    ]);
   });
   it("requires a matching stable identifier and rejects conflicting secondary identifiers", () => {
     expect(matchesFederalIdentifiers(identity, { uei: identity.uei.toLowerCase(), recipientId: "recipient-1" })).toBe(true);

@@ -29,6 +29,44 @@ function fixture() {
 }
 
 describe("direct Jev publication", () => {
+  const classified = (patch: Partial<typeof evaluation.attributes> = {}) => ({ ...evaluation, questionVersion: "stanley-business-services-v2", attributes: {
+    ...evaluation.attributes, signalType: "operating_change" as const, contentClass: "actual_company_development" as const,
+    companyRole: "subject" as const, contractActivity: "none" as const, operatingChangeType: "billing_or_finance_process" as const, ...patch,
+  } });
+  it("uses native first-pass classes to distinguish holiday/editorial/client coverage from actual company changes", () => {
+    for (const contentClass of ["holiday_greeting", "editorial_coverage", "client_work", "promotional_content", "incidental_mention", "evergreen_profile", "unknown"] as const) {
+      const result = classified({ contentClass });
+      expect(jevPublicationRoute(result, observation.event_date, now)).toEqual({ type: null, reason: `content_${contentClass}` });
+      expect(result.attributes.contentClass).toBe(contentClass);
+    }
+    for (const companyRole of ["publisher", "namesake", "unknown"] as const)
+      expect(jevPublicationRoute(classified({ companyRole }), observation.event_date, now).reason).toBe(`company_role_${companyRole}`);
+    expect(jevSignalType(classified(), observation.event_date, now)).toBe("operating_change");
+    expect(jevSignalType(classified({ signalType: "erp_tech", companyRole: "customer", operatingChangeType: "systems_change" }), observation.event_date, now)).toBe("erp_tech");
+    // Real mixed-content source: the holiday headline does not erase an explicit closure.
+    expect(jevSignalType(classified({ operatingChangeType: "closure_or_wind_down" }), observation.event_date, now)).toBe("operating_change");
+  });
+  it("routes own commercial awards but not bids, registrations or unverified government identity", () => {
+    const award = classified({ signalType: "news", companyRole: "service_provider", contractActivity: "commercial_award", operatingChangeType: "contract_award" });
+    expect(jevSignalType(award, observation.event_date, now)).toBe("operating_change");
+    for (const contractActivity of ["bid_opportunity", "bid_submission", "registration", "existing_contract_delivery", "unknown", "none"] as const)
+      expect(jevPublicationRoute(classified({ contractActivity, operatingChangeType: "contract_award" }), observation.event_date, now).reason).toBe("contract_award_not_established");
+    expect(jevPublicationRoute(classified({ contractActivity: "government_award", operatingChangeType: "contract_award" }), observation.event_date, now).reason).toBe("government_publisher_required");
+    // Older paid contracts have no new native fields and retain their original routing.
+    expect(jevSignalType({ ...evaluation, questionVersion: "stanley-business-services-v1" }, observation.event_date, now)).toBe("press");
+  });
+  it("persists exact native content, role, contract and direction choices alongside their distributions", async () => {
+    const deps = fixture(); const request = input(); request.evaluation = classified({ operatingChangeType: "closure_or_wind_down" });
+    request.observation.title = "July 4, 1776 through July 4, 2026";
+    request.evaluation.metadata = { provider: "typesafe-direct", rawAnswers: {
+      contentClass: { type: "choice", choice: "actual_company_development", probabilities: { actual_company_development: .83, holiday_greeting: .17 }, confidence: .57 },
+      companyRole: { type: "choice", choice: "subject" }, contractActivity: { type: "choice", choice: "none" },
+      operatingChangeType: { type: "choice", choice: "closure_or_wind_down" },
+    } };
+    expect((await publishJevFinding(request, deps)).status).toBe("published");
+    expect(deps.getSaved().metadata.jevFinding.attributes).toEqual(request.evaluation.attributes);
+    expect(deps.getSaved().metadata.jevFinding.rawAnswers).toEqual(request.evaluation.metadata.rawAnswers);
+  });
   it("keeps one event card across reports without changing the original source or Jev answers", async () => {
     const deps = fixture();
     const event = { id: "event1", company_id: company.id, event_type: "press", title: observation.title,

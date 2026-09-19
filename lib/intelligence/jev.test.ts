@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION,
+  evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION,
   MAX_EVIDENCE_STATE_BYTES, MAX_COMPANY_CONTEXT_BYTES, MAX_SURROUNDING_CONTEXT_BYTES, MAX_RAW_ANSWERS_BYTES, type JevEvaluationRequest,
   hasPrivateExcerptAuthorization, TYPESAFE_EVALUATION_URL,
 } from "./jev";
@@ -39,6 +39,39 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("Jev evidence adapter", () => {
+  it("classifies the selected company development, role, contract stage and direction in one native v2 request", async () => {
+    const native = response();
+    Object.assign(native.answers, {
+      contentClass: { type: "choice", choice: "actual_company_development", probabilities: { actual_company_development: .88, holiday_greeting: .12 }, confidence: .61 },
+      companyRole: { type: "choice", choice: "subject" }, contractActivity: { type: "choice", choice: "none" },
+      operatingChangeType: { type: "choice", choice: "closure_or_wind_down" },
+    });
+    const evaluate = vi.fn(async (request: JevEvaluationRequest) => {
+      expect(request.questions.contentClass.instructions).toContain("not the dominant page genre");
+      expect(request.questions.contentClass.instructions).toContain("publisher's own closure");
+      expect(request.questions.companyRole.instructions).toContain("not necessarily public source evidence");
+      expect(request.questions.contractActivity.instructions).toContain("client's, publisher's, competitor's");
+      expect(request.state.companyIdentityContext).toBe("Authorized NetSuite record header: Lavender, Minneapolis, MN");
+      expect(request.state.eventDateBasis).toBe("page_publication");
+      return native;
+    });
+    const result = await evaluateEvidence({ ...input, text: "July 4, 1776 through July 4, 2026. It is now time to say goodbye. Lavender has no immediate plans to continue the publication in its current format.",
+      companyName: "Lavender Magazine", questionPack: "business-services-v2", eventDateBasis: "page_publication",
+      companyIdentityContext: "Authorized NetSuite record header: Lavender, Minneapolis, MN" }, { evaluate });
+    expect(result).toMatchObject({ ok: true, questionVersion: JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION,
+      attributes: { contentClass: "actual_company_development", companyRole: "subject", contractActivity: "none", operatingChangeType: "closure_or_wind_down" } });
+    expect(result.ok && result.metadata.rawAnswers).toEqual(native.answers);
+    expect(evaluate).toHaveBeenCalledOnce();
+  });
+  it("requires typed v2 classification answers without changing the old paid v1 contract", async () => {
+    const evaluate = vi.fn(async () => response());
+    expect(await evaluateEvidence({ ...input, questionPack: "business-services-v2" }, { evaluate })).toMatchObject({ ok: false, error: { kind: "invalid_response" } });
+    const old = await evaluateEvidence({ ...input, questionPack: "business-services-v1" }, { evaluate });
+    expect(old).toMatchObject({ ok: true, questionVersion: JEV_BUSINESS_SERVICES_QUESTION_VERSION });
+    if (old.ok) expect(old.attributes).not.toHaveProperty("contentClass");
+    expect((evaluate.mock.calls[1] as unknown as [JevEvaluationRequest])[0].questions).not.toHaveProperty("companyRole");
+    expect(estimateEvidenceInputTokens({ ...input, privacy: "private_excerpt", questionPack: "business-services-v2" })).toBeNull();
+  });
   it("gives the public business-services pack evergreen attribution and headline limits while preserving native answers", async () => {
     const evaluate = vi.fn(async (request: JevEvaluationRequest) => {
       expect(request.questions.companyRelationship.instructions).toContain("evergreen");

@@ -1,5 +1,6 @@
 "use client";
 import AccountResearchPanel from "./AccountResearchPanel";
+import IntelligenceClassification from "./IntelligenceClassification";
 import FederalAwardLifecycle from "./FederalAwardLifecycle";
 import FederalIdentityContext from "@/components/FederalIdentityContext";
 import { federalAwardLabel, type FederalCoverage, type RelatedFederalEntity } from "@/lib/publicGrowth/federalPresentation";
@@ -1513,9 +1514,9 @@ type DrawerTrigger = {
   metadata?: Record<string, unknown> | null;
 };
 
-function TriggerSourceExcerpt({ evidence }: { evidence?: TriggerSourceEvidence | null }) {
+function TriggerSourceExcerpt({ evidence, expanded = false }: { evidence?: TriggerSourceEvidence | null; expanded?: boolean }) {
   if (!evidence) return null;
-  return <details className="mt-1 text-xs text-[var(--text-muted)]" onClick={event => event.stopPropagation()}>
+  return <details open={expanded} className="mt-1 text-xs text-[var(--text-muted)]" onClick={event => event.stopPropagation()}>
     <summary className="cursor-pointer text-[var(--accent)]">Supporting source passage</summary>
     <blockquote className="mt-1 border-l-2 pl-2 whitespace-pre-wrap" style={{ borderColor: "var(--border)" }}>{evidence.excerpt}</blockquote>
     <span className="text-[10px]">Collected {new Date(evidence.observedAt).toLocaleDateString()}</span>
@@ -1859,7 +1860,8 @@ function DetailDrawer({
                       <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{fmt(t.signal_date || t.detected_at)}{t.live < t.strength * 0.5 ? " · fading" : ""}</span>
                     </div>
                     <p className="text-[var(--text-muted)]">{t.summary}</p>
-                    <TriggerSourceExcerpt evidence={readTriggerSourceEvidence(t.metadata)} />
+                    <IntelligenceClassification attributes={t.metadata?.jevFinding && typeof t.metadata.jevFinding === "object" ? (t.metadata.jevFinding as Record<string, unknown>).attributes : null} />
+                    <TriggerSourceExcerpt evidence={readTriggerSourceEvidence(t.metadata)} expanded />
                     {(t.metadata?.jevFinding || (Array.isArray(t.metadata?.jevContextFindings) && t.metadata.jevContextFindings.length > 0)) ? <details className="mt-2 text-xs"><summary className="cursor-pointer text-[var(--gold)]">Jev output attached to this trigger</summary><p className="mt-2 text-[var(--text-muted)]">Stored model judgments and supporting context; the original trigger remains attributed to its source.</p>{Array.isArray(t.metadata?.jevContextFindings) && t.metadata.jevContextFindings.map((context, index) => <TriggerSourceExcerpt key={index} evidence={readTriggerSourceEvidence({ intelligenceEvidence: context && typeof context === "object" ? (context as Record<string, unknown>).evidence : null })} />)}<pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify({ primaryFinding: t.metadata?.jevFinding ?? null, additionalContext: t.metadata?.jevContextFindings ?? [] }, null, 2)}</pre></details> : null}
                     {t.source_url && <a href={t.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{t.source_name || "source"} ↗</a>}
                   </div>

@@ -60,22 +60,36 @@ describe("worker predispatch budget handling", () => {
     expect(await runIntelligenceWorker(1)).toMatchObject({ outcomes: { invalid_request: 1 } });
     expect(mocks.reserve).toHaveBeenCalledOnce(); expect(mocks.settle).toHaveBeenCalledWith("reservation", 0);
   });
-  it.each(["stanley-evidence-v2", "stanley-public-scale-v1"])("resumes paid %s results without reinterpreting them or rereading the baseline", async (questionVersion) => {
+  it("caches one identity lookup for concurrent new jobs and checkpoints missing identity without stopping interpretation", async () => {
+    vi.stubEnv("TYPESAFE_MODEL", "invalid-model");
+    let claimed = false;
+    mocks.rpc.mockImplementation(async (name: string) => name === "company_identity_source_context"
+      ? { data: null, error: { code: "unavailable" } }
+      : { data: name === "intelligence_claim" ? claimed ? [] : (claimed = true, [1, 2].map(n => ({ id: `job-${n}`, observation_id: "obs", kind: "interpret", lease_token: `lease-${n}`, attempts: 1, result: null }))) : true, error: null });
+    expect(await runIntelligenceWorker(2)).toMatchObject({ outcomes: { invalid_request: 2 } });
+    expect(mocks.rpc.mock.calls.filter(([name]) => name === "company_identity_source_context")).toHaveLength(1);
+    const finishes = mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_finish");
+    expect(finishes).toHaveLength(2);
+    expect(finishes.every(([, args]) => args.p_result.companyIdentityContext.includes("unavailable"))).toBe(true);
+    expect(mocks.settle.mock.calls.every(([, tokens]) => tokens === 0)).toBe(true);
+  });
+  it.each(["stanley-evidence-v2", "stanley-public-scale-v1", "stanley-business-services-v1"])("resumes paid %s results without reinterpreting them or rereading the baseline", async (questionVersion) => {
     const nativeAnswer = { type: "score", score: 2 };
     const evaluation = { ok: true, questionVersion, model: "jev-1.13.0", usage: { inputTokens: 500, outputTokens: 30 },
       attributes: { companyRelationship: "direct", companyRelevance: .96, concreteEvent: .9, operationalComplexity: .5,
         signalType: "new_entity", evidenceSectionId: "s1" }, criteria: {}, metadata: { rawAnswers: { operationalComplexity: nativeAnswer } } };
     const savedContext = buildPublicScaleContext("company", []);
     const savedResult = { parts: [{ start: 0, end: (observation.evidence_text as string).length, evaluation }],
-      ...(questionVersion === "stanley-public-scale-v1" ? { publicScaleContext: savedContext } : {}) };
+      ...(questionVersion !== "stanley-evidence-v2" ? { publicScaleContext: savedContext } : {}) };
     mocks.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_claim"
       ? [{ id: "job", observation_id: "obs", kind: "interpret", lease_token: "lease", attempts: 2, result: savedResult }] : true, error: null }));
     expect(await runIntelligenceWorker(1)).toMatchObject({ outcomes: { complete: 1 } });
     expect(mocks.reserve).not.toHaveBeenCalled(); expect(mocks.settle).not.toHaveBeenCalled();
     expect(mocks.from.mock.calls.filter(([table]) => table === "intelligence_observations")).toHaveLength(1);
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "company_identity_source_context")).toBe(false);
     const completed = mocks.rpc.mock.calls.find(([name]) => name === "intelligence_finish")![1];
     expect(completed.p_result.parts).toEqual(savedResult.parts);
     expect(completed.p_attributes.rawAnswers.operationalComplexity).toEqual(nativeAnswer);
-    expect(completed.p_result.publicScaleContext).toEqual(questionVersion === "stanley-public-scale-v1" ? savedContext : undefined);
+    expect(completed.p_result.publicScaleContext).toEqual(questionVersion !== "stanley-evidence-v2" ? savedContext : undefined);
   });
 });

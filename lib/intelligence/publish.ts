@@ -28,10 +28,21 @@ export type JevPublicationReceipt = { status: "published" | "already_published" 
 /** Existing feed-routing rules; these do not alter Jev output or add a second opinion. */
 export function jevPublicationRoute(result: Evaluation, eventDate: string | null, now = Date.now()): { type: string | null; reason: string } {
   const a = result.attributes;
+  const classified = result.questionVersion === "stanley-business-services-v2";
+  if (classified) {
+    // These are Jev's choices from the original evidence request, not another
+    // interpretation or a headline/keyword filter. Old paid contracts are unchanged.
+    if (a.contractActivity === "government_award") return { type: null, reason: "government_publisher_required" };
+    if (a.contentClass !== "actual_company_development") return { type: null, reason: `content_${a.contentClass ?? "unknown"}` };
+    if (!["subject", "service_provider", "customer", "partner"].includes(a.companyRole ?? "unknown"))
+      return { type: null, reason: `company_role_${a.companyRole ?? "unknown"}` };
+    if (a.operatingChangeType === "contract_award" && a.contractActivity !== "commercial_award")
+      return { type: null, reason: "contract_award_not_established" };
+  }
   const allowed = new Set(["funding", "ma", "new_entity", "finance_hire", "press", "operating_change", "erp_tech", "hiring_velocity", "employee_growth"]);
   const relevantChange = ["systems_project", "finance_leadership", "close_reporting", "financial_controls", "cash_working_capital", "investor_reporting", "project_financials", "unbilled_work"].some(id => (result.criteria[id] ?? 0) >= .8);
   // Keep Jev's news label intact; this only selects an existing worklist category.
-  const type = a.signalType === "news" && relevantChange ? "operating_change" : a.signalType;
+  const type = a.signalType === "news" && (relevantChange || (classified && a.contractActivity === "commercial_award")) ? "operating_change" : a.signalType;
   if (!allowed.has(type)) return { type: null, reason: "operating_context_only" };
   if (a.companyRelationship !== "direct") return { type: null, reason: "not_direct_company" };
   if (a.companyRelevance < .8) return { type: null, reason: "company_relevance" };
@@ -58,6 +69,10 @@ function findingReceipt(input: { observation: JevPublicationObservation; evaluat
     || SCORES.some((key) => !Number.isFinite(evaluation.attributes[key]) || evaluation.attributes[key] < 0 || evaluation.attributes[key] > 1)) throw new Error("Invalid Jev publication result");
   const attributes = { signalType: evaluation.attributes.signalType, companyRelationship: evaluation.attributes.companyRelationship,
     evidenceSectionId: evaluation.attributes.evidenceSectionId,
+    ...(evaluation.attributes.contentClass !== undefined ? { contentClass: evaluation.attributes.contentClass } : {}),
+    ...(evaluation.attributes.companyRole !== undefined ? { companyRole: evaluation.attributes.companyRole } : {}),
+    ...(evaluation.attributes.contractActivity !== undefined ? { contractActivity: evaluation.attributes.contractActivity } : {}),
+    ...(evaluation.attributes.operatingChangeType !== undefined ? { operatingChangeType: evaluation.attributes.operatingChangeType } : {}),
     ...Object.fromEntries(SCORES.map((key) => [key, evaluation.attributes[key]])) } as EvidenceAttributes;
   if (attributes.evidenceSectionId !== null && (!/^[a-zA-Z0-9_-]{1,80}$/.test(attributes.evidenceSectionId))) throw new Error("Invalid Jev section identity");
   const criteria = probabilityMap(evaluation.criteria, 32);

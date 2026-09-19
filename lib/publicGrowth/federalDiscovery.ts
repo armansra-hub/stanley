@@ -1,7 +1,8 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
+import { enrichCompanyIdentity } from "@/lib/companyIdentity";
 import { fetchJson, PublicGrowthDeadlineError, requirePublicGrowthTime } from "./http";
-import { decideIdentityMatch, normalizeName } from "./identity";
+import { companyIdentityNames, decideIdentityMatch, normalizeName } from "./identity";
 import { awardUrl, compactAward, fetchAwardDetail, IDV_CODES, type FederalAwardCollection } from "./usaspending";
 import { stableHash } from "./storage";
 import { assertFrozenFederalIdentities, federalSearchTargets, loadVerifiedFederalIdentities,
@@ -146,16 +147,17 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
     if (!UUID.test(companyId) || !Number.isFinite(deadline)) fail("invalid_request");
     return await withServiceDeadline(deadline, async () => {
       requirePublicGrowthTime(deadline);
-      const company = await currentCompany(companyId);
+      const company = await enrichCompanyIdentity(await currentCompany(companyId));
+      const knownNames = companyIdentityNames(company).map(normalizeName);
       const identities = await loadVerifiedFederalIdentities(companyId);
       state = options.continuation ? parseFederalDiscoveryContinuation(options.continuation, companyId) : {
         version: 1, companyId, companyIdentity: companyIdentity(company), searchEndDate: new Date().toISOString().slice(0, 10),
-        targets: federalSearchTargets(company.name, identities), targetIndex: 0, page: 1, candidate: null, lastPageHash: null,
+        targets: federalSearchTargets(company.name, identities, company.legalNames), targetIndex: 0, page: 1, candidate: null, lastPageHash: null,
       };
       if (state.companyIdentity !== companyIdentity(company)) hold("company_identity_changed");
       assertFrozenFederalIdentities(state.targets.flatMap((target) => target.identity ? [target.identity] : []), identities);
       const target = state.targets[state.targetIndex];
-      if (!target.identity && normalizeName(target.query) !== normalizeName(company.name)) fail("invalid_unbound_query");
+      if (!target.identity && !knownNames.includes(normalizeName(target.query))) fail("invalid_unbound_query");
       stage = "award_search"; requirePublicGrowthTime(deadline);
       if (state.searchAfter === undefined && state.page >= USASPENDING_LEGACY_PAGE_BUDGET) {
         state.page = 1; state.lastPageHash = null; state.searchAfter = null;
@@ -203,12 +205,13 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
       if (!detail || typeof detail !== "object" || !detail.recipient || typeof detail.recipient !== "object") fail("invalid_award_response");
       const award = { ...compactAward(detail), sourceUrl: awardUrl(selected.id) }, recipient = award.recipient;
       if (award.generatedAwardId !== selected.id || (selected.uei && !same(selected.uei, recipient.uei))
-        || (target.identity ? !matchesFederalIdentifiers(target.identity, recipient) : normalizeName(recipient.legalName) !== normalizeName(company.name))
+        || (target.identity ? !matchesFederalIdentifiers(target.identity, recipient) : !knownNames.includes(normalizeName(recipient.legalName)))
         || !/^[A-Z0-9]{12}$/i.test(recipient.uei ?? "")
         || ![award.awardCeiling, award.currentAwardAmount, award.totalObligations].every(Number.isFinite)) fail("award_identity_mismatch");
       stage = "identity";
       const decision = target.identity ? { status: "verified", method: "verified_identifier", confidence: 1,
-        evidence: { verifiedEntityId: target.identity.entityId, matchedIdentifiers: true } } : decideIdentityMatch(company, recipient);
+        evidence: { verifiedEntityId: target.identity.entityId, matchedIdentifiers: true } }
+        : decideIdentityMatch(company, { ...recipient, addressLine1: recipient.address });
       if (decision.status !== "verified") hold("identity_not_verified");
       return serialized(deadline, async () => {
         const fresh = await currentCompany(companyId);
@@ -221,6 +224,7 @@ export async function discoverFederalCompany(companyId: string, options: { deadl
         if (!entity) {
           mayHaveWritten = true;
           const payload = { legal_name: recipient.legalName, uei: recipient.uei, usaspending_recipient_id: recipient.recipientId,
+            address_line1: recipient.address,
             city: recipient.city, state: recipient.state, postal_code: recipient.postalCode, country_code: recipient.countryCode,
             source: "usaspending", source_url: award.sourceUrl, observed_at: new Date().toISOString(),
             evidence: { discovery: true, generatedAwardId: award.generatedAwardId }, payload_hash: stableHash(recipient) };

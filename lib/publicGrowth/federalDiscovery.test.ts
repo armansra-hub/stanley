@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/companyIdentity", () => ({ enrichCompanyIdentity: async (company: any) => ({ ...company,
+  legalNames: company.legalNames ?? [], addresses: company.addresses ?? [] }) }));
 const mocks = vi.hoisted(() => ({ from: vi.fn(), search: vi.fn(), detail: vi.fn(), deadline: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: mocks.from }),
   withServiceDeadline: (deadline: number, fn: () => Promise<unknown>) => { mocks.deadline(deadline); return fn(); } }));
@@ -13,10 +15,13 @@ const ENTITY = "22222222-2222-4222-8222-222222222222";
 const OTHER = "33333333-3333-4333-8333-333333333333";
 const UEI = "ABCDEFGHIJKL";
 const company = { id: ID, name: "Acme Aerospace Inc", domain: "acme.test", website_raw: null, city: "Austin", state: "TX",
+  addresses: [{ addressLine1: "100 Main Street", city: "Austin", state: "TX", postalCode: "78701", countryCode: "US",
+    sourceKind: "netsuite_record", sourceId: "record-123", capturedAt: "2026-09-19T00:00:00Z" }],
   netsuite_internal_id: "123", lists: ["netsuite_tam"], status: "new" };
 const sourceRow = { generated_internal_id: "A1", "Award ID": "PIID1", "Recipient Name": company.name, "Recipient UEI": UEI };
 const sourceDetail = { generated_unique_award_id: "A1", piid: "PIID1", type: "D", total_obligation: 10,
-  recipient: { recipient_name: company.name, recipient_uei: UEI, recipient_hash: "recipient1", location: { city_name: "Austin", state_code: "TX" } } };
+  recipient: { recipient_name: company.name, recipient_uei: UEI, recipient_hash: "recipient1", location: {
+    address_line1: "100 Main St", city_name: "Austin", state_code: "TX", zip5: "78701", location_country_code: "USA" } } };
 let tables: Record<string, any[]>;
 let writes: Array<{ table: string; payload: any; options: any }>;
 let readHook: ((table: string, filters: Record<string, unknown>) => unknown) | undefined;
@@ -60,6 +65,26 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("bounded federal discovery", () => {
+  it("requires sourced street evidence when a fresh government recipient has no website", async () => {
+    tables.companies[0].addresses = [];
+    expect(await discoverFederalCompany(ID)).toMatchObject({ status: "ambiguous", reason: "identity_not_verified", mayHaveWritten: false });
+    expect(writes).toEqual([]);
+  });
+  it("retrieves a sourced legal alias and binds it using the account's address without leaking CRM address text", async () => {
+    tables.companies[0].name = "Acme Brand";
+    tables.companies[0].legalNames = [company.name];
+    mocks.search.mockResolvedValueOnce({ results: [], page_metadata: { hasNext: false } })
+      .mockResolvedValueOnce({ results: [sourceRow], page_metadata: { hasNext: false } });
+    const first = await discoverFederalCompany(ID);
+    expect(first).toMatchObject({ status: "in_progress", reason: "next_verified_alias" });
+    const result = await discoverFederalCompany(ID, { continuation: first.continuation });
+    expect(result.status).toBe("matched");
+    expect(JSON.parse(mocks.search.mock.calls[1][1].body).filters.recipient_search_text).toEqual([company.name]);
+    const binding = writes.find((write) => write.table === "company_government_matches");
+    expect(binding?.payload.match_method).toBe("exact_name_address");
+    expect(JSON.stringify(binding?.payload.evidence)).not.toMatch(/100 Main|78701/);
+    expect(binding?.payload.evidence.addressEvidence[0]).toMatchObject({ sourceId: "record-123", streetMatch: true });
+  });
   it("persists and sends provider cursors while retaining cross-page unbound identity checks", async () => {
     mocks.search.mockResolvedValueOnce({ results: [sourceRow], page_metadata: {
       hasNext: true, last_record_unique_id: 123, last_record_sort_value: "1693526400000",

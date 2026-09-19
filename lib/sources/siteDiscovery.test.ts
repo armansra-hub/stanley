@@ -35,4 +35,66 @@ describe("company source discovery and evidence", () => {
     expect(first.sourceDates).toEqual([{ value: "2026-09-17T00:00:00.000Z", kind: "published", source: "date" }, { value: "2026-09-18T00:00:00.000Z", kind: "time", source: "time[datetime]" }]);
     expect(second.sourceDates).toEqual([]);
   });
+
+  it("keeps the complete article, its paragraphs and an editorial closing footnote", () => {
+    const page = sitePageEvidence(`<title>A holiday message</title><header>Site menu</header><main>
+      <article class="post no-comments"><header><h1>A holiday message</h1></header>
+        <p>We celebrate the holiday\nwith our readers.</p>
+        <div><p>Our newsletter and subscription business will change.</p></div>
+        <aside><p>Editor's note: the publication will close after this issue.</p></aside>
+        <footer><p>Our final edition will be published next month.</p></footer>
+      </article></main><footer>Site copyright</footer>`, "https://publisher.com/news/final-edition");
+    expect(page.text).toBe("A holiday message\n\nWe celebrate the holiday with our readers.\n\nOur newsletter and subscription business will change.\n\nEditor's note: the publication will close after this issue.\n\nOur final edition will be published next month.");
+    expect(page.truncated).toBe(false);
+  });
+
+  it("removes structurally marked widgets without filtering the article's business language", () => {
+    const page = sitePageEvidence(`<article><p>We acquired a newsletter publisher and are closing two offices.</p>
+      <div class="related-posts"><article>Unrelated company's major acquisition.</article></div>
+      <div class="newsletter-signup"><p>Sign up for our newsletter.</p></div>
+      <div id="comments"><p>Anonymous commenter claims a contract win.</p></div>
+      <div class="cookie-consent">Accept our cookies.</div>
+      <div class="social-share">Share this post.</div>
+      <aside class="sidebar"><p>Popular stories elsewhere.</p></aside>
+      <p>Our final paragraph is part of the operating announcement.</p></article>`, "https://acme.com/news");
+    expect(page.text).toBe("We acquired a newsletter publisher and are closing two offices.\n\nOur final paragraph is part of the operating announcement.");
+  });
+
+  it("does not stop a main container at the first nested article's closing tag", () => {
+    const page = sitePageEvidence('<main><h1>Newsroom</h1><article><p>First news item.</p></article><article><p>Second news item.</p></article><p>Office closure notice at the end.</p></main>', "https://acme.com/news");
+    expect(page.text).toBe("Newsroom\n\nFirst news item.\n\nSecond news item.\n\nOffice closure notice at the end.");
+  });
+
+  it("keeps text and hashes stable when widgets or HTML formatting change", () => {
+    const first = sitePageEvidence('<main><p>Our <strong>new</strong> office\nopens soon.</p><div class="related-posts">Old unrelated story.</div></main>', "https://acme.com/news");
+    const second = sitePageEvidence('<main><p>Our <strong>new</strong> office opens soon.</p><div class="related-posts">An entirely different story.</div></main>', "https://acme.com/news");
+    expect(first.text).toBe("Our new office opens soon.");
+    expect(first.contentHash).toBe(second.contentHash);
+  });
+
+  it("accepts only addresses directly attached to named same-site organizations", () => {
+    const schema = { "@graph": [
+      { "@type": "Organization", "@id": "https://acme.com/#organization", name: "Acme Services", alternateName: "Acme", url: "https://www.acme.com", address: { "@type": "PostalAddress", streetAddress: "100 Main Street", addressLocality: "Denver", addressRegion: "CO", postalCode: "80202", addressCountry: "United States" } },
+      { "@type": "Organization", "@id": "https://acme.com/#customer", name: "Customer Incorporated", url: "https://customer.com", address: { streetAddress: "999 Customer Way" } },
+      { "@type": "LocalBusiness", name: "Different subsidiary", url: "https://acme.com/subsidiary", address: { streetAddress: "500 Subsidiary Avenue" } },
+      { "@type": "Event", name: "Industry event", location: { "@type": "Place", address: { streetAddress: "123 Convention Drive" } } },
+      { "@type": "PostalAddress", streetAddress: "Unscoped address" },
+    ] };
+    const page = sitePageEvidence(`<script type="application/ld+json">${JSON.stringify(schema)}</script><main>Our company.</main>`, "https://acme.com/about");
+    expect(page.companyIdentity).toEqual({ names: ["Acme Services", "Acme"], addresses: [{ addressLine1: "100 Main Street", city: "Denver", state: "CO", postalCode: "80202", countryCode: "US" }], sourceUrl: "https://acme.com/about" });
+    expect(page.text).toBe("Our company.");
+  });
+
+  it("supports an explicit article publisher but does not walk customers, events or arbitrary JSON", () => {
+    const publisher = { "@type": "NewsMediaOrganization", name: "Publisher", url: "https://publisher.com", address: { addressLocality: "Minneapolis", addressRegion: "MN" } };
+    const page = sitePageEvidence(`<script type="application/ld+json">${JSON.stringify({ "@type": "NewsArticle", publisher, about: { ...publisher, name: "Unrelated subject" } })}</script><article>Article body.</article>`, "https://publisher.com/story");
+    expect(page.companyIdentity?.names).toEqual(["Publisher"]);
+    for (const value of [
+      { "@type": "Organization", name: "No domain", address: { addressLocality: "Unknown" } },
+      { "@type": "Event", organizer: publisher },
+      { customers: [publisher] },
+    ]) {
+      expect(sitePageEvidence(`<script type="application/ld+json">${JSON.stringify(value)}</script>`, "https://publisher.com").companyIdentity).toBeUndefined();
+    }
+  });
 });

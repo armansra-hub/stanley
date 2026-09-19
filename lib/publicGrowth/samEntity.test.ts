@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+vi.mock("@/lib/companyIdentity", () => ({ enrichCompanyIdentity: async (company: any) => ({ ...company,
+  legalNames: company.legalNames ?? [], addresses: company.addresses ?? [] }) }));
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), from: vi.fn(), entity: vi.fn(), match: vi.fn() }));
 vi.mock("./http", async (original) => ({ ...await original<typeof import("./http")>(), fetchJson: mocks.fetch }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: mocks.from }) }));
@@ -24,6 +26,23 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("SAM source-scoped continuation", () => {
+  it("uses a sourced company address when SAM omits the website and retains only comparison evidence", async () => {
+    const candidate = row("Legal Company");
+    candidate.coreData.entityInformation.entityURL = "";
+    Object.assign(candidate.coreData.physicalAddress, { addressLine1: "100 Main St", zipCode: "78701", countryCode: "US" });
+    mocks.fetch.mockResolvedValue({ entityData: [candidate] });
+    const result = await sweepSamCompany({ ...company, addresses: [{ addressLine1: "100 Main Street", city: "Austin", state: "TX", postalCode: "78701",
+      countryCode: "US", sourceKind: "netsuite_record", sourceId: "record-123", capturedAt: "2026-09-19T00:00:00Z" }] });
+    expect(result).toMatchObject({ status: "matched", entities: 1 });
+    expect(mocks.match.mock.calls[0][2]).toMatchObject({ status: "verified", method: "exact_name_address" });
+    expect(JSON.stringify(mocks.match.mock.calls[0][2].evidence)).not.toMatch(/100 Main|78701/);
+  });
+  it("does not verify an unsupported same-name/state SAM recipient", async () => {
+    const candidate = row("Legal Company"); candidate.coreData.entityInformation.entityURL = "";
+    mocks.fetch.mockResolvedValue({ entityData: [candidate] });
+    expect(await sweepSamCompany(company)).toMatchObject({ status: "ambiguous" });
+    expect(mocks.match.mock.calls[0][2]).toMatchObject({ status: "pending", method: "exact_name_city_state" });
+  });
   it("uses the documented CAGE and zero-based page filters without following provider URLs", async () => {
     mocks.fetch.mockResolvedValue({ entityData: [row()], links: { nextLink: "https://other.test/key" } });
     const result = await searchSamEntitiesPage({ cageCode: "1AB23" }, 3);

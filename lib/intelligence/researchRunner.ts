@@ -137,7 +137,10 @@ export async function refreshAccountResearch(companyId: string, options: {
             netsuiteInternalId: loaded.company.netsuite_internal_id, sourceKind: "website", sourceUrl: page.url, title: page.title || loaded.company.name,
             text: page.text, eventDate: published ?? null, metadata: { focusedResearch: true, automaticResearch: options.automatic === true,
               researchRankingVersion: ranking.rankingVersion, businessServicesResearchVersion: BUSINESS_SERVICES_RESEARCH_VERSION,
-              researchTopics: loaded.missingTopics, sourceDates: page.sourceDates, sourceTruncated: page.truncated } });
+              researchTopics: loaded.missingTopics, sourceDates: page.sourceDates, sourceTruncated: page.truncated,
+              eventDateBasis: published ? "source_publication" : "unknown",
+              ...(page.companyIdentity && loaded.company.domain && sameCompanySite(page.url, `https://${String(loaded.company.domain).replace(/^https?:\/\//, "")}`)
+                ? { companyIdentity: page.companyIdentity } : {}) } });
           if (!result) throw new Error("observation_not_persisted");
           outcome = result.queued ? "queued" : "unchanged";
         }

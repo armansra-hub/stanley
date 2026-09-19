@@ -1,6 +1,6 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
-import { normalizeName } from "./identity";
+import { companyIdentityNames, normalizeName } from "./identity";
 
 export interface VerifiedFederalIdentity {
   entityId: string;
@@ -37,8 +37,8 @@ export async function loadVerifiedFederalIdentities(companyId: string): Promise<
   return identities;
 }
 
-export function federalSearchTargets(companyName: string, identities: VerifiedFederalIdentity[]): FederalSearchTarget[] {
-  if (!identities.length) return [{ query: companyName, identity: null }];
+export function federalSearchTargets(companyName: string, identities: VerifiedFederalIdentity[], legalNames: string[] = []): FederalSearchTarget[] {
+  if (!identities.length) return companyIdentityNames({ name: companyName, legalNames }).map((query) => ({ query, identity: null }));
   return identities.flatMap((identity) => [...new Set([identity.uei, identity.legalName, identity.dbaName].filter((v): v is string => Boolean(v)))]
     .map((query) => ({ query, identity: { ...identity } })));
 }

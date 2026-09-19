@@ -1,7 +1,8 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { recomputePriority } from "@/lib/db/triggers";
-import { decideIdentityMatch, normalizeName } from "./identity";
+import { companyIdentityNames, decideIdentityMatch, normalizeName } from "./identity";
+import { enrichCompanyIdentity } from "@/lib/companyIdentity";
 import { calculateContractMetrics, deriveContractEvents } from "./metrics";
 import { awardUrl, autocompleteRecipients, compactAward, fetchAwardDetail, fetchAwardTransactionsPage, recipientProfileUrl, searchContractAwardsPage, searchReceivedContractSubawardsPage } from "./usaspending";
 import { PublicGrowthDeadlineError, requirePublicGrowthTime } from "./http";
@@ -159,16 +160,19 @@ export async function sweepUsaspendingCompany(
 ): Promise<CompanySweepReceipt> {
   const receipt: CompanySweepReceipt = { companyId: company.id, companyName: company.name, status: "no_awards", awards: 0, transactions: 0, triggers: 0 };
   try {
+    let enrichedIdentity = false;
     let state = options.awardContinuation ? structuredClone(options.awardContinuation) : null;
     if (state) Object.assign(state, usaspendingCursorField(state));
     let currentSearchPage: Awaited<ReturnType<typeof searchContractAwardsPage>> | null = null;
     if (!state) {
       const identities = await loadVerifiedFederalIdentities(company.id);
-      let targets = federalSearchTargets(company.name, identities);
+      if (!identities.length) { company = await enrichCompanyIdentity(company); enrichedIdentity = true; }
+      let targets = federalSearchTargets(company.name, identities, company.legalNames);
       if (!identities.length) {
         const suggestions = await observePrimeRequest("recipient_autocomplete", () => autocompleteRecipients(company.name, 1, options.deadlineMs));
-        const names = [...new Set([company.name, ...suggestions.map((x) => x.recipient_name)
-          .filter((name) => normalizeName(name) === normalizeName(company.name))])];
+        const companyNames = companyIdentityNames(company);
+        const names = [...new Set([...companyNames, ...suggestions.map((x) => x.recipient_name)
+          .filter((name) => companyNames.some((known) => normalizeName(name) === normalizeName(known)))])];
         if (names.length > 300) throw new Error("recipient alias set exceeds supported continuation bound");
         targets = names.map((query) => ({ query, identity: null }));
       }
@@ -288,9 +292,11 @@ export async function sweepUsaspendingCompany(
       state.pendingAwardId = null; state.seenTransactionIds = [];
       receipt.status = "ambiguous"; receipt.awardDone = false; receipt.awardContinuation = state; return receipt;
     }
+    if (!target?.identity && !enrichedIdentity) company = await enrichCompanyIdentity(company);
     const decision = target?.identity ? { status: "verified" as const, method: "verified_identifier", confidence: 1,
       evidence: { verifiedEntityId: target.identity.entityId, matchedIdentifiers: true } }
-      : decideIdentityMatch(company, { legalName: seed.recipient.legalName, city: seed.recipient.city, state: seed.recipient.state, uei: seed.recipient.uei });
+      : decideIdentityMatch(company, { legalName: seed.recipient.legalName, city: seed.recipient.city, state: seed.recipient.state,
+        addressLine1: seed.recipient.address, postalCode: seed.recipient.postalCode, countryCode: seed.recipient.countryCode, uei: seed.recipient.uei });
     const entityId = target?.identity?.entityId ?? await saveGovernmentEntity({
       uei: seed.recipient.uei, usaspending_recipient_id: seed.recipient.recipientId, legal_name: seed.recipient.legalName,
       city: seed.recipient.city, state: seed.recipient.state, postal_code: seed.recipient.postalCode, country_code: seed.recipient.countryCode,

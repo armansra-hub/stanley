@@ -1,6 +1,7 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { evaluateEvidence, estimateEvidenceInputTokens, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION } from "./jev";
+import { evaluateEvidence, estimateEvidenceInputTokens, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION } from "./jev";
+import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
 import { publishJevFinding, jevSignalType, type JevPublicationReceipt } from "./publish";
 import type { EvaluateEvidenceInput, EvaluateEvidenceResult } from "./evaluation";
 import { intelligenceEnabled, INTELLIGENCE_VERSION } from "./observations";
@@ -16,7 +17,7 @@ type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 export type PartResult = { start: number; end: number; evaluation: Evaluation };
 type PacketPublication = { start: number; end: number; questionVersion: string; attemptedAt: string; outcome: JevPublicationReceipt };
 type Job = { id: string; observation_id: string; view_id: string | null; kind: "interpret" | "view"; lease_token: string; attempts: number;
-  result: { parts?: PartResult[]; publications?: PacketPublication[]; publicScaleContext?: PublicScaleContext; routingBackfill?: string } | null };
+  result: { parts?: PartResult[]; publications?: PacketPublication[]; publicScaleContext?: PublicScaleContext; companyIdentityContext?: string; routingBackfill?: string } | null };
 type Observation = { id: string; company_id: string; source_kind: string; source_url: string; title: string; evidence_text: string;
   event_date: string | null; observed_at: string; is_current: boolean; feedback_excluded?: boolean; metadata: Record<string, unknown> };
 
@@ -48,8 +49,15 @@ export function workerEvidenceInput(
   packet: { start: number; end: number; text: string }, question: string | null,
   feedback: EvaluateEvidenceInput["feedbackExamples"],
   publicScaleContext?: PublicScaleContext,
-  businessServices = true,
+  businessServices: boolean | "business-services-v1" | "business-services-v2" = "business-services-v2",
+  companyIdentityContext?: string,
 ): EvaluateEvidenceInput {
+  const questionPack = businessServices === true ? "business-services-v2" : businessServices || undefined;
+  const sourceDates = (Array.isArray(observation.metadata?.sourceDates) ? observation.metadata.sourceDates : [])
+    .filter((value): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value))
+    .slice(0, 12).map(value => Object.fromEntries(["kind", "value", "source"].flatMap(key =>
+      typeof value[key] === "string" && Buffer.byteLength(value[key], "utf8") <= 160 ? [[key, value[key]]] : [])));
+  while (Buffer.byteLength(JSON.stringify(sourceDates), "utf8") > 1600) sourceDates.pop();
   const surroundingContext = [
     packet.start > 0 ? `Source introduction: ${evidencePackets(observation.evidence_text, 800)[0]?.text ?? ""}` : "",
     packet.start > 0 ? `Immediately before this packet: ${evidencePackets(observation.evidence_text.slice(Math.max(0, packet.start - 200), packet.start), 800)[0]?.text ?? ""}` : "",
@@ -65,7 +73,12 @@ export function workerEvidenceInput(
     ...(publicScaleContext ? { publicScaleContext: publicScaleContext.text } : {}),
     ...(surroundingContext ? { surroundingContext } : {}),
     sections: evidencePackets(packet.text, 1200).map(({ text }, i) => ({ id: `s${i + 1}`, text })),
-    ...(businessServices ? { questionPack: "business-services-v1" as const } : {}),
+    ...(questionPack ? { questionPack } : {}),
+    ...(questionPack === "business-services-v2" ? {
+      ...(companyIdentityContext ? { companyIdentityContext } : {}),
+      eventDateBasis: typeof observation.metadata?.eventDateBasis === "string" && Buffer.byteLength(observation.metadata.eventDateBasis, "utf8") <= 128 ? observation.metadata.eventDateBasis : "unknown",
+      ...(sourceDates.length ? { sourceDateContext: JSON.stringify(sourceDates) } : {}),
+    } : {}),
     ...(typeof observation.metadata?.evidenceKind === "string" ? { evidenceKind: observation.metadata.evidenceKind } : {}),
     criteria: question ? [{ id: "view_match", instructions: question }] : businessServices ? operatingCriteria(company.subindustry ?? null, observation.source_kind, observation.metadata?.researchTopics) : OPERATING_CRITERIA,
     feedbackExamples: feedback, privacy: "public",
@@ -105,14 +118,14 @@ async function finish(job: Job, status: string, result: unknown, extra: Record<s
   if (error || data !== true) throw new Error("Intelligence lease completion was not confirmed");
 }
 
-async function runJob(job: Job, deadline: number, publicContexts: Map<string, Promise<PublicContextObservation[]>>): Promise<string> {
+async function runJob(job: Job, deadline: number, publicContexts: Map<string, Promise<PublicContextObservation[]>>, identityContexts: Map<string, Promise<string>>): Promise<string> {
   const db = serviceClient();
   const { data: raw, error } = await db.from("intelligence_observations").select("*").eq("id", job.observation_id).single();
   if (error || !raw) throw new Error("Observation unavailable");
   const observation = raw as Observation;
   if (!observation.is_current || observation.feedback_excluded) { await finish(job, "superseded", {}); return "superseded"; }
   const { data: company, error: companyError } = await db.from("companies")
-    .select("id,name,domain,netsuite_internal_id,status,record_dead,description,subindustry,ns_industry")
+    .select("id,name,domain,website_raw,city,state,netsuite_internal_id,status,record_dead,description,subindustry,ns_industry")
     .eq("id", observation.company_id).single();
   if (companyError) throw new Error("Account unavailable");
   if (!company || company.status === "removed_from_tam") { await finish(job, "superseded", {}); return "superseded"; }
@@ -124,12 +137,12 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     question = view.question;
   }
   const feedback = await loadFeedbackExamples(observation.company_id);
-  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION].includes(part.evaluation.questionVersion));
+  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION].includes(part.evaluation.questionVersion));
   // Preserve already-paid v2 work under its original contract. New jobs receive
   // public baseline context; no completed Jev finding is reviewed again.
-  const contract = priorParts[0]?.evaluation.questionVersion ?? JEV_BUSINESS_SERVICES_QUESTION_VERSION;
+  const contract = priorParts[0]?.evaluation.questionVersion ?? JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION;
   const usePublicScale = contract !== JEV_QUESTION_VERSION;
-  const businessServices = contract === JEV_BUSINESS_SERVICES_QUESTION_VERSION;
+  const businessServices = contract === JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION ? "business-services-v2" : contract === JEV_BUSINESS_SERVICES_QUESTION_VERSION ? "business-services-v1" : false;
   const parts = priorParts.filter(part => part.evaluation.questionVersion === contract);
   const publications = job.result?.publications ?? [];
   let publicScaleContext: PublicScaleContext | undefined;
@@ -141,7 +154,20 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       publicScaleContext = buildPublicScaleContext(observation.company_id, await publicContexts.get(observation.company_id)!, observation.id);
     }
   }
+  let companyIdentityContext: string | undefined;
+  if (businessServices === "business-services-v2") {
+    companyIdentityContext = job.result?.companyIdentityContext;
+    if (!companyIdentityContext) {
+      if (!identityContexts.has(observation.company_id)) identityContexts.set(observation.company_id,
+        loadCompanyIdentityContext(company).then(identity => {
+          if (!identity.context?.trim() || Buffer.byteLength(identity.context, "utf8") > 4000) throw new Error("Identity context unavailable");
+          return identity.context;
+        }).catch(() => "Authorized business identity context unavailable; do not assume addresses, aliases or other missing identity facts."));
+      companyIdentityContext = await identityContexts.get(observation.company_id)!;
+    }
+  }
   const checkpoint = () => ({ parts, publications, ...(publicScaleContext ? { publicScaleContext } : {}),
+    ...(companyIdentityContext ? { companyIdentityContext } : {}),
     ...(job.result?.routingBackfill ? { routingBackfill: job.result.routingBackfill } : {}) });
   const persistCheckpoint = async () => {
     const { data: saved, error: saveError } = await db.from("intelligence_jobs").update({ result: checkpoint() })
@@ -159,7 +185,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       await finish(job, "queued", checkpoint(), { p_error: "continuation", p_retry_seconds: 30 });
       return "continued";
     }
-    const input = workerEvidenceInput(observation, company, packet, question, feedback, publicScaleContext, businessServices);
+    const input = workerEvidenceInput(observation, company, packet, question, feedback, publicScaleContext, businessServices, companyIdentityContext);
     if (estimateEvidenceInputTokens(input) === null) {
       await finish(job, "failed", checkpoint(), { p_error: "invalid_input" });
       return "invalid_input";
@@ -248,6 +274,7 @@ export async function runIntelligenceWorker(limit = 96, deadlineMs = Date.now() 
     }
     const outcomes: Record<string, number> = {};
     const publicContexts = new Map<string, Promise<PublicContextObservation[]>>();
+    const identityContexts = new Map<string, Promise<string>>();
     let processed = 0;
     // Capacity follows the time budget. Claim at most three immediately runnable
     // jobs at once, but keep consuming while there is capacity for fresh evidence.
@@ -260,7 +287,7 @@ export async function runIntelligenceWorker(limit = 96, deadlineMs = Date.now() 
       if (!jobs.length) break;
       await Promise.all(jobs.map(async (job) => {
         let outcome: string;
-        try { outcome = await runJob(job, deadlineMs, publicContexts); }
+        try { outcome = await runJob(job, deadlineMs, publicContexts, identityContexts); }
         catch {
           // Uncertain work remains leased for recovery; never fake a completed receipt.
           outcome = "checkpoint_or_service_error";

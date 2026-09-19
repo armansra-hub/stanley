@@ -96,6 +96,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
                 sourceKind: "website", sourceUrl: page.url, title: page.title || `${c.name} company website`,
                 text: page.text, eventDate: published.length === 1 ? published[0] : null,
                 metadata: { sourceDates: page.sourceDates, meaningfulContentHash: page.contentHash, textTruncated: page.truncated,
+                  ...(page.companyIdentity ? { companyIdentity: page.companyIdentity } : {}),
                   eventDateBasis: published.length === 1 ? "page_publication" : "unknown", collectionMode: baseline ? "baseline" : "deep" },
               });
               if (!stored) captureFailed = true;
