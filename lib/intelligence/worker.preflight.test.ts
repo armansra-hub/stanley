@@ -4,7 +4,7 @@ vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc
 vi.mock("./observations", () => ({ intelligenceEnabled: () => true, INTELLIGENCE_VERSION: "test" }));
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("./budget", () => ({ reserveJev: mocks.reserve, settleJev: mocks.settle, secondsUntilNextMonth: () => 60 }));
-vi.mock("./publish", () => ({ publishJevFinding: vi.fn(), jevSignalType: vi.fn() }));
+vi.mock("./publish", () => ({ publishJevFinding: vi.fn(async () => ({ status: "not_eligible", reason: "unknown_event_date" })), jevSignalType: vi.fn() }));
 vi.mock("./events", () => ({ attachObservationEvent: async () => null, bindEventTrigger: vi.fn() }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => true }));
 import { runIntelligenceWorker } from "./worker";
@@ -20,10 +20,10 @@ beforeEach(() => {
     ? claimed ? [] : (claimed = true, [{ id: "job", observation_id: "obs", view_id: null, kind: "interpret", lease_token: "lease", attempts: 1, result: null }]) : true, error: null }));
   mocks.from.mockImplementation((table: string) => {
     const query: any = {};
-    for (const method of ["select", "eq", "limit"]) query[method] = () => query;
+    for (const method of ["select", "eq", "gt", "limit", "update"]) query[method] = () => query;
     const result = () => ({ data: table === "intelligence_config" ? { enabled: true } : table === "intelligence_views" ? []
       : table === "intelligence_observations" ? observation : { name: "Acme", domain: "acme.test" }, error: null });
-    query.single = async () => result(); query.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve);
+    query.single = query.maybeSingle = async () => result(); query.then = (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve);
     return query;
   });
   mocks.reserve.mockResolvedValue("reservation"); mocks.settle.mockResolvedValue(undefined);

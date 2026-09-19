@@ -1,4 +1,5 @@
 "use client";
+import AccountResearchPanel from "./AccountResearchPanel";
 import FederalAwardLifecycle from "./FederalAwardLifecycle";
 import FederalIdentityContext from "@/components/FederalIdentityContext";
 import { federalAwardLabel, type FederalCoverage, type RelatedFederalEntity } from "@/lib/publicGrowth/federalPresentation";
@@ -1155,7 +1156,7 @@ export default function Dashboard({
       </div>
       )}
 
-      {drawer && <DetailDrawer company={drawer} onClose={() => setDrawerId(null)} onSaveNote={saveNote} onRate={rateCompany}
+      {drawer && <DetailDrawer key={drawer.id} company={drawer} onClose={() => setDrawerId(null)} onSaveNote={saveNote} onRate={rateCompany}
         onStar={(id, v) => toggleStar(id, v)}
         onStatus={(id, status) => { void changeStatus([id], status).then((saved) => { if (saved) setDrawerId(null); }); }} />}
       {sqlModal && <SqlModal text={sqlModal} onClose={() => setSqlModal(null)} />}
@@ -1579,6 +1580,8 @@ function DetailDrawer({
   onStar: (id: string, value: boolean) => void;
   onStatus: (id: string, status: "new" | "reviewed" | "dismissed") => void;
 }) {
+  const [researchFrames, setResearchFrames] = useState<Array<{ id: string; name: string }>>([]);
+  const noteEdited = useRef(false), ratingEdited = useRef(false);
   const [note, setNote] = useState(company.notes ?? "");
   const [ratingComment, setRatingComment] = useState(company.rating_comment ?? "");
   // Pull the FULL record (every signal + every trigger across the DB) on open — the row
@@ -1590,7 +1593,7 @@ function DetailDrawer({
     setLoading(true); setDetail(null);
     fetch("/api/headhunter/lead", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: company.id }) })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (live && d?.company) { setDetail(d); setNote(d.company.notes ?? ""); setRatingComment(d.company.rating_comment ?? ""); } })
+      .then((d) => { if (live && d?.company) { setDetail(d); if (!noteEdited.current) setNote(d.company.notes ?? ""); if (!ratingEdited.current) setRatingComment(d.company.rating_comment ?? ""); } })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [company.id]);
@@ -1627,7 +1630,7 @@ function DetailDrawer({
 
   return (
     <div className="fixed inset-0 z-20 flex justify-end bg-black/40" onClick={onClose}>
-      <div className="h-full w-[460px] overflow-y-auto border-l bg-[var(--surface)] p-5" style={{ borderColor: "var(--border)" }} onClick={(e) => e.stopPropagation()}>
+      <div hidden={researchFrames.length > 0} className="h-full w-[460px] max-w-full overflow-y-auto border-l bg-[var(--surface)] p-5" style={{ borderColor: "var(--border)" }} onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -1639,6 +1642,8 @@ function DetailDrawer({
           </div>
           <button onClick={onClose} className="text-[var(--text-muted)]">✕</button>
         </div>
+
+        <button type="button" className="mb-4 w-full rounded-md border border-[var(--gold)] px-3 py-2 text-sm text-[var(--gold)] hover:bg-[var(--surface-2)]" onClick={() => setResearchFrames([{ id: c.id, name: c.name }])}>Account intelligence →</button>
 
         {publicGrowth && (publicGrowth.federalCoverage || publicGrowth.entities.length > 0 || publicGrowth.awards.length > 0 || publicGrowth.naicsSize.length > 0 || publicGrowth.headcount.length > 0 || publicGrowth.revenue.length > 0 || publicGrowth.opportunities.length > 0) && (
           <div className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "rgba(110,168,230,0.45)", background: "rgba(110,168,230,0.05)" }}>
@@ -1730,7 +1735,6 @@ function DetailDrawer({
         )}
         {/* Quick actions — act on the lead without closing the drawer + hunting the row. */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <Link href={`/headhunter/intelligence?companyId=${encodeURIComponent(c.id)}`} className="rounded-md border px-2.5 py-1 text-xs text-[var(--gold)] hover:bg-[var(--surface-2)]">Account intelligence →</Link>
           <button onClick={() => onStar(c.id, !c.starred)} className="rounded-md border px-2.5 py-1 text-xs" style={{ borderColor: "var(--border)", color: c.starred ? "var(--tier-b)" : "var(--text-muted)" }}>
             {c.starred ? "★ Starred" : "☆ Star"}
           </button>
@@ -1814,7 +1818,7 @@ function DetailDrawer({
           </div>
           <textarea
             value={ratingComment}
-            onChange={(e) => setRatingComment(e.target.value)}
+            onChange={(e) => { ratingEdited.current = true; setRatingComment(e.target.value); }}
             onBlur={() => { if (c.rating != null) onRate(c.id, c.rating, ratingComment || null); }}
             placeholder="Why? (optional — helps the bot learn what's working)"
             className="mt-2 h-14 w-full rounded-md border bg-[var(--surface)] p-2 text-xs outline-none"
@@ -1841,6 +1845,7 @@ function DetailDrawer({
                     </div>
                     <p className="text-[var(--text-muted)]">{t.summary}</p>
                     <TriggerSourceExcerpt evidence={readTriggerSourceEvidence(t.metadata)} />
+                    {(t.metadata?.jevFinding || (Array.isArray(t.metadata?.jevContextFindings) && t.metadata.jevContextFindings.length > 0)) ? <details className="mt-2 text-xs"><summary className="cursor-pointer text-[var(--gold)]">Jev output attached to this trigger</summary><p className="mt-2 text-[var(--text-muted)]">Stored model judgments and supporting context; the original trigger remains attributed to its source.</p>{Array.isArray(t.metadata?.jevContextFindings) && t.metadata.jevContextFindings.map((context, index) => <TriggerSourceExcerpt key={index} evidence={readTriggerSourceEvidence({ intelligenceEvidence: context && typeof context === "object" ? (context as Record<string, unknown>).evidence : null })} />)}<pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify({ primaryFinding: t.metadata?.jevFinding ?? null, additionalContext: t.metadata?.jevContextFindings ?? [] }, null, 2)}</pre></details> : null}
                     {t.source_url && <a href={t.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[var(--accent)] hover:underline">{t.source_name || "source"} ↗</a>}
                   </div>
                 )} />
@@ -1849,7 +1854,7 @@ function DetailDrawer({
           ))}
           {federalAwardCount > 0 && (
             <p className="text-xs text-[var(--text-muted)]">
-              + {federalAwardCount} federal award signal{federalAwardCount === 1 ? "" : "s"} — itemised with sources under <strong>Federal activity</strong> below.
+              + {federalAwardCount} federal award signal{federalAwardCount === 1 ? "" : "s"} — itemised with sources under <strong>Public growth intelligence</strong> above.
             </p>
           )}
         </div>
@@ -1912,13 +1917,26 @@ function DetailDrawer({
         <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Notes</h3>
         <textarea
           value={note}
-          onChange={(e) => setNote(e.target.value)}
+          onChange={(e) => { noteEdited.current = true; setNote(e.target.value); }}
           onBlur={() => onSaveNote(c.id, note)}
           placeholder="Add a note (saved on blur)…"
           className="h-20 w-full rounded-md border bg-[var(--surface-2)] p-2 text-sm outline-none"
           style={{ borderColor: "var(--border)" }}
         />
       </div>
+      {researchFrames.map((frame, index) => <div key={index + ":" + frame.id} hidden={index !== researchFrames.length - 1}
+        className="h-full w-[860px] max-w-full overflow-y-auto border-l bg-[var(--surface)] p-5" style={{ borderColor: "var(--border)" }} onClick={event => event.stopPropagation()}>
+        <header className="sticky top-0 z-10 mb-4 border-b bg-[var(--surface)] pb-3">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <button type="button" className="text-sm text-[var(--gold)] hover:underline" onClick={() => setResearchFrames(previous => previous.slice(0, -1))}>{index ? "← Back to " + researchFrames[index - 1].name : "← Back to lead record"}</button>
+            <button type="button" aria-label="Close lead record" onClick={onClose} className="text-[var(--text-muted)]">✕</button>
+          </div>
+          <h2 className="text-xl font-semibold">{frame.name}</h2><p className="mt-1 text-xs text-[var(--text-muted)]">Account intelligence</p>
+        </header>
+        <AccountResearchPanel companyId={frame.id} active={index === researchFrames.length - 1} onOpenAccount={(id, name) => {
+          if (id !== frame.id) setResearchFrames(previous => [...previous, { id, name }]);
+        }} />
+      </div>)}
     </div>
   );
 }

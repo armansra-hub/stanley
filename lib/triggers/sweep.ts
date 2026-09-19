@@ -2,7 +2,7 @@ import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate, headlineCandidateSeen } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
-import { fetchNewsForCompany, fetchNewsItems } from "@/lib/sources/googleNews";
+import { fetchNewsForCompany, fetchNewsForCompanyResult, fetchNewsItems, type NewsItem } from "@/lib/sources/googleNews";
 import { claimClassifierCall } from "@/lib/db/settings";
 import { classifyEventLLM, HEADLINE_CLASSIFIER_BATCH_BUDGET_MS } from "@/lib/triggers/classify";
 import { classifyHeadline } from "@/lib/triggers/config";
@@ -12,8 +12,7 @@ import { parseDateLoose } from "@/lib/time";
 import { createHash } from "node:crypto";
 import { enqueueObservation, intelligenceEnabled } from "@/lib/intelligence/observations";
 import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
-import { fetchPublicHttpText, validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
-import { sitePageEvidence } from "@/lib/sources/siteDiscovery";
+import { readNewsEvidence } from "@/lib/sources/newsEvidence";
 import {
   isCareerEvidenceUrl,
   isFinanceHireEligible,
@@ -188,7 +187,7 @@ const PE_RE = /\b(private equity|pe firm|portfolio company|portfolio of|backed b
  * newsroom RSS (requireNameMatch=false — it's already their feed). Returns true if a
  * NEW trigger landed. opts.llm = use the Opus verifier (budget-gated) on claimable. */
 type NewsCompany = { id: string; name: string; domain?: string | null; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence;
-type HeadlineItem = { raw_excerpt: string; source_url: string; signal_date: string | null; source_name: string };
+type HeadlineItem = NewsItem;
 type HeadlineOptions = { llm?: boolean; requireNameMatch?: boolean; classifierDeadlineMs?: number; captureIntelligence?: boolean };
 
 function headlineKey(item: HeadlineItem): string {
@@ -196,23 +195,16 @@ function headlineKey(item: HeadlineItem): string {
 }
 
 /** Article text is fetched through the same DNS-pinned transport as final review. */
-async function observeHeadline(company: NewsCompany, item: HeadlineItem): Promise<void> {
-  const source = validatePublicHttpUrl(item.source_url);
-  if (source.pathname.replace(/\/+$/, "").length < 2) throw new Error("Article evidence unavailable");
-  const response = await fetchPublicHttpText(source.toString(), { timeoutMs: 4000, maxRedirects: 6, maxBytes: 1_000_000 });
-  const finalUrl = validatePublicHttpUrl(response.finalUrl);
-  if (response.status < 200 || response.status >= 300 || finalUrl.pathname.replace(/\/+$/, "").length < 2) throw new Error("Article evidence unavailable");
-  const evidence = sitePageEvidence(response.body, response.finalUrl);
-  // A Google consent/article gateway is not publisher body text. Preserve the
-  // item for retry while the existing RSS/headline candidate path can continue.
-  if (evidence.text.length < 160 || /(?:^|\.)(?:google\.com|googleusercontent\.com)$/i.test(finalUrl.hostname)) throw new Error("Article body unavailable");
+async function observeHeadline(company: NewsCompany, item: HeadlineItem) {
+  const evidence = await readNewsEvidence(item);
   const stored = await enqueueObservation({
     companyId: company.id, companyName: company.name, companyDomain: company.domain,
-    netsuiteInternalId: company.netsuite_internal_id, sourceKind: "news", sourceUrl: response.finalUrl,
+    netsuiteInternalId: company.netsuite_internal_id, sourceKind: "news", sourceUrl: evidence.sourceUrl,
     title: item.raw_excerpt, text: evidence.text, eventDate: item.signal_date,
-    metadata: { sourceName: item.source_name, feedUrl: item.source_url, sourceDates: evidence.sourceDates, articleBodyAvailable: true, textTruncated: evidence.truncated },
+    metadata: { sourceName: item.source_name, ...evidence.metadata },
   });
   if (!stored) throw new Error("News observation persistence disabled");
+  return evidence;
 }
 
 export async function classifyAndRecordHeadline(
@@ -264,27 +256,63 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
     const sourceKey = "news:google";
     const state = await readSourceState(company.id, sourceKey);
     const seen = new Set(Array.isArray(state.cursor?.seen) ? state.cursor.seen.filter((value): value is string => typeof value === "string").slice(-128) : []);
-    const pending = Array.isArray(state.cursor?.pending) ? state.cursor.pending.filter((value): value is HeadlineItem => Boolean(value && typeof value === "object" && typeof value.raw_excerpt === "string" && typeof value.source_url === "string" && typeof value.source_name === "string" && (value.signal_date === null || typeof value.signal_date === "string"))).slice(0, 24) : [];
-    const fetched = await fetchNewsForCompany(company.name, 24);
-    const items = [...new Map([...pending, ...fetched].filter(item => isFresh(item.signal_date)).map(item => [headlineKey(item), item])).values()];
+    const pending = Array.isArray(state.cursor?.pending) ? state.cursor.pending.filter((value): value is HeadlineItem => Boolean(value && typeof value === "object" && typeof value.raw_excerpt === "string" && typeof value.source_url === "string" && typeof value.source_name === "string" && (value.signal_date === null || typeof value.signal_date === "string"))).slice(0, 48) : [];
+    const fetched = await fetchNewsForCompanyResult(company.name, 24);
+    const retries = (state.cursor?.retries ?? {}) as Record<string, { attempts?: number; after?: string }>;
+    const nextRetries: typeof retries = {};
+    const items = [...new Map([...pending, ...fetched.items].filter(item => isFresh(item.signal_date)).map(item => [headlineKey(item), item])).values()];
     const failed: HeadlineItem[] = [];
+    let saved = 0, bodyCount = 0, storageFailures = 0;
+    const warningCodes: Record<string, number> = {};
+    const articleDeadline = Date.now() + 50_000;
     for (let start = 0; start < items.length; start += 4) {
+      if (Date.now() >= articleDeadline) {
+        for (const item of items.slice(start)) if (!seen.has(headlineKey(item))) { failed.push(item); if (retries[headlineKey(item)]) nextRetries[headlineKey(item)] = retries[headlineKey(item)]; }
+        break;
+      }
       const batch = items.slice(start, start + 4);
-      const results = await Promise.allSettled(batch.map(item => classifyAndRecordHeadline(company, item, { ...opts, requireNameMatch: true, captureIntelligence: !seen.has(headlineKey(item)) })));
+      const results = await Promise.allSettled(batch.map(async item => {
+        const key = headlineKey(item);
+        const retry = retries[key];
+        if (!seen.has(key) && retry?.after && Date.parse(retry.after) > Date.now()) {
+          failed.push(item); nextRetries[key] = retry;
+          return false;
+        }
+        const [capture, legacy] = await Promise.allSettled([
+          seen.has(key) ? Promise.resolve(null) : observeHeadline(company, item),
+          classifyLegacyHeadline(company, item, { ...opts, requireNameMatch: true }),
+        ]);
+        if (capture.status === "rejected") { storageFailures++; throw capture.reason; }
+        if (capture.value) {
+          saved++;
+          if (capture.value.bodyAvailable) { bodyCount++; seen.add(key); }
+          else {
+            failed.push(item);
+            const attempts = Math.min(6, (retry?.attempts ?? 0) + 1);
+            nextRetries[key] = { attempts, after: new Date(Date.now() + Math.min(24, 2 ** attempts) * 3600000).toISOString() };
+            const code = capture.value.error ?? "publisher_unresolved";
+            warningCodes[code] = (warningCodes[code] ?? 0) + 1;
+          }
+        }
+        if (legacy.status === "rejected") throw legacy.reason;
+        return legacy.value;
+      }));
       results.forEach((result, index) => {
-        if (result.status === "fulfilled") { if (result.value) added++; seen.add(headlineKey(batch[index])); }
+        if (result.status === "fulfilled") { if (result.value) added++; }
         else failed.push(batch[index]);
       });
     }
-    // A source adapter returning [] can mean an upstream failure; do not claim
-    // a successful coverage pass when the adapter cannot distinguish the two.
-    const incomplete = failed.length > 0 || fetched.length === 0;
+    const incomplete = failed.length > 0 || fetched.status === "unavailable";
+    const status = !incomplete ? (items.length ? "complete" : "empty")
+      : (saved > 0 || seen.size > 0 || failed.some(item => retries[headlineKey(item)])) ? "partial" : "unavailable";
     await writeSourceState(company.id, sourceKey, {
-      cursor: { seen: [...seen].slice(-128), pending: failed.slice(0, 24), scope: "latest_24_feed_items" },
+      cursor: { seen: [...seen].slice(-128), pending: [...new Map(failed.map(item => [headlineKey(item), item])).values()].slice(0, 48), retries: nextRetries, scope: "latest_24_feed_items_and_pending" },
       complete: !incomplete,
-      ...(incomplete ? { error: "News capture incomplete; pending evidence will retry" } : {}),
+      status, successful: saved > 0 || fetched.status !== "unavailable",
+      details: { feedStatus: fetched.status, feedError: fetched.error ?? null, httpStatus: fetched.httpStatus ?? null, saved, bodyCount, headlineOnly: saved - bodyCount, storageFailures, warningCodes },
+      ...(incomplete ? { error: fetched.error ? `News feed: ${fetched.error}` : storageFailures ? "News storage unavailable" : "Headline evidence saved; publisher bodies pending" } : {}),
     });
-    if (incomplete) throw new Error("News capture incomplete");
+    if (storageFailures || fetched.status === "unavailable") throw new Error("News capture incomplete");
     return added;
   }
   for (const it of await fetchNewsForCompany(company.name, 6)) {

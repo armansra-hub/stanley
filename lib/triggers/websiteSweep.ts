@@ -13,6 +13,7 @@ import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceStat
 import { companyPageUrl, sameCompanySite, sitePageEvidence } from "@/lib/sources/siteDiscovery";
 import { fetchPublicHttpText } from "./urlSafety";
 import { nextRevisit, websiteChangeHistory } from "./adaptiveRevisit";
+import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from "@/lib/sources/outcomes";
 
 const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now() - new Date(d).getTime()) / 86_400_000; return a >= 0 && a < 180; };
 
@@ -55,29 +56,35 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           ? [...new Set(value.filter((url): url is string => typeof url === "string" && url.length <= 2048).map(url => companyPageUrl(url, base)).filter((url): url is string => Boolean(url)))].slice(0, 200) : [];
         const knownUrls = urls(state?.cursor?.knownUrls);
         const priorPending = urls(state?.cursor?.pendingUrls);
+        const baseline = captureEnabled && !state?.cursor?.baselineCapturedAt && !urls(state?.cursor?.verifiedUrls).length;
         const scan = captureEnabled
-          ? await fetchSiteSignals(c.domain, c.name, { knownUrls, maxPages: 5 })
+          ? await fetchSiteSignals(c.domain, c.name, { knownUrls, maxPages: baseline ? 2 : 5, mode: baseline ? "baseline" : "deep" })
           : await fetchSiteSignals(c.domain, c.name);
         let captureFailed = stateReadFailed;
         const fetchedPending: string[] = [];
         const failedPending: string[] = [...(scan.coverage.failedUrls ?? [])];
+        const urlOutcomes: SourceUrlOutcome[] = [...(scan.coverage.urlOutcomes ?? [])];
+        const savedUrls: string[] = [];
         if (captureEnabled) {
           // Reserve three slots for the prior backlog. Homepage discovery alone
           // must not keep selecting the same first few newsroom links forever.
           const pending = (priorPending.length ? priorPending : knownUrls)
-            .filter(url => !scan.coverage.attemptedUrls.includes(url)).slice(0, 3);
+            .filter(url => !scan.coverage.attemptedUrls.includes(url)).slice(0, baseline ? 0 : 3);
           await Promise.all(pending.map(async url => {
             try {
               const response = await fetchPublicHttpText(url, { timeoutMs: 3500, maxBytes: 1_000_000 });
+              const outcome = sameCompanySite(response.finalUrl, base) ? publicResponseOutcome(url, response.status, response.body)
+                : { url, outcome: "unavailable" as const, code: "cross_company_redirect" as const };
+              urlOutcomes.push(outcome);
               if ((response.status === 404 || response.status === 410) && sameCompanySite(response.finalUrl, base)) {
                 fetchedPending.push(url); return; // confirmed absence is not an endless retry failure
               }
-              if (response.status < 200 || response.status >= 300 || !sameCompanySite(response.finalUrl, base)) throw new Error("Website page unavailable");
+              if (outcome.outcome !== "success") { failedPending.push(url); return; }
               const page = sitePageEvidence(response.body, response.finalUrl);
               if (!page.text.trim()) throw new Error("Website page has no evidence");
               if (!scan.pages.some(existing => existing.url === page.url)) scan.pages.push(page);
               fetchedPending.push(url);
-            } catch { failedPending.push(url); }
+            } catch (error) { failedPending.push(url); urlOutcomes.push({ url, outcome: "unavailable", code: sourceErrorCode(error) }); }
           }));
           if (!scan.pages.some(page => page.text.trim())) captureFailed = true;
           for (const page of scan.pages) {
@@ -88,9 +95,11 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
                 companyId: c.id, companyName: c.name, companyDomain: c.domain,
                 sourceKind: "website", sourceUrl: page.url, title: page.title || `${c.name} company website`,
                 text: page.text, eventDate: published.length === 1 ? published[0] : null,
-                metadata: { sourceDates: page.sourceDates, meaningfulContentHash: page.contentHash, textTruncated: page.truncated },
+                metadata: { sourceDates: page.sourceDates, meaningfulContentHash: page.contentHash, textTruncated: page.truncated,
+                  eventDateBasis: published.length === 1 ? "page_publication" : "unknown", collectionMode: baseline ? "baseline" : "deep" },
               });
               if (!stored) captureFailed = true;
+              else savedUrls.push(page.url);
             } catch { captureFailed = true; }
           }
         }
@@ -110,7 +119,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
 
         // Real newsroom/blog items retain the exact source page and the existing
         // event verifier, including the acquirer-position check for M&A.
-        if (scan.feedUrl) {
+        if (scan.feedUrl && !baseline) {
           const feedItems = (await fetchFeed(scan.feedUrl, captureEnabled ? 12 : 8)).filter(it => fresh(it.signal_date));
           if (captureEnabled) {
             for (let from = 0; from < feedItems.length; from += 4) {
@@ -140,7 +149,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         if (captureEnabled) {
           if (stateReadFailed) return; // preserve an unknown durable cursor
           const allKnown = urls([...knownUrls, ...scan.discoveredUrls]);
-          const verifiedUrls = urls([...urls(state?.cursor?.verifiedUrls), ...scan.pages.filter(page => page.text.trim()).map(page => page.url)]);
+          const verifiedUrls = urls([...urls(state?.cursor?.verifiedUrls), ...savedUrls]);
           const attempted = new Set([...scan.coverage.attemptedUrls, ...fetchedPending]);
           const newlyDiscovered = scan.discoveredUrls.filter(url => !knownUrls.includes(url));
           const pending = captureFailed
@@ -152,12 +161,19 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           const changedSinceComplete = changes.outcome === "changed" || state?.cursor?.changedSinceComplete === true || touched;
           const revisit = nextRevisit(state?.cursor?.revisit,
             !complete ? "incomplete" : changedSinceComplete ? "changed" : changes.outcome);
+          const consecutiveFailures = savedUrls.length ? 0 : Math.min(8, Number(state?.cursor?.consecutiveFailures ?? 0) + 1);
+          const warningCodes = [...new Set(urlOutcomes.filter(outcome => outcome.outcome === "unavailable").map(outcome => outcome.code ?? "network"))];
           await writeSourceState(c.id, sourceKey, {
             cursor: { knownUrls: allKnown, verifiedUrls, pendingUrls: pending, attemptedPages: scan.coverage.attemptedUrls.length + fetchedPending.length + failedPending.length, retainedPages: scan.pages.length,
+              baselineCapturedAt: state?.cursor?.baselineCapturedAt ?? (savedUrls.length ? new Date().toISOString() : null),
+              collectionMode: baseline ? "baseline" : "deep", consecutiveFailures, urlOutcomes: urlOutcomes.slice(0, 16),
               pageHashes: captureFailed ? state?.cursor?.pageHashes ?? {} : changes.hashes,
               changedSinceComplete: !complete && changedSinceComplete, revisit },
             complete,
-            ...(incomplete ? { error: "Website evidence capture incomplete; saved pages will be retried" } : {}),
+            status: savedUrls.length ? (complete ? "complete" : "partial") : "unavailable", successful: savedUrls.length > 0,
+            details: { urlOutcomes: urlOutcomes.slice(0, 16), savedPages: savedUrls.length, pendingPages: pending.length, storageError: captureFailed },
+            nextAttemptAt: consecutiveFailures ? new Date(Date.now() + Math.min(24, 2 ** (consecutiveFailures - 1)) * 3600000).toISOString() : null,
+            ...(incomplete ? { error: warningCodes.length ? `Website: ${warningCodes.join(", ")}` : captureFailed ? "Website evidence capture/storage incomplete" : "Website depth pending" } : {}),
           });
           if (!captureFailed) await setSiteChecked(c.id, fingerprint);
         }

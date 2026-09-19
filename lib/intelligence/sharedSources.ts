@@ -6,6 +6,7 @@ import { fetchPublicHttpText, validatePublicHttpUrl } from "@/lib/triggers/urlSa
 import { htmlToVisibleText, sitePageEvidence } from "@/lib/sources/siteDiscovery";
 import { canonicalEvidenceUrl, enqueueObservation, intelligenceEnabled, type ObservationInput } from "./observations";
 import { getSourceAttentionWeights } from "./feedback";
+import { publicResponseOutcome } from "@/lib/sources/outcomes";
 
 export type SharedSource = {
   id: string; name: string; url: string; enabled: boolean; format: string;
@@ -160,7 +161,11 @@ function databaseStore(): SharedSourceStore {
 type Dependencies = { store?: SharedSourceStore; fetchText?: typeof fetchPublicHttpText; enqueue?: (input: ObservationInput) => ReturnType<typeof enqueueObservation>; now?: () => number };
 
 export async function runSharedSources(deps: Dependencies = {}) {
-  const result = { enabled: false, claimed: 0, fetched: 0, empty: 0, processed: 0, observations: 0, failed: 0, unmatched: 0 };
+  // Returned metrics are persisted by the cron's existing intelligence.sources
+  // event. Distinct matches are account counts; observations are evidence rows.
+  const result = { enabled: false, claimed: 0, fetched: 0, empty: 0, processed: 0, observations: 0, failed: 0, unmatched: 0,
+    matchedAccounts: 0, sourceYield: [] as { sourceId: string; matchedAccounts: number; observations: number; processedItems: number; unmatchedItems: number; pendingFailures: number }[] };
+  const matchedAccounts = new Set<string>();
   if (!intelligenceEnabled()) return result;
   const store = deps.store ?? databaseStore();
   if (!await store.enabled()) return result;
@@ -182,6 +187,8 @@ export async function runSharedSources(deps: Dependencies = {}) {
     if (!source) continue;
     result.claimed++;
     let sourceError: string | null = null;
+    const sourceMatches = new Set<string>();
+    const before = { observations: result.observations, processed: result.processed, unmatched: result.unmatched, failed: result.failed };
     try {
       if (Date.parse(source.next_fetch_at) <= now()) {
         try {
@@ -207,7 +214,7 @@ export async function runSharedSources(deps: Dependencies = {}) {
           // before matching so companies mentioned deeper in the announcement remain discoverable.
           if (!payload.bodyFetched) {
             const response = await fetchText(payload.url, { timeoutMs: 5_000, maxBytes: 1_000_000 });
-            if (response.status < 200 || response.status >= 300) throw new Error("article_fetch_failed");
+            if (publicResponseOutcome(payload.url, response.status, response.body).outcome !== "success") throw new Error("article_fetch_failed");
             const evidence = sitePageEvidence(response.body, response.finalUrl);
             if (evidence.text.length < 160) throw new Error("article_body_unavailable");
             payload = { ...payload, text: evidence.text, bodyFetched: true, sourceDates: evidence.sourceDates };
@@ -221,9 +228,11 @@ export async function runSharedSources(deps: Dependencies = {}) {
               netsuiteInternalId: candidate.account.netsuite_internal_id, sourceKind: "news", sourceUrl: payload.url, title: payload.title, text: payload.text,
               eventDate: payload.eventDate, metadata: { sharedSourceId: source.id, sharedSourceName: source.name, sharedFeedUrl: source.url,
                 sourceScope: source.scope, sourceRole: "announcement_context", candidateMatch: candidate.basis, identityVerified: false,
-                governmentAwardVerified: false, sourceDates: payload.sourceDates ?? [], dateKind: "feed_publication", verificationUrl: source.verification_url } });
+                governmentAwardVerified: false, sourceDates: payload.sourceDates ?? [], dateKind: "feed_publication", eventDateBasis: "feed_publication",
+                evidenceKind: "article_body", articleBodyAvailable: true, verificationUrl: source.verification_url } });
             if (!observation) throw new Error("observation_not_persisted");
             result.observations++;
+            matchedAccounts.add(candidate.account.id); sourceMatches.add(candidate.account.id);
           }
           await store.item(source, item.item_key, { done: true });
           result.processed++;
@@ -236,6 +245,10 @@ export async function runSharedSources(deps: Dependencies = {}) {
       }
     } finally {
       await store.release(source, sourceError);
+      result.sourceYield.push({ sourceId: source.id, matchedAccounts: sourceMatches.size,
+        observations: result.observations - before.observations, processedItems: result.processed - before.processed,
+        unmatchedItems: result.unmatched - before.unmatched, pendingFailures: result.failed - before.failed });
+      result.matchedAccounts = matchedAccounts.size;
     }
   }
   return result;

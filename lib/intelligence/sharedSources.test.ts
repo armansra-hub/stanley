@@ -76,6 +76,8 @@ describe("durable shared collection", () => {
     const result = await runSharedSources(deps);
     expect(deps.fetchText).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ fetched: 1, processed: 1, observations: 2, failed: 0 });
+    expect(result.matchedAccounts).toBe(2);
+    expect(result.sourceYield).toEqual([expect.objectContaining({ matchedAccounts: 2, observations: 2, processedItems: 1 })]);
     expect(deps.store.snapshot).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining([expect.objectContaining({ item_key: expect.any(String) })]), null);
     expect(deps.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "news", text: expect.stringContaining("Tacoma Operations"),
       metadata: expect.objectContaining({ sourceRole: "announcement_context", identityVerified: false, governmentAwardVerified: false, candidateMatch: "exact_name" }) }));

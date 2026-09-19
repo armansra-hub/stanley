@@ -11,6 +11,7 @@ describe("durable observation identity", () => {
     expect(prepareObservation(base).contentHash).not.toBe(prepareObservation({ ...base, companyDomain: "example.com" }).contentHash);
     expect(prepareObservation(base).sourceKey).toBe(prepareObservation({ ...base, sourceKind: "news" }).sourceKey);
     expect(prepareObservation(base).contentHash).toBe(prepareObservation({ ...base, sourceKind: "news" }).contentHash);
+    expect(prepareObservation(base).contentHash).toBe(prepareObservation({ ...base, netsuiteInternalId: "1234" }).contentHash);
   });
   it("keeps exact source spans and marks bounded public captures", () => {
     const text = "First paragraph.\n".repeat(800);

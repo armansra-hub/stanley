@@ -14,14 +14,18 @@ type ReadStage = "client" | "status" | "health" | "views" | "observations" | "fe
 
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!intelligenceEnabled()) return NextResponse.json(empty);
   const params = req.nextUrl.searchParams;
   const companyId = params.get("companyId"), viewId = params.get("viewId");
+  const scope = params.get("scope");
+  const accountScope = scope === "account";
   const dismissed = params.get("dismissed") === "true";
   const offset = Number(params.get("offset") ?? 0);
-  if ((companyId && !isUuid(companyId)) || (viewId && !isUuid(viewId)) || !Number.isInteger(offset) || offset < 0 || offset > 100_000) {
+  if ((scope && scope !== "account") || (accountScope && !companyId) || (companyId && !isUuid(companyId)) || (viewId && !isUuid(viewId)) || !Number.isInteger(offset) || offset < 0 || offset > 100_000) {
     return NextResponse.json({ error: "invalid_filter" }, { status: 400 });
   }
+  // Cached account research remains readable while collection is paused. Global
+  // administration and its aggregate queries are not part of the lead drawer.
+  if (!intelligenceEnabled() && !accountScope) return NextResponse.json(empty);
   let stage: ReadStage = "client";
   let code = "unknown";
   const fail = (failedStage: ReadStage, error: unknown): never => {
@@ -36,9 +40,9 @@ export async function GET(req: NextRequest) {
     const db = serviceClient();
     stage = "status";
     const [status, views, health] = await Promise.all([
-      db.rpc("intelligence_status"),
-      db.from("intelligence_views").select("id,name,question,active,backfill_complete").eq("active", true).order("created_at", { ascending: false }).limit(100),
-      db.rpc("intelligence_health"),
+      accountScope ? Promise.resolve({ data: { enabled: intelligenceEnabled() }, error: null }) : db.rpc("intelligence_status"),
+      accountScope ? Promise.resolve({ data: [], error: null }) : db.from("intelligence_views").select("id,name,question,active,backfill_complete").eq("active", true).order("created_at", { ascending: false }).limit(100),
+      accountScope ? Promise.resolve({ data: null, error: null }) : db.rpc("intelligence_health"),
     ]);
     if (status.error) fail("status", status.error);
     if (views.error) fail("views", views.error);

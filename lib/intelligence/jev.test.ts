@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION,
+  evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION,
   MAX_EVIDENCE_STATE_BYTES, MAX_COMPANY_CONTEXT_BYTES, MAX_SURROUNDING_CONTEXT_BYTES, MAX_RAW_ANSWERS_BYTES, type JevEvaluationRequest,
   hasPrivateExcerptAuthorization, TYPESAFE_EVALUATION_URL,
 } from "./jev";
@@ -39,6 +39,19 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("Jev evidence adapter", () => {
+  it("gives the public business-services pack evergreen attribution and headline limits while preserving native answers", async () => {
+    const evaluate = vi.fn(async (request: JevEvaluationRequest) => {
+      expect(request.questions.companyRelationship.instructions).toContain("evergreen");
+      expect(request.questions.signalType.instructions).toContain("agency launching a customer's brand");
+      expect(request.questions.evidenceStrength.instructions).toContain("headline-only");
+      expect(request.state.evidenceKind).toBe("headline_only");
+      return response();
+    });
+    const result = await evaluateEvidence({ ...input, privacy: "public", questionPack: "business-services-v1", evidenceKind: "headline_only" }, { evaluate });
+    expect(result).toMatchObject({ ok: true, questionVersion: JEV_BUSINESS_SERVICES_QUESTION_VERSION });
+    if (result.ok) expect(result.metadata.rawAnswers).toEqual(response().answers);
+    expect(estimateEvidenceInputTokens({ ...input, privacy: "private_excerpt", questionPack: "business-services-v1" })).toBeNull();
+  });
   it("uses cited public footprint only for first-pass relative materiality and preserves native judgments", async () => {
     const publicScaleContext = 'Public source https://example.test/about, dated 2026-09-01: "Example Engineering operates two facilities and employs 85 people." Missing current revenue remains unknown.';
     const evaluate = vi.fn(async (request: JevEvaluationRequest) => {

@@ -49,7 +49,7 @@ describe("website evidence collection integration", () => {
 
   it("spends bounded slots on the prior backlog and retains unfetched URLs fairly", async () => {
     const pending = Array.from({ length: 5 }, (_, index) => `https://acme.com/news/older-${index}`);
-    mocks.read.mockResolvedValue({ cursor: { knownUrls: [articleUrl, ...pending], pendingUrls: pending }, lastSuccessAt: null });
+    mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18T00:00:00Z", knownUrls: [articleUrl, ...pending], pendingUrls: pending }, lastSuccessAt: null });
     await sweepWebsites(1);
     expect(mocks.fetch.mock.calls.map(([url]) => url)).toEqual(pending.slice(0, 3));
     expect(mocks.write).toHaveBeenCalledWith(company.id, "website", expect.objectContaining({ complete: false, cursor: expect.objectContaining({ pendingUrls: pending.slice(3) }) }));
@@ -74,7 +74,7 @@ describe("website evidence collection integration", () => {
   });
 
   it("records pending-page failures without following cross-company evidence", async () => {
-    mocks.read.mockResolvedValue({ cursor: { knownUrls: ["https://acme.com/news/later"], pendingUrls: ["https://acme.com/news/later"] }, lastSuccessAt: null });
+    mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18T00:00:00Z", knownUrls: ["https://acme.com/news/later"], pendingUrls: ["https://acme.com/news/later"] }, lastSuccessAt: null });
     mocks.fetch.mockResolvedValue({ status: 200, finalUrl: "https://foreign.com/news/story", body: "Foreign content", contentType: "text/html" });
     await sweepWebsites(1);
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
@@ -133,7 +133,7 @@ describe("website evidence collection integration", () => {
 
   it("clears a confirmed absent backlog URL without storing an invented evidence page", async () => {
     const missing = "https://acme.com/news/removed-page";
-    mocks.read.mockResolvedValue({ cursor: { knownUrls: [missing], pendingUrls: [missing] }, lastSuccessAt: null });
+    mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18T00:00:00Z", knownUrls: [missing], pendingUrls: [missing] }, lastSuccessAt: null });
     mocks.fetch.mockResolvedValue({ status: 410, finalUrl: missing, body: "Gone", contentType: "text/html" });
     await sweepWebsites(1);
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);

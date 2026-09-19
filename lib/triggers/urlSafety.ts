@@ -236,18 +236,18 @@ function requestPinned(
   });
 }
 
-function requestPinnedText(
+function requestPinnedBytes(
   url: URL,
   address: ResolvedPublicAddress,
   timeoutMs: number,
   maxBytes: number,
   accept: string,
-): Promise<{ status: number; location: string | null; body: string; contentType: string | null }> {
+): Promise<{ status: number; location: string | null; body: Uint8Array; contentType: string | null }> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (
-      result: { status: number; location: string | null; body: string; contentType: string | null } | null,
+      result: { status: number; location: string | null; body: Uint8Array; contentType: string | null } | null,
       error?: Error,
     ) => {
       if (settled) return;
@@ -278,7 +278,7 @@ function requestPinnedText(
       const status = response.statusCode ?? 0;
       if ([301, 302, 303, 307, 308].includes(status) || status < 200 || status >= 300) {
         response.destroy();
-        finish({ status, location, body: "", contentType });
+        finish({ status, location, body: new Uint8Array(), contentType });
         return;
       }
 
@@ -296,7 +296,7 @@ function requestPinnedText(
       response.once("end", () => finish({
         status,
         location,
-        body: Buffer.concat(chunks).toString("utf8"),
+        body: new Uint8Array(Buffer.concat(chunks)),
         contentType,
       }));
       response.once("error", (error) => finish(null, error));
@@ -322,6 +322,16 @@ export interface PublicHttpTextResponse extends PublicHttpStatus {
   contentType: string | null;
 }
 
+export interface PublicHttpBytesResponse extends PublicHttpStatus {
+  body: Uint8Array;
+  contentType: string | null;
+}
+
+export async function fetchPublicHttpText(rawUrl: string, opts: PublicHttpFetchOptions = {}): Promise<PublicHttpTextResponse> {
+  const response = await fetchPublicHttpBytes(rawUrl, opts);
+  return { ...response, body: Buffer.from(response.body).toString("utf8") };
+}
+
 export interface PublicHttpFetchOptions {
   timeoutMs?: number;
   maxRedirects?: number;
@@ -335,10 +345,10 @@ export interface PublicHttpFetchOptions {
  * with an all-answers-public policy, and connected through a pinned address.
  * Redirects are followed manually under the same absolute deadline.
  */
-export async function fetchPublicHttpText(
+export async function fetchPublicHttpBytes(
   rawUrl: string,
   opts: PublicHttpFetchOptions = {},
-): Promise<PublicHttpTextResponse> {
+): Promise<PublicHttpBytesResponse> {
   const timeoutMs = Math.max(250, Math.min(opts.timeoutMs ?? 7_000, 15_000));
   const maxRedirects = Math.max(0, Math.min(opts.maxRedirects ?? 4, 6));
   const maxBytes = Math.max(16_384, Math.min(opts.maxBytes ?? 4_000_000, 5_000_000));
@@ -360,7 +370,7 @@ export async function fetchPublicHttpText(
     );
     const remainingForRequest = deadline - Date.now();
     if (remainingForRequest <= 0) throw new Error("HTTP fetch timed out");
-    const response = await requestPinnedText(current, addresses[0], remainingForRequest, maxBytes, accept);
+    const response = await requestPinnedBytes(current, addresses[0], remainingForRequest, maxBytes, accept);
     if (![301, 302, 303, 307, 308].includes(response.status) || !response.location) {
       return { ...response, finalUrl: current.toString() };
     }

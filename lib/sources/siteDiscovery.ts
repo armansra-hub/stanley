@@ -45,11 +45,11 @@ export function sameCompanySite(candidate: string, base: string): boolean {
   } catch { return false; }
 }
 
-export function companyPageUrl(raw: string, base: string): string | null {
+export function companyPageUrl(raw: string, base: string, allowPdf = false): string | null {
   try {
     const url = new URL(decodeEntities(raw), base);
     if (!sameCompanySite(url.toString(), base)) return null;
-    if (/\.(?:pdf|png|jpe?g|gif|webp|svg|zip|gz|css|js|mp4|woff2?)(?:$|\/)/i.test(url.pathname)) return null;
+    if ((!allowPdf && /\.pdf(?:$|\/)/i.test(url.pathname)) || /\.(?:png|jpe?g|gif|webp|svg|zip|gz|css|js|mp4|woff2?)(?:$|\/)/i.test(url.pathname)) return null;
     url.hash = "";
     for (const key of [...url.searchParams.keys()]) {
       if (/^(?:utm_|fbclid|gclid)/i.test(key)) url.searchParams.delete(key);
@@ -64,19 +64,21 @@ export function sitePageKind(value: string): SitePageKind | null {
   if (/\b(news(?:room)?|press|announcements?|acquisitions?|insights?|blog|media center)\b/i.test(text)) return "news";
   if (/\b(locations?|offices?|branches|where we (?:are|work))\b/i.test(text)) return "locations";
   if (/\b(about|our company|who we are|leadership|our team)\b/i.test(text)) return "about";
-  if (/\b(services?|solutions?|what we do|industries)\b/i.test(text)) return "services";
+  if (/\b(services?|solutions?|what we do|industries|capabilities|expertise|practice areas?|case stud(?:y|ies)|our work|projects?|pricing|plans|terms|billing)\b/i.test(text)) return "services";
   return null;
 }
 
-export function discoverSiteLinks(html: string, base: string): DiscoveredSiteLink[] {
+export function discoverSiteLinks(html: string, base: string, options: { includePdf?: boolean } = {}): DiscoveredSiteLink[] {
   const links: DiscoveredSiteLink[] = [];
   const seen = new Set<string>();
   for (const match of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
     const href = htmlAttributes(match[1]).href;
     if (!href) continue;
-    const url = companyPageUrl(href, base);
+    const url = companyPageUrl(href, base, options.includePdf === true);
     const label = htmlToVisibleText(match[2]);
-    const kind = sitePageKind(`${url ? new URL(url).pathname : ""} ${label}`);
+    const kind = sitePageKind(`${url ? new URL(url).pathname : ""} ${label}`)
+      ?? (options.includePdf && url && /\.pdf$/i.test(new URL(url).pathname)
+        && /\b(capabilit|annual|report|brochure|overview|contract)/i.test(`${url} ${label}`) ? "services" : null);
     if (!url || !kind || seen.has(url)) continue;
     seen.add(url);
     links.push({ url, kind, label: label.slice(0, 160) });
@@ -112,9 +114,12 @@ export function sitePageEvidence(html: string, url: string): SitePageEvidence {
   const text = htmlToVisibleText(body);
   const sourceDates: SiteDateReference[] = [];
   const add = (value: string | undefined, kind: SiteDateReference["kind"], source: string) => {
-    // Only explicit ISO-like source dates. Never substitute collection time.
-    if (!value || !/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value) || !Number.isFinite(Date.parse(value))) return;
-    if (!sourceDates.some((date) => date.value === value && date.kind === kind)) sourceDates.push({ value, kind, source });
+    // Accept explicit source dates, including labeled prose. Never interpret an
+    // arbitrary number, copyright year, or collection timestamp as publication.
+    const raw = value?.trim();
+    if (!raw || !/^(?:\d{4}-\d{2}-\d{2}(?:T|$)|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2},?\s+\d{4}$)/i.test(raw) || !Number.isFinite(Date.parse(raw))) return;
+    const normalized = new Date(/^\d{4}-/.test(raw) ? raw : `${raw} UTC`).toISOString();
+    if (!sourceDates.some((date) => date.value === normalized && date.kind === kind)) sourceDates.push({ value: normalized, kind, source });
   };
   for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
     const attrs = htmlAttributes(match[0]);
@@ -122,9 +127,16 @@ export function sitePageEvidence(html: string, url: string): SitePageEvidence {
     if (/^(article:published_time|datepublished|date|pubdate)$/.test(name)) add(attrs.content, "published", name);
     if (/^(article:modified_time|datemodified|last-modified)$/.test(name)) add(attrs.content, "modified", name);
   }
-  for (const match of html.matchAll(/<time\b[^>]*>/gi)) add(htmlAttributes(match[0]).datetime, "time", "time[datetime]");
+  for (const match of html.matchAll(/<time\b([^>]*)>([\s\S]*?)<\/time\s*>/gi)) {
+    const attrs = htmlAttributes(match[1]);
+    const kind = attrs.itemprop?.toLowerCase() === "datepublished" ? "published" : attrs.itemprop?.toLowerCase() === "datemodified" ? "modified" : "time";
+    add(attrs.datetime ?? htmlToVisibleText(match[2]), kind, `time[${attrs.itemprop ?? "datetime"}]`);
+  }
   for (const match of html.matchAll(/"(datePublished|dateModified)"\s*:\s*"([^"]+)"/g)) {
     add(match[2], match[1] === "datePublished" ? "published" : "modified", `json-ld.${match[1]}`);
+  }
+  for (const match of text.slice(0, 3000).matchAll(/\b(Published|Posted|Last updated|Updated)(?:\s+on)?\s*:?\s*((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2})\b/gi)) {
+    add(match[2], /updated/i.test(match[1]) ? "modified" : "published", "labeled_visible_date");
   }
   return {
     url, title: htmlToVisibleText(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").slice(0, 300),

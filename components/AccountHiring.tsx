@@ -4,8 +4,8 @@ import type { readAtsHiringContext } from "@/lib/intelligence/atsLifecycle";
 type HiringContext = Awaited<ReturnType<typeof readAtsHiringContext>>;
 const date = (value: string | null) => value ? new Date(value).toLocaleDateString() : "No completed scan yet";
 
-export default function AccountHiring({ hiring }: { hiring: HiringContext | null | undefined }) {
-  if (!hiring?.boards.length) return null;
+export default function AccountHiring({ hiring, coverage }: { hiring: HiringContext | null | undefined; coverage?: "available" | "unavailable" }) {
+  if (!hiring?.boards.length) return <section aria-label="Hiring coverage" className="mt-4 rounded border p-3"><h3 className="text-sm font-semibold">Hiring coverage</h3><p className="mt-2 text-xs text-[var(--text-muted)]">{coverage === "unavailable" || hiring === null ? "Hiring data could not be loaded. Hiring activity is unknown." : "No job-board baseline is stored for this account yet. This does not establish that the company is not hiring."}</p></section>;
   return <details className="mt-4 rounded border p-3">
     <summary className="cursor-pointer font-medium">Hiring changes · {hiring.boards.length} tracked {hiring.boards.length === 1 ? "board" : "boards"}</summary>
     <p className="mt-2 text-xs text-[var(--text-muted)]">{hiring.basis}</p>

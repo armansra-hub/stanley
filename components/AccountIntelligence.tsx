@@ -33,11 +33,12 @@ function StoryBody({ version }: { version: Version }) {
     <p className="text-xs text-[var(--text-muted)]">Written from {version.coverage.includedCurrent ?? sources.filter(source => source.current).length} current source excerpts{typeof version.coverage.availableCurrent === "number" ? ` of ${version.coverage.availableCurrent} available` : ""}{version.coverage.requestLimited ? "; additional evidence remains outside this version" : ""}. Jev’s original judgments remain in the evidence feed.</p>
   </div>;
 }
-export default function AccountIntelligence({ companyId, refreshKey }: { companyId: string; refreshKey?: string | null }) {
+export default function AccountIntelligence({ companyId, active = true, refreshKey }: { companyId: string; active?: boolean; refreshKey?: string | null }) {
   const [data, setData] = useState<Memory | null>(null), [error, setError] = useState("");
   const [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0), [message, setMessage] = useState("");
   useEffect(() => { setData(null); setMessage(""); }, [companyId]);
   useEffect(() => {
+    if (!active) return;
     const abort = new AbortController();
     const load = async () => {
       try {
@@ -50,7 +51,7 @@ export default function AccountIntelligence({ companyId, refreshKey }: { company
     void load();
     const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 30_000);
     return () => { abort.abort(); clearInterval(timer); };
-  }, [companyId, refreshKey, refresh]);
+  }, [companyId, refreshKey, refresh, active]);
   async function requestStory() {
     setBusy(true); setMessage("");
     try {
@@ -66,7 +67,8 @@ export default function AccountIntelligence({ companyId, refreshKey }: { company
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="western text-2xl">Account story and developments</h2><button type="button" disabled={busy} onClick={() => void requestStory()} className="rounded border px-3 py-2 text-sm disabled:opacity-50">{busy ? "Requesting…" : data?.story ? "Update account story" : "Write account story"}</button></div>
     {error && <p className="mt-2 text-sm" role="status">{error}</p>}
     {message && <p className="mt-2 text-sm" role="status">{message}</p>}
-    {data?.story ? <><p className="mt-2 text-xs text-[var(--text-muted)]">Written {new Date(data.story.created_at).toLocaleString()}{!data.story.current ? " · New evidence is awaiting an updated story" : ""}</p><StoryBody version={data.story} /></> : <p className="mt-3 text-sm text-[var(--text-muted)]">A sourced account story combines the available research into business context, developments and explicit unknowns.</p>}
+    {!data && !error && <p role="status" className="mt-3 text-sm text-[var(--text-muted)]">Loading saved account story and developments…</p>}
+    {data?.story ? <><p className="mt-2 text-xs text-[var(--text-muted)]">Written {new Date(data.story.created_at).toLocaleString()}{!data.story.current ? " · New evidence is awaiting an updated story" : ""}</p><StoryBody version={data.story} /></> : <p className="mt-3 text-sm text-[var(--text-muted)]">No saved account story is available yet. A story requires interpreted evidence; collecting, interpreting and writing are separate steps.</p>}
     {data?.coverage.storyJob && ["queued", "running"].includes(data.coverage.storyJob.status) && <p role="status" className="mt-3 text-xs text-[var(--text-muted)]">Story {data.coverage.storyJob.status === "running" ? "being written" : "queued"}{data.coverage.storyJob.last_error === "budget_deferred" ? " for the next available budget" : ""}.</p>}
     {!!data?.events.length && <div className="mt-5 border-t pt-4"><h3 className="mb-3 font-semibold">Developments and reports</h3>{data.events.map(event => <details key={event.id} className="mb-2 rounded border p-3"><summary className="cursor-pointer text-sm font-medium">{event.title} <span className="font-normal text-[var(--text-muted)]">· {event.event_date?.slice(0, 10) ?? "Date unknown"} · {event.evidence_count} reports</span></summary>{event.sources?.filter(source => !source.excluded).map(source => <div key={source.observationId} className="mt-3 text-sm"><a href={safeUrl(source.url)} target="_blank" rel="noopener noreferrer" className="text-[var(--gold)] underline">{source.title}</a><p className="mt-1 text-xs text-[var(--text-muted)]">{source.current ? "Current source" : "Earlier source version"} · captured {source.observedAt.slice(0, 10)}</p>{source.excerpt && <p className="mt-1 whitespace-pre-wrap">{source.excerpt}</p>}</div>)}</details>)}</div>}
     {data && data.history.length > 1 && <details className="mt-5 border-t pt-4"><summary className="cursor-pointer text-sm font-semibold">Previous account stories</summary>{data.history.slice(1).map(version => <details key={version.id} className="mt-3 rounded border p-3"><summary className="cursor-pointer text-sm">{new Date(version.created_at).toLocaleString()} · historical version</summary><StoryBody version={version} /></details>)}</details>}

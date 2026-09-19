@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), rank: vi.fn(), log: vi.fn(), calls: [] as { table: string; method: string; args: unknown[] }[] }));
+const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), fetch: vi.fn(), pdf: vi.fn(), enqueue: vi.fn(), rank: vi.fn(), log: vi.fn(), discover: vi.fn(), sourceState: vi.fn(), calls: [] as { table: string; method: string; args: unknown[] }[] }));
 vi.mock("next/server", async importOriginal => ({ ...await importOriginal<typeof import("next/server")>(), after: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: m.from, rpc: m.rpc }), withServiceDeadline: (_deadline: number, run: () => unknown) => run() }));
 vi.mock("@/lib/intelligence/worker", () => ({ runIntelligenceWorker: vi.fn() }));
 vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: () => true, enqueueObservation: m.enqueue }));
 vi.mock("@/lib/intelligence/http", () => ({ intelligenceUiAuthorized: () => true, sameOriginMutation: () => true,
   isUuid: (value: unknown) => typeof value === "string" && /^[a-f0-9-]{36}$/.test(value), smallJson: (request: Request) => request.json() }));
-vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: async () => ({ cursor: { verifiedUrls: ["https://example.test/services", "https://example.test/locations"] } }) }));
+vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: m.sourceState }));
 vi.mock("@/lib/triggers/urlSafety", () => ({ fetchPublicHttpText: m.fetch }));
+vi.mock("@/lib/sources/publicPdf", () => ({ fetchPublicPdfEvidence: m.pdf }));
 vi.mock("@/lib/sources/siteDiscovery", () => ({ sameCompanySite: (url: string) => url.startsWith("https://example.test/"), sitePageKind: () => "services",
+  discoverSiteLinks: m.discover,
   sitePageEvidence: () => ({ url: "https://example.test/locations", text: "Public business operations.", title: "Locations", sourceDates: [], truncated: false }) }));
 vi.mock("@/lib/db/events", () => ({ logEvent: m.log }));
 vi.mock("@/lib/intelligence/researchRanking", () => ({ rankResearchCandidates: m.rank }));
@@ -19,6 +21,9 @@ import { refreshAccountResearch, runDirectedResearchWorker } from "@/lib/intelli
 const company = "10000000-0000-4000-8000-000000000001";
 beforeEach(() => {
   m.calls.length = 0; m.rpc.mockReset();
+  m.sourceState.mockReset().mockResolvedValue({ cursor: { verifiedUrls: ["https://example.test/services", "https://example.test/locations"] } });
+  m.discover.mockReset().mockReturnValue([]);
+  m.pdf.mockReset();
   m.log.mockReset().mockResolvedValue(undefined);
   m.rank.mockReset().mockImplementation(async ({ candidates }) => ({ candidates, providerUsed: true, outcome: "ranked", rankingVersion: "next-source-v1",
     scores: [{ url: candidates[0], optionId: "source_1", score: .86, rawAnswer: { type: "noul", noul: .86, confidence: .57 } }] }));
@@ -26,7 +31,7 @@ beforeEach(() => {
   m.enqueue.mockReset().mockResolvedValue({ id: "observation", queued: false });
   m.from.mockImplementation((table: string) => {
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "eq", "neq", "order", "limit", "range", "in", "single"]) chain[method] = (...args: unknown[]) => { m.calls.push({ table, method, args }); return chain; };
+    for (const method of ["select", "eq", "neq", "order", "limit", "range", "in", "single", "upsert"]) chain[method] = (...args: unknown[]) => { m.calls.push({ table, method, args }); return chain; };
     chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: table === "companies" ? { id: company, name: "Synthetic", domain: "example.test", netsuite_internal_id: "1" }
       : table === "intelligence_research_attempts" ? [{ source_url: "https://example.test/services", next_attempt_at: "2999-01-01", last_attempt_at: "2026-09-18" }] : [], count: table === "intelligence_jobs" ? 2 : null, error: null }).then(resolve);
     return chain;
@@ -34,6 +39,42 @@ beforeEach(() => {
   m.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_research_claim" ? [{ source_url: "https://example.test/locations", lease_token: "lease" }] : true, error: null }));
 });
 describe("focused research state and receipts", () => {
+  it("reads selected public PDFs only in deep research and retains limits without inventing a date", async () => {
+    m.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_research_claim"
+      ? [{ source_url: "https://example.test/capabilities.pdf", lease_token: "pdf-lease" }] : true, error: null }));
+    m.pdf.mockResolvedValue({ status: "extracted", url: "https://example.test/capabilities.pdf", text: "[PDF page 1]\nContract operations",
+      pagesRead: 12, totalPages: 15, bytes: 12000, truncated: true, truncationReasons: ["page_limit"], evidenceKind: "public_pdf_text" });
+    expect(await refreshAccountResearch(company, { deadlineMs: Date.now() + 90000 })).toMatchObject({ outcomes: ["unchanged"] });
+    expect(m.pdf).toHaveBeenCalledWith("https://example.test/capabilities.pdf", expect.objectContaining({ mode: "deep" }));
+    expect(m.fetch).not.toHaveBeenCalled();
+    expect(m.enqueue).toHaveBeenCalledWith(expect.objectContaining({ eventDate: null, metadata: expect.objectContaining({
+      evidenceKind: "public_pdf_text", sourceTruncated: true, truncationReasons: ["page_limit"], pdfPagesRead: 12, pdfTotalPages: 15,
+    }) }));
+    m.enqueue.mockClear(); m.pdf.mockResolvedValue({ status: "no_readable_text", url: "https://example.test/capabilities.pdf" });
+    expect(await refreshAccountResearch(company, { deadlineMs: Date.now() + 90000 })).toMatchObject({ outcomes: ["source_empty"] });
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+  it("offers discovered but unread sources before already captured pages, excluding outside hosts", async () => {
+    m.sourceState.mockResolvedValue({ cursor: { verifiedUrls: ["https://example.test/locations"],
+      knownUrls: ["https://example.test/services/project-costing", "https://outside.test/services"],
+      pendingUrls: ["https://example.test/services/project-costing", "https://example.test/careers/controller"] } });
+    const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/profile?companyId=${company}`));
+    const result = await response.json();
+    expect(result.nextSources[0]).toBe("https://example.test/services/project-costing");
+    expect(result.newSourceCount).toBe(2);
+    expect(result.discoveredSourceCount).toBe(3);
+    expect(result.nextSources).not.toContain("https://outside.test/services");
+    expect(m.fetch).not.toHaveBeenCalled();
+  });
+  it("persists newly found company links for a later separately leased research pass", async () => {
+    m.discover.mockReturnValue([{ url: "https://example.test/services/contracts", label: "Contracts", kind: "services" }]);
+    const result = await refreshAccountResearch(company, { deadlineMs: Date.now() + 90000 });
+    expect(result).toMatchObject({ outcomes: ["unchanged"], remainingSources: 1 });
+    expect(m.calls).toContainEqual({ table: "intelligence_research_sources", method: "upsert", args: [[{
+      company_id: company, source_url: "https://example.test/services/contracts", title: "Contracts", discovered_from: "https://example.test/locations",
+    }], { onConflict: "company_id,source_url", ignoreDuplicates: true }] });
+    expect(m.enqueue).toHaveBeenCalledOnce();
+  });
   it("returns pending work for profile polling and excludes recently completed/corrected evidence", async () => {
     const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/profile?companyId=${company}`));
     expect(await response.json()).toMatchObject({ nextSources: ["https://example.test/locations"], pendingJobs: 2,

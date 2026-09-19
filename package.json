@@ -29,7 +29,8 @@
     "rrule": "^2.8.1",
     "rss-parser": "^3.13.0",
     "xlsx": "^0.18.5",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "unpdf": "1.6.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",

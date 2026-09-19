@@ -12,7 +12,7 @@ const company = "10000000-0000-4000-8000-000000000001", observation = "10000000-
 beforeEach(() => {
   m.failure.table = ""; m.failure.code = "";
   m.calls.length = 0; m.authorized.mockReturnValue(true); m.priority.mockReset().mockResolvedValue(10);
-  m.rpc.mockResolvedValue({ data: { enabled: true }, error: null });
+  m.rpc.mockReset().mockResolvedValue({ data: { enabled: true }, error: null });
   m.from.mockImplementation((table: string) => {
     let single = false;
     const chain: Record<string, unknown> = {};
@@ -61,6 +61,19 @@ describe("reversible intelligence feedback API", () => {
       expect(select).toContain("companies:companies!intelligence_observations_company_id_fkey!inner(name,status)");
       if (suffix) expect(select).toContain("intelligence_view_matches:intelligence_view_matches!intelligence_view_matches_observation_id_fkey!inner(probability,view_id)");
     }
+  });
+  it("loads exact-account cached evidence without global status, health or saved views", async () => {
+    const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence?scope=account&companyId=${company}`));
+    expect(response.status).toBe(200);
+    expect(m.rpc).not.toHaveBeenCalled();
+    expect(m.calls.some(call => call.table === "intelligence_views")).toBe(false);
+    expect(m.calls).toContainEqual({ table: "intelligence_observations", method: "eq", args: ["company_id", company] });
+    expect(m.calls).toContainEqual({ table: "intelligence_observations", method: "neq", args: ["companies.status", "removed_from_tam"] });
+    expect(await response.json()).toMatchObject({ views: [], health: null, observations: [{ company_id: company }] });
+  });
+  it("rejects an unbound account scope", async () => {
+    expect((await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence?scope=account"))).status).toBe(400);
+    expect(m.rpc).not.toHaveBeenCalled();
   });
   it("provides an explicit excluded-evidence review path for Undo", async () => {
     expect((await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence?dismissed=true"))).status).toBe(200);

@@ -24,6 +24,22 @@ function response(body: string, finalUrl: string) {
 }
 
 describe("website career evidence redirects", () => {
+  it("spends only two requests on baseline and retains deeper actual links", async () => {
+    guardedFetch.mockImplementation(async input => {
+      const url = String(input);
+      return response(url.endsWith("/services") ? "<main>Project delivery and managed services.</main>" : '<main>Acme</main><a href="/news">News</a><a href="/services">Our services</a><a href="/case-studies">Case studies</a>', url);
+    });
+    const scan = await fetchSiteSignals("acme.com", "Acme", { mode: "baseline" });
+    expect(guardedFetch.mock.calls.map(([url]) => url)).toEqual(["https://acme.com", "https://acme.com/services"]);
+    expect(scan.discoveredUrls).toContain("https://acme.com/case-studies");
+    expect(scan.coverage.remainingUrls).toContain("https://acme.com/news");
+  });
+  it("reports transport and block-page outcomes without treating them as evidence", async () => {
+    guardedFetch.mockResolvedValue(response('<title>Just a moment...</title><main>Cloudflare challenge</main>', "https://acme.com"));
+    const scan = await fetchSiteSignals("acme.com", "Acme", { mode: "baseline" });
+    expect(scan.pages).toEqual([]);
+    expect(scan.coverage.urlOutcomes).toEqual([expect.objectContaining({ outcome: "unavailable", code: "blocked" })]);
+  });
   it("uses a verified final careers URL", async () => {
     guardedFetch.mockImplementation(async (input) => {
       const url = String(input);
@@ -86,7 +102,7 @@ describe("website career evidence redirects", () => {
     const scan = await fetchSiteSignals("acme.com", "Acme");
     expect(scan.discoveredUrls).toContain("https://acme.com/locations/new-branch");
     expect(scan.feedUrl).toBe("https://acme.com/insights/feed.xml");
-    expect(scan.pages).toContainEqual(expect.objectContaining({ url: "https://acme.com/news/acquisition", sourceDates: [{ value: "2026-09-17T10:00:00Z", kind: "published", source: "article:published_time" }] }));
+    expect(scan.pages).toContainEqual(expect.objectContaining({ url: "https://acme.com/news/acquisition", sourceDates: [{ value: "2026-09-17T10:00:00.000Z", kind: "published", source: "article:published_time" }] }));
     expect(guardedFetch.mock.calls.some(([url]) => String(url).includes("unrelated.com"))).toBe(false);
     expect(scan.financeRoles[0]?.url).toBe("https://acme.com/careers/openings");
   });

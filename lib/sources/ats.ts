@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { companyPageUrl, discoverSiteLinks, htmlToVisibleText, sameCompanySite } from "./siteDiscovery";
+import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from "./outcomes";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -56,15 +57,25 @@ const ATS_PATTERNS: { type: AtsType; re: RegExp }[] = [
 const BAD_TOKENS = new Set(["careers", "jobs", "company", "www", "embed", "job_board", "search", "about", "en-us", "en"]);
 
 /** Follow actual company careers links before legacy paths; at most four pages. */
-export async function detectAts(domain: string): Promise<{ type: AtsType; token: string } | null> {
+export type AtsDetection = { status: "detected" | "none" | "unsupported" | "unavailable"; board?: { type: AtsType; token: string }; outcomes: SourceUrlOutcome[]; unsupportedProvider?: string };
+export async function detectAtsResult(domain: string): Promise<AtsDetection> {
   const base = `https://${domain.replace(/\/+$/, "")}`;
   const pending = [base];
   const seen = new Set<string>();
+  const outcomes: SourceUrlOutcome[] = [];
+  let unsupportedProvider: string | undefined;
   while (pending.length && seen.size < 4) {
     const page = pending.shift()!;
     if (seen.has(page)) continue;
     seen.add(page);
-    const html = await fetchText(page, 3500, base);
+    let html: string | null = null;
+    try {
+      const response = await fetchPublicHttpText(page, { timeoutMs: 3500, maxBytes: 2000000 });
+      const outcome = sameCompanySite(response.finalUrl, base) ? publicResponseOutcome(page, response.status, response.body)
+        : { url: page, outcome: "unavailable" as const, code: "cross_company_redirect" as const };
+      outcomes.push(outcome);
+      if (outcome.outcome === "success") html = response.body;
+    } catch (error) { outcomes.push({ url: page, outcome: "unavailable", code: sourceErrorCode(error) }); }
     if (!html) {
       if (page === base) for (const fallback of [`${base}/careers`, `${base}/jobs`]) {
         if (companyPageUrl(fallback, base)) pending.push(fallback);
@@ -74,8 +85,12 @@ export async function detectAts(domain: string): Promise<{ type: AtsType; token:
     for (const { type, re } of ATS_PATTERNS) {
       const m = html.match(re);
       const token = m?.[1]?.toLowerCase();
-      if (token && !BAD_TOKENS.has(token) && token.length >= 2) return { type, token };
+      if (token && !BAD_TOKENS.has(token) && token.length >= 2) return { status: "detected", board: { type, token }, outcomes };
     }
+    // Report identifiable hosted systems outside our public API adapters rather
+    // than implying that the company has no careers activity.
+    const unsupported = html.match(/(?:[\w-]+\.)?(myworkdayjobs\.com|icims\.com|adp\.com|paylocity\.com|bamboohr\.com|applytojob\.com|jobvite\.com|ultipro\.com|taleo\.net)/i);
+    if (unsupported) unsupportedProvider = unsupported[1].toLowerCase();
     for (const link of discoverSiteLinks(html, page).filter((link) => link.kind === "careers")) {
       if (!seen.has(link.url) && !pending.includes(link.url)) pending.push(link.url);
     }
@@ -85,7 +100,10 @@ export async function detectAts(domain: string): Promise<{ type: AtsType; token:
       }
     }
   }
-  return null;
+  return { status: unsupportedProvider ? "unsupported" : !outcomes.some(row => row.outcome === "success") || outcomes.some(row => row.outcome === "unavailable") ? "unavailable" : "none", outcomes, ...(unsupportedProvider ? { unsupportedProvider } : {}) };
+}
+export async function detectAts(domain: string): Promise<{ type: AtsType; token: string } | null> {
+  return (await detectAtsResult(domain)).board ?? null;
 }
 
 export interface AtsJobBatch {

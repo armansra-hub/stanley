@@ -4,6 +4,7 @@ import { extractGrowthSignals } from "@/lib/sources/growth";
 import { scanFinanceRoles } from "@/lib/sources/careers";
 import { isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
+import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from "./outcomes";
 import { companyPageUrl, discoverSiteLinks, htmlAttributes, htmlToVisibleText, sameCompanySite, sitePageEvidence, sitePageKind, sitemapLocations, type SitePageEvidence } from "./siteDiscovery";
 
 /**
@@ -20,7 +21,7 @@ import { companyPageUrl, discoverSiteLinks, htmlAttributes, htmlToVisibleText, s
 // they required only the phrase, never evidence of an actual event.
 
 // Raw HTML (case preserved) — for parent-name capture + RSS-link discovery.
-interface FetchedPage { html: string; finalUrl: string; status: number | null }
+interface FetchedPage { html: string; finalUrl: string; status: number | null; outcome: SourceUrlOutcome }
 
 async function fetchPage(url: string, ms = 7000): Promise<FetchedPage> {
   try {
@@ -29,10 +30,9 @@ async function fetchPage(url: string, ms = 7000): Promise<FetchedPage> {
       maxBytes: 4_000_000,
       accept: "text/html,application/xhtml+xml,application/xml,text/xml;q=0.9",
     });
-    return response.status >= 200 && response.status < 300
-      ? { html: response.body, finalUrl: response.finalUrl, status: response.status }
-      : { html: "", finalUrl: response.finalUrl, status: response.status };
-  } catch { return { html: "", finalUrl: url, status: null }; }
+    const outcome = publicResponseOutcome(url, response.status, response.body);
+    return { html: outcome.outcome === "success" ? response.body : "", finalUrl: response.finalUrl, status: response.status, outcome };
+  } catch (error) { return { html: "", finalUrl: url, status: null, outcome: { url, outcome: "unavailable", code: sourceErrorCode(error) } }; }
 }
 const cleanHtml = htmlToVisibleText;
 
@@ -76,17 +76,19 @@ export interface SiteScan {
   financeRoles: FinanceRoleHit[];
   pages: SitePageEvidence[];
   discoveredUrls: string[];
-  coverage: { attemptedUrls: string[]; succeededUrls: string[]; remainingUrls: string[]; failedUrls?: string[] };
+  coverage: { attemptedUrls: string[]; succeededUrls: string[]; remainingUrls: string[]; failedUrls?: string[]; urlOutcomes?: SourceUrlOutcome[] };
 }
 
 /** Bounded link/sitemap discovery, with legacy paths only as fallbacks. */
-export async function fetchSiteSignals(domain: string, companyName?: string, options: { knownUrls?: string[]; maxPages?: number } = {}): Promise<SiteScan> {
+export async function fetchSiteSignals(domain: string, companyName?: string, options: { knownUrls?: string[]; maxPages?: number; mode?: "baseline" | "deep" } = {}): Promise<SiteScan> {
   const base = `https://${domain.replace(/\/+$/, "")}`;
-  const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, Math.min(10, Math.floor(options.maxPages!))) : 8;
+  const baseline = options.mode === "baseline";
+  const maxPages = baseline ? 2 : Number.isFinite(options.maxPages) ? Math.max(1, Math.min(10, Math.floor(options.maxPages!))) : 8;
   const attemptedUrls = [base];
   const failedUrls: string[] = [];
   const homePage = await fetchPage(base, 5000);
-  const empty: SiteScan = { growth: [], parent: null, feedUrl: null, financeRoles: [], pages: [], discoveredUrls: [], coverage: { attemptedUrls, succeededUrls: [], remainingUrls: [], failedUrls: [base] } };
+  const urlOutcomes: SourceUrlOutcome[] = [sameCompanySite(homePage.finalUrl, base) ? homePage.outcome : { url: base, outcome: "unavailable", code: "cross_company_redirect" }];
+  const empty: SiteScan = { growth: [], parent: null, feedUrl: null, financeRoles: [], pages: [], discoveredUrls: [], coverage: { attemptedUrls, succeededUrls: [], remainingUrls: [], failedUrls: [base], urlOutcomes } };
   if (!homePage.html || !sameCompanySite(homePage.finalUrl, base)) return empty;
   const pages = [homePage];
   const candidates = new Map<string, string>();
@@ -99,6 +101,7 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
 
   // Fetch at most a root sitemap plus two relevant child maps. This is discovery,
   // never a claim that the site's entire sitemap or article history was covered.
+  if (!baseline) {
   const sitemapUrl = new URL("/sitemap.xml", homePage.finalUrl).toString();
   const sitemap = await fetchPage(sitemapUrl, 3500);
   if (sameCompanySite(sitemap.finalUrl, base)) {
@@ -117,16 +120,18 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
   for (const [path, kind] of [["about", "about"], ["news", "news"], ["careers", "careers"], ["jobs", "careers"]]) {
     if (!discoveredKinds.has(kind)) add(`${base}/${path}`, kind);
   }
+  }
   // One representative page per category precedes additional pages. A newsroom
   // with hundreds of links must not crowd out careers or location evidence.
   const chosen: string[] = [];
-  for (const kind of ["news", "careers", "about", "locations", "services"]) {
+  for (const kind of baseline ? ["services", "about", "locations", "news", "careers"] : ["news", "careers", "about", "locations", "services"]) {
     const first = [...candidates].find(([, value]) => value === kind)?.[0];
     if (first) chosen.push(first);
   }
   const firstWave = [...new Set([...chosen, ...candidates.keys()])].slice(0, Math.min(5, maxPages - 1));
   attemptedUrls.push(...firstWave);
   for (const { url, page } of await Promise.all(firstWave.map(async (url) => ({ url, page: await fetchPage(url, 4000) })))) {
+    urlOutcomes.push(sameCompanySite(page.finalUrl, base) ? page.outcome : { url, outcome: "unavailable", code: "cross_company_redirect" });
     if (page.html && sameCompanySite(page.finalUrl, base)) pages.push(page);
     else if (page.status === 404 || page.status === 410) candidates.delete(url);
     else failedUrls.push(url);
@@ -137,6 +142,7 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
   const nextWave = [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)).slice(0, Math.max(0, maxPages - attemptedUrls.length));
   attemptedUrls.push(...nextWave);
   for (const { url, page } of await Promise.all(nextWave.map(async (url) => ({ url, page: await fetchPage(url, 3500) })))) {
+    urlOutcomes.push(sameCompanySite(page.finalUrl, base) ? page.outcome : { url, outcome: "unavailable", code: "cross_company_redirect" });
     if (page.html && sameCompanySite(page.finalUrl, base)) pages.push(page);
     else if (page.status === 404 || page.status === 410) candidates.delete(url);
     else failedUrls.push(url);
@@ -176,6 +182,6 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
     parent: detectParent([homeText, ...evidence.filter((page) => sitePageKind(page.url) === "about").map((page) => page.text)].join(" ")),
     feedUrl: pages.map((page) => findFeedUrl(page.html, page.finalUrl)).find(Boolean) ?? null,
     financeRoles, pages: evidence, discoveredUrls: [...candidates.keys()],
-    coverage: { attemptedUrls, succeededUrls: evidence.map((page) => page.url), remainingUrls: [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)), failedUrls },
+    coverage: { attemptedUrls, succeededUrls: evidence.map((page) => page.url), remainingUrls: [...candidates.keys()].filter((url) => !attemptedUrls.includes(url)), failedUrls, urlOutcomes },
   };
 }

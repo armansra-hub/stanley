@@ -3,7 +3,6 @@ import { runIntelligenceWorker } from "@/lib/intelligence/worker";
 import { logEvent } from "@/lib/db/events";
 import { reviewPendingCandidates } from "@/lib/triggers/candidateReview";
 import { runAccountStoryWorker } from "@/lib/intelligence/narratives";
-import { runDirectedResearchWorker } from "@/lib/intelligence/researchRunner";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -17,13 +16,11 @@ export async function GET(req: Request) {
   try {
     const startedAt = Date.now();
     const result = await runIntelligenceWorker(192, startedAt + 190000);
-    const research = result.enabled ? await runDirectedResearchWorker(2, startedAt + 240000) : null;
     const stories = result.enabled ? await runAccountStoryWorker(2, startedAt + 275000) : null;
     const review = result.enabled ? await reviewPendingCandidates(8, { deadlineMs: startedAt + 285000 }) : null;
     if (result.processed) await logEvent("headhunter", "intelligence.processed", { summary: `Processed ${result.processed} evidence jobs`, meta: result });
     if (stories?.processed) await logEvent("headhunter", "intelligence.stories", { summary: `Processed ${stories.processed} account stories`, meta: stories });
-    if (research?.processed) await logEvent("headhunter", "intelligence.research", { summary: `Processed ${research.processed} directed research accounts`, meta: research });
-    return NextResponse.json({ ...result, research, stories, review });
+    return NextResponse.json({ ...result, research: { scheduler: "intelligence-research" }, stories, review });
   } catch {
     return NextResponse.json({ error: "intelligence_worker_unavailable" }, { status: 503 });
   }

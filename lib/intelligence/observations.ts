@@ -58,7 +58,11 @@ export function prepareObservation(input: ObservationInput) {
     // source. Context/date/body changes still produce a new observation version.
     sourceKey: createHash("sha256").update(url).digest("hex"),
     // Context/date changes invalidate semantic reuse even when source text is identical.
-    contentHash: createHash("sha256").update(JSON.stringify([text, input.title, event?.toISOString(), context])).digest("hex"),
+    // The public company ID is already the database partition. An optional CRM
+    // locator is provenance, not semantic evidence; collectors must not create
+    // new versions of identical public pages merely by supplying that locator.
+    contentHash: createHash("sha256").update(JSON.stringify([text, input.title, event?.toISOString(),
+      { companyName: context.companyName, companyDomain: context.companyDomain }])).digest("hex"),
     metadata: { ...input.metadata, ...context, retainedCharacters: text.length, sourceCharacters: normalized.length, textTruncated: normalized.length > text.length },
   };
 }

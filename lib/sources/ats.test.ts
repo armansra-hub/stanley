@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
-import { detectAts, fetchAtsJobs, fetchAtsJobsBatch, scanJob } from "./ats";
+import { detectAts, detectAtsResult, fetchAtsJobs, fetchAtsJobsBatch, scanJob } from "./ats";
 
 vi.mock("@/lib/triggers/urlSafety", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/triggers/urlSafety")>(),
@@ -16,6 +16,16 @@ function response(body: string, finalUrl = "https://dyadlaw.com/") {
 }
 
 describe("Wizehire ATS support", () => {
+  it("distinguishes unserved company pages from an observed site with no board", async () => {
+    guardedFetch.mockImplementation(async input => ({ ...response("Not found", String(input)), status: 404 }));
+    expect((await detectAtsResult("dyadlaw.com")).status).toBe("unavailable");
+    guardedFetch.mockImplementation(async input => response("<main>Company services and contact information.</main>", String(input)));
+    expect((await detectAtsResult("dyadlaw.com")).status).toBe("none");
+  });
+  it("reports public career systems outside the supported adapters separately", async () => {
+    guardedFetch.mockImplementation(async input => response('<a href="https://acme.wd1.myworkdayjobs.com/en-US/Careers">Careers</a>', String(input)));
+    expect(await detectAtsResult("dyadlaw.com")).toMatchObject({ status: "unsupported", unsupportedProvider: "myworkdayjobs.com" });
+  });
   it("detects the public jobroll company id", async () => {
     guardedFetch.mockResolvedValue(response(
       '<script src="https://wizehire.com/jobroll/v1/bootstrap/27220/jobroll.js?company_id=27220"></script>',

@@ -32,6 +32,17 @@ describe("cross-source operating matches", () => {
   it("validates and deduplicates the finite operating taxonomy", () => {
     expect(operatingTopicFilter(["inventory", "inventory"])).toEqual(["inventory"]);
     expect(operatingTopicFilter(["constructor"])).toBeNull();
-    expect(operatingTopicFilter([])).toBeNull();
+    expect(operatingTopicFilter([])).toEqual([]);
+  });
+  it("supports Any and counts-only without fabricating support for unmatched selected traits", () => {
+    const raw = fixture(); raw.accounts[0].observations.pop(); raw.mode = "any";
+    expect(buildTopicSearchResult(raw).accounts[0].topics.map(topic => topic.id)).toEqual(["project_billing"]);
+    expect(buildTopicSearchResult({ ...raw, topics: [], topicCounts: { project_billing: 5 } })).toMatchObject({ accounts: [], topicCounts: { project_billing: 5 } });
+  });
+  it("accepts independently attributed topic packets behind a weak representative answer", () => {
+    const raw = fixture();
+    raw.accounts[0].observations[0].attributes = { companyRelevance: .2, companyRelationship: "unknown",
+      topicEvidence: [{ topic: "project_billing", probability: .83, companyRelevance: .91, companyRelationship: "direct", start: 0, end: 20 }] };
+    expect(buildTopicSearchResult(raw).accounts).toHaveLength(1);
   });
 });

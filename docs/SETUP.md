@@ -33,7 +33,7 @@ Legacy enrichment options remain in the template; setting a key does not enable 
 
 ## Database migrations
 
-This checkout contains 64 SQL files, ending at `0062_intelligence_feedback_and_research.sql`. Sort and track by **full basename**, not numeric prefix: `0034` and `0038` each have two migrations. Intelligence migrations are disabled by default; schema presence alone does not start collection. Migration `0062` adds reversible exact-observation feedback, bounded public/source priorities and durable focused-research attempts.
+Sort and track migrations by **full basename**, not numeric prefix: `0034` and `0038` each have two migrations. Intelligence migrations are disabled by default; schema presence alone does not start collection. Migrations `0071`–`0074` repair collection outcomes, preserve native packet attribution, add scoped metrics and enable discovered-source research. Install them in filename order before the matching application deployment. After that Git deployment is Ready, `intelligence_queue_saved_packet_replay()` can recover application routing from stored paid packets without any new model calls; do not activate it on the earlier worker.
 
 Apply the reviewed ordered set to a clean development database using authorized migration tooling. Existing production has a ledger and requires catalog/schema-cache comparison before release. The historical `system/apply_migrations.py` mentioned in older instructions is external to this repository; it is not part of this checkout.
 
@@ -42,7 +42,7 @@ Apply the reviewed ordered set to a clean development database using authorized 
 ## Scheduled infrastructure
 
 - Vercel: hourly `/api/cron/daily`, defined by `vercel.json` and `lib/cron/dailyPlan.ts`. Confirm plan support for cadence and function duration on a new instance.
-- Intelligence: gated five-minute `/api/cron/intelligence` and `/api/cron/intelligence-collect`, plus fifteen-minute `/api/cron/intelligence-sources`. Jev findings publish directly without candidate review or a second model; the same cron may service existing legacy candidates separately. Monitor database capacity on the existing plan; see [Intelligence](INTELLIGENCE.md).
+- Intelligence: gated five-minute `/api/cron/intelligence`, `/api/cron/intelligence-collect` and `/api/cron/intelligence-research`, plus fifteen-minute `/api/cron/intelligence-sources`. The separate research schedule prevents deeper reading from waiting behind baseline interpretation. Jev findings publish directly without candidate review or a second model; the interpretation cron may service existing legacy candidates separately. Monitor database capacity on the existing plan; see [Business-services research](BUSINESS_SERVICES_RESEARCH.md).
 - Foundations: deliberate script/POST runs for bulk data; refresh cadence must be configured separately.
 - Calendar: `/api/cron/calendar-sync` exists separately. Historical notes describe an external/pg_cron schedule; verify the actual database job.
 - Outreach: the local Codex automation service or a foreground user request starts a bounded coordinator. Live definitions, status, and private checkpoints are outside Git and are not installed by `npm ci`.

@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   detect: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), read: vi.fn(), sourceRead: vi.fn(), write: vi.fn(), known: vi.fn(), apply: vi.fn(), patterns: vi.fn(),
 }));
 vi.mock("@/lib/db/triggers", () => ({ pickAtsForRotation: mocks.pick, setAtsChecked: mocks.checked, setErpFlags: mocks.flags, recordTrigger: mocks.trigger, recomputePriority: mocks.priority }));
-vi.mock("@/lib/sources/ats", async (original) => ({ ...await original<typeof import("@/lib/sources/ats")>(), detectAts: mocks.detect, fetchAtsJobsBatch: mocks.fetch }));
+vi.mock("@/lib/sources/ats", async (original) => ({ ...await original<typeof import("@/lib/sources/ats")>(), detectAtsResult: mocks.detect, fetchAtsJobsBatch: mocks.fetch }));
 vi.mock("@/lib/intelligence/observations", async (original) => ({ ...await original<typeof import("@/lib/intelligence/observations")>(), enqueueObservation: mocks.enqueue }));
 vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: mocks.sourceRead, writeSourceState: mocks.write }));
 vi.mock("@/lib/intelligence/atsLifecycle", async (original) => ({ ...await original<typeof import("@/lib/intelligence/atsLifecycle")>(), readAtsScan: mocks.read, readAtsKnownJobs: mocks.known, applyAtsBatch: mocks.apply, enqueuePendingAtsPatterns: mocks.patterns }));
@@ -36,9 +36,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("ATS collection integration", () => {
+  it.each(["none", "unsupported", "unavailable"] as const)("records %s discovery distinctly without inventing an empty job board", async status => {
+    mocks.pick.mockResolvedValue([{ ...company, ats_type: null, ats_token: null }]);
+    mocks.detect.mockResolvedValue({ status, outcomes: [] });
+    await sweepAts(1);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.write).toHaveBeenCalledWith(company.id, "ats:discovery", expect.objectContaining({ status: status === "none" ? "empty" : status, complete: status === "none" }));
+    if (status !== "none") expect(mocks.checked).not.toHaveBeenCalledWith(company.id, expect.objectContaining({ ats_type: "none" }));
+  });
   it("redetects a stored none on its next fair rotation", async () => {
     mocks.pick.mockResolvedValue([{ ...company, ats_type: "none", ats_token: null }]);
-    mocks.detect.mockResolvedValue({ type: "lever", token: "acme" });
+    mocks.detect.mockResolvedValue({ status: "detected", board: { type: "lever", token: "acme" }, outcomes: [] });
     expect((await sweepAts(1)).detected).toBe(1);
     expect(mocks.detect).toHaveBeenCalledWith("acme.com");
     expect(mocks.checked).toHaveBeenCalledWith("company-1", { ats_type: "lever", ats_token: "acme" });
@@ -51,7 +59,7 @@ describe("ATS collection integration", () => {
     await sweepAts(1);
     expect(mocks.fetch).toHaveBeenCalledWith("lever", "acme", { offset: 150, maxJobs: 150 });
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "job", sourceUrl: job.url, eventDate: job.date }));
-    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", { cursor: expect.objectContaining({ offset: 300, scanId: "scan-1", revisit: expect.objectContaining({ outcome: "incomplete", intervalHours: 1 }) }), complete: false });
+    expect(mocks.write).toHaveBeenCalledWith("company-1", "ats:lever:acme", expect.objectContaining({ cursor: expect.objectContaining({ offset: 300, scanId: "scan-1", revisit: expect.objectContaining({ outcome: "incomplete", intervalHours: 1 }) }), complete: false }));
     expect(mocks.enqueue.mock.invocationCallOrder[0]).toBeLessThan(mocks.write.mock.invocationCallOrder[0]);
     // The broader operating role receives semantic interpretation, not a regex
     // trigger or an unsupported persistent incumbent update.

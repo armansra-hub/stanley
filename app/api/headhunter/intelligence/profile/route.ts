@@ -3,17 +3,18 @@ import { intelligenceEnabled } from "@/lib/intelligence/observations";
 import { intelligenceUiAuthorized, isUuid, sameOriginMutation, smallJson } from "@/lib/intelligence/http";
 import { runIntelligenceWorker } from "@/lib/intelligence/worker";
 import { loadResearchProfile, refreshAccountResearch } from "@/lib/intelligence/researchRunner";
+import { withServiceDeadline } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!intelligenceEnabled()) return NextResponse.json({ error: "intelligence_disabled" }, { status: 409 });
   const companyId = req.nextUrl.searchParams.get("companyId");
   if (!isUuid(companyId)) return NextResponse.json({ error: "invalid_company" }, { status: 400 });
   try {
-    const { candidates: _candidates, ...result } = await loadResearchProfile(companyId);
+    const deadline = Date.now() + 15_000;
+    const { candidates: _candidates, ...result } = await withServiceDeadline(deadline, () => loadResearchProfile(companyId, deadline));
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch { return NextResponse.json({ error: "profile_unavailable" }, { status: 503 }); }
 }

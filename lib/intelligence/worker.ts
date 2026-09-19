@@ -1,20 +1,22 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { evaluateEvidence, estimateEvidenceInputTokens, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION } from "./jev";
-import { publishJevFinding, jevSignalType } from "./publish";
+import { evaluateEvidence, estimateEvidenceInputTokens, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION } from "./jev";
+import { publishJevFinding, jevSignalType, type JevPublicationReceipt } from "./publish";
 import type { EvaluateEvidenceInput, EvaluateEvidenceResult } from "./evaluation";
 import { intelligenceEnabled, INTELLIGENCE_VERSION } from "./observations";
 import { reserveJev, settleJev, secondsUntilNextMonth } from "./budget";
-import { OPERATING_CRITERIA, OPERATING_TOPICS, type OperatingTopic } from "./profiles";
+import { OPERATING_CRITERIA, OPERATING_TOPICS, operatingCriteria, type OperatingTopic } from "./profiles";
+import { businessServicesResearchContext } from "./businessServices";
 import { loadFeedbackExamples } from "./feedback";
 import { attachObservationEvent, bindEventTrigger } from "./events";
 import { queueAccountStory } from "./narratives";
 import { buildPublicScaleContext, loadPublicScaleObservations, type PublicScaleContext, type PublicContextObservation } from "./publicContext";
 
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
-type PartResult = { start: number; end: number; evaluation: Evaluation };
+export type PartResult = { start: number; end: number; evaluation: Evaluation };
+type PacketPublication = { start: number; end: number; questionVersion: string; attemptedAt: string; outcome: JevPublicationReceipt };
 type Job = { id: string; observation_id: string; view_id: string | null; kind: "interpret" | "view"; lease_token: string; attempts: number;
-  result: { parts?: PartResult[]; publicScaleContext?: PublicScaleContext } | null };
+  result: { parts?: PartResult[]; publications?: PacketPublication[]; publicScaleContext?: PublicScaleContext; routingBackfill?: string } | null };
 type Observation = { id: string; company_id: string; source_kind: string; source_url: string; title: string; evidence_text: string;
   event_date: string | null; observed_at: string; is_current: boolean; feedback_excluded?: boolean; metadata: Record<string, unknown> };
 
@@ -41,18 +43,20 @@ export function nextRetrySeconds(attempt: number): number {
 
 /** Assemble the actual worker request before reserving any paid-call budget. */
 export function workerEvidenceInput(
-  observation: Pick<Observation, "evidence_text" | "source_kind" | "source_url" | "title" | "event_date" | "observed_at">,
+  observation: Pick<Observation, "evidence_text" | "source_kind" | "source_url" | "title" | "event_date" | "observed_at"> & { metadata?: Record<string, unknown> },
   company: { name: string; domain?: string | null; subindustry?: string | null; ns_industry?: string | null },
   packet: { start: number; end: number; text: string }, question: string | null,
   feedback: EvaluateEvidenceInput["feedbackExamples"],
   publicScaleContext?: PublicScaleContext,
+  businessServices = true,
 ): EvaluateEvidenceInput {
   const surroundingContext = [
     packet.start > 0 ? `Source introduction: ${evidencePackets(observation.evidence_text, 800)[0]?.text ?? ""}` : "",
     packet.start > 0 ? `Immediately before this packet: ${evidencePackets(observation.evidence_text.slice(Math.max(0, packet.start - 200), packet.start), 800)[0]?.text ?? ""}` : "",
     packet.end < observation.evidence_text.length ? `Immediately after this packet: ${evidencePackets(observation.evidence_text.slice(packet.end, packet.end + 200), 800)[0]?.text ?? ""}` : "",
   ].filter(Boolean).join("\n");
-  const companyContext = evidencePackets([company.subindustry, company.ns_industry].filter(value => value?.trim()).join("; "), 600)[0]?.text;
+  const companyContext = evidencePackets([company.subindustry, company.ns_industry,
+    businessServices && company.subindustry?.trim() ? businessServicesResearchContext(company.subindustry) : ""].filter(value => typeof value === "string" && value.trim()).join("; "), 2400)[0]?.text;
   return {
     text: packet.text, companyName: String(company.name), companyDomain: company.domain ?? undefined,
     sourceKind: observation.source_kind, sourceUrl: observation.source_url, title: observation.title,
@@ -61,13 +65,38 @@ export function workerEvidenceInput(
     ...(publicScaleContext ? { publicScaleContext: publicScaleContext.text } : {}),
     ...(surroundingContext ? { surroundingContext } : {}),
     sections: evidencePackets(packet.text, 1200).map(({ text }, i) => ({ id: `s${i + 1}`, text })),
-    criteria: question ? [{ id: "view_match", instructions: question }] : OPERATING_CRITERIA,
+    ...(businessServices ? { questionPack: "business-services-v1" as const } : {}),
+    ...(typeof observation.metadata?.evidenceKind === "string" ? { evidenceKind: observation.metadata.evidenceKind } : {}),
+    criteria: question ? [{ id: "view_match", instructions: question }] : businessServices ? operatingCriteria(company.subindustry ?? null, observation.source_kind, observation.metadata?.researchTopics) : OPERATING_CRITERIA,
     feedbackExamples: feedback, privacy: "public",
   };
 }
 
 /** Selection is an interpretation aid, not an alternate trigger publisher. */
 export const candidateType = jevSignalType;
+
+/** Every paid packet remains available. A representative answer is only a UI
+ * summary; it is never the sole source of operating traits or event routing. */
+export function packetFinding(observation: Pick<Observation, "evidence_text">, part: PartResult, publication?: JevPublicationReceipt) {
+  const section = evidencePackets(observation.evidence_text.slice(part.start, part.end), 1200)
+    .map((value, index) => ({ ...value, id: `s${index + 1}` })).find(value => value.id === part.evaluation.attributes.evidenceSectionId);
+  const excerptStart = section ? part.start + section.start : null;
+  const excerptEnd = section ? part.start + section.end : null;
+  return { start: part.start, end: part.end, attributes: part.evaluation.attributes, criteria: part.evaluation.criteria,
+    model: part.evaluation.model, questionVersion: part.evaluation.questionVersion, rawAnswers: part.evaluation.metadata.rawAnswers ?? null,
+    evidenceExcerpt: excerptStart !== null && excerptEnd !== null ? observation.evidence_text.slice(excerptStart, excerptEnd) : null,
+    excerptStart, excerptEnd, ...(publication ? { publication } : {}) };
+}
+
+export function aggregatePacketFindings(observation: Pick<Observation, "evidence_text">, parts: PartResult[], publications: PacketPublication[] = []) {
+  return {
+    packetFindings: parts.map(part => packetFinding(observation, part, publications.find(p => p.start === part.start && p.end === part.end && p.questionVersion === part.evaluation.questionVersion)?.outcome)),
+    topicEvidence: parts.filter(p => p.evaluation.attributes.companyRelationship === "direct" && p.evaluation.attributes.companyRelevance >= .8)
+      .flatMap(p => Object.entries(p.evaluation.criteria).filter(([topic, probability]) => Object.hasOwn(OPERATING_TOPICS, topic) && probability >= .8)
+        .map(([topic, probability]) => ({ topic: topic as OperatingTopic, probability, start: p.start, end: p.end,
+          companyRelationship: p.evaluation.attributes.companyRelationship, companyRelevance: p.evaluation.attributes.companyRelevance }))),
+  };
+}
 
 async function finish(job: Job, status: string, result: unknown, extra: Record<string, unknown> = {}) {
   const { data, error } = await serviceClient().rpc("intelligence_finish", {
@@ -95,12 +124,14 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     question = view.question;
   }
   const feedback = await loadFeedbackExamples(observation.company_id);
-  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION].includes(part.evaluation.questionVersion));
+  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION].includes(part.evaluation.questionVersion));
   // Preserve already-paid v2 work under its original contract. New jobs receive
   // public baseline context; no completed Jev finding is reviewed again.
-  const usePublicScale = !priorParts.length || priorParts[0].evaluation.questionVersion === JEV_PUBLIC_SCALE_QUESTION_VERSION;
-  const contract = usePublicScale ? JEV_PUBLIC_SCALE_QUESTION_VERSION : JEV_QUESTION_VERSION;
+  const contract = priorParts[0]?.evaluation.questionVersion ?? JEV_BUSINESS_SERVICES_QUESTION_VERSION;
+  const usePublicScale = contract !== JEV_QUESTION_VERSION;
+  const businessServices = contract === JEV_BUSINESS_SERVICES_QUESTION_VERSION;
   const parts = priorParts.filter(part => part.evaluation.questionVersion === contract);
+  const publications = job.result?.publications ?? [];
   let publicScaleContext: PublicScaleContext | undefined;
   if (usePublicScale) {
     if (job.result?.publicScaleContext) publicScaleContext = job.result.publicScaleContext;
@@ -110,14 +141,25 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       publicScaleContext = buildPublicScaleContext(observation.company_id, await publicContexts.get(observation.company_id)!, observation.id);
     }
   }
-  const checkpoint = () => ({ parts, ...(publicScaleContext ? { publicScaleContext } : {}) });
+  const checkpoint = () => ({ parts, publications, ...(publicScaleContext ? { publicScaleContext } : {}),
+    ...(job.result?.routingBackfill ? { routingBackfill: job.result.routingBackfill } : {}) });
+  const persistCheckpoint = async () => {
+    const { data: saved, error: saveError } = await db.from("intelligence_jobs").update({ result: checkpoint() })
+      .eq("id", job.id).eq("lease_token", job.lease_token).eq("status", "running")
+      .gt("lease_until", new Date().toISOString()).select("id").maybeSingle();
+    if (saveError || !saved) throw new Error("Intelligence result checkpoint failed");
+  };
   for (const packet of evidencePackets(observation.evidence_text, 6000)) {
     if (parts.some((p) => p.start === packet.start && p.end === packet.end)) continue;
+    if (job.result?.routingBackfill) {
+      await finish(job, "failed", checkpoint(), { p_error: "saved_packet_coverage_gap" });
+      return "saved_packet_coverage_gap";
+    }
     if (Date.now() > deadline - 25_000) {
       await finish(job, "queued", checkpoint(), { p_error: "continuation", p_retry_seconds: 30 });
       return "continued";
     }
-    const input = workerEvidenceInput(observation, company, packet, question, feedback, publicScaleContext);
+    const input = workerEvidenceInput(observation, company, packet, question, feedback, publicScaleContext, businessServices);
     if (estimateEvidenceInputTokens(input) === null) {
       await finish(job, "failed", checkpoint(), { p_error: "invalid_input" });
       return "invalid_input";
@@ -139,10 +181,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     }
     parts.push({ start: packet.start, end: packet.end, evaluation });
     // Persist each paid result under its exact live lease before another call.
-    const { data: saved, error: saveError } = await db.from("intelligence_jobs").update({ result: checkpoint() })
-      .eq("id", job.id).eq("lease_token", job.lease_token).eq("status", "running")
-      .gt("lease_until", new Date().toISOString()).select("id").maybeSingle();
-    if (saveError || !saved) throw new Error("Intelligence result checkpoint failed");
+    await persistCheckpoint();
   }
   const ranked = [...parts].sort((a, b) => {
     const score = (p: PartResult) => job.kind === "view" ? (p.evaluation.criteria.view_match ?? 0) :
@@ -151,11 +190,31 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
   });
   const best = ranked[0];
   if (!best) throw new Error("No interpretation returned");
-  const packetText = observation.evidence_text.slice(best.start, best.end);
-  const selectedSection = evidencePackets(packetText, 1200).map((s, i) => ({ ...s, id: `s${i + 1}` }))
-    .find((s) => s.id === best.evaluation.attributes.evidenceSectionId);
-  const excerptStart = selectedSection ? best.start + selectedSection.start : null;
-  const excerptEnd = selectedSection ? best.start + selectedSection.end : null;
+  const { excerptStart, excerptEnd } = packetFinding(observation, best);
+  if (job.kind === "interpret") {
+    // One source owns one feed card; every additional packet can append its raw
+    // context. Choose an eligible packet for event grouping before any UI winner.
+    const ordered = [...ranked].sort((a, b) => Number(Boolean(jevSignalType(b.evaluation, observation.event_date))) - Number(Boolean(jevSignalType(a.evaluation, observation.event_date))));
+    let grouped = publications.some(publication => publication.outcome.status !== "not_eligible");
+    for (const part of ordered) {
+      if (publications.some(p => p.start === part.start && p.end === part.end && p.questionVersion === part.evaluation.questionVersion)) continue;
+      if (Date.now() > deadline - 8_000) {
+        await finish(job, "queued", checkpoint(), { p_error: "publication_continuation", p_retry_seconds: 30 });
+        return "continued";
+      }
+      const finding = packetFinding(observation, part);
+      const event = !grouped && jevSignalType(part.evaluation, observation.event_date)
+        ? await attachObservationEvent(observation.id, { ...part.evaluation.attributes, evidenceExcerpt: finding.evidenceExcerpt }) : null;
+      if (event) grouped = true;
+      const publication = await publishJevFinding({ company, observation, evaluation: part.evaluation, event,
+        passage: finding.excerptStart !== null && finding.excerptEnd !== null ? {
+          text: observation.evidence_text.slice(finding.excerptStart, finding.excerptEnd), start: finding.excerptStart, end: finding.excerptEnd,
+        } : null });
+      if (event && "triggerId" in publication && publication.triggerId) await bindEventTrigger(event.id, publication.triggerId);
+      publications.push({ start: part.start, end: part.end, questionVersion: part.evaluation.questionVersion, attemptedAt: new Date().toISOString(), outcome: publication });
+      await persistCheckpoint();
+    }
+  }
   const attributes = { ...best.evaluation.attributes,
     evidenceExcerpt: excerptStart !== null && excerptEnd !== null ? observation.evidence_text.slice(excerptStart, excerptEnd) : null, excerptStart, excerptEnd,
     model: best.evaluation.model, questionVersion: best.evaluation.questionVersion,
@@ -165,18 +224,8 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     sourceTruncated: observation.metadata.textTruncated === true,
     // Retain distinct supported categories across sections for reusable profiles.
     signalTypes: [...new Set(parts.filter((p) => p.evaluation.attributes.companyRelevance >= 0.8).map((p) => p.evaluation.attributes.signalType))],
-    topicEvidence: parts.filter(p => p.evaluation.attributes.companyRelationship === "direct" && p.evaluation.attributes.companyRelevance >= .8)
-      .flatMap(p => Object.entries(p.evaluation.criteria).filter(([topic, probability]) => topic in OPERATING_TOPICS && probability >= .8)
-        .map(([topic, probability]) => ({ topic: topic as OperatingTopic, probability, start: p.start, end: p.end }))),
+    ...aggregatePacketFindings(observation, parts, publications),
   };
-  if (job.kind === "interpret") {
-    const event = await attachObservationEvent(observation.id, attributes);
-    const publication = await publishJevFinding({ company, observation, evaluation: best.evaluation, event,
-      passage: excerptStart !== null && excerptEnd !== null ? {
-        text: observation.evidence_text.slice(excerptStart, excerptEnd), start: excerptStart, end: excerptEnd,
-      } : null });
-    if (event && "triggerId" in publication && publication.triggerId) await bindEventTrigger(event.id, publication.triggerId);
-  }
   await finish(job, "complete", { ...checkpoint(), excerptStart, excerptEnd }, job.kind === "view"
     ? { p_probability: best.evaluation.criteria.view_match ?? 0 }
     : { p_attributes: attributes, p_version: INTELLIGENCE_VERSION });

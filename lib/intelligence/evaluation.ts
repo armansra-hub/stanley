@@ -30,6 +30,10 @@ export interface EvaluateEvidenceInput {
   /** Cited public baseline passages for account-relative materiality.
    * Absent for the private-excerpt v2 contract; never private CRM size fields. */
   publicScaleContext?: string;
+  /** Narrow public territory pack. Private excerpts retain their original contract. */
+  questionPack?: "business-services-v1";
+  /** Collector-declared content boundary; a headline is never passed as a full article. */
+  evidenceKind?: string;
   /** Verbatim nearby text from this same source, supplied by the caller for attribution. */
   surroundingContext?: string;
   privacy?: "public" | "private_excerpt";

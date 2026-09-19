@@ -6,23 +6,26 @@ type Source = { observationId: string; url: string; title: string; eventDate: st
 type Match = { companyId: string; name: string; subindustry: string | null; sharedTopics: string[]; sources: Source[] };
 type Result = { seedTopics: string[]; accounts: Match[]; matchingAccounts: number; hasMore: boolean; nextOffset: number | null; note: string };
 function safeUrl(value: string) { try { const u = new URL(value); return /^https?:$/.test(u.protocol) && !u.username && !u.password ? u.href : undefined; } catch { return undefined; } }
-export default function AccountLookalikes({ companyId, refreshKey }: { companyId: string; refreshKey?: string | null }) {
+export default function AccountLookalikes({ companyId, active = true, refreshKey, onOpenAccount }: { companyId: string; active?: boolean; refreshKey?: string | null; onOpenAccount?: (id: string, name: string) => void }) {
   const [data, setData] = useState<Result | null>(null), [offset, setOffset] = useState(0), [error, setError] = useState("");
+  useEffect(() => { setData(null); setOffset(0); setError(""); }, [companyId]);
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController();
     void fetch(`/api/headhunter/intelligence/lookalikes?companyId=${encodeURIComponent(companyId)}&offset=${offset}`, { signal: controller.signal, cache: "no-store" })
       .then(async response => { if (!response.ok) throw new Error(); const next: Result = await response.json(); if (!controller.signal.aborted) { setData(next); setError(""); } })
       .catch(() => { if (!controller.signal.aborted) setError("Similar accounts are temporarily unavailable."); });
     return () => controller.abort();
-  }, [companyId, refreshKey, offset]);
-  const label = (topic: string) => OPERATING_TOPICS[topic as keyof typeof OPERATING_TOPICS] ?? topic.replace(/_/g, " ");
+  }, [companyId, refreshKey, offset, active]);
+  const label = (topic: string) => OPERATING_TOPICS[topic as keyof typeof OPERATING_TOPICS]?.[0] ?? topic.replace(/_/g, " ");
   return <section aria-label="Similar operating patterns" className="mb-6 rounded-lg border bg-[var(--surface)] p-5">
     <h2 className="western text-2xl">Similar operating patterns</h2>
     <p className="mt-2 text-sm text-[var(--text-muted)]">Find other TAM accounts with the same sourced operating traits.</p>
     {error && <p role="status" className="mt-2 text-sm">{error}</p>}
+    {!data && !error && <p role="status" className="mt-2 text-sm text-[var(--text-muted)]">Loading similar accounts…</p>}
     {data && <><p className="mt-2 text-xs text-[var(--text-muted)]">{data.seedTopics.length ? `${data.matchingAccounts} accounts match this account’s operating evidence.` : "More interpreted evidence is needed to find similar accounts."}</p>
       <div className="mt-3 grid gap-3 md:grid-cols-2">{data.accounts.map(account => <article key={account.companyId} className="rounded border p-3">
-        <Link href={`/headhunter/intelligence?companyId=${account.companyId}`} className="font-semibold text-[var(--gold)] hover:underline">{account.name}</Link>
+        {onOpenAccount ? <button type="button" onClick={() => onOpenAccount(account.companyId, account.name)} className="font-semibold text-[var(--gold)] hover:underline">{account.name}</button> : <Link href={`/headhunter/intelligence?companyId=${account.companyId}`} className="font-semibold text-[var(--gold)] hover:underline">{account.name}</Link>}
         {account.subindustry && <p className="text-xs text-[var(--text-muted)]">{account.subindustry}</p>}
         <p className="mt-2 text-sm">{account.sharedTopics.map(label).join(" · ")}</p>
         <details className="mt-2 text-xs"><summary className="cursor-pointer">Supporting sources</summary>{account.sources.map(source => <p key={source.observationId} className="mt-2"><a href={safeUrl(source.url)} target="_blank" rel="noopener noreferrer" className="text-[var(--gold)] underline">{source.title}</a>{source.eventDate ? ` · ${source.eventDate.slice(0, 10)}` : ""}{source.excerpt && <span className="mt-1 block text-[var(--text-muted)]">{source.excerpt}</span>}</p>)}</details>

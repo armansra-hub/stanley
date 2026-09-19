@@ -2,37 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import OperatingProfile from "./OperatingProfile";
+import AccountResearchPanel from "./AccountResearchPanel";
 import OperatingMatches from "./OperatingMatches";
 import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceHealth";
-import AccountIntelligence from "./AccountIntelligence";
-import AccountLookalikes from "./AccountLookalikes";
+import { EvidenceCard, type FeedbackReason, type Observation } from "./IntelligenceEvidenceCard";
 
-type FeedbackReason = "useful" | "wrong_company" | "old_event" | "irrelevant" | "not_now";
 type SavedView = { id: string; name: string; question: string; active: boolean; backfill_complete: boolean };
-type Observation = {
-  id: string;
-  company_id: string | null;
-  company_name: string | null;
-  source_kind: string;
-  source_url: string | null;
-  title: string | null;
-  event_date: string | null;
-  observed_at: string;
-  attributes: {
-    [key: string]: unknown;
-    signalType?: string;
-    signalTypes?: string[];
-    companyRelationship?: string;
-    evidenceExcerpt?: string | null;
-    operationalComplexity?: number;
-    requiresResearch?: number;
-  } | null;
-  matchProbability?: number;
-  feedback?: { reason: FeedbackReason; note?: string | null } | null;
-  feedback_excluded?: boolean;
-  public_priority_weight?: number;
-};
 type IntelligenceData = {
   enabled: boolean;
   views: SavedView[];
@@ -40,57 +15,31 @@ type IntelligenceData = {
   hasMore: boolean;
   spend: { usedUsd: number; reservedUsd: number; limitUsd: number };
   jobs: { queued: number; running: number; failed: number };
-  sourceCoverage: { complete: number; partial: number; failed: number };
+  sourceCoverage: { complete: number; partial: number; failed: number; empty?: number; unavailable?: number; unsupported?: number; unknown?: number; withWarnings?: number; accountsWithSuccess48h?: number; scope?: string };
   health?: IntelligenceHealthData;
 };
 
 const API = "/api/headhunter/intelligence";
 const buttonClass = "rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm transition hover:bg-[var(--surface-2)] disabled:cursor-wait disabled:opacity-50";
 const fieldClass = "w-full rounded-md border bg-[var(--background)] px-3 py-2 text-sm outline-none focus:border-[var(--gold)] disabled:opacity-50";
-const feedbackOptions: [FeedbackReason, string][] = [
-  ["useful", "Useful"], ["wrong_company", "Wrong company"], ["old_event", "Old event"],
-  ["irrelevant", "Not relevant"], ["not_now", "Not now"],
-];
-const signalLabels: Record<string, string> = {
-  funding: "Funding", new_entity: "New entity", ma: "Acquisition", gov_contract: "Government contract",
-  finance_hire: "Finance hiring", press: "Expansion", erp_tech: "ERP / systems", hiring_velocity: "Hiring growth",
-  employee_growth: "Employee growth", federal_award: "Federal award", federal_subaward: "Federal subaward",
-  sam_award_notice: "SAM award notice", operating_change: "Operating change", news: "Company news", none: "No specific development",
-};
-
-function sourceLink(value: string | null): { url: string; host: string } | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
-      ? { url: url.href, host: url.hostname.replace(/^www\./, "") } : null;
-  } catch { return null; }
-}
-
-function dateLabel(value: string | null, captured = false): string {
-  if (!value || !Number.isFinite(Date.parse(value))) return "Unknown";
-  return new Date(value).toLocaleString(undefined, captured
-    ? { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }
-    : { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-}
-
-function ageLabel(value: string | null): string {
-  if (!value || !Number.isFinite(Date.parse(value))) return "Event age unknown";
-  const days = Math.floor((Date.now() - Date.parse(value)) / 86_400_000);
-  if (days < 0) return "Future event date";
-  if (days === 0) return "Today";
-  return `${days.toLocaleString()} ${days === 1 ? "day" : "days"} ago${days >= 90 ? " · Historical" : ""}`;
-}
-
 function dollars(value: number): string {
   return Number.isFinite(value) ? value.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Unknown";
 }
 
-function probability(value: unknown): string | null {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? `${Math.round(value * 100)}%` : null;
-}
-
 export default function IntelligencePanel({ companyId, initialViewId }: { companyId?: string; initialViewId?: string }) {
+  const [frames, setFrames] = useState<Array<{ id: string; name: string }>>(companyId ? [{ id: companyId, name: "Account intelligence" }] : []);
+  const openAccount = (id: string, name: string) => setFrames(previous => previous.at(-1)?.id === id ? previous : [...previous, { id, name }]);
+  return <>
+    <div hidden={frames.length > 0}><GlobalIntelligencePanel active={frames.length === 0} initialViewId={initialViewId} onOpenAccount={openAccount} /></div>
+    {frames.map((frame, index) => <div key={index + ":" + frame.id} hidden={index !== frames.length - 1} className="fixed inset-0 z-20 overflow-y-auto bg-[var(--background)]">
+      <div className="mx-auto max-w-5xl p-5"><header className="sticky top-0 z-10 mb-4 border-b bg-[var(--background)] pb-3"><button type="button" className="mb-3 text-sm text-[var(--gold)]" onClick={() => setFrames(previous => previous.slice(0, -1))}>← Back to {index ? frames[index - 1].name : "Intelligence"}</button><h1 className="western text-3xl">{frame.name}</h1></header>
+        <AccountResearchPanel companyId={frame.id} active={index === frames.length - 1} onOpenAccount={openAccount} />
+      </div>
+    </div>)}
+  </>;
+}
+function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { active: boolean; initialViewId?: string; onOpenAccount: (id: string, name: string) => void }) {
+  const companyId: string | undefined = undefined;
   const [viewId, setViewId] = useState(initialViewId ?? "");
   const [dismissed, setDismissed] = useState(false);
   const [snapshot, setSnapshot] = useState<{ key: string; data: IntelligenceData } | null>(null);
@@ -141,16 +90,18 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
   }, [companyId, viewId, dismissed, key]);
 
   useEffect(() => {
+    if (!active) return;
     void load();
     return () => { requestId.current += 1; requestBusy.current = false; };
-  }, [load]);
+  }, [load, active]);
 
   useEffect(() => {
+    if (!active) return;
     const timer = setInterval(() => {
       if (document.visibilityState === "visible" && !requestBusy.current && !mutating) void load(0, true);
     }, 60_000);
     return () => clearInterval(timer);
-  }, [load, mutating]);
+  }, [load, mutating, active]);
 
   async function mutate(body: Record<string, unknown>, message: string): Promise<Record<string, unknown> | null> {
     if (mutating) return null;
@@ -207,27 +158,26 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
 
       {data && <section aria-label="Intelligence activity" className="mb-6 grid gap-px overflow-hidden rounded-lg border bg-[var(--border)] text-sm sm:grid-cols-3">
         <div className="bg-[var(--surface)] p-4">
-          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Monthly intelligence budget</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global monthly intelligence budget</div>
           <div className="mt-1"><strong className="text-lg">{dollars(data.spend.usedUsd)}</strong><span className="text-[var(--text-muted)]"> used of {dollars(data.spend.limitUsd)}</span></div>
           <div className="mt-1 text-xs text-[var(--text-muted)]">{dollars(data.spend.reservedUsd)} reserved for work in progress</div>
         </div>
         <div className="bg-[var(--surface)] p-4">
-          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Background work</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global evidence / view jobs</div>
           <div className="mt-1 text-lg"><strong>{data.jobs.queued.toLocaleString()}</strong> queued <span className="text-[var(--text-muted)]">· {data.jobs.running.toLocaleString()} running</span></div>
           <div className="mt-1 text-xs text-[var(--text-muted)]">{data.jobs.failed ? `${data.jobs.failed.toLocaleString()} failed` : "No failed jobs"}</div>
         </div>
         <div className="bg-[var(--surface)] p-4">
-          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Source coverage</div>
-          <div className="mt-1 text-lg"><strong>{data.sourceCoverage.complete.toLocaleString()}</strong> complete</div>
-          <div className="mt-1 text-xs text-[var(--text-muted)]">{data.sourceCoverage.partial.toLocaleString()} partial · {data.sourceCoverage.failed.toLocaleString()} failed</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">TAM source checkpoints</div>
+          <div className="mt-1 text-lg"><strong>{data.sourceCoverage.complete.toLocaleString()}</strong> complete checks</div>
+          <div className="mt-1 text-xs text-[var(--text-muted)]">{data.sourceCoverage.partial.toLocaleString()} partial with saved content · {(data.sourceCoverage.unavailable ?? data.sourceCoverage.failed).toLocaleString()} unavailable</div>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{data.sourceCoverage.empty !== undefined ? data.sourceCoverage.empty.toLocaleString() + " quiet / empty · " : ""}{data.sourceCoverage.unsupported !== undefined ? data.sourceCoverage.unsupported.toLocaleString() + " unsupported · " : ""}{data.sourceCoverage.unknown !== undefined ? data.sourceCoverage.unknown.toLocaleString() + " unknown" : ""}</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">Checkpoints are company/source pairs, not accounts.{data.sourceCoverage.withWarnings ? ` ${data.sourceCoverage.withWarnings.toLocaleString()} checks saved content with warnings.` : ""}{data.sourceCoverage.accountsWithSuccess48h !== undefined ? " " + data.sourceCoverage.accountsWithSuccess48h.toLocaleString() + " distinct TAM accounts checked successfully in 48 hr." : ""} Partial means usable content was saved; depth can still be in progress.</p>
         </div>
       </section>}
 
       {data?.health && <IntelligenceHealth health={data.health} />}
-      {companyId && data?.enabled && <OperatingProfile companyId={companyId} refreshKey={updatedAt} />}
-      {companyId && data?.enabled && <AccountIntelligence key={`story:${companyId}`} companyId={companyId} refreshKey={updatedAt} />}
-      {companyId && data?.enabled && <AccountLookalikes key={`similar:${companyId}`} companyId={companyId} refreshKey={updatedAt} />}
-      <OperatingMatches enabled={data?.enabled === true} refreshKey={updatedAt} />
+      <OperatingMatches onOpenAccount={onOpenAccount} enabled={data?.enabled === true} refreshKey={updatedAt} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>
         <form onSubmit={saveView} className="mt-3 space-y-3">
@@ -268,7 +218,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
           <p className="mt-1 text-xs text-[var(--text-muted)]">{selectedView.backfill_complete ? "Historical evidence queued for matching. Results appear as processing completes." : "Historical evidence is still being queued. Results are incomplete."} Event dates show how old each match is.</p>
         </div>}
         <div aria-live="polite" className="mb-3 text-xs text-[var(--text-muted)]">
-          {loading ? "Loading evidence…" : data ? `${data.observations.length.toLocaleString()} findings loaded` : "Evidence has not loaded yet."}
+          {loading ? "Loading evidence…" : data ? `${data.observations.length.toLocaleString()} evidence items loaded` : "Evidence has not loaded yet."}
           {updatedAt && ` · Updated ${new Date(updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
           <span className="ml-1">· Refreshes every minute while open</span>
         </div>
@@ -277,7 +227,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
           <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-muted)]">{viewId ? "Matches will appear as source research and this view’s background processing complete." : "The feed will fill as sources are collected and processed."}</p>
         </div>}
         <div className="space-y-4">
-          {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy} onFeedback={async (reason, note) => {
+          {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
             const result = await mutate({ action: reason === null ? "clear_feedback" : "feedback", observationId: observation.id, reason, ...(note.trim() ? { note: note.trim() } : {}) }, reason === null ? "Feedback cleared; evidence restored." : "Feedback saved.");
             return Boolean(result);
           }} />)}
@@ -286,61 +236,4 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
       </section>
     </main>
   );
-}
-
-function EvidenceCard({ observation, busy, onFeedback }: {
-  observation: Observation;
-  busy: boolean;
-  onFeedback: (reason: FeedbackReason | null, note: string) => Promise<boolean>;
-}) {
-  const [note, setNote] = useState(observation.feedback?.note ?? "");
-  const [noteOpen, setNoteOpen] = useState(false);
-  const attributes = observation.attributes;
-  const source = sourceLink(observation.source_url);
-  const signals = [...new Set(attributes?.signalTypes ?? (attributes?.signalType ? [attributes.signalType] : []))];
-  const match = probability(observation.matchProbability);
-  const relationship = attributes?.companyRelationship;
-  const relationshipLabel = relationship === "direct" ? "Company itself" : relationship === "related" ? "Related company" : relationship === "unrelated" ? "Different company" : "Company relationship unknown";
-  return <article className="rounded-lg border bg-[var(--surface)] p-4 sm:p-5">
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div className="min-w-0 flex-1">
-        {observation.company_id ? <Link className="text-sm font-semibold text-[var(--gold)] hover:underline" href={`/headhunter/intelligence?companyId=${encodeURIComponent(observation.company_id)}`}>{observation.company_name || "Company name unavailable"}</Link> : <p className="text-sm text-[var(--text-muted)]">Company not linked</p>}
-        <h3 className="mt-1 break-words text-lg font-semibold leading-snug">{observation.title || "Untitled source observation"}</h3>
-      </div>
-      {match && <span className="rounded-full border px-2.5 py-1 text-xs text-[var(--gold)]" title="Model-estimated probability that the evidence matches this view’s question. This is not a factual accuracy score.">Question match {match}</span>}
-    </div>
-    <div className="mt-3 flex flex-wrap gap-2 text-xs">
-      {signals.map(signal => <span key={signal} className="rounded border bg-[var(--surface-2)] px-2 py-1">{signalLabels[signal] ?? signal.replace(/_/g, " ")}</span>)}
-      <span className="rounded border px-2 py-1 text-[var(--text-muted)]">{attributes ? relationshipLabel : "Not yet interpreted"}</span>
-      {attributes && typeof attributes.requiresResearch === "number" && attributes.requiresResearch >= 0.7 && <span className="rounded border px-2 py-1 text-[var(--gold)]">More context needed</span>}
-    </div>
-    <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[var(--text-muted)]">
-      <div><dt className="inline">Event: </dt><dd className="inline text-[var(--text)]">{dateLabel(observation.event_date)} <span className="text-[var(--text-muted)]">· {ageLabel(observation.event_date)}</span></dd></div>
-      <div><dt className="inline">Captured: </dt><dd className="inline">{dateLabel(observation.observed_at, true)}</dd></div>
-    </dl>
-    {attributes?.evidenceExcerpt ? <blockquote className="mt-4 whitespace-pre-wrap break-words border-l-2 border-[var(--gold)] pl-4 text-sm leading-relaxed">{attributes.evidenceExcerpt}</blockquote> : <p className="mt-4 text-sm text-[var(--text-muted)]">{attributes ? "No supporting passage was selected. Open the source for context." : "This source is awaiting interpretation. Its event type and supporting passage are not yet established."}</p>}
-    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
-      <span>{observation.source_kind.replace(/_/g, " ")}</span><span aria-hidden="true">·</span>
-      {source ? <a href={source.url} target="_blank" rel="noopener noreferrer" className="break-all text-[var(--gold)] hover:underline">Open {source.host} ↗</a> : <span>Source link unavailable</span>}
-    </div>
-    <div className="mt-4 border-t pt-3">
-      <div className="flex flex-wrap items-center gap-1.5" aria-label="Feedback on this observation">
-        {feedbackOptions.map(([reason, label]) => <button key={reason} type="button" disabled={busy} aria-pressed={observation.feedback?.reason === reason} onClick={() => void onFeedback(reason, note)} className={`rounded-md border px-2.5 py-1.5 text-xs transition hover:bg-[var(--surface-2)] disabled:opacity-50 ${observation.feedback?.reason === reason ? "border-[var(--gold)] text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>{label}</button>)}
-        <button type="button" disabled={busy} onClick={() => setNoteOpen(open => !open)} aria-expanded={noteOpen} className="px-2 py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text)]">{noteOpen ? "Hide note" : "Add context"}</button>
-      </div>
-      {noteOpen && <label className="mt-3 block text-xs text-[var(--text-muted)]">Optional context · saved with your next feedback selection
-        <textarea rows={2} maxLength={500} value={note} disabled={busy} onChange={event => setNote(event.target.value)} className={`${fieldClass} mt-1`} placeholder="What would make this finding more useful?" />
-      </label>}
-      {observation.feedback && <p className="mt-2 text-xs text-[var(--text-muted)]">Saved feedback: {feedbackOptions.find(([reason]) => reason === observation.feedback?.reason)?.[1] ?? observation.feedback.reason}{observation.feedback.note ? ` · ${observation.feedback.note}` : ""}</p>}
-      {observation.feedback && <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)]">
-        <button type="button" disabled={busy} className="text-[var(--gold)] underline" onClick={() => void onFeedback(null, "")}>Undo feedback</button>
-        <span>{observation.feedback_excluded ? "Excluded from account profiles and matching views." : "Recorded feedback adjusts public priority by at most 10%, softened by four neutral examples. TAM grades stay unchanged."}</span>
-      </div>}
-      {attributes && <details className="mt-4 rounded border p-3">
-        <summary className="cursor-pointer text-sm font-medium">Jev output</summary>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">Stored Jev judgments and probabilities for the selected evidence packet, with collected topic references and coverage. These are model outputs; feedback affects ranking separately.</p>
-        <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(attributes, null, 2)}</pre>
-      </details>}
-    </div>
-  </article>;
 }

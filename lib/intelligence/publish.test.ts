@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { jevSignalType, publishJevFinding, type JevPublicationObservation } from "./publish";
+import { jevSignalType, jevPublicationRoute, publishJevFinding, type JevPublicationObservation } from "./publish";
 import type { EvaluateEvidenceResult } from "./evaluation";
 
 const now = Date.parse("2026-09-18T12:00:00Z");
@@ -19,7 +19,13 @@ function fixture() {
   const find = vi.fn(async () => saved);
   const reheat = vi.fn().mockResolvedValue(true);
   const priority = vi.fn().mockResolvedValue(50);
-  return { record, find, reheat, priority, now: () => now, setSaved: (value: any) => { saved = value; }, getSaved: () => saved };
+  const attach = vi.fn(async (_id, _company, _url, finding, evidence) => {
+    const contexts = saved?.metadata?.jevContextFindings ?? [];
+    if (saved && !contexts.some((value: any) => value.finding.operationKey === finding.operationKey))
+      saved.metadata = { ...saved.metadata, jevContextFindings: [...contexts, { finding, evidence }] };
+    return true;
+  });
+  return { record, find, reheat, priority, attach, now: () => now, setSaved: (value: any) => { saved = value; }, getSaved: () => saved };
 }
 
 describe("direct Jev publication", () => {
@@ -35,7 +41,8 @@ describe("direct Jev publication", () => {
     const second = await publishJevFinding({ ...syndicated, event }, { ...deps, findEvent });
     expect(second.status).toBe("already_published");
     expect(deps.record).toHaveBeenCalledOnce();
-    expect(deps.getSaved()).toEqual(original);
+    expect(deps.getSaved()).toMatchObject(original);
+    expect(deps.getSaved().metadata.jevContextFindings).toHaveLength(1);
     expect(deps.getSaved().source_url).toBe(observation.source_url);
   });
   it("reads the winning event after a concurrent insert loses the unique event key", async () => {
@@ -115,9 +122,13 @@ describe("direct Jev publication", () => {
   it("preserves a pre-existing different article interpretation under the established dedupe key", async () => {
     const deps = fixture();
     deps.setSaved({ id: "legacy1", company_id: company.id, type: "ma", source_url: observation.source_url, metadata: {} });
-    expect(await publishJevFinding(input(), deps)).toEqual({ status: "not_eligible", reason: "source_already_recorded", triggerId: "legacy1" });
+    expect(await publishJevFinding(input(), deps)).toMatchObject({ status: "context_attached", triggerId: "legacy1" });
     expect(deps.record).not.toHaveBeenCalled();
-    expect(deps.priority).not.toHaveBeenCalled();
+    expect(deps.getSaved().type).toBe("ma");
+    expect(deps.getSaved().metadata.jevFinding).toBeUndefined();
+    expect(deps.getSaved().metadata.jevContextFindings[0].finding.attributes).toEqual(evaluation.attributes);
+    await publishJevFinding(input(), deps);
+    expect(deps.getSaved().metadata.jevContextFindings).toHaveLength(1);
   });
   it("preserves verified-government publication for every government type and capture", async () => {
     for (const signalType of ["gov_contract", "federal_award", "federal_subaward", "sam_award_notice"] as const) {
@@ -127,6 +138,16 @@ describe("direct Jev publication", () => {
     const request = input(); request.observation.source_kind = "government";
     expect(await publishJevFinding(request, deps)).toMatchObject({ status: "not_eligible", reason: "government_publisher_required" });
     expect(deps.record).not.toHaveBeenCalled();
+  });
+  it("routes dated ERP/hiring/growth and substantive finance news without rewriting native labels", () => {
+    for (const signalType of ["erp_tech", "hiring_velocity", "employee_growth"] as const)
+      expect(jevSignalType({ ...evaluation, attributes: { ...evaluation.attributes, signalType } }, observation.event_date, now)).toBe(signalType);
+    const news = { ...evaluation, attributes: { ...evaluation.attributes, signalType: "news" as const }, criteria: { close_reporting: .91 } };
+    expect(jevSignalType(news, observation.event_date, now)).toBe("operating_change");
+    expect(news.attributes.signalType).toBe("news");
+    expect(jevPublicationRoute(news, null, now).reason).toBe("unknown_event_date");
+    expect(jevPublicationRoute(news, "2020-01-01", now).reason).toBe("historical_event");
+    expect(jevSignalType({ ...news, attributes: { ...news.attributes, concreteEvent: .2 } }, observation.event_date, now)).toBeNull();
   });
   it("keeps undated, future, stale, unrelated and low-relevance output on the raw observation only", async () => {
     for (const date of [null, "2026-10-18", "2020-01-01", "invalid"]) expect(jevSignalType(evaluation, date, now)).toBeNull();

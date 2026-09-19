@@ -25,7 +25,10 @@ export async function GET(req: Request) {
     const slot = Math.floor(Date.now() / 300000) % 3;
     const results = await Promise.allSettled([
       sweepBase(30),
-      slot === 0 ? sweepWebsites(48, { scope: "claimable" }) : slot === 1 ? sweepAts(72) : sweepWebsites(48, { scope: "tail" }),
+      // Baseline coverage of current TAM gets capacity on every invocation.
+      // Deep pages have their own durable research queue and rotation.
+      sweepWebsites(96, { scope: "claimable" }),
+      ...(slot === 1 ? [sweepAts(72)] : []),
     ]);
     const outcomes = results.map(result => result.status === "fulfilled" ? result.value : { error: "source_unavailable" });
     await logEvent("headhunter", "intelligence.collection", { summary: "Frequent public-source rotation completed", meta: { slot, outcomes } });

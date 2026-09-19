@@ -22,18 +22,28 @@ export type JevFindingReceipt = {
   usage: { inputTokens: number | null; outputTokens: number | null } | null;
   eventId?: string;
 };
-export type JevPublicationReceipt = { status: "published" | "already_published"; triggerId: string; operationKey: string } |
+export type JevPublicationReceipt = { status: "published" | "already_published" | "context_attached"; triggerId: string; operationKey: string } |
   { status: "not_eligible"; reason: string; triggerId?: string };
 
 /** Existing feed-routing rules; these do not alter Jev output or add a second opinion. */
-export function jevSignalType(result: Evaluation, eventDate: string | null, now = Date.now()): string | null {
+export function jevPublicationRoute(result: Evaluation, eventDate: string | null, now = Date.now()): { type: string | null; reason: string } {
   const a = result.attributes;
-  const allowed = new Set(["funding", "ma", "new_entity", "finance_hire", "press", "operating_change"]);
-  if (!allowed.has(a.signalType) || a.companyRelationship !== "direct" || a.companyRelevance < .8 || a.concreteEvent < .75) return null;
-  if (a.signalType === "ma" && a.isAcquirer < .8) return null;
+  const allowed = new Set(["funding", "ma", "new_entity", "finance_hire", "press", "operating_change", "erp_tech", "hiring_velocity", "employee_growth"]);
+  const relevantChange = ["systems_project", "finance_leadership", "close_reporting", "financial_controls", "cash_working_capital", "investor_reporting", "project_financials", "unbilled_work"].some(id => (result.criteria[id] ?? 0) >= .8);
+  // Keep Jev's news label intact; this only selects an existing worklist category.
+  const type = a.signalType === "news" && relevantChange ? "operating_change" : a.signalType;
+  if (!allowed.has(type)) return { type: null, reason: "operating_context_only" };
+  if (a.companyRelationship !== "direct") return { type: null, reason: "not_direct_company" };
+  if (a.companyRelevance < .8) return { type: null, reason: "company_relevance" };
+  if (a.concreteEvent < .75) return { type: null, reason: "no_concrete_development" };
+  if (a.signalType === "ma" && a.isAcquirer < .8) return { type: null, reason: "not_acquirer" };
   const age = eventDate ? now - Date.parse(eventDate) : NaN;
-  return Number.isFinite(age) && age >= 0 && age <= 180 * 86_400_000 ? a.signalType : null;
+  if (!Number.isFinite(age)) return { type: null, reason: "unknown_event_date" };
+  if (age < 0) return { type: null, reason: "future_event_date" };
+  if (age > 180 * 86_400_000) return { type: null, reason: "historical_event" };
+  return { type, reason: "dated_development" };
 }
+export const jevSignalType = (result: Evaluation, eventDate: string | null, now = Date.now()) => jevPublicationRoute(result, eventDate, now).type;
 
 const SCORES = ["companyRelevance", "concreteEvent", "isAcquirer", "operationalComplexity", "growthRelevance", "evidenceStrength", "requiresResearch"] as const;
 function probabilityMap(value: Record<string, number> | undefined, limit: number): Record<string, number> {
@@ -83,7 +93,16 @@ type Dependencies = {
   reheat?: (companyId: string, type: string, url: string, date: string | null) => Promise<unknown>;
   priority?: (companyId: string) => Promise<unknown>;
   now?: () => number;
+  attach?: (triggerId: string, companyId: string, sourceUrl: string, finding: JevFindingReceipt, evidence: TriggerSourceEvidence) => Promise<boolean>;
 };
+
+async function attachFinding(triggerId: string, companyId: string, sourceUrl: string, finding: JevFindingReceipt, evidence: TriggerSourceEvidence): Promise<boolean> {
+  const { data, error } = await serviceClient().rpc("intelligence_attach_trigger_finding", {
+    p_trigger: triggerId, p_company: companyId, p_source_url: sourceUrl, p_finding: finding, p_evidence: evidence,
+  });
+  if (error || data !== true) throw new Error("Jev source context attachment was not confirmed");
+  return true;
+}
 
 async function readReceipt(companyId: string, url: string): Promise<TriggerReceipt | null> {
   const { data, error } = await serviceClient().from("triggers").select("id,company_id,type,source_url,signal_date,summary,source_name,metadata")
@@ -108,8 +127,9 @@ export async function publishJevFinding(input: { company: JevPublicationCompany;
   if (!observation.is_current || company.status === "removed_from_tam") return { status: "not_eligible", reason: "superseded" };
   // Any government capture continues through the verified entity pipeline, including a model mislabel.
   if (observation.source_kind === "government") return { status: "not_eligible", reason: "government_publisher_required" };
-  const type = jevSignalType(evaluation, observation.event_date, (deps.now ?? Date.now)());
-  if (!type) return { status: "not_eligible", reason: "feed_routing" };
+  const route = jevPublicationRoute(evaluation, observation.event_date, (deps.now ?? Date.now)());
+  const type = route.type;
+  if (!type) return { status: "not_eligible", reason: route.reason };
   if (!passage || !evaluation.attributes.evidenceSectionId) return { status: "not_eligible", reason: "no_selected_source_passage" };
   const evidence: TriggerSourceEvidence = { observationId: observation.id, excerpt: passage.text, start: passage.start, end: passage.end, observedAt: observation.observed_at };
   if (!readTriggerSourceEvidence({ intelligenceEvidence: evidence }) || observation.evidence_text.slice(passage.start, passage.end) !== passage.text) throw new Error("Jev publication source passage mismatch");
@@ -133,13 +153,20 @@ export async function publishJevFinding(input: { company: JevPublicationCompany;
   // the event binding adds all later reports as additional source context.
   if (input.event && savedFinding?.eventId === input.event.id && savedFinding.operationKey !== finding.operationKey) {
     if (!isPublishableTriggerForCompany(saved, company)) return { status: "not_eligible", reason: "source_or_company_policy", triggerId: saved.id };
+    if (!await (deps.attach ?? attachFinding)(saved.id, company.id, url, finding, evidence)) throw new Error("Jev source context attachment was not confirmed");
     await (deps.priority ?? recomputePriority)(company.id);
     return { status: "already_published", triggerId: saved.id, operationKey: savedFinding.operationKey ?? finding.operationKey };
   }
   if (saved.source_url !== url) throw new Error("Jev publication has no exact source receipt");
   if (savedFinding?.operationKey !== finding.operationKey) {
-    // A pre-existing article owns the established source dedupe key. Preserve it and leave this raw result on its observation.
-    if (existing || !inserted) return { status: "not_eligible", reason: "source_already_recorded", triggerId: saved.id };
+    // Append context atomically without overwriting the source owner's original
+    // interpretation, summary, date, provenance or native Jev answer.
+    if (existing || !inserted) {
+      if (!isPublishableTriggerForCompany(saved, company)) return { status: "not_eligible", reason: "source_or_company_policy", triggerId: saved.id };
+      if (!await (deps.attach ?? attachFinding)(saved.id, company.id, url, finding, evidence)) throw new Error("Jev source context attachment was not confirmed");
+      await (deps.priority ?? recomputePriority)(company.id);
+      return { status: "context_attached", triggerId: saved.id, operationKey: finding.operationKey };
+    }
     throw new Error("Jev publication metadata was not retained");
   }
   const savedEvidence = readTriggerSourceEvidence(saved.metadata);

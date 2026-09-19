@@ -15,7 +15,7 @@ describe("cached operating topic search route", () => {
     expect((await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics?topic=inventory"))).status).toBe(401);
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
-  it.each(["topic=constructor", "topic=inventory&limit=13", "topic=inventory&after=invalid", ""])("rejects invalid query %s before storage", async query => {
+  it.each(["topic=constructor", "topic=inventory&limit=13", "topic=inventory&after=invalid", "topic=inventory&mode=none"])("rejects invalid query %s before storage", async query => {
     expect((await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/topics?${query}`))).status).toBe(400);
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
@@ -24,8 +24,16 @@ describe("cached operating topic search route", () => {
     const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/topics?topic=inventory&after=${after}&limit=4`));
     expect(response.status).toBe(200);
     expect(mocks.rpc).toHaveBeenCalledOnce();
-    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_topic_search", { p_topics: ["inventory"], p_after: after, p_limit: 4 });
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_topic_search", { p_topics: ["inventory"], p_after: after, p_limit: 4, p_mode: "all" });
     expect(await response.json()).toMatchObject({ coverageLimited: true, accounts: [] });
+  });
+  it("accepts an empty selection for counts and an explicit Any search", async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: { enabled: true, topics: [], accounts: [], topicCounts: { inventory: 0 }, hasMore: false, nextCursor: null }, error: null });
+    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics"));
+    expect(await response.json()).toMatchObject({ accounts: [], topicCounts: { inventory: 0 } });
+    expect(mocks.rpc).toHaveBeenLastCalledWith("intelligence_topic_search", { p_topics: [], p_after: null, p_limit: 8, p_mode: "all" });
+    await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics?topic=project_delivery&topic=project_billing&mode=any"));
+    expect(mocks.rpc).toHaveBeenLastCalledWith("intelligence_topic_search", { p_topics: ["project_delivery", "project_billing"], p_after: null, p_limit: 8, p_mode: "any" });
   });
   it("reports disabled setup without attempting a database or model request", async () => {
     mocks.enabled.mockReturnValue(false);

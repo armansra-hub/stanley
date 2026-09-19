@@ -1,7 +1,7 @@
 import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { pickAtsForRotation, setAtsChecked, setErpFlags, recordTrigger, recomputePriority } from "@/lib/db/triggers";
-import { detectAts, fetchAtsJobsBatch, scanJob, type AtsType } from "@/lib/sources/ats";
+import { detectAtsResult, fetchAtsJobsBatch, scanJob, type AtsType } from "@/lib/sources/ats";
 import { isCareerEvidenceUrl, isFinanceHireEligible } from "@/lib/triggers/signalIntegrity";
 import { enqueueObservation } from "@/lib/intelligence/observations";
 import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
@@ -36,14 +36,25 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
         // A negative detection is not permanent. The fair rotation supplies the
         // revisit interval without stamping the whole TAM or creating a second job.
         if (!type || type === "none" || !token) {
-          const found = await detectAts(c.domain);
-          if (found) { type = found.type; token = found.token; stats.detected++; }
-          else { type = "none"; token = null; }
-          await setAtsChecked(c.id, { ats_type: type, ats_token: token ?? null });
+          const detection = await detectAtsResult(c.domain);
+          if (detection.board) {
+            type = detection.board.type; token = detection.board.token; stats.detected++;
+            await setAtsChecked(c.id, { ats_type: type, ats_token: token });
+          } else {
+            if (intelligenceEnabled) await writeSourceState(c.id, "ats:discovery", {
+              cursor: { detection: detection.status, unsupportedProvider: detection.unsupportedProvider ?? null },
+              complete: detection.status === "none", status: detection.status === "none" ? "empty" : detection.status === "unsupported" ? "unsupported" : "unavailable",
+              successful: detection.status !== "unavailable", details: { urlOutcomes: detection.outcomes },
+              nextAttemptAt: new Date(Date.now() + (detection.status === "unavailable" ? 2 : 24) * 3600000).toISOString(),
+              ...(detection.status === "unavailable" ? { error: "ATS discovery unavailable; no absence inferred" } : {}),
+            });
+            if (detection.status === "none") await setAtsChecked(c.id, { ats_type: "none", ats_token: null });
+            return;
+          }
         } else {
           await setAtsChecked(c.id, {}); // just bump ats_checked_at (re-poll rotation)
         }
-        if (type === "none" || !token) return;
+        if (!type || !token) return;
         stats.with_board++;
 
         // A finance role at a record-dead or finance-services company is not an
@@ -111,6 +122,9 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
               revisit: nextRevisit(sourceState?.cursor?.revisit, atsRevisitOutcome(lifecycle.complete === true, lifecycle.summary)),
             },
             complete: lifecycle.complete === true,
+            status: batch.status === "unavailable" ? "unavailable" : lifecycle.complete ? (jobs.length ? "complete" : "empty") : "partial",
+            successful: batch.status !== "unavailable",
+            details: { providerStatus: batch.status, returnedJobs: jobs.length, offset, restart: lifecycle.restart === true },
             ...(lifecycle.restart ? { error: "ATS board changed during pagination; restarting complete scan" } : {}),
             ...(batch.status === "unavailable" ? { error: "ATS retrieval unavailable; prior offset retained" } : {}),
           });
