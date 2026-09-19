@@ -7,6 +7,7 @@ import {
   bootstrapTamRegradeRun,
   claimTamGradeWork,
   getTamRegradeStatus,
+  getTamPublishedEvent,
   heartbeatTamActor,
   finalizeTamCheckpointSeed,
   listTamRegradeRecords,
@@ -47,6 +48,17 @@ export async function GET(req: NextRequest) {
   }
   const url = new URL(req.url);
   const runSlug = url.searchParams.get("run") || DEFAULT_TAM_RUN_SLUG;
+  if (url.searchParams.get("view") === "publish_event") {
+    try {
+      return NextResponse.json(await getTamPublishedEvent({
+        runSlug: url.searchParams.get("run"),
+        netsuiteInternalId: url.searchParams.get("id"),
+        provenanceSha256: url.searchParams.get("provenanceSha256"),
+      }));
+    } catch (error) {
+      return errorResponse(error);
+    }
+  }
   if (url.searchParams.get("view") === "records") {
     try {
       const currentParam = url.searchParams.get("current");

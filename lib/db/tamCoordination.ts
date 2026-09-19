@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/server";
 import {
   bootstrapTamRunSchema,
@@ -192,6 +193,33 @@ export async function getTamRegradeStatus(
   });
   if (error) throw new Error(`TAM status read failed: ${error.message}`);
   return data as TamRegradeStatus;
+}
+
+const publishedEventQuerySchema = z.object({
+  runSlug: z.string().trim().min(1),
+  netsuiteInternalId: z.string().regex(/^[0-9]+$/),
+  provenanceSha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+export async function getTamPublishedEvent(raw: unknown) {
+  const input = publishedEventQuerySchema.parse(raw);
+  const runId = await runIdFor(input.runSlug);
+  const { data, error } = await serviceClient()
+    .from("tam_regrade_events")
+    .select("id,run_id,netsuite_internal_id,kind,created_at,provenance_sha256:metadata->>provenance_sha256")
+    .eq("run_id", runId)
+    .eq("netsuite_internal_id", input.netsuiteInternalId)
+    .eq("kind", "grade.published")
+    .eq("metadata->>provenance_sha256", input.provenanceSha256)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(`TAM publication event read failed: ${error.message}`);
+  return {
+    events: (data ?? []).map(({ provenance_sha256, ...event }) => ({
+      ...event,
+      metadata: { provenance_sha256 },
+    })),
+  };
 }
 
 export interface ListTamRegradeRecordsInput {
