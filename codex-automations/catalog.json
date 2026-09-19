@@ -2,7 +2,7 @@
   "schema_version": 1,
   "as_of": "2026-09-11",
   "scope": "Local Codex work inventory; components, skills, workflows, artifacts, and history are intentionally distinguished.",
-  "entry_count": 82,
+  "entry_count": 88,
   "entries": [
     {
       "id": "ST01",
@@ -10,10 +10,11 @@
       "title": "Headhunter: territory and account workspace",
       "status": "Source present",
       "purpose": "Bring territory imports, claimed accounts, prioritization, evidence, and exports into one interface.",
-      "logic": "Imports normalize account records; the UI exposes TAM, Old Gold, and Triggered as different views. Company detail and history preserve the evidence behind a worklist. An imported account is not automatically a claimed account.",
+      "logic": "Imports normalize account records; the UI exposes TAM, Old Gold, and Triggered separately. Inline Account Intelligence adds Jev evidence, operating matches, research and Claude-written cited stories while preserving account context. An imported account is not automatically claimed.",
       "infrastructure": "Next.js App Router, React, TypeScript, Supabase Postgres.",
       "evidence": "Public: components/Dashboard.tsx; lib/baseImport.ts; app/api/headhunter/.",
-      "availability": "Implementation is in this repository; operation requires separately authorized services and private state."
+      "availability": "Implementation is in this repository; operation requires separately authorized services and private state.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "ST02",
@@ -54,10 +55,11 @@
       "title": "Triggered prioritization and review lifecycle",
       "status": "Source present",
       "purpose": "Rank fresh external changes separately from CRM readiness.",
-      "logic": "Combine signal strength, decay, and fit. A reviewed company reheats only from evidence whose event and detection are both newer than the human review boundary. Export freshness uses the configured window. Starred items and history support manual review.",
+      "logic": "Combine source-supported signal priority, decay and fit. Eligible Jev packets publish directly or enrich existing source cards; the separate legacy review path remains. Human review boundaries, event/detection dates, quarantine and export freshness still apply. Public intelligence never rewrites TAM or Old Gold.",
       "infrastructure": "Trigger tables, freshness functions, dashboard, export routes.",
       "evidence": "Public: lib/triggers/freshness.ts; lib/triggers/signalIntegrity.ts; config/signals.ts.",
-      "availability": "Implementation is in this repository; operation requires separately authorized services and private state."
+      "availability": "Implementation is in this repository; operation requires separately authorized services and private state.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "ST06",
@@ -88,9 +90,10 @@
       "status": "Source present",
       "purpose": "Provide a conversational interface to application functions.",
       "logic": "Route conversation through configured model and tool contracts. Voice is an input surface for the same application capabilities; account access and tool permissions still bound actions. Model defaults vary by component and settings.",
-      "infrastructure": "Anthropic-backed chat orchestration; app chat routes and browser UI.",
+      "infrastructure": "Anthropic-backed chat orchestration and application tools. Jev is a separate evidence/research provider, not the chat model.",
       "evidence": "Public: lib/chat/run.ts; lib/chat/tools.ts; app/api/chat/.",
-      "availability": "Implementation is in this repository; operation requires separately authorized services and private state."
+      "availability": "Implementation is in this repository; operation requires separately authorized services and private state.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "ST09",
@@ -98,10 +101,11 @@
       "title": "Codex and Claude coordination bridge",
       "status": "Source present",
       "purpose": "Share bounded lead evidence, grades, task status, and messages across authorized agents.",
-      "logic": "Dedicated agent-token authentication protects specific endpoints. Read access uses table and scalar-column allowlists. Writes use specialized validation, dry-run support, exact identity, and atomic database guards. Cron secrets and query tokens do not grant bridge access.",
+      "logic": "Dedicated agent-token authentication protects bounded reads and specialized writes. The separately gated intelligence/evaluate endpoint supports Jev excerpt annotations with usage-only server persistence. Exact identity, publication provenance and atomic grade guards remain required.",
       "infrastructure": "app/api/agent, server-only credentials, Supabase audit events.",
       "evidence": "Public: AGENTS.md bridge contract; app/api/agent/.",
-      "availability": "Implementation is in this repository; operation requires separately authorized services and private state."
+      "availability": "Implementation is in this repository; operation requires separately authorized services and private state.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "ST10",
@@ -120,10 +124,11 @@
       "title": "Hourly rotating source orchestration",
       "status": "Source present",
       "purpose": "Bound each hosted ingestion invocation while covering multiple source families.",
-      "logic": "The historically named daily route runs hourly. One invocation executes a five-request stage from an 80-request manifest, a 16-stage rotation. Prime awards and candidate review recur each stage. Provider failures mean intended coverage is not proof of successful observation.",
+      "logic": "The historical daily route still runs hourly with a five-request stage from an 80-request manifest. Additional gated intelligence interpretation, baseline collection and directed research run every five minutes; shared sources run every fifteen minutes. Federal discovery has its own five-minute job. Schedules are capacity plans, not successful coverage guarantees.",
       "infrastructure": "Vercel cron; lib/cron; authenticated worker routes.",
       "evidence": "Public: vercel.json; lib/cron/dailyPlan.ts; lib/cron/rotation.ts.",
-      "availability": "Implementation is in this repository; operation requires separately authorized services and private state."
+      "availability": "Implementation is in this repository; operation requires separately authorized services and private state.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "SG02",
@@ -131,10 +136,11 @@
       "title": "News discovery, identity checks, and candidate review",
       "status": "Source present",
       "purpose": "Find relevant company news while preventing same-name misattribution.",
-      "logic": "Collect RSS/news candidates, check company identity, classify qualifying evidence, and route uncertain candidates for review. URL safety and evidence requirements apply before a trigger is accepted.",
+      "logic": "With intelligence enabled, labeled publisher-body or headline-only evidence enters Jev interpretation. Eligible packet findings publish without a second-model review; exact source/identity, date and freshness routing still applies. The legacy intelligence-disabled path and legacy candidates retain their existing reviewer. Google wrappers are not article bodies.",
       "infrastructure": "RSS parser, Google News sources, regex and model classification, review queue.",
       "evidence": "Public: config/news.ts; lib/triggers/classify.ts; lib/triggers/candidateReview.ts; lib/triggers/urlSafety.ts.",
-      "availability": "Implementation is in this repository; operation requires separately authorized services and private state."
+      "availability": "Implementation is in this repository; operation requires separately authorized services and private state.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "SG03",
@@ -142,10 +148,11 @@
       "title": "Website, careers, ATS, and finance-hiring signals",
       "status": "Source present",
       "purpose": "Detect operational change and hiring evidence from company-linked surfaces.",
-      "logic": "Sweep known company websites and careers sources, interpret configured events, and retain attributable evidence. Source-specific thresholds and freshness are implemented in code; observed hiring is not a confirmed purchase project.",
+      "logic": "Known company websites, supported PDFs and ATS boards feed retained public observations. Resumable ATS scans preserve listing history and distinguish baseline, changed, reappearing and removed listings. Jev interprets source and derived hiring context; a removed listing is not a confirmed hire.",
       "infrastructure": "Website/ATS sweep workers, configured data providers including Apify where used.",
       "evidence": "Public: lib/triggers/websiteSweep.ts; lib/triggers/atsSweep.ts; config/actors.ts.",
-      "availability": "Implementation is in this repository; operation requires separately authorized services and private state."
+      "availability": "Implementation is in this repository; operation requires separately authorized services and private state.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "SG04",
@@ -417,10 +424,11 @@
       "title": "Single-record TAM reader and independent validator",
       "status": "Source present",
       "purpose": "Make every final grade traceable to complete record review.",
-      "logic": "Atomically claim one exact Internal ID, run a complete reader pass and independent complete validator reread, validate schema and source hashes, publish immediately, confirm exact record/event, and checkpoint before the next record. Partial reads and unverified finals fail closed.",
+      "logic": "The canonical exact-ID runner retains complete reader and independent validator passes, provenance, immediate publish/readback and receipts. Installed navigation helpers add lossless local indexes and optional bounded Jev annotations at the authorized claimed-record boundary. Neither changes grades or resumes the separately paused grader. Public snapshots include the current staging companion and schema clarifications.",
       "infrastructure": "Python runner/core, JSON schemas, authenticated coordination service.",
       "evidence": "Public: operations/reference/tools/run_tam_single_record.py; tam_record_core.py; tam_v9_reader_schema.json; tam_v9_validator_schema.json.",
-      "availability": "Reviewed actual source snapshots are public under operations/reference; private evidence and coordination configuration are required."
+      "availability": "Reviewed actual source snapshots are public under operations/reference; private evidence and coordination configuration are required.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "EV03",
@@ -462,9 +470,10 @@
       "status": "Source present",
       "purpose": "Prevent overlapping external actions and resource-heavy idle runs.",
       "logic": "Acquire and heartbeat the browser lease and workflow lock; load exact bounded state, act on one item, verify, checkpoint, and release. Preserve ungrouped Chrome tabs and required playback focus handoff. Repeated failures become blockers, not uncontrolled UI loops.",
-      "infrastructure": "PowerShell locks, Python state snapshots, operating standard and receipts.",
+      "infrastructure": "Local PowerShell locks and bounded state snapshots; cloud Jev work separately uses database leases, paid-packet checkpoints and model-budget reservations.",
       "evidence": "Public: operations/reference/browser-automation-lock.ps1; linkedin-cadence-lock.ps1; operations/README.md. Private: AUTOMATION_OPERATING_STANDARD.md.",
-      "availability": "Private source or artifacts; public description only."
+      "availability": "Private source or artifacts; public description only.",
+      "reviewed_on": "2026-09-18"
     },
     {
       "id": "EV07",
@@ -905,6 +914,81 @@
       "infrastructure": "Codex/vendor installations, dependency folders, archived checkouts and output copies.",
       "evidence": "Private inventory skip log and source-folder inventory. Public: docs/SOURCE_RECONCILIATION.md.",
       "availability": "Private source or artifacts; public description only."
+    },
+    {
+      "id": "JV01",
+      "category": "jev-intelligence",
+      "title": "Direct Jev interpretation and trigger publication",
+      "status": "Source present",
+      "purpose": "Interpret public company evidence while preserving native judgments.",
+      "logic": "One direct TypeSafe request per bounded packet returns relationship, event, complexity and operating judgments. Native answers and source passages are retained. Eligible developments publish directly or attach to existing cards; application routing and source deduplication do not add a second model review.",
+      "infrastructure": "Server-only direct HTTP adapter; default pinned jev-1.13.0; durable worker, publisher and event tables.",
+      "evidence": "Public: lib/intelligence/jev.ts; worker.ts; publish.ts; events.ts; docs/JEV_USAGE.md.",
+      "availability": "Implementation and reviewed reference code are public; operation requires authorized configuration and private state.",
+      "reviewed_on": "2026-09-18"
+    },
+    {
+      "id": "JV02",
+      "category": "jev-intelligence",
+      "title": "Jev operating profiles, saved questions and matching",
+      "status": "Source present",
+      "purpose": "Make source-supported operating context searchable across accounts.",
+      "logic": "Business-services interpretation selects at most ten operating questions per packet from a 21-topic library. Every packet retains its own attribution. Saved semantic questions use the worker view path; Any/All topic matching, profiles and lookalikes reuse cached results without another model call. Traits and hypotheses are not confirmed pain or buying intent.",
+      "infrastructure": "Jev worker, operating profiles, topic cache/search, inline account UI, Supabase.",
+      "evidence": "Public: lib/intelligence/profiles.ts; businessServices.ts; topicSearch.ts; worker.ts.",
+      "availability": "Implementation and reviewed reference code are public; operation requires authorized configuration and private state.",
+      "reviewed_on": "2026-09-18"
+    },
+    {
+      "id": "JV03",
+      "category": "jev-intelligence",
+      "title": "Jev-directed research and source ranking",
+      "status": "Source present",
+      "purpose": "Choose useful next pages without confusing unvisited URLs with evidence.",
+      "logic": "Rank up to eight discovered same-company options against explicit missing-topic context. Retain the unranked tail and original order on errors or budget deferral. A separate five-minute research worker claims up to three sources per account, sharing source leases with manual research.",
+      "infrastructure": "Jev ranking adapter; researchRunner; discovered-source queue; bounded web/PDF readers.",
+      "evidence": "Public: lib/intelligence/researchRanking.ts; researchRunner.ts; app/api/cron/intelligence-research/route.ts.",
+      "availability": "Implementation and reviewed reference code are public; operation requires authorized configuration and private state.",
+      "reviewed_on": "2026-09-18"
+    },
+    {
+      "id": "JV04",
+      "category": "jev-intelligence",
+      "title": "Jev evidence feeding Claude account stories",
+      "status": "Source present",
+      "purpose": "Turn retained evidence into source-cited account memory.",
+      "logic": "Jev supplies structured findings; Claude writes an overview, developments, explicitly unverified hypotheses, conflicting source claims and unknowns. The writer neither approves nor rescores Jev. Event grouping and versioned stories retain source history; syndicated reports are not automatically independent corroboration.",
+      "infrastructure": "Jev interpretations plus existing Anthropic account writer; durable story jobs and versioned storage.",
+      "evidence": "Public: lib/intelligence/narratives.ts; events.ts; docs/INTELLIGENCE.md.",
+      "availability": "Implementation and reviewed reference code are public; operation requires authorized configuration and private state.",
+      "reviewed_on": "2026-09-18"
+    },
+    {
+      "id": "JV05",
+      "category": "jev-intelligence",
+      "title": "Optional local Jev TAM evidence annotations",
+      "status": "Source present",
+      "purpose": "Assist evidence navigation at a separately authorized full-record review boundary.",
+      "logic": "Local indexes preserve full source pointers; bounded excerpt packets can be sent through an authenticated privacy-gated endpoint after readiness checks. Completed annotations are cached locally and uncertain paid attempts are not replayed. Full reader and independent validator remain required. The grader is separately paused; publication of this code does not activate it.",
+      "infrastructure": "Python navigation/annotation helpers; authenticated agent endpoint; shared Jev budget; private local cache.",
+      "evidence": "Public: operations/reference/tools/tam_jev_annotations.py; tam_navigation_bridge.py; run_tam_single_record.py; app/api/agent/intelligence/evaluate/route.ts; docs/TAM_EVIDENCE_INDEX.md.",
+      "availability": "Implementation and reviewed reference code are public; operation requires authorized configuration and private state.",
+      "reviewed_on": "2026-09-18"
+    },
+    {
+      "id": "JV06",
+      "category": "jev-intelligence",
+      "title": "Jev budget, checkpoints, feedback and runtime visibility",
+      "status": "Source present",
+      "purpose": "Keep continuous interpretation bounded and recoverable.",
+      "logic": "Atomic reservations, exact content/context hashes, leases and paid-packet checkpoints constrain dispatch and retries. Unknown outcomes retain reservations. Explicit feedback can exclude evidence or adjust bounded public priority without rewriting native answers or CRM grades. Metrics distinguish source capture, interpretation, queue latency and published cards.",
+      "infrastructure": "TypeSafe requests; Supabase queue/budget/feedback/metrics; Vercel five/fifteen-minute schedules.",
+      "evidence": "Public: lib/intelligence/budget.ts; observations.ts; feedback.ts; worker.ts; vercel.json; docs/INTELLIGENCE.md.",
+      "availability": "Implementation and reviewed reference code are public; operation requires authorized configuration and private state.",
+      "reviewed_on": "2026-09-18"
     }
-  ]
+  ],
+  "inventory_as_of": "2026-09-11",
+  "jev_update_as_of": "2026-09-18",
+  "jev_source_baseline": "459c062e8c24e20ffa6a8de804de8462560482fe"
 }

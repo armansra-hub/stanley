@@ -32,3 +32,7 @@ These definitions were inventoried without changing the running sales system. Re
 | BDR Slack coordination experiment | Historical scheduled-message work, including an unresolved cancellation-verification outcome. No matching current Codex recurring definition was found. |
 
 Recurring Missions inside Stanley and the hosted hourly Vercel ingestion rotation are application features, not additional local Codex automation definitions. Scheduled Outlook delivery is also distinct from a Codex schedule and is not an authorized substitute for the current Outlook workflow.
+
+## Hosted Jev schedules — source refresh September 18, 2026 (Pacific)
+
+Separate from the six saved local definitions above, Stanley's `vercel.json` contains gated five-minute interpretation, collection and directed-research routes and a fifteen-minute shared-source route. The hourly broad-source and five-minute federal-discovery jobs remain distinct. See [Jev runtime and code](../docs/JEV_USAGE.md). This is a checked-in schedule inventory, not a fresh audit of local scheduler health or successful production coverage.

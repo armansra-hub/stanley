@@ -47,7 +47,7 @@ Apply the reviewed ordered set to a clean development database using authorized 
 - Calendar: `/api/cron/calendar-sync` exists separately. Historical notes describe an external/pg_cron schedule; verify the actual database job.
 - Outreach: the local Codex automation service or a foreground user request starts a bounded coordinator. Live definitions, status, and private checkpoints are outside Git and are not installed by `npm ci`.
 
-The canonical local TAM grader is paused under its current handoff; deploying this cloud runtime does not resume it. Jev question contract `stanley-evidence-v2` uses public background, nearby source text and separate event/collection dates. The Intelligence page exposes retained model answers. Event-level report clustering and generated account narratives are not included in the current implementation.
+The canonical local TAM grader is paused under its current handoff; deploying this cloud runtime does not resume it. Current business-services interpretation uses `stanley-business-services-v1`; the adapter also retains `stanley-public-scale-v1` and `stanley-evidence-v2` for their respective request paths and compatible continuations. The Intelligence page exposes retained Jev answers. Event-level report clustering and versioned account narratives are implemented; the narrative writer uses Claude and does not review or rescore Jev. See the [Jev usage and code map](JEV_USAGE.md) and [intelligence implementation](INTELLIGENCE.md).
 
 ## Validation and release
 

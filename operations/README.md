@@ -80,3 +80,7 @@ The workstation also has separate TAL-gifting and Sales Navigator customer-CSV u
 ## Not included
 
 Full private policy files, customer-specific suppressions, recipients, mailbox content, browser state, live automation definitions, ledgers, CRM PDFs, production environment files, and historical ad hoc repair scripts. The guide explains the logic; actual execution still needs authorized private state.
+
+## Jev in local evidence review
+
+The hosted Jev engine interprets public evidence and ranks research options. The local TAM runner additionally has optional bounded, privacy-gated Jev excerpt annotations and lossless evidence navigation; its full reader/independent-validator and publication gates remain. The grader is separately paused and this source handoff does not resume it. [Jev usage and code map](../docs/JEV_USAGE.md) distinguishes the public engine, private annotation route and Claude writer.

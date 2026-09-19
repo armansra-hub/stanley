@@ -17,7 +17,7 @@ These are selected actual files from the operator's canonical Stanley workspace,
 | `tools/tam_record_core.py` | Evidence validation, prompts, model invocation, provenance |
 | `tools/tam_navigation_bridge.py`, `tools/tam_evidence_index.py`, `tools/tam_jev_annotations.py` | Local lossless navigation/cache, source amount/date arithmetic, bounded readiness-gated Jev annotations and stage timing |
 | `tools/tam_public_context.py` | Public source dates compared locally with canonical last substantive interaction, after completed publication/readback |
-| `tools/stage_tam_final_grades.py` | Deterministic final staging and conflicts |
+| `tools/stage_tam_final_grades.py` | Deterministic staging/conflicts and exact publish-payload return under the staging lock |
 | `tools/tam_v9_*_schema.json` | Structured reader, independent validator, and oversized-chunk outputs |
 | `tests/` | Existing synthetic render-guard regression tests |
 
@@ -34,3 +34,5 @@ python -m pytest tests
 ```
 
 Do not run the TAM/LinkedIn write commands merely to explore the repository. Read the functions and use synthetic fixtures. None of these snapshots is imported by the Next.js application; `.vercelignore` excludes this directory from hosted deployment.
+
+The staging companion, reader/validator schema descriptions and existing staging tests were synchronized for the September 18 Pacific Jev handoff (separate from the earlier September 19 UTC navigation capture). Their manifest entries record the exact bytes. Offline staging regression tests are in `tools/tests/`; they use synthetic temporary files and do not access CRM or the model provider.

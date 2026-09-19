@@ -24,7 +24,7 @@ Capture, reconciliation, export, and runtime utilities supporting the workflows.
 
 **Status:** Source present. **Purpose:** Make every final grade traceable to complete record review.
 
-**How it works:** Atomically claim one exact Internal ID, run a complete reader pass and independent complete validator reread, validate schema and source hashes, publish immediately, confirm exact record/event, and checkpoint before the next record. Partial reads and unverified finals fail closed.
+**How it works:** The canonical exact-ID runner retains complete reader and independent validator passes, provenance, immediate publish/readback and receipts. Installed navigation helpers add lossless local indexes and optional bounded Jev annotations at the authorized claimed-record boundary. Neither changes grades or resumes the separately paused grader. Public snapshots include the current staging companion and schema clarifications.
 
 **Infrastructure:** Python runner/core, JSON schemas, authenticated coordination service.
 
@@ -82,7 +82,7 @@ Capture, reconciliation, export, and runtime utilities supporting the workflows.
 
 **How it works:** Acquire and heartbeat the browser lease and workflow lock; load exact bounded state, act on one item, verify, checkpoint, and release. Preserve ungrouped Chrome tabs and required playback focus handoff. Repeated failures become blockers, not uncontrolled UI loops.
 
-**Infrastructure:** PowerShell locks, Python state snapshots, operating standard and receipts.
+**Infrastructure:** Local PowerShell locks and bounded state snapshots; cloud Jev work separately uses database leases, paid-packet checkpoints and model-budget reservations.
 
 **Evidence:** Public: operations/reference/browser-automation-lock.ps1; linkedin-cadence-lock.ps1; operations/README.md. Private: AUTOMATION_OPERATING_STANDARD.md.
 

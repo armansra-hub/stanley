@@ -2,7 +2,7 @@
   "name": "jarvis",
   "version": "0.1.0",
   "private": true,
-  "description": "Jarvis — all-in-one assistant for a NetSuite AE. v1: Prospecting module.",
+  "description": "Stanley — territory intelligence with Jev-powered account research and Claude-assisted workflows for a NetSuite AE.",
   "scripts": {
     "dev": "next dev",
     "gen-art": "node scripts/gen-art.mjs",

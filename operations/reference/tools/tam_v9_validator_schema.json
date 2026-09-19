@@ -52,13 +52,13 @@
     "exact_id": { "type": "string", "pattern": "^[0-9]+$" },
     "company_name": { "type": "string", "minLength": 1 },
     "validation_status": { "type": "string", "enum": ["passed", "hold"] },
-    "hold_reason": { "type": "string" },
+    "hold_reason": { "type": "string", "description": "When validation_status is passed, return exactly the empty string \"\". Whitespace, placeholders such as \"None\", \"N/A\" or \"No hold\", and explanatory prose are not empty strings. When validation_status is hold, provide a nonempty, specific explanation of the genuine unresolved identity or evidence problem that prevents a supported final judgment under the existing hold policy; ordinary ambiguity alone is not a hold. Independently assess whether a real unresolved problem exists. Never hide such a problem by blanking this field, or cosmetically change validation_status to satisfy the consistency gate. This clarification changes only how the existing status and reason are expressed; preserve all full-read, independent-validation, evidence, scoring and hold requirements." },
     "final_score": { "type": "integer", "minimum": 0, "maximum": 100 },
     "score_adjust_note": { "type": "string", "minLength": 1 },
     "disposition": { "type": "string", "minLength": 1 },
     "newest_human_interaction_date": { "type": "string" },
     "newest_human_interaction_summary": { "type": "string", "minLength": 1 },
-    "record_digest": { "type": "string", "minLength": 80 },
+    "record_digest": { "type": "string", "minLength": 80, "description": "Preserve the substantive record digest and all material chronology. Include five separate, nonempty rubric lines beginning exactly Timing:, Budget:, Why change:, Obstacle:, and Confidence:. Each label must start its own physical line in the decoded string: encode actual newline characters as \\n in JSON between these lines, not spaces, semicolons, or literal backslash-plus-n characters. Do not prefix these labels with bullets or Markdown. Budget must state supported/conditional/unknown/insufficient with its independently supported basis; genuinely unknown budget stays neutral. Follow the existing rubric for each line; this formatting requirement does not alter evidence, judgment, scores, or full-read and independent-validation requirements." },
     "positive_evidence": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
@@ -69,7 +69,8 @@
     },
     "dq_status": {
       "type": "string",
-      "enum": ["none", "explicit", "inferred", "ambiguous"]
+      "enum": ["none", "explicit", "inferred", "ambiguous"],
+      "description": "Classify the substantive disqualification evidence, not whether a literal DQ label appears in CRM. Use explicit for a specific dated human-authored or buyer-attributed disqualification, and inferred only for a supported contextual conclusion from such evidence; use none when disqualification is not established and ambiguous when it remains materially unresolved. A bare status or lost-reason code is insufficient. Independently reconcile the chronology and explain why the cited evidence still controls. For a passed result with final_score from 0 through 10 and child_company false, the existing gate requires dq_status explicit or inferred, a nonempty dq_reason, dead_reason_specific true, and a nonempty dated human dead_reason_source. These fields must describe the actual supported judgment. If evidence remains none or ambiguous, genuinely re-evaluate the judgment and score under the full rubric; use hold only for a genuine unresolved identity or evidence problem under the existing hold policy. Never cosmetically relabel ambiguous evidence, invent support, or choose a score merely to satisfy the gate. Missing or genuinely ambiguous budget remains neutral; do not confuse it with supported buyer-grounded affordability failure. Passed human evaluation or revisit windows remain positive absent a later substantive reversal: preserve their date and milestone as historical/arrived but not newly confirmed. Elapsed time or lack of subsequent buyer confirmation alone is not DQ evidence. Preserve all existing full-read, independent-validation, specific-reason, source, score and Old Gold requirements."
     },
     "dq_reason": { "type": "string" },
     "child_company": { "type": "boolean" },
@@ -112,9 +113,9 @@
     "newest_interaction_verified": { "type": "boolean" },
     "every_dq_occurrence_reviewed": { "type": "boolean" },
     "every_status_change_contextualized": { "type": "boolean" },
-    "opportunity_records_reviewed": { "type": "boolean" },
-    "intro_call_records_reviewed": { "type": "boolean" },
-    "budget_threshold_applied": { "type": "boolean" },
+    "opportunity_records_reviewed": { "type": "boolean", "description": "Reports your independently completed review, not whether an opportunity exists. Set true only after independently reviewing all supplied raw evidence for actual opportunity records, linked markers, dates, status, and conversion context, including a supported finding that no opportunity record is present. Report existence separately in opportunity_exists. If this review was not completed or remains unresolved, leave false; never copy the reader's attestation or set true merely to pass validation." },
+    "intro_call_records_reviewed": { "type": "boolean", "description": "Reports your independently completed review, not whether an Intro Call exists. Set true only after independently reviewing all supplied raw evidence for Intro Call records, dates, attendees, and outcomes, including a supported finding that no Intro Call record is present. Report existence separately in intro_call_exists. If this review was not completed or remains unresolved, leave false; never copy the reader's attestation or set true merely to pass validation." },
+    "budget_threshold_applied": { "type": "boolean", "description": "Reports your independently completed application of the budget policy, not whether the company has a stated or qualifying budget. Set true only after independently reviewing all supplied raw budget evidence and applying the rubric's approximately $3,000/month threshold, source/context requirements, and neutral treatment of missing or genuinely ambiguous budget unless buyer-grounded evidence establishes affordability or insufficiency. Describe the supported result in budget_status. If this assessment was not completed or remains unresolved, leave false; never infer a budget, copy the reader's attestation, or set true merely to pass validation." },
     "dead_reason_specific": { "type": "boolean" },
     "dead_reason_source": { "type": "string" }
   }

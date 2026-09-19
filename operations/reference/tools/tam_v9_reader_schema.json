@@ -102,9 +102,9 @@
     "pdf_pages_read": { "type": "integer", "minimum": 1 },
     "every_dq_occurrence_reviewed": { "type": "boolean" },
     "every_status_change_contextualized": { "type": "boolean" },
-    "opportunity_records_reviewed": { "type": "boolean" },
-    "intro_call_records_reviewed": { "type": "boolean" },
-    "budget_threshold_applied": { "type": "boolean" },
+    "opportunity_records_reviewed": { "type": "boolean", "description": "Reports completed review, not whether an opportunity exists. Set true only after reviewing all supplied evidence for actual opportunity records, linked markers, dates, status, and conversion context, including a supported finding that no opportunity record is present. Report existence separately in opportunity_exists. If this review was not completed or remains unresolved, leave false; never set true merely to pass validation." },
+    "intro_call_records_reviewed": { "type": "boolean", "description": "Reports completed review, not whether an Intro Call exists. Set true only after reviewing all supplied evidence for Intro Call records, dates, attendees, and outcomes, including a supported finding that no Intro Call record is present. Report existence separately in intro_call_exists. If this review was not completed or remains unresolved, leave false; never set true merely to pass validation." },
+    "budget_threshold_applied": { "type": "boolean", "description": "Reports completed application of the budget policy, not whether the company has a stated or qualifying budget. Set true only after reviewing all supplied budget evidence and applying the rubric's approximately $3,000/month threshold, source/context requirements, and neutral treatment of missing or genuinely ambiguous budget unless buyer-grounded evidence establishes affordability or insufficiency. Describe the supported result in budget_status. If this assessment was not completed or remains unresolved, leave false; never infer a budget or set true merely to pass validation." },
     "dead_reason_specific": { "type": "boolean" },
     "dead_reason_source": { "type": "string" }
   }

@@ -4,7 +4,7 @@ import BackgroundCycler from "@/components/BackgroundCycler";
 
 export const metadata: Metadata = {
   title: "Stanley",
-  description: "The all-in-one toolkit for a NetSuite AE.",
+  description: "Territory intelligence for a NetSuite AE, with Jev-powered account research and Claude-assisted workflows.",
 };
 
 export default function RootLayout({

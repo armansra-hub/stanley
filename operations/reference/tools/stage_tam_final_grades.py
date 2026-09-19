@@ -189,6 +189,7 @@ def main() -> int:
             "single-record automation."
         ),
     )
+    parser.add_argument("--return-exact-payload", help="Return this exact staged ID in stdout while the staging lock is held")
     args = parser.parse_args()
     if not 1 <= args.lock_attempts <= 600:
         parser.error("--lock-attempts must be 1-600")
@@ -529,7 +530,13 @@ def main() -> int:
         sort_keys=True,
     ).encode("utf-8")
     write_atomic(manifest_path, manifest_bytes)
-    print(json.dumps(manifest, indent=2))
+    if args.return_exact_payload:
+        exact_payload = queue_by_id.get(args.return_exact_payload)
+        if exact_payload is None:
+            raise ValueError("requested exact publish payload was not staged")
+        print(json.dumps({**manifest, "exact_publish_payload": exact_payload}, indent=2))
+    else:
+        print(json.dumps(manifest, indent=2))
     return 0
 
 

@@ -65,3 +65,7 @@ This is the most complete inventory established from the **accessible local evid
 A private audit package under the Stanley workspace retains the filesystem metadata, access-error list, project/task crosswalk, raw saved definitions, and exact local evidence locations. Those files are deliberately outside the Git worktree and were not published. The public catalog contains descriptions and safe source references; it does not export CRM data, mailbox history, compensation details, or raw Codex conversations.
 
 Future refreshes should re-enumerate project/task/schedule metadata, compare source and output changes, update stable catalog IDs, recheck status evidence, and review the exact Git diff before publishing. This catalog does not create a new recurring automation.
+
+## Jev source update — September 18, 2026 (Pacific)
+
+This targeted refresh reconciled Stanley GitHub main with the current Jev checkout, inspected actual adapter/worker/research/private-annotation call sites, and compared local TAM reference files with their published snapshots. It added JV01–JV06 and updated related entries. It did not rerun the full September 11 filesystem/task inventory or change those historical counts. Current profile-linked film-brief and job-search CRM source searches found no Jev/TypeSafe implementation; their model attribution was preserved.
