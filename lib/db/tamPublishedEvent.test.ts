@@ -12,15 +12,25 @@ beforeEach(() => {
 });
 describe("exact published TAM event read", () => {
   it("filters exact run, ID, publication kind and provenance, with one compact result", async () => {
-    mocks.limit.mockResolvedValue({ data: [{ id: 8, run_id: "run-id", netsuite_internal_id: "123", kind: "grade.published", created_at: "2026-09-19", provenance_sha256: input.provenanceSha256 }], error: null });
+    mocks.limit.mockResolvedValue({ data: [{ id: 8, run_id: "run-id", netsuite_internal_id: "123", kind: "grade.published", created_at: "2026-09-19", company_id: "event-company-id", provenance_sha256: input.provenanceSha256 }], error: null });
     const result = await getTamPublishedEvent(input);
     expect(mocks.from.mock.calls).toEqual([["tam_regrade_runs"], ["tam_regrade_events"]]);
     expect(mocks.eq.mock.calls).toEqual([["slug", "test-run"], ["run_id", "run-id"], ["netsuite_internal_id", "123"], ["kind", "grade.published"], ["metadata->>provenance_sha256", input.provenanceSha256]]);
-    expect(mocks.select).toHaveBeenLastCalledWith("id,run_id,netsuite_internal_id,kind,created_at,provenance_sha256:metadata->>provenance_sha256");
+    expect(mocks.select).toHaveBeenLastCalledWith("id,run_id,netsuite_internal_id,kind,created_at,company_id:metadata->>company_id,provenance_sha256:metadata->>provenance_sha256");
     expect(mocks.order).toHaveBeenCalledWith("created_at", { ascending: false });
     expect(mocks.limit).toHaveBeenCalledWith(1);
-    expect(result.events[0]).toMatchObject({ kind: "grade.published", netsuite_internal_id: "123", metadata: { provenance_sha256: input.provenanceSha256 } });
+    expect(result.events[0]).toMatchObject({ kind: "grade.published", netsuite_internal_id: "123", metadata: { company_id: "event-company-id", provenance_sha256: input.provenanceSha256 } });
     expect(result.events[0]).not.toHaveProperty("provenance_sha256");
+    expect(result.events[0]).not.toHaveProperty("company_id");
+    // The foreground recovery gate compares the stored event metadata to the live company.
+    expect(result.events[0].metadata.company_id).toBe("event-company-id");
+  });
+  it.each([null, undefined])("does not infer a missing stored company binding (%s)", async (companyId) => {
+    mocks.limit.mockResolvedValue({ data: [{ id: 9, kind: "grade.published", netsuite_internal_id: "123", company_id: companyId, provenance_sha256: input.provenanceSha256 }], error: null });
+    const result = await getTamPublishedEvent(input);
+    expect(result.events[0].metadata.company_id).toBe(companyId);
+    expect(result.events[0].metadata.company_id).not.toBe("event-company-id");
+    expect(mocks.from.mock.calls).toEqual([["tam_regrade_runs"], ["tam_regrade_events"]]);
   });
   it.each([{ ...input, runSlug: null }, { ...input, runSlug: " " }, { ...input, netsuiteInternalId: "123x" }, { ...input, netsuiteInternalId: null }, { ...input, provenanceSha256: "A".repeat(64) }, { ...input, provenanceSha256: null }])("rejects missing or malformed exact selectors before database access: %o", async (bad) => {
     await expect(getTamPublishedEvent(bad)).rejects.toThrow(); expect(mocks.from).not.toHaveBeenCalled();

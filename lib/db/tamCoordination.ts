@@ -206,7 +206,7 @@ export async function getTamPublishedEvent(raw: unknown) {
   const runId = await runIdFor(input.runSlug);
   const { data, error } = await serviceClient()
     .from("tam_regrade_events")
-    .select("id,run_id,netsuite_internal_id,kind,created_at,provenance_sha256:metadata->>provenance_sha256")
+    .select("id,run_id,netsuite_internal_id,kind,created_at,company_id:metadata->>company_id,provenance_sha256:metadata->>provenance_sha256")
     .eq("run_id", runId)
     .eq("netsuite_internal_id", input.netsuiteInternalId)
     .eq("kind", "grade.published")
@@ -215,9 +215,9 @@ export async function getTamPublishedEvent(raw: unknown) {
     .limit(1);
   if (error) throw new Error(`TAM publication event read failed: ${error.message}`);
   return {
-    events: (data ?? []).map(({ provenance_sha256, ...event }) => ({
+    events: (data ?? []).map(({ company_id, provenance_sha256, ...event }) => ({
       ...event,
-      metadata: { provenance_sha256 },
+      metadata: { company_id, provenance_sha256 },
     })),
   };
 }
