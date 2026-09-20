@@ -233,6 +233,46 @@ class Lifecycle(unittest.TestCase):
   self.assertTrue(result["readOnlyReconciled"])
   for path,raw in before.items():self.assertEqual(path.read_bytes(),raw)
 
+ def test_staged_activation_keeps_dispatch_disabled_and_reports_later_owner_enable(self):
+  self.prepare();directory=self.artifacts/"successor";plan=m.read(directory/"plan.json")
+  m.write(directory/"state.json",{"status":"complete","checkpoint_seed_id":"seed"})
+  live_path=self.mission_path.with_name("tam-regrade-live-state.json");m.write(live_path,self.mission)
+  control_path=self.root/"automation-control.json";m.write(control_path,{"tamRegrade":{"enabled":False}})
+  posts=[];validations=[];control_states=[]
+  class Api:
+   def request(s,method,url,payload=None):posts.append((method,payload));return {"admitted":1}
+  self.fake.Api=Api;self.fake.ENDPOINT="/coordination"
+  self.fake.board=lambda api,run:{"run":{"completed_checkpoint_seed_id":"seed"},"checkpointSeed":{"manifest_sha256":plan["seedManifestSha256"]}}
+  self.fake.records=lambda *args:[];self.fake.verify_board_records=lambda *args:None
+  @contextmanager
+  def boundary(*a,**kw):yield None
+  def load_context(path,mission_path,root):
+   current=m.read(path);ref=m.reference(root,path)
+   self.assertEqual(m.read(mission_path)["activeGradingRound"]["context"],ref)
+   self.assertEqual(m.read(live_path)["activeGradingRound"]["context"],ref)
+   self.assertFalse(m.read(control_path)["tamRegrade"]["enabled"])
+   self.assertEqual(current["checkpoint_seed_id"],"seed");validations.append(ref);return current
+  fake_round=SimpleNamespace(load_round_context=load_context);fake_core=SimpleNamespace(configure_round=lambda context:None)
+  write=m.write
+  def tracked_write(path,value):
+   if path==control_path:control_states.append(value["tamRegrade"]["enabled"])
+   return write(path,value)
+  with patch.object(m,"modules",return_value=(None,self.fake)),patch.object(m,"safe_boundary",boundary),patch.object(m,"initializer_adapter",boundary),patch.object(m,"write",tracked_write),patch.dict(sys.modules,{"tam_grading_round":fake_round,"tam_record_core":fake_core}),patch("importlib.reload",side_effect=lambda module:module):
+   staged=m.activate(self.root,directory,keep_dispatch_disabled=True)
+   self.assertEqual(staged["status"],"canonical_successor_activated_dispatch_disabled")
+   self.assertTrue(staged["pendingOwnerEnable"]);self.assertFalse(staged["dispatchEnabled"])
+   self.assertEqual(control_states,[False]);self.assertEqual(len(validations),1)
+   authorization=m.read(m.bound(self.root,m.read(control_path)["tamRegrade"]["parallelAuthorization"]))
+   self.assertEqual(authorization["contextSha256"],staged["context"]["sha256"])
+   repeated=m.activate(self.root,directory)
+   self.assertEqual(repeated["status"],staged["status"],"Default retry cannot enable a staged successor")
+   (directory/"activation_receipt.json").unlink()
+   self.assertFalse(m.reconcile_activation(self.root,directory)["dispatchEnabled"],"Missing staged receipt is reconciled without enabling")
+   control=m.read(control_path);control["tamRegrade"]["enabled"]=True;write(control_path,control) # Simulate separate owner enable after repinning.
+   active=m.activate(self.root,directory,keep_dispatch_disabled=True)
+   self.assertTrue(active["dispatchEnabled"]);self.assertEqual(active["status"],"active_canonical_successor")
+   self.assertFalse(active["pendingOwnerEnable"]);self.assertEqual(len(posts),1,"Admission is never replayed")
+
  def test_long_capture_registers_and_prepared_core_reads_normal_canonical_locator(self):
   """Exercise real filesystem/PDF I/O past MAX_PATH, without active runtime edits."""
   if os.name=="nt":

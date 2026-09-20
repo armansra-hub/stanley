@@ -83,10 +83,20 @@ New plans pause the predecessor, perform one atomic `evidence_successor_initiali
 
 Repeat only the canonical `apply` continuation when durable state says no uncertain action. A pending action is resolved with read-only `reconcile`; never clear it or blindly repeat a POST. Fast-init recovery requires the saved response's fencing token and exact live seed/manifest. If the response was lost, retain the intent for explicit token recovery. Existing plans without `successorInitialize` retain their original operation indexes and transport; never convert an in-progress journal in place. Old published finals carry forward unchanged as historical completed evidence; changed IDs become canonical pending work; previous pending IDs remain pending; existing holds retain their exact reason. Old seed/grade/history remains intact.
 
+Before activation, preserve the retained evidence lineage for every carried final:
+
+```powershell
+& $py 'C:/Users/Arman Sra/Documents/Stanley/stanley-jev-intelligence-20260918/tools/tam_changed_lineage.py' --records "$handoff/records.json" --plan '<new-successor-directory>/plan.json' --predecessor-root '<predecessor-artifact-root>' --output '<new-successor-directory>/inherited_final_lineage.json'
+```
+
+The local manifest binds the original publication, checkpoint, source-bound Jev preparation, reader and validator artifacts by hash. It does not read PDFs or call a model. Later successors reuse the exact predecessor manifest and plan while preserving the original evidence and parent references. Require `status:verified` and no exact-ID anomalies; retain failed manifests for diagnosis rather than overwriting them. Use the fixed filename `inherited_final_lineage.json` so future handoffs can find it.
+
 ```powershell
 & $py $helper reconcile --directory '<new-successor-directory>'
 & $py $helper activate --directory '<new-successor-directory>'
 ```
+
+When the owner must repin its adapter manifest to the successor context before dispatch, use `activate --directory '<new-successor-directory>' --keep-dispatch-disabled`. This performs the same cloud admission, canonical pointer/context validation and parallel-authorization setup, while keeping `tamRegrade.enabled:false` throughout. The receipt reports `canonical_successor_activated_dispatch_disabled`, `dispatchEnabled:false` and `pendingOwnerEnable:true`. The owner then repins and validates its adapter before separately enabling normal dispatch. Repeating activation never enables a staged successor or repeats admission; `reconcile-activation` reports the actual disabled/enabled control state and refreshes only the receipt, including after the owner enables it. The ordinary activation command retains its existing enable-last behavior for a first activation.
 
 Activation requires a complete existing seed and exact final readback. It admits the specific change receipts, binds the canonical mission/live checkpoint to the new context, validates that context with the installed core and enables the same three-slot control **last**. Local pointer failure rolls back the before-images; an uncertain admission uses `reconcile-admission` (read-only exact receipt verification) before continuing. If control was enabled but the final local receipt was lost, `reconcile-activation` proves the exact active mission/live/context/authorization/control and live seed, then writes only that missing receipt. It does not stop or reconfigure a running worker. The helper does not launch a coordinator. The existing TAM owner/watchdog resumes the normal foreground coordinator with its current reviewed launch options and the new canonical context. It then performs the ordinary full-read/independent-validation/publish/readback flow. Cloud receipts become `published` only when that exact successor, PDF and full-record hash publish.
 

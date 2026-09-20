@@ -412,12 +412,14 @@ def apply(root,directory,maximum=250,reconcile=False):
         with initializer_adapter(initializer,plan):
             return initializer.reconcile(directory,api=api) if reconcile else initializer.apply(directory,sha((directory/"plan.json").read_bytes()),maximum,api=api)
 
-def activate(root,directory):
+def activate(root,directory,keep_dispatch_disabled=False):
     directory=inside(root,directory); plan=read(directory/"plan.json"); state=read(directory/"state.json"); _,initializer=modules(root)
     if (directory/"activation_receipt.json").exists():
         result=read(directory/"activation_receipt.json")
         require(canonical(root)[1]["activeGradingRound"]["context"]==result["context"],"Activation receipt belongs to another active round")
-        return result
+        # Report current verified dispatch state, including a later owner enable;
+        # never replay admission or silently enable an already staged successor.
+        return reconcile_activation(root,directory)
     require(state.get("status")=="complete" and not state.get("pending_action"),"Exact canonical initialization/readback must be complete")
     with safe_boundary(root,(directory,)):
         control_path=root/"automation-control.json"; control=read(control_path); require(control["tamRegrade"].get("enabled") is False,"Dispatch must remain disabled during activation")
@@ -449,19 +451,20 @@ def activate(root,directory):
             write(mission_path,{**old,"runSlug":plan["runSlug"],"activeGradingRound":active,"changedEvidence":plan["mission"]["changedEvidence"]})
             write(live_path,{**live,"runSlug":plan["runSlug"],"activeGradingRound":active,"updatedAt":datetime.now(timezone.utc).isoformat()})
             # Read the freshly installed runtime in this process only. The
-            # coordinator still cannot dispatch until control is enabled last.
+            # coordinator cannot dispatch before validation; the staged mode
+            # leaves enabling to the owner after its adapter manifest is repinned.
             import importlib, tam_grading_round, tam_record_core
             importlib.reload(tam_grading_round); importlib.reload(tam_record_core)
             verified=tam_grading_round.load_round_context(directory/"context.active.json",mission_path=mission_path,root=root)
             tam_record_core.configure_round(verified)
-            control["tamRegrade"].update(enabled=True,mode="checkpointed-parallel-records",maxConcurrentRecords=3,parallelAuthorization=reference(root,directory/"parallel_execution_authorization.json"))
+            control["tamRegrade"].update(enabled=not keep_dispatch_disabled,mode="checkpointed-parallel-records",maxConcurrentRecords=3,parallelAuthorization=reference(root,directory/"parallel_execution_authorization.json"))
             write(control_path,control)
         except BaseException:
             for path in (mission_path,live_path,control_path):
                 temporary=path.with_name(path.name+".activation-rollback"); temporary.write_bytes((before/path.name).read_bytes()); os.replace(temporary,path)
             write(directory/"activation_rollback.json",{"status":"rolled_back","at":datetime.now(timezone.utc).isoformat()})
             raise
-        result={"status":"active_canonical_successor","runSlug":plan["runSlug"],"context":context_ref,"changedIds":len(plan["changedEvidenceBindings"]),"coordinatorLaunched":False}
+        result={"status":"canonical_successor_activated_dispatch_disabled" if keep_dispatch_disabled else "active_canonical_successor","runSlug":plan["runSlug"],"context":context_ref,"changedIds":len(plan["changedEvidenceBindings"]),"coordinatorLaunched":False,"dispatchEnabled":not keep_dispatch_disabled,"pendingOwnerEnable":keep_dispatch_disabled}
         write(directory/"activation_receipt.json",result); return result
 
 def refresh_snapshot(root,directory,row_observation=None):
@@ -565,21 +568,22 @@ def reconcile_admission(root,directory):
     write(directory/"changed_admission.response.json",result); return result
 
 def reconcile_activation(root,directory):
-    """Read-only proof for a crash after enabling control but before writing
-    its local receipt. Never reset an active coordinator or repeat admission."""
+    """Prove staged or enabled activation and refresh only its local receipt.
+    Never reset a coordinator, enable dispatch or repeat cloud admission."""
     directory=inside(root,directory);plan=read(directory/"plan.json");state=read(directory/"state.json")
     require(state.get("status")=="complete" and not state.get("pending_action"),"Initialization incomplete")
     context_ref=reference(root,directory/"context.active.json"); context=read(directory/"context.active.json")
     _,mission,_,_=canonical(root);live=read(root/"stanley-source/stanley-main/config/tam-regrade-live-state.json");control=read(root/"automation-control.json")["tamRegrade"]
     for checkpoint in (mission,live):
         require(checkpoint.get("runSlug")==plan["runSlug"] and checkpoint["activeGradingRound"]["context"]==context_ref and checkpoint["activeGradingRound"]["checkpointSeedId"]==state["checkpoint_seed_id"],"Canonical activation checkpoint differs")
-    require(control.get("enabled") is True and control.get("mode")=="checkpointed-parallel-records" and control.get("maxConcurrentRecords")==3,"Canonical control is not this active successor")
+    require(type(control.get("enabled")) is bool and control.get("mode")=="checkpointed-parallel-records" and control.get("maxConcurrentRecords")==3,"Canonical control is not this successor")
     authorization=read(bound(root,control["parallelAuthorization"]))
     expected={"approved":True,"runSlug":plan["runSlug"],"contextSha256":context_ref["sha256"],"maxConcurrentRecords":3,"eachRecordSerialReaderThenValidator":True}
     require(all(authorization.get(k)==v for k,v in expected.items()) and context["checkpoint_seed_id"]==state["checkpoint_seed_id"],"Active authorization differs")
     _,initializer=modules(root);status=initializer.board(initializer.Api(),plan["runSlug"])
     require(status["run"]["completed_checkpoint_seed_id"]==state["checkpoint_seed_id"] and status["checkpointSeed"]["manifest_sha256"]==plan["seedManifestSha256"],"Live seed differs")
-    result={"status":"active_canonical_successor","runSlug":plan["runSlug"],"context":context_ref,"changedIds":len(plan["changedEvidenceBindings"]),"coordinatorLaunched":False,"readOnlyReconciled":True}
+    enabled=control["enabled"]
+    result={"status":"active_canonical_successor" if enabled else "canonical_successor_activated_dispatch_disabled","runSlug":plan["runSlug"],"context":context_ref,"changedIds":len(plan["changedEvidenceBindings"]),"coordinatorLaunched":False,"dispatchEnabled":enabled,"pendingOwnerEnable":not enabled,"readOnlyReconciled":True}
     write(directory/"activation_receipt.json",result);return result
 
 def quiesce(root,directory):
@@ -615,6 +619,7 @@ def main():
     parser.add_argument("--board",type=Path); parser.add_argument("--records",type=Path); parser.add_argument("--registrations",type=Path); parser.add_argument("--release-commit"); parser.add_argument("--max-operations",type=int,default=250)
     parser.add_argument("--row-observation",type=Path); parser.add_argument("--dom",type=Path)
     parser.add_argument("--registration",type=Path);parser.add_argument("--output",type=Path)
+    parser.add_argument("--keep-dispatch-disabled",action="store_true",help="Activate canonical successor pointers but leave dispatch disabled for owner adapter repinning")
     args=parser.parse_args(); root=workspace()
     if args.command=="bundle": result=bundle(root,args.directory)
     elif args.command=="install": result=install(root,args.directory/"bundle.json")
@@ -629,6 +634,6 @@ def main():
     elif args.command=="reconcile-admission": result=reconcile_admission(root,args.directory)
     elif args.command=="reconcile-activation": result=reconcile_activation(root,args.directory)
     elif args.command=="export-boundary": result=export_boundary(root,args.directory)
-    else: result=activate(root,args.directory)
+    else: result=activate(root,args.directory,args.keep_dispatch_disabled)
     print(json.dumps(result))
 if __name__=="__main__": main()
