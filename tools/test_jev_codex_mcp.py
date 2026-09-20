@@ -1,11 +1,19 @@
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import jev_codex_mcp as mcp
 
 class ConnectorTests(unittest.TestCase):
+    def test_stdio_is_utf8_even_with_windows_legacy_default(self):
+        message = {"jsonrpc": "2.0", "id": "caf\u00e9\u2014", "method": "initialize", "params": {"protocolVersion": "2025-03-26"}}
+        result = subprocess.run([sys.executable, str(Path(mcp.__file__))], input=(json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, check=True, timeout=10)
+        self.assertEqual(json.loads(result.stdout.decode("utf-8"))["id"], message["id"])
+
     def test_initialize_and_tools_without_credentials_or_paid_call(self):
         with patch.object(mcp, "request", side_effect=AssertionError("network")):
             self.assertEqual(mcp.dispatch({"method": "initialize", "params": {"protocolVersion": "2025-03-26"}})["protocolVersion"], "2025-03-26")

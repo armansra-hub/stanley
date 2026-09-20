@@ -170,16 +170,14 @@ export function isWeakHistoricalMatch(match: { match_method: string; evidence?: 
     || match.match_method === "domain" && !(e.nameMatch === true && e.domainMatch === true);
 }
 
-async function remediateOne(company: TamIdentity, lease: string, deadline: number) {
+export async function remediateOne(company: TamIdentity, lease: string, deadline: number) {
   const db = serviceClient();
-  const matches: any[] = (await data(db.from("company_government_matches").select("*").eq("company_id", company.id).eq("match_status", "verified").limit(101))) ?? [];
-  if (matches.length > 100) throw new Error("identity_match_set_incomplete");
-  const weak = matches.filter(isWeakHistoricalMatch);
-  if (!weak.length) return { status: "no_weak_matches" };
-  const recent: any[] = (await data(db.from("federal_identity_remediation_receipts").select("match_id").eq("company_id", company.id)
-    .gte("created_at", new Date(Date.now() - 7 * 86_400_000).toISOString()).limit(100))) ?? [];
-  const match = weak.find(row => !recent.some(r => r.match_id === row.id));
-  if (!match) return { status: "awaiting_new_evidence" };
+  // Selection/exclusion happens against the complete database set under the
+  // existing company lease. Large recipient families never require a truncated
+  // client-side match list or capped receipt list to decide the next exact ID.
+  const selection: any = await data(db.rpc("federal_identity_next_repair_match", { p_company: company.id, p_lease: lease }));
+  const match = selection?.match;
+  if (!match) return { status: selection?.hasWeakMatches ? "awaiting_new_evidence" : "no_weak_matches", pending: false };
   const entity: any = await data(db.from("government_entities").select("*").eq("id", match.government_entity_id).single());
   const latest = await data(db.from("federal_awards").select("generated_award_id").eq("government_entity_id", entity.id).order("observed_at", { ascending: false }).limit(1).maybeSingle());
   let decision: ReturnType<typeof decideIdentityMatch> | null = null, sourceUrl: string | null = null;
@@ -198,7 +196,7 @@ async function remediateOne(company: TamIdentity, lease: string, deadline: numbe
   const result = await data(db.rpc("federal_identity_repair_match", { p_company: company.id, p_lease: lease, p_match: match.id, p_before: match,
     p_outcome: outcome, p_decision: decision ?? {}, p_evidence: { sourceUrl, sourceReadAt: new Date().toISOString(),
       candidateDecision: decision, relatedBindingIds: related.map(row => row.id), missing: latest ? null : "No stored award supplies a fresh source identifier/address; no demotion performed." } }));
-  return { ...result, matchId: match.id, pending: weak.length > recent.length + 1 };
+  return { ...result, matchId: match.id, pending: result.outcome === "stale" || selection.pending === true };
 }
 
 /** One persisted company lease; source discovery, each recipient, and historical

@@ -185,6 +185,9 @@ def dispatch(message: dict):
     raise ValueError("Unknown method")
 
 def main():
+    # MCP is UTF-8 even when Windows starts Python with an ANSI console code page.
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", newline="\n")
     for line in sys.stdin.buffer:
         if len(line) > 1_048_576:
             continue

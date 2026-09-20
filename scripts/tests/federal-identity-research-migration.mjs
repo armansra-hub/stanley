@@ -14,6 +14,7 @@ try {
  create table federal_awards(id uuid primary key default gen_random_uuid(),government_entity_id uuid,generated_award_id text,award_id text);
  create table triggers(id uuid primary key default gen_random_uuid(),company_id uuid,strength integer,metadata jsonb,dedupe_key text);`);
  await db.exec(await readFile(new URL("../../supabase/migrations/0085_federal_identity_research.sql", import.meta.url), "utf8"));
+ await db.exec(await readFile(new URL("../../supabase/migrations/0095_federal_repair_exact_selection.sql", import.meta.url), "utf8"));
  const company = "11111111-1111-4111-8111-111111111111", observation = "22222222-2222-4222-8222-222222222222";
  await db.query("insert into companies values($1,'Acme','acme.com',null,'Austin','TX','123',array['netsuite_tam'],'active')", [company]);
  await db.query("insert into intelligence_observations values($1,$2,'https://acme.com/about',now(),true,false,'website','{}','Acme legal name Acme Legal LLC')", [observation, company]);
@@ -68,5 +69,24 @@ try {
  assert.equal(repairJob.company_id,company,"finite repair reaches weak name-only link despite ordinary due date");
  assert.equal((await scalar("select federal_identity_repair_snapshot() value")).leased,1);
  assert.equal(await scalar("select federal_identity_claim_job(true) value"),null,"normal and finite workers share exclusive lease");
+ // A real large family: 200 strong bindings, 200 recently receipted weak
+ // bindings, then 100 untreated weak bindings beyond both old client caps.
+ const large="88888888-8888-4888-8888-888888888888", token="99999999-9999-4999-8999-999999999999";
+ await db.query("insert into companies values($1,'Large Family','large.example',null,null,null,'456',array['netsuite_tam'],'active')",[large]);
+ await db.exec("insert into government_entities(id,uei,legal_name) select md5('entity-'||n)::uuid,'U'||lpad(n::text,11,'0'),'Recipient '||n from generate_series(1,500) n");
+ await db.query("insert into company_government_matches(id,company_id,government_entity_id,match_status,match_method,confidence,evidence) select lpad(to_hex(n),32,'0')::uuid,$1,md5('entity-'||n)::uuid,'verified',case when n<=200 then 'verified_identifier' else 'name_only' end,.6,'{}' from generate_series(1,500) n",[large]);
+ await db.query("insert into federal_identity_jobs(company_id,lease_token,lease_expires_at) values($1,$2,now()+interval '4 minutes')",[large,token]);
+ await db.query("insert into federal_identity_remediation_receipts(match_id,company_id,before_image,outcome,evidence) select m.id,m.company_id,to_jsonb(m),'needs_evidence','{}' from company_government_matches m where company_id=$1 and id between lpad(to_hex(201),32,'0')::uuid and lpad(to_hex(400),32,'0')::uuid",[large]);
+ const nextMatch=()=>scalar("select federal_identity_next_repair_match($1,$2) value",[large,token]);
+ await assert.rejects(scalar("select federal_identity_next_repair_match($1,gen_random_uuid()) value",[large]),/identity lease lost/);
+ let selected=await nextMatch();
+ assert.equal(selected.match.id,"00000000-0000-0000-0000-000000000191","selection crosses both old 100-row caps");
+ assert.equal(selected.pending,true);
+ await scalar("select federal_identity_repair_match($1,$2,$3,$4,'needs_evidence','{}','{}') value",[large,token,selected.match.id,selected.match]);
+ assert.equal((await nextMatch()).match.id,"00000000-0000-0000-0000-000000000192","successful receipt advances exact selection without replay");
+ await db.query("insert into federal_identity_remediation_receipts(match_id,company_id,before_image,outcome,evidence) select m.id,m.company_id,to_jsonb(m),'needs_evidence','{}' from company_government_matches m where company_id=$1 and id between lpad(to_hex(402),32,'0')::uuid and lpad(to_hex(499),32,'0')::uuid",[large]);
+ selected=await nextMatch();assert.equal(selected.match.id,"00000000-0000-0000-0000-0000000001f4");assert.equal(selected.pending,false);
+ await scalar("select federal_identity_repair_match($1,$2,$3,$4,'needs_evidence','{}','{}') value",[large,token,selected.match.id,selected.match]);
+ assert.deepEqual(await nextMatch(),{match:null,pending:false,hasWeakMatches:true},"unresolved receipted matches are not mistaken for no weak matches");
  console.log(JSON.stringify({passed:true,checks:["migration compiles","exclusive lease","direct vs related","strict binding","identifier conflicts","idempotent enrollment","immutable before/after","CAS","needs-evidence preservation","exact trigger suppression with before-images","award history retained","feedback exclusion","lease completion"]}));
 } finally { await db.close(); }

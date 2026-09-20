@@ -16,6 +16,7 @@ try {
  create table tam_regrade_events(run_id uuid,actor_key text,kind text,netsuite_internal_id text,summary text,metadata jsonb);`);
  await db.exec(await readFile(new URL("../../supabase/migrations/0088_tam_changed_evidence.sql",import.meta.url),"utf8"));
  await db.exec(await readFile(new URL("../../supabase/migrations/0093_tam_changed_evidence_predecessor.sql",import.meta.url),"utf8"));
+ await db.exec(await readFile(new URL("../../supabase/migrations/0094_tam_document_capture_observations.sql",import.meta.url),"utf8"));
  const scalar = async (q,p=[]) => (await db.query(q,p)).rows[0]?.v;
  const company="11111111-1111-4111-8111-111111111111", old="22222222-2222-4222-8222-222222222222", next="33333333-3333-4333-8333-333333333333", oldSeed="44444444-4444-4444-8444-444444444444", seed="55555555-5555-4555-8555-555555555555";
  const first="Full captured CRM record v1",second="Full captured CRM record v2",third="Full captured CRM record v3", pdf=hash("fresh pdf"),index=hash("index"),provenance=hash("provenance");
@@ -60,5 +61,16 @@ try {
   await db.query("insert into tam_regrade_records values($1,'456',$2,true,'published','passed',$3,$4,$5,'2026-09-18',$6,'verified','published_complete')",[run,carried,checkpoint,{recordTextSha256:hash(first),capturedAt:'2026-09-17T00:00:00Z'},ph,pdf]);
  await document(second,'2026-09-20',{company:carried,id:'456'});
  assert.equal(await scalar("select predecessor_run_id v from tam_evidence_change_receipts where netsuite_internal_id='456'"),next,"carried final with unchanged publication date binds the newest completed successor");
- console.log(JSON.stringify({ok:true,checks:21,scope:"change detection, exact successor admission, immutable grade, publication lifecycle, reversion capture, carried predecessor"}));
+ const race="77777777-7777-4777-8777-777777777777";
+ await db.query("insert into companies values($1,'789',array['netsuite_tam'],'active')",[race]);
+ await db.query("insert into tam_regrade_records values($1,'789',$2,true,'published','passed',$3,$4,$5,'2026-09-18',$6,'verified','published_complete'),($7,'789',$2,true,'reading','pending',$8,'{}',null,null,$6,'verified','unrepresented')",[old,race,oldSeed,{recordTextSha256:hash(first),capturedAt:'2026-09-17T00:00:00Z'},hash('race-old'),pdf,next,seed]);
+ await document(first,'2026-09-18T01:00:00Z',{company:race,id:'789'});
+ await document(second,'2026-09-19T01:00:00Z',{company:race,id:'789'});
+ const observation=[{internalId:'789',docType:'record_text',sha256:hash(first),capturedAt:'2026-09-20T01:00:00Z'}];
+ assert.equal((await scalar('select tam_observe_document_captures($1) v',[observation])).changes,0,'reverted body equals still-published predecessor while successor reads');
+ await scalar('select tam_observe_document_captures($1) v',[observation]);
+ await db.query("update tam_regrade_records set grade_status='published',validation_status='passed',grade_provenance=$1,grade_provenance_sha256=$2,published_at='2026-09-20T02:00:00Z' where run_id=$3 and netsuite_internal_id='789'",[{recordTextSha256:hash(second),capturedAt:'2026-09-19T01:00:00Z'},hash('race-new'),next]);
+ assert.equal(await scalar("select count(*)::int v from tam_evidence_change_receipts where netsuite_internal_id='789' and predecessor_run_id=$1 and record_text_sha256=$2",[next,hash(first)]),1,'reversion during grading becomes an exact successor receipt after publication');
+ assert.equal(await scalar("select count(*)::int v from tam_document_capture_observations o join lead_documents d on d.id=o.document_id where d.netsuite_internal_id='789'"),3,'same capture observation deduplicates');
+ console.log(JSON.stringify({ok:true,checks:24,scope:"change detection, exact successor admission, immutable grade, publication lifecycle, reversion capture, carried predecessor, reversion during grading"}));
 } finally { await db.close(); }
