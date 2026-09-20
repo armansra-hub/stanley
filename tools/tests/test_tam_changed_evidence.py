@@ -294,7 +294,7 @@ class Lifecycle(unittest.TestCase):
   m.write(self.mission_path,checkpoint);live_path=self.mission_path.with_name("tam-regrade-live-state.json");m.write(live_path,checkpoint)
   auth={"approved":True,"runSlug":"new-run","contextSha256":context_ref["sha256"],"maxConcurrentRecords":3,"eachRecordSerialReaderThenValidator":True}
   m.write(directory/"auth.json",auth);control_path=self.root/"automation-control.json";m.write(control_path,{"tamRegrade":{"enabled":True,"mode":"checkpointed-parallel-records","maxConcurrentRecords":3,"parallelAuthorization":m.reference(self.root,directory/"auth.json")}})
-  self.fake.Api=lambda:None;self.fake.board=lambda api,run:{"run":{"completed_checkpoint_seed_id":"seed"},"checkpointSeed":{"manifest_sha256":"manifest"}}
+  self.fake.Api=lambda:None;self.fake.board=lambda api,run:{"run":{"completed_checkpoint_seed_id":"seed","max_active_leases":3},"checkpointSeed":{"manifest_sha256":"manifest"}}
   before={p:p.read_bytes() for p in (self.mission_path,live_path,control_path)}
   with patch.object(m,"modules",return_value=(None,self.fake)):result=m.reconcile_activation(self.root,directory)
   self.assertTrue(result["readOnlyReconciled"])
@@ -309,7 +309,7 @@ class Lifecycle(unittest.TestCase):
   class Api:
    def request(s,method,url,payload=None):posts.append((method,payload));return {"admitted":1}
   self.fake.Api=Api;self.fake.ENDPOINT="/coordination"
-  self.fake.board=lambda api,run:{"run":{"completed_checkpoint_seed_id":"seed"},"checkpointSeed":{"manifest_sha256":plan["seedManifestSha256"]}}
+  self.fake.board=lambda api,run:{"run":{"completed_checkpoint_seed_id":"seed","max_active_leases":3},"checkpointSeed":{"manifest_sha256":plan["seedManifestSha256"]}}
   self.fake.records=lambda *args:[];self.fake.verify_board_records=lambda *args:None
   @contextmanager
   def boundary(*a,**kw):yield None
@@ -325,6 +325,15 @@ class Lifecycle(unittest.TestCase):
    if path==control_path:control_states.append(value["tamRegrade"]["enabled"])
    return write(path,value)
   with patch.object(m,"modules",return_value=(None,self.fake)),patch.object(m,"safe_boundary",boundary),patch.object(m,"initializer_adapter",boundary),patch.object(m,"write",tracked_write),patch.dict(sys.modules,{"tam_grading_round":fake_round,"tam_record_core":fake_core}),patch("importlib.reload",side_effect=lambda module:module):
+   good_board=self.fake.board
+   before={p:p.read_bytes() for p in (self.mission_path,live_path,control_path)}
+   for capacity in (None,1,4,True,"3"):
+    self.fake.board=lambda api,run:{"run":{"completed_checkpoint_seed_id":"seed","max_active_leases":capacity},"checkpointSeed":{"manifest_sha256":plan["seedManifestSha256"]}}
+    with self.assertRaisesRegex(ValueError,"Cloud successor capacity"):
+     m.activate(self.root,directory,keep_dispatch_disabled=True)
+    self.assertEqual(posts,[]);self.assertFalse((directory/"changed_admission.intent.json").exists())
+    for path,raw in before.items():self.assertEqual(path.read_bytes(),raw)
+   self.fake.board=good_board
    staged=m.activate(self.root,directory,keep_dispatch_disabled=True)
    self.assertEqual(staged["status"],"canonical_successor_activated_dispatch_disabled")
    self.assertTrue(staged["pendingOwnerEnable"]);self.assertFalse(staged["dispatchEnabled"])

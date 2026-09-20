@@ -519,6 +519,7 @@ def activate(root,directory,keep_dispatch_disabled=False):
         control_path=root/"automation-control.json"; control=read(control_path); require(control["tamRegrade"].get("enabled") is False,"Dispatch must remain disabled during activation")
         api=initializer.Api(); status=initializer.board(api,plan["runSlug"])
         require(status["run"]["completed_checkpoint_seed_id"]==state["checkpoint_seed_id"] and status["checkpointSeed"]["manifest_sha256"]==plan["seedManifestSha256"],"Live successor seed differs")
+        require(type(status["run"].get("max_active_leases")) is int and status["run"]["max_active_leases"]==3,"Cloud successor capacity must support the authorized three local workers before activation")
         with initializer_adapter(initializer,plan): initializer.verify_board_records(initializer.records(api,plan["runSlug"]),plan,True)
         payload={"action":"evidence_change_admit","runSlug":plan["runSlug"],"evidenceIndexSha256":plan["references"]["evidenceIndex"]["sha256"],"bindings":plan["changedEvidenceBindings"]}
         require(len(payload["bindings"])<=200,"Activate at most 200 exact changed records per successor")
@@ -676,6 +677,7 @@ def reconcile_activation(root,directory):
     require(all(authorization.get(k)==v for k,v in expected.items()) and context["checkpoint_seed_id"]==state["checkpoint_seed_id"],"Active authorization differs")
     _,initializer=modules(root);status=initializer.board(initializer.Api(),plan["runSlug"])
     require(status["run"]["completed_checkpoint_seed_id"]==state["checkpoint_seed_id"] and status["checkpointSeed"]["manifest_sha256"]==plan["seedManifestSha256"],"Live seed differs")
+    require(type(status["run"].get("max_active_leases")) is int and status["run"]["max_active_leases"]==3,"Cloud successor capacity must support the authorized three local workers before activation")
     enabled=control["enabled"]
     result={"status":"active_canonical_successor" if enabled else "canonical_successor_activated_dispatch_disabled","runSlug":plan["runSlug"],"context":context_ref,"changedIds":len(plan["changedEvidenceBindings"]),"coordinatorLaunched":False,"dispatchEnabled":enabled,"pendingOwnerEnable":not enabled,"readOnlyReconciled":True}
     write(directory/"activation_receipt.json",result);return result

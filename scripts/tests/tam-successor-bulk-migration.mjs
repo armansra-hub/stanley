@@ -27,7 +27,7 @@ try {
  const capture={current:snapshot,allowedPrior:[]};
  const counts={currentTotal:4,removedTotal:0,pdfVerified:4,publishedComplete:2,legacySchemaRecovery:0,lostStagingRecovery:0,activeHold:1,unrepresented:1};
  const hashes={current:idHash(['1','2','3','4']),removed:idHash([]),publishedComplete:idHash(['1','2']),legacySchemaRecovery:idHash([]),lostStagingRecovery:idHash([]),activeHold:idHash(['3']),unrepresented:idHash(['4'])};
- const pred=await scalar("select bootstrap_tam_regrade_run('predecessor','1327786','{}','capturing',4,$1)",[snapshot]);
+ const pred=await scalar("select bootstrap_tam_regrade_run('ars-bs-tam-2026-09-19-jev','1327786','{}','capturing',4,$1)",[snapshot]);
  const members=[];
  for(const id of ['1','2','3','4']) {
   const company=randomUUID();
@@ -44,10 +44,10 @@ try {
   return {...base,recoveryCohort:'published_complete',finalAssessmentLineSha256:hash(JSON.stringify(assessment)),publishQueueLineSha256:hash('queue'+base.netsuiteInternalId),historicalPublishedAt:'2026-09-18T14:00:00Z',finalScore:38,recordDigest:assessment.record_digest,
    provenance:{data,canonicalJson,sha256:hash(canonicalJson),objectPath:run+'/'+base.netsuiteInternalId+'.json'},validation:{status:'passed',validatedBy:'validator',validatedAt:'2026-09-18T13:00:00Z'}};
  };
- const original=[published(members[0],'predecessor'),published(members[1],'predecessor'),{...members[2],recoveryCohort:'active_hold',holdReason:'Identity review remains unresolved',holdFileSha256:hash('hold')},{...members[3],recoveryCohort:'unrepresented'}];
- const started=await scalar('select begin_tam_regrade_checkpoint_seed($1,$2,$3,$4,$5,$6,$7,$8,$9)',['predecessor','codex',hash('prior manifest'),'prior/manifest.json','a'.repeat(40),counts,hashes,capture,sourceHashes]);
- await scalar('select seed_tam_regrade_checkpoint_batch($1,$2,$3,$4)',['predecessor','codex',started.seedToken,original]);
- await scalar('select finalize_tam_regrade_checkpoint_seed($1,$2,$3)',['predecessor','codex',started.seedToken]);
+ const original=[published(members[0],'ars-bs-tam-2026-09-19-jev'),published(members[1],'ars-bs-tam-2026-09-19-jev'),{...members[2],recoveryCohort:'active_hold',holdReason:'Identity review remains unresolved',holdFileSha256:hash('hold')},{...members[3],recoveryCohort:'unrepresented'}];
+ const started=await scalar('select begin_tam_regrade_checkpoint_seed($1,$2,$3,$4,$5,$6,$7,$8,$9)',['ars-bs-tam-2026-09-19-jev','codex',hash('prior manifest'),'prior/manifest.json','a'.repeat(40),counts,hashes,capture,sourceHashes]);
+ await scalar('select seed_tam_regrade_checkpoint_batch($1,$2,$3,$4)',['ars-bs-tam-2026-09-19-jev','codex',started.seedToken,original]);
+ await scalar('select finalize_tam_regrade_checkpoint_seed($1,$2,$3)',['ars-bs-tam-2026-09-19-jev','codex',started.seedToken]);
  await db.query("update tam_regrade_runs set status='paused' where id=$1",[pred.id]);
  // The real publication RPC deliberately retains exact actor/token/lease
  // metadata for idempotent publication retry, even after grade_status changes.
@@ -64,9 +64,9 @@ try {
  const receipt=await scalar('select id from tam_evidence_change_receipts where document_id=$1',[document]);
  const nextCounts={...counts,publishedComplete:1,unrepresented:2};
  const nextHashes={...hashes,publishedComplete:idHash(['2']),unrepresented:idHash(['1','4'])};
- const manifest={schema:'tam-successor-checkpoint-manifest',version:1,runSlug:'successor',historicalRunSlug:'predecessor',expectedCounts:nextCounts,cohortHashes:nextHashes,captureSnapshotHashes:capture,sourceHashes,releaseCommit:'a'.repeat(40)};
+ const manifest={schema:'tam-successor-checkpoint-manifest',version:1,runSlug:'successor',historicalRunSlug:'ars-bs-tam-2026-09-19-jev',expectedCounts:nextCounts,cohortHashes:nextHashes,captureSnapshotHashes:capture,sourceHashes,releaseCommit:'a'.repeat(40)};
  const manifestCanonicalJson=JSON.stringify(manifest)+'\n';
- const input={action:'evidence_successor_initialize',predecessorRunSlug:'predecessor',predecessorSeedId:started.seedId,
+ const input={action:'evidence_successor_initialize',predecessorRunSlug:'ars-bs-tam-2026-09-19-jev',predecessorSeedId:started.seedId,
   bootstrap:{runSlug:'successor',searchId:'1327786',mission:{changedEvidence:{predecessorRunId:pred.id,evidenceIndexSha256:sourceHashes.evidenceIndex,registrationSha256:sourceHashes.registrations}},sourceTotal:4,sourceSnapshotSha256:snapshot},
   seed:{runSlug:'successor',actorKey:'codex',manifestSha256:hash(manifestCanonicalJson),manifestObjectPath:'successor/manifest.json',releaseCommit:manifest.releaseCommit,expectedCounts:nextCounts,cohortHashes:nextHashes,captureSnapshotHashes:capture,sourceHashes},manifestCanonicalJson,
   expectedPredecessorBindings:fingerprints,changes:[{receiptId:receipt,internalId:'1',recordTextSha256:hash(freshText),pdfObjectPath:'fresh/1/print.pdf',pdfSha256:hash('fresh pdf'),pdfPageCount:3,pdfVerifiedAt:'2026-09-20T10:01:00Z',pdfCaptureSnapshotSha256:snapshot}]};
@@ -109,7 +109,7 @@ try {
  await db.query("update tam_regrade_runs set status='grading' where id=$1",[pred.id]);
  // An actual canonical claim must also block the carry-forward after dispatch
  // is paused. Roll this whole rehearsal back to leave the fixture unchanged.
- await scalar("select claim_tam_regrade_record('predecessor','3','another-reader',true,null,300)");
+ await scalar("select claim_tam_regrade_record('ars-bs-tam-2026-09-19-jev','3','another-reader',true,null,300)");
  await db.query("update tam_regrade_runs set status='paused' where id=$1",[pred.id]);
  await assert.rejects(call(input),/idle boundary/);await db.exec('rollback');passed++;
  const result=await call(input);
@@ -130,5 +130,59 @@ try {
  assert.equal(await scalar("select has_function_privilege('service_role','tam_initialize_changed_successor(jsonb)','EXECUTE')"),true);
  assert.equal(await scalar("select has_function_privilege('anon','tam_initialize_changed_successor(jsonb)','EXECUTE')"),false);
  assert.equal(await scalar("select has_function_privilege('authenticated','tam_initialize_changed_successor(jsonb)','EXECUTE')"),false);passed++;
- console.log(JSON.stringify({passed,scope:'real canonical seed lifecycle, exact predecessor hashes, changed receipt/PDF identity, atomic rollback, idempotence, frozen evidence, inherited hold/final and service-only grants'}));
+ // Build real completed checkpoints before the capacity migration so both
+ // historical opt-in and already-created successor backfill are exercised.
+ const allPendingCounts={...counts,publishedComplete:0,activeHold:0,unrepresented:4};
+ const allPendingHashes={...hashes,publishedComplete:idHash([]),activeHold:idHash([]),unrepresented:hashes.current};
+ const pendingRun=async slug=>{
+  const run=await scalar('select bootstrap_tam_regrade_run($1,\'1327786\',\'{}\',\'capturing\',4,$2)',[slug,snapshot]);
+  await db.query(`insert into tam_regrade_records(run_id,netsuite_internal_id,company_id,company_name,table_rows,source_coordinates,saved_search_row_count,table_rows_sha256,pdf_status,pdf_object_path,pdf_sha256,pdf_page_count,pdf_verified_at)
+    select $1,netsuite_internal_id,company_id,company_name,table_rows,source_coordinates,saved_search_row_count,table_rows_sha256,pdf_status,pdf_object_path,pdf_sha256,pdf_page_count,pdf_verified_at from tam_regrade_records where run_id=$2`,[run.id,pred.id]);
+  const seed=await scalar('select begin_tam_regrade_checkpoint_seed($1,$2,$3,$4,$5,$6,$7,$8,$9)',[slug,'codex',hash(slug+' manifest'),slug+'/manifest.json','a'.repeat(40),allPendingCounts,allPendingHashes,capture,sourceHashes]);
+  await scalar('select seed_tam_regrade_checkpoint_batch($1,$2,$3,$4)',[slug,'codex',seed.seedToken,members.map(row=>({...row,recoveryCohort:'unrepresented'}))]);
+  await scalar('select finalize_tam_regrade_checkpoint_seed($1,$2,$3)',[slug,'codex',seed.seedToken]);
+  return run;
+ };
+ const approved=await pendingRun('ars-bs-tam-2026-09-17');
+ const generic=await pendingRun('ars-bs-tam-changes-unproven');
+ await db.exec(await sql('0100_tam_successor_lease_capacity.sql'));
+ for(const runId of [pred.id,approved.id,result.run.id])assert.equal(await scalar('select max_active_leases from tam_regrade_runs where id=$1',[runId]),3);
+ assert.equal(await scalar('select max_active_leases from tam_regrade_runs where id=$1',[generic.id]),1);passed++;
+ const genericAfter=await scalar("select bootstrap_tam_regrade_run('new-unproven','1327786','{}','capturing',4,$1)",[snapshot]);
+ assert.equal(genericAfter.max_active_leases,1);passed++;
+ await assert.rejects(db.query('update tam_regrade_runs set max_active_leases=4 where id=$1',[generic.id]),/check constraint/);passed++;
+ const claim=(slug,id,actor,token=null)=>scalar('select claim_tam_regrade_record($1,$2,$3,false,$4,300)',[slug,id,actor,token]);
+ const one=await claim(approved.slug,'1','actor-one');
+ await assert.rejects(claim(approved.slug,'2','actor-one'),/actor already has another active/);passed++;
+ const two=await claim(approved.slug,'2','actor-two');
+ const three=await claim(approved.slug,'3','actor-three');
+ assert.equal(one.grade_status,'reading');assert.equal(two.grade_status,'reading');assert.equal(three.grade_status,'reading');passed++;
+ await assert.rejects(claim(approved.slug,'4','actor-four'),/active lease capacity reached/);passed++;
+ assert.equal((await claim(approved.slug,'1','actor-one',one.claim_token)).resumed,true);passed++;
+ await claim(generic.slug,'1','generic-one');
+ await assert.rejects(claim(generic.slug,'2','generic-two'),/active lease capacity reached/);passed++;
+ // A second canonical successor, created after migration, inherits the first
+ // successor's capacity inside the same transaction without a helper toggle.
+ await db.exec(await sql('0093_tam_changed_evidence_predecessor.sql'));
+ await db.query("update tam_regrade_runs set status='paused' where id=$1",[result.run.id]);
+ const secondText='Second successor changed exact CRM body';
+ const secondDocument=await scalar("insert into lead_documents(company_id,netsuite_internal_id,doc_type,body,sha256,captured_at) values($1,'2','record_text',$2,$3,'2026-09-20T11:00:00Z') returning id",[before[1].company_id,secondText,hash(secondText)]);
+ const secondReceipt=await scalar('select id from tam_evidence_change_receipts where document_id=$1 and predecessor_run_id=$2',[secondDocument,result.run.id]);
+ const secondCounts={...nextCounts,publishedComplete:0,unrepresented:3};
+ const secondHashes={...nextHashes,publishedComplete:idHash([]),unrepresented:idHash(['1','2','4'])};
+ const secondManifest={...manifest,runSlug:'successor-two',historicalRunSlug:'successor',expectedCounts:secondCounts,cohortHashes:secondHashes};
+ const secondCanonical=JSON.stringify(secondManifest)+'\n';
+ const secondInput={...structuredClone(input),predecessorRunSlug:'successor',predecessorSeedId:finalized.seedId,
+  bootstrap:{...input.bootstrap,runSlug:'successor-two',mission:{changedEvidence:{...input.bootstrap.mission.changedEvidence,predecessorRunId:result.run.id}}},
+  seed:{...input.seed,runSlug:'successor-two',manifestObjectPath:'successor-two/manifest.json',manifestSha256:hash(secondCanonical),expectedCounts:secondCounts,cohortHashes:secondHashes},
+  manifestCanonicalJson:secondCanonical,
+  expectedPredecessorBindings:(await db.query('select netsuite_internal_id as "internalId",tam_successor_predecessor_binding(r) as sha256 from tam_regrade_records r where run_id=$1 order by membership_ordinal',[result.run.id])).rows,
+  changes:[{...input.changes[0],internalId:'2',receiptId:secondReceipt,recordTextSha256:hash(secondText),pdfObjectPath:'second-fresh/2/print.pdf',pdfSha256:hash('second fresh pdf'),pdfVerifiedAt:'2026-09-20T11:01:00Z'}]};
+ const second=await call(secondInput);assert.equal(second.run.max_active_leases,3);passed++;
+ const secondRows=next.map(row=>row.netsuiteInternalId==='2'?{...members[1],...secondInput.changes[0],recoveryCohort:'unrepresented'}:row);
+ await scalar('select seed_tam_regrade_checkpoint_batch($1,$2,$3,$4)',['successor-two','codex',second.seed.seedToken,secondRows]);
+ await scalar('select finalize_tam_regrade_checkpoint_seed($1,$2,$3)',['successor-two','codex',second.seed.seedToken]);
+ assert.equal((await scalar("select get_tam_regrade_status('successor-two',0)")).run.max_active_leases,3);passed++;
+ assert.deepEqual((await db.query('select * from tam_regrade_records where run_id=$1 order by membership_ordinal',[pred.id])).rows,before);passed++;
+ console.log(JSON.stringify({passed,scope:'canonical seed lifecycle, completed claim history, source-bound successor capacity backfill/inheritance, three-slot admission, same-actor/fourth-slot rejection, generic one-slot default, rollback and service-only grants'}));
 } finally {await db.close();}
