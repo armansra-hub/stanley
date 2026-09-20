@@ -71,7 +71,7 @@ export async function loadResearchProfile(companyId: string, deadlineMs = Infini
 
 export type ResearchProfile = Awaited<ReturnType<typeof loadResearchProfile>>;
 export type ResearchRefreshResult = { sources: number; outcomes: ResearchOutcome[]; ranking: ResearchRankingResult | null;
-  outcome: "refreshed" | "no_sources_due" | "topics_supported" | "deadline_deferred" | "sources_leased";
+  outcome: "refreshed" | "no_sources_due" | "topics_supported" | "deadline_deferred" | "sources_leased" | "ranking_pending";
   remainingSources: number; nextAttemptAt: string };
 
 export async function refreshAccountResearch(companyId: string, options: {
@@ -86,9 +86,14 @@ export async function refreshAccountResearch(companyId: string, options: {
     if (options.automatic && !loaded.missingTopics.length) return empty("topics_supported");
     if (!loaded.candidates.length) return empty("no_sources_due", loaded.nextAttemptAt);
     if (Date.now() > options.deadlineMs - 32_000) return empty("deadline_deferred");
-    const ranking = await rankResearchCandidates({ companyName: loaded.company.name, companyDomain: loaded.company.domain,
+    const ranking = await rankResearchCandidates({ companyId, automaticResearch: options.automatic === true,
+      companyName: loaded.company.name, companyDomain: loaded.company.domain,
       missingTopics: loaded.missingTopics, candidates: loaded.candidates, candidateTitles: loaded.candidateTitles,
       researchContext: loaded.researchFocus });
+    // An identical native ranking is already in flight. Let that invocation
+    // choose its sources; do not race it using the unranked fallback order.
+    if (ranking.outcome === "busy") return { ...empty("ranking_pending", new Date(Date.now() + 60_000).toISOString()),
+      ranking, remainingSources: loaded.candidates.length };
     if (Date.now() > options.deadlineMs - 17_000) return { ...empty("deadline_deferred"), ranking };
     const db = serviceClient();
     const { data, error } = await db.rpc("intelligence_research_claim", { p_company: companyId, p_urls: ranking.candidates });
@@ -139,6 +144,7 @@ export async function refreshAccountResearch(companyId: string, options: {
               researchRankingVersion: ranking.rankingVersion, businessServicesResearchVersion: BUSINESS_SERVICES_RESEARCH_VERSION,
               researchTopics: loaded.missingTopics, sourceDates: page.sourceDates, sourceTruncated: page.truncated,
               eventDateBasis: published ? "source_publication" : "unknown",
+              discovery: { collector: "directed_research", url: claim.source_url, title: loaded.candidateTitles[claim.source_url] ?? null, eventDate: null },
               ...(page.companyIdentity && loaded.company.domain && sameCompanySite(page.url, `https://${String(loaded.company.domain).replace(/^https?:\/\//, "")}`)
                 ? { companyIdentity: page.companyIdentity } : {}) } });
           if (!result) throw new Error("observation_not_persisted");

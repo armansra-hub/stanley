@@ -92,6 +92,19 @@ describe("durable shared collection", () => {
     expect(deps.store.item).toHaveBeenLastCalledWith(expect.anything(), item.item_key, { error: "article_or_observation_pending" });
     expect(deps.store.release).toHaveBeenCalledWith(expect.anything(), "article_or_observation_pending");
   });
+  it("uses the fetched publisher URL while retaining the original feed headline and date", async () => {
+    const deps = fixture();
+    const publisherUrl = "https://publisher.example/news/expansion";
+    deps.fetchText.mockImplementation(async url => ({ status: 200, body: url.includes("/feed") ? feed
+      : `<title>Publisher's operating announcement</title><meta property="article:published_time" content="2026-09-16"><main>${article}</main>`,
+      finalUrl: url.includes("/feed") ? url : publisherUrl, contentType: "text/html" }));
+    expect((await runSharedSources(deps)).observations).toBe(1);
+    expect(deps.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceUrl: publisherUrl, title: item.payload.title, eventDate: item.payload.eventDate,
+      metadata: expect.objectContaining({ eventDateBasis: "feed_publication", sourceDates: [{ kind: "published", value: "2026-09-16T00:00:00.000Z", source: "article:published_time" }],
+        discovery: { collector: "shared_feed", url: item.payload.url, title: item.payload.title, eventDate: item.payload.eventDate } }) }));
+    expect(deps.store.item).toHaveBeenNthCalledWith(1, expect.anything(), item.item_key, { payload: expect.objectContaining({ url: publisherUrl, bodyFetched: true,
+      discovery: { url: item.payload.url, title: item.payload.title, eventDate: item.payload.eventDate } }) });
+  });
   it("does not complete an item when the queue is disabled during the run", async () => {
     const deps = fixture();
     deps.enqueue.mockResolvedValue(null);

@@ -16,7 +16,9 @@ export type SharedSource = {
   lease_token?: string;
 };
 export type SharedAccount = { id: string; name: string; domain: string | null; netsuite_internal_id: string | null; state: string | null; city: string | null };
-export type FeedPayload = { url: string; title: string; text: string; eventDate: string | null; bodyFetched?: boolean; sourceDates?: unknown[] };
+export type FeedPayload = { url: string; title: string; text: string; eventDate: string | null; bodyFetched?: boolean; sourceDates?: unknown[];
+  eventDateBasis?: string; publisherIdentity?: unknown; textTruncated?: boolean;
+  discovery?: { url: string; title: string; eventDate: string | null } };
 export type SharedItem = { item_key: string; payload: FeedPayload };
 
 const SUPPORTED = new Set(["rss", "atom"]);
@@ -217,10 +219,15 @@ export async function runSharedSources(deps: Dependencies = {}) {
             if (publicResponseOutcome(payload.url, response.status, response.body).outcome !== "success") throw new Error("article_fetch_failed");
             const evidence = sitePageEvidence(response.body, response.finalUrl);
             if (evidence.text.length < 160) throw new Error("article_body_unavailable");
-            payload = { ...payload, text: evidence.text, bodyFetched: true, sourceDates: evidence.sourceDates };
+            // The redirect proves document location, not semantic equivalence of
+            // feed and page headlines/dates. Keep the original feed evidence.
+            payload = { ...payload, url: evidence.url, text: evidence.text,
+              eventDateBasis: "feed_publication", bodyFetched: true, sourceDates: evidence.sourceDates, textTruncated: evidence.truncated,
+              ...(evidence.companyIdentity ? { publisherIdentity: evidence.companyIdentity } : {}),
+              discovery: payload.discovery ?? { url: payload.url, title: payload.title, eventDate: payload.eventDate } };
             await store.item(source, item.item_key, { payload });
           }
-          const candidates = match(`${payload.title}\n${payload.text}`);
+          const candidates = match(`${payload.title}\n${payload.discovery?.title ?? ""}\n${payload.text}`);
           // Never silently truncate a many-account roundup: retain it for review/retry.
           if (candidates.length > 8) throw new Error("article_candidate_capacity_exceeded");
           for (const candidate of candidates) {
@@ -228,7 +235,10 @@ export async function runSharedSources(deps: Dependencies = {}) {
               netsuiteInternalId: candidate.account.netsuite_internal_id, sourceKind: "news", sourceUrl: payload.url, title: payload.title, text: payload.text,
               eventDate: payload.eventDate, metadata: { sharedSourceId: source.id, sharedSourceName: source.name, sharedFeedUrl: source.url,
                 sourceScope: source.scope, sourceRole: "announcement_context", candidateMatch: candidate.basis, identityVerified: false,
-                governmentAwardVerified: false, sourceDates: payload.sourceDates ?? [], dateKind: "feed_publication", eventDateBasis: "feed_publication",
+                governmentAwardVerified: false, sourceDates: payload.sourceDates ?? [], dateKind: payload.eventDateBasis ?? "feed_publication",
+                eventDateBasis: payload.eventDateBasis ?? "feed_publication", textTruncated: payload.textTruncated ?? false,
+                ...(payload.publisherIdentity ? { publisherIdentity: payload.publisherIdentity } : {}),
+                discovery: { collector: "shared_feed", ...(payload.discovery ?? { url: payload.url, title: payload.title, eventDate: payload.eventDate }) },
                 evidenceKind: "article_body", articleBodyAvailable: true, verificationUrl: source.verification_url } });
             if (!observation) throw new Error("observation_not_persisted");
             result.observations++;

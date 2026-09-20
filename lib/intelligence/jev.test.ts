@@ -3,6 +3,8 @@ import {
   evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION,
   MAX_EVIDENCE_STATE_BYTES, MAX_COMPANY_CONTEXT_BYTES, MAX_SURROUNDING_CONTEXT_BYTES, MAX_RAW_ANSWERS_BYTES, type JevEvaluationRequest,
   hasPrivateExcerptAuthorization, TYPESAFE_EVALUATION_URL,
+  prepareEvidenceRequest, evidenceRequestFingerprint, prepareResearchRankingRequest, researchRankingRequestFingerprint,
+  evaluateResearchRanking, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION, JEV_RESEARCH_RANKING_QUESTION_VERSION,
 } from "./jev";
 import type { EvaluateEvidenceInput } from "./evaluation";
 
@@ -38,7 +40,109 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
+describe("Jev native next-source ranking", () => {
+  const ranking = { ...input, sourceKind: "discovered_research_options", criteria: Array.from({ length: 8 }, (_, i) => ({
+    id: `source_${i + 1}`, instructions: `Would reading option ${i + 1} help investigate project billing? Use only supplied URL/path clues.`,
+  })) };
+  it("asks only the eight consumed questions with the exact existing grounding, context and native answers", async () => {
+    const prepared = prepareResearchRankingRequest(ranking)!;
+    const old = prepareEvidenceRequest(ranking)!;
+    expect(prepared.questions).toEqual(Object.fromEntries(Object.entries(old.questions).filter(([key]) => key.startsWith("criterion_"))));
+    expect(prepared.state).toEqual(old.state);
+    expect(Object.keys(prepared.questions)).toHaveLength(8);
+    expect(Object.keys(old.questions)).toHaveLength(17);
+    const answers = Object.fromEntries(ranking.criteria.map((criterion, index) => [`criterion_${criterion.id}`, {
+      type: "noul", noul: index / 10, confidence: .2,
+    }]));
+    const evaluate = vi.fn(async (_request: JevEvaluationRequest) => ({ answers, usage: { input_tokens: 2100, output_tokens: 0 }, model: JEV_MODEL }));
+    const result = await evaluateResearchRanking(ranking, { evaluate });
+    expect(result).toMatchObject({ ok: true, questionVersion: JEV_RESEARCH_RANKING_QUESTION_VERSION,
+      criteria: { source_1: 0, source_8: .7 }, metadata: { rawAnswers: answers }, usage: { inputTokens: 2100, outputTokens: 0 } });
+    expect(result).not.toHaveProperty("attributes");
+    expect(evaluate).toHaveBeenCalledOnce();
+    expect(evaluate.mock.calls[0][0].questions).toEqual(prepared.questions);
+    expect(researchRankingRequestFingerprint(ranking)).not.toBe(evidenceRequestFingerprint(ranking));
+    expect(researchRankingRequestFingerprint({ ...ranking, abortSignal: AbortSignal.timeout(1000) })).toBe(researchRankingRequestFingerprint(ranking));
+  });
+  it("requires every consumed native answer, preserves billable usage, and rejects private or malformed inputs locally", async () => {
+    const evaluate = vi.fn(async () => ({ answers: { criterion_source_1: { type: "noul", noul: .5 } }, usage: { input_tokens: 44, output_tokens: 0 } }));
+    expect(await evaluateResearchRanking(ranking, { evaluate })).toMatchObject({ ok: false, usage: { inputTokens: 44 }, error: { kind: "invalid_response" } });
+    expect(await evaluateResearchRanking({ ...ranking, privacy: "private_excerpt" }, { evaluate })).toMatchObject({ ok: false, usage: { inputTokens: 0 }, error: { kind: "invalid_input" } });
+    expect(await evaluateResearchRanking({ ...ranking, criteria: [] }, { evaluate })).toMatchObject({ ok: false, usage: { inputTokens: 0 }, error: { kind: "invalid_input" } });
+    expect(evaluate).toHaveBeenCalledOnce();
+  });
+  it("uses the direct transport once and retains unknown usage on a failed provider response", async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 429, headers: { "retry-after": "2" } }));
+    expect(await evaluateResearchRanking(ranking, { fetch: fetcher })).toMatchObject({ ok: false, usage: null,
+      error: { kind: "rate_limit", retryable: true, retryAfterMs: 2000 } });
+    expect(fetcher).toHaveBeenCalledOnce();
+    const body = JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(Object.keys(body)).toEqual(["model", "state", "questions"]);
+    expect(Object.keys(body.questions)).toHaveLength(8);
+  });
+});
+
 describe("Jev evidence adapter", () => {
+  it("sends every v3 source character once with section labels, exact offsets and uncovered closing text", async () => {
+    const text = "Intro.\n\nRepeated café paragraph.\nUnlabelled context.\nRepeated café paragraph.\n\nFinal notice: we are closing permanently.\n";
+    const sections = [{ id: "s1", text: "Repeated café paragraph." }, { id: "s2", text: "Repeated café paragraph." }];
+    const prepared = prepareEvidenceRequest({ ...input, text, sections, questionPack: "business-services-v3" })!;
+    expect(prepared.questionVersion).toBe(JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION);
+    expect(prepared.state).not.toHaveProperty("sections");
+    const restored = prepared.state.evidence.replace(/\n<evidence-section id="s\d+" start="\d+" end="\d+">\n|\n<\/evidence-section>\n/g, "");
+    expect(restored).toBe(text);
+    const labels = [...prepared.state.evidence.matchAll(/<evidence-section id="(s\d+)" start="(\d+)" end="(\d+)">\n([\s\S]*?)\n<\/evidence-section>/g)];
+    expect(labels).toHaveLength(2);
+    for (const match of labels) expect(text.slice(Number(match[2]), Number(match[3]))).toBe(match[4]);
+    expect(Number(labels[1][2])).toBeGreaterThan(Number(labels[0][3]));
+    const legacy = prepareEvidenceRequest({ ...input, text, sections, questionPack: "business-services-v2" })!;
+    expect(legacy.state.evidence).toBe(text);
+    expect(JSON.parse(legacy.state.sections)).toEqual(sections);
+    for (const key of Object.keys(legacy.questions).filter(key => key !== "evidenceSectionId")) {
+      expect(prepared.questions[key]).toEqual(legacy.questions[key]);
+    }
+    const native = response();
+    Object.assign(native.answers, { contentClass: { type: "choice", choice: "actual_company_development" },
+      companyRole: { type: "choice", choice: "subject" }, contractActivity: { type: "choice", choice: "none" },
+      operatingChangeType: { type: "choice", choice: "closure_or_wind_down" }, evidenceSectionId: { type: "choice", choice: "s2" } });
+    const result = await evaluateEvidence({ ...input, text, sections, questionPack: "business-services-v3" }, { evaluate: async () => native });
+    expect(result).toMatchObject({ ok: true, questionVersion: JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION,
+      attributes: { contentClass: "actual_company_development", operatingChangeType: "closure_or_wind_down", evidenceSectionId: "s2" } });
+    expect(result.ok && result.metadata.rawAnswers).toEqual(native.answers);
+  });
+  it("bounds the single-copy request and rejects overlapping or misordered v3 section spans without truncation", () => {
+    const text = "abcdef";
+    expect(prepareEvidenceRequest({ ...input, text, questionPack: "business-services-v3", sections: [
+      { id: "s1", text: "abcd" }, { id: "s2", text: "cdef" },
+    ] })).toBeNull();
+    expect(prepareEvidenceRequest({ ...input, text, questionPack: "business-services-v3", sections: [
+      { id: "s1", text: "def" }, { id: "s2", text: "abc" },
+    ] })).toBeNull();
+    expect(prepareEvidenceRequest({ ...input, text: "x".repeat(MAX_EVIDENCE_STATE_BYTES), questionPack: "business-services-v3" })).toBeNull();
+    expect(prepareEvidenceRequest({ ...input, privacy: "private_excerpt", questionPack: "business-services-v3" })).toBeNull();
+  });
+  it("substantially reduces a fully sectioned public request without changing its question set or evidence", () => {
+    const paragraphs = Array.from({ length: 5 }, (_, i) => `${i}: ${"A company fact with a location and operating detail. ".repeat(22)}\n`);
+    const common = { ...input, text: paragraphs.join(""), sections: paragraphs.map((text, i) => ({ id: `s${i + 1}`, text })) };
+    const previous = prepareEvidenceRequest({ ...common, questionPack: "business-services-v2" })!;
+    const efficient = prepareEvidenceRequest({ ...common, questionPack: "business-services-v3" })!;
+    expect(previous).not.toBeNull(); expect(efficient).not.toBeNull();
+    expect(Object.keys(efficient.questions)).toEqual(Object.keys(previous.questions));
+    expect(Buffer.byteLength(JSON.stringify(efficient))).toBeLessThan(Buffer.byteLength(JSON.stringify(previous)) * .9);
+  });
+  it("fingerprints the full model, contract, identity and source context but never transport cancellation", () => {
+    const request: EvaluateEvidenceInput = { ...input, questionPack: "business-services-v3", companyIdentityContext: "Record identity: Example at 12 Main St", eventDateBasis: "publication" };
+    const key = evidenceRequestFingerprint(request);
+    expect(key).toMatch(/^[a-f0-9]{64}$/);
+    expect(evidenceRequestFingerprint({ ...request, abortSignal: new AbortController().signal })).toBe(key);
+    for (const patch of [{ companyIdentityContext: "Record identity: Example at 21 Main St" }, { title: "Changed title" },
+      { eventDate: "2026-09-01" }, { eventDateBasis: "explicit_event" }, { sourceUrl: "https://other.test/news" },
+      { questionPack: "business-services-v2" as const }, { companyContext: "Updated sector" }, { text: input.text + " It later closed." }]) {
+      expect(evidenceRequestFingerprint({ ...request, ...patch })).not.toBe(key);
+    }
+    vi.stubEnv("TYPESAFE_MODEL", "jev-1.13.1");
+    expect(evidenceRequestFingerprint(request)).not.toBe(key);
+  });
   it("classifies the selected company development, role, contract stage and direction in one native v2 request", async () => {
     const native = response();
     Object.assign(native.answers, {

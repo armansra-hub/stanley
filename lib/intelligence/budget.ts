@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
+import type { JevSpendContext } from "./jevRequests";
 
 export const JEV_USD_PER_MILLION = 0.042;
 export function jevCost(inputTokens: number): number {
@@ -11,9 +12,13 @@ export function jevCost(inputTokens: number): number {
 /** Reserve the model's complete documented request ceiling (64k), rather than
  * assuming a characters/token ratio can guarantee a cap. Actual usage refunds
  * the excess at settlement. Unknown/lost usage keeps the entire reservation. */
-export async function reserveJev(): Promise<string | null> {
+export async function reserveJev(context?: JevSpendContext): Promise<string | null> {
   const id = randomUUID();
-  const { data, error } = await serviceClient().rpc("intelligence_reserve", {
+  const { data, error } = await serviceClient().rpc(context ? "intelligence_reserve_jev" : "intelligence_reserve", context ? {
+    p_id: id, p_amount: jevCost(65_536), p_purpose: context.purpose,
+    p_company: context.companyId ?? null, p_observation: context.observationId ?? null,
+    p_source_kind: context.sourceKind ?? null, p_workload: context.workload ?? "unattributed",
+  } : {
     p_id: id, p_category: "jev", p_amount: jevCost(65_536),
   });
   if (error) throw new Error(`Budget reservation failed: ${error.code ?? "database_error"}`);

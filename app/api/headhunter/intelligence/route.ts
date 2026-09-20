@@ -4,11 +4,12 @@ import { intelligenceEnabled } from "@/lib/intelligence/observations";
 import { intelligenceUiAuthorized, isUuid, sameOriginMutation, smallJson } from "@/lib/intelligence/http";
 import { runIntelligenceWorker } from "@/lib/intelligence/worker";
 import { recomputePriority } from "@/lib/db/triggers";
+import { readJevCostMetrics } from "@/lib/intelligence/costMetrics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 const empty = { enabled: false, views: [], observations: [], hasMore: false,
-  spend: { usedUsd: 0, reservedUsd: 0, limitUsd: 20 }, jobs: { queued: 0, running: 0, failed: 0 },
+  spend: { available: false, usedUsd: 0, reservedUsd: 0, limitUsd: 20 }, jobs: { queued: 0, running: 0, failed: 0 },
   sourceCoverage: { complete: 0, partial: 0, failed: 0 } };
 type ReadStage = "client" | "status" | "health" | "views" | "observations" | "feedback" | "response";
 
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
   }
   // Cached account research remains readable while collection is paused. Global
   // administration and its aggregate queries are not part of the lead drawer.
-  if (!intelligenceEnabled() && !accountScope) return NextResponse.json(empty);
+  if (!intelligenceEnabled() && !accountScope) return NextResponse.json({ ...empty, jevCost: await readJevCostMetrics() });
   let stage: ReadStage = "client";
   let code = "unknown";
   const fail = (failedStage: ReadStage, error: unknown): never => {
@@ -39,10 +40,11 @@ export async function GET(req: NextRequest) {
   try {
     const db = serviceClient();
     stage = "status";
-    const [status, views, health] = await Promise.all([
+    const [status, views, health, jevCost] = await Promise.all([
       accountScope ? Promise.resolve({ data: { enabled: intelligenceEnabled() }, error: null }) : db.rpc("intelligence_status"),
       accountScope ? Promise.resolve({ data: [], error: null }) : db.from("intelligence_views").select("id,name,question,active,backfill_complete").eq("active", true).order("created_at", { ascending: false }).limit(100),
       accountScope ? Promise.resolve({ data: null, error: null }) : db.rpc("intelligence_health"),
+      accountScope ? Promise.resolve(null) : readJevCostMetrics(),
     ]);
     if (status.error) fail("status", status.error);
     if (views.error) fail("views", views.error);
@@ -72,7 +74,7 @@ export async function GET(req: NextRequest) {
       return { ...fields, company_name: (Array.isArray(account) ? account[0]?.name : account?.name) ?? "Unknown account",
         ...(matches?.length ? { matchProbability: matches[0].probability } : {}), feedback: feedbackById.get(String(row.id)) ?? null };
     });
-    return NextResponse.json({ ...status.data, health: health.data, enabled: intelligenceEnabled() && status.data?.enabled === true, views: views.data ?? [], observations, hasMore: observations.length === 50 });
+    return NextResponse.json({ ...status.data, health: health.data, ...(jevCost ? { jevCost } : {}), enabled: intelligenceEnabled() && status.data?.enabled === true, views: views.data ?? [], observations, hasMore: observations.length === 50 });
   } catch {
     console.error("intelligence.read_failed", { stage, code });
     return NextResponse.json({ error: "intelligence_storage_unavailable", stage }, { status: 503 });

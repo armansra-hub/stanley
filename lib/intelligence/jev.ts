@@ -1,10 +1,12 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import {
   EVIDENCE_SIGNAL_TYPES,
   EVIDENCE_CONTENT_CLASSES, EVIDENCE_COMPANY_ROLES, EVIDENCE_CONTRACT_ACTIVITIES, EVIDENCE_OPERATING_CHANGE_TYPES,
   type CompanyRelationship,
   type EvaluateEvidenceInput,
   type EvaluateEvidenceResult,
+  type EvaluateCriteriaResult,
   type EvaluationFailure,
   type EvaluationMetadata,
   type EvaluationUsage,
@@ -17,6 +19,8 @@ export const JEV_QUESTION_VERSION = "stanley-evidence-v2";
 export const JEV_PUBLIC_SCALE_QUESTION_VERSION = "stanley-public-scale-v1";
 export const JEV_BUSINESS_SERVICES_QUESTION_VERSION = "stanley-business-services-v1";
 export const JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION = "stanley-business-services-v2";
+export const JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION = "stanley-business-services-v3";
+export const JEV_RESEARCH_RANKING_QUESTION_VERSION = "stanley-research-ranking-v1";
 export const MAX_EVIDENCE_STATE_BYTES = 24_000;
 export const MAX_COMPANY_CONTEXT_BYTES = 4_000;
 export const MAX_SURROUNDING_CONTEXT_BYTES = 4_000;
@@ -70,6 +74,7 @@ const relationshipOptions: Record<CompanyRelationship, string> = {
 };
 
 function questionsFor(input: EvaluateEvidenceInput): Record<string, Question> {
+  const currentClassification = input.questionPack === "business-services-v2" || input.questionPack === "business-services-v3";
   const questions: Record<string, Question> = {
     signalType: {
       type: "choice",
@@ -110,13 +115,13 @@ function questionsFor(input: EvaluateEvidenceInput): Record<string, Question> {
     },
     requiresResearch: { type: "noul", instructions: grounding + "Is material context missing or ambiguous such that additional source research would help establish company identity, what changed, or its operating implications?" },
   };
-  if (input.questionPack === "business-services-v1" || input.questionPack === "business-services-v2") {
+  if (input.questionPack === "business-services-v1" || currentClassification) {
     questions.companyRelationship.instructions = grounding + "How does the specified company relate to the business facts, operating model or development in this source? An evergreen description on its own site can directly establish its business facts even when no new event occurred. Customers, clients, employers in a person's past biography, parents and namesakes remain distinct.";
     questions.companyRelevance.instructions = grounding + "Does this source's identifying context establish substantive facts about the specified company itself? Its own domain, name and descriptions of its own services can establish relevance for evergreen operating facts independently of whether there is a new event. A customer story, staffing advertisement for a client, former employer or namesake is not automatically about this company's own operations.";
     questions.signalType.instructions += " Routine project/service descriptions are operating context, not a newly formed entity. An agency launching a customer's brand is that customer's event. Distinguish planned systems evaluation, vendor selection, implementation, and completed go-live; software skills in a job are not a systems project. Finance reporting/control/cash process changes count as operating_change without requiring expansion. An open finance job is a vacancy, not an appointed executive.";
     questions.evidenceStrength.instructions += " evidenceKind identifies the captured material. A headline-only source contains no unseen article body; base your answer on the supplied text only.";
   }
-  if (input.questionPack === "business-services-v2") {
+  if (currentClassification) {
     const ownDevelopment = " Identify whose business actually changed. A publisher's domain, byline, masthead, copyright, ads or first-person editorial voice identifies the publisher, not the subject of every article. A dated article, holiday/anniversary greeting, historical retrospective, sponsored feature or client's campaign does not itself establish a change in the publisher/agency's operations. A real new contract awarded to this company is its own development; a client engagement case study, mention of contract activity or bid opportunity alone is not a new award. Classify the selected supported development about the specified company, not the dominant page genre: explicit own operational change can be announced in promotional copy or covered by a third party. A holiday-themed article that explicitly announces the publisher's own closure is actual_company_development with closure_or_wind_down, not merely a holiday greeting. eventDateBasis and sourceDateContext describe date provenance: page/feed publication or modification time is not automatically the date of the underlying development.";
     questions.contentClass = { type: "choice", instructions: grounding + "What kind of evidence is this relative to the specified company's own business?" + ownDevelopment, criteria: {
       actual_company_development: "A specific actual or formally announced change to this company's own business, operations, workforce, systems, locations, capital or awarded commercial work. An actual finance vacancy counts; a client's change does not.",
@@ -171,7 +176,7 @@ function questionsFor(input: EvaluateEvidenceInput): Record<string, Question> {
     questions.concreteEvent.instructions += " Evaluate the target's selected own development, not page genre or ownership. A publisher's explicit closure inside a holiday article is an actual event; editorial coverage of other subjects is not its own event. Dates in greetings/history do not establish company events. eventDateBasis/sourceDateContext may describe publication timing rather than event timing.";
   }
   if (input.publicScaleContext !== undefined) {
-    const relativeScale = input.questionPack === "business-services-v2" ? " Compare the development only with the cited publicScaleContext baseline at the relevant date. Do not infer revenue, employees, footprint, ratios or currentness; missing or historical-only scale remains unknown. Counterparty scale is not target scale, and baseline context does not prove the new event. A single location/acquisition need not be material to a large company." : " Use publicScaleContext only as cited public baseline context. Assess the materiality of this new development relative to the company's explicitly supported existing footprint, operating model and size at the relevant date. An additional location for a two-location operator may be more material than the same addition for a 200-location operator, but do not infer either denominator. An acquisition is not automatically a large share of the buyer's business. Missing or historical-only scale remains unknown; do not invent revenue, employees, location/entity totals, ratios or currentness. Public context does not itself prove that this new event occurred, and counterparty scale is not the target company's scale.";
+    const relativeScale = currentClassification ? " Compare the development only with the cited publicScaleContext baseline at the relevant date. Do not infer revenue, employees, footprint, ratios or currentness; missing or historical-only scale remains unknown. Counterparty scale is not target scale, and baseline context does not prove the new event. A single location/acquisition need not be material to a large company." : " Use publicScaleContext only as cited public baseline context. Assess the materiality of this new development relative to the company's explicitly supported existing footprint, operating model and size at the relevant date. An additional location for a two-location operator may be more material than the same addition for a 200-location operator, but do not infer either denominator. An acquisition is not automatically a large share of the buyer's business. Missing or historical-only scale remains unknown; do not invent revenue, employees, location/entity totals, ratios or currentness. Public context does not itself prove that this new event occurred, and counterparty scale is not the target company's scale.";
     questions.operationalComplexity.instructions += relativeScale;
     questions.growthRelevance.instructions += relativeScale;
     questions.requiresResearch.instructions += " When relative materiality cannot be established because the company's current baseline footprint or scale is missing, that is an explicit research gap; do not fill it from assumed company size.";
@@ -185,11 +190,13 @@ function questionsFor(input: EvaluateEvidenceInput): Record<string, Question> {
       instructions: grounding + "Which supplied section most directly supports the principal development or finding about the specified company? Select its ID only when that section itself supports the finding; choose __none__ if no supplied section does. Do not use prior feedback as evidence.",
       criteria: Object.fromEntries([
         [NO_SUPPORTING_SECTION, "No supplied section directly supports the finding."],
-        ...input.sections.map(section => [section.id, `The verbatim evidence section with ID ${section.id} in state.sections.`]),
+        ...input.sections.map(section => [section.id, input.questionPack === "business-services-v3"
+          ? `The verbatim evidence section labeled ${section.id} in state.evidence.`
+          : `The verbatim evidence section with ID ${section.id} in state.sections.`]),
       ]),
     };
   }
-  if (input.questionPack === "business-services-v2") {
+  if (currentClassification) {
     // New categorical choices share concise grounding so the full page, source
     // dates and authorized identity context still fit the existing request cap.
     // Preserve all older prompt strings under their original paid contracts.
@@ -205,11 +212,11 @@ function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function prepare(input: EvaluateEvidenceInput): { state: Record<string, string>; questions: Record<string, Question> } | null {
+function prepare(input: EvaluateEvidenceInput, questionBuilder = questionsFor): { state: Record<string, string>; questions: Record<string, Question> } | null {
   if (!input || typeof input.text !== "string" || !input.text.trim()) return null;
   if (input.privacy !== undefined && input.privacy !== "public" && input.privacy !== "private_excerpt") return null;
   if (input.publicScaleContext !== undefined && input.privacy === "private_excerpt") return null;
-  if (input.questionPack !== undefined && (!["business-services-v1", "business-services-v2"].includes(input.questionPack) || input.privacy === "private_excerpt")) return null;
+  if (input.questionPack !== undefined && (!["business-services-v1", "business-services-v2", "business-services-v3"].includes(input.questionPack) || input.privacy === "private_excerpt")) return null;
   if (input.criteria !== undefined && !Array.isArray(input.criteria)) return null;
   if ((input.criteria?.length ?? 0) > MAX_SEMANTIC_CRITERIA) return null;
   const ids = new Set<string>();
@@ -246,7 +253,23 @@ function prepare(input: EvaluateEvidenceInput): { state: Record<string, string>;
         || Buffer.byteLength(section.text, "utf8") > 1_500 || !input.text.includes(section.text)) return null;
       sectionIds.add(section.id);
     }
-    if (input.sections.length) state.sections = JSON.stringify(input.sections);
+    if (input.sections.length && input.questionPack === "business-services-v3") {
+      // Insert labels around ordered verbatim spans. Every character, including
+      // whitespace, unlabelled gaps and the final paragraph, is retained once.
+      // Offsets refer to the unchanged input text (UTF-16, as worker packets do).
+      let cursor = 0;
+      const labelled: string[] = [];
+      for (const section of input.sections) {
+        const start = input.text.indexOf(section.text, cursor);
+        if (start < cursor) return null; // Never silently drop overlapping spans.
+        const end = start + section.text.length;
+        labelled.push(input.text.slice(cursor, start), `\n<evidence-section id="${section.id}" start="${start}" end="${end}">\n`,
+          input.text.slice(start, end), `\n</evidence-section>\n`);
+        cursor = end;
+      }
+      labelled.push(input.text.slice(cursor));
+      state.evidence = labelled.join("");
+    } else if (input.sections.length) state.sections = JSON.stringify(input.sections);
   }
   if (input.feedbackExamples !== undefined) {
     if (!Array.isArray(input.feedbackExamples) || input.feedbackExamples.length > 3) return null;
@@ -258,7 +281,7 @@ function prepare(input: EvaluateEvidenceInput): { state: Record<string, string>;
     }
     if (input.feedbackExamples.length) state.feedbackExamples = JSON.stringify(input.feedbackExamples);
   }
-  const questions = questionsFor(input);
+  const questions = questionBuilder(input);
   // Bytes are a deliberately conservative input bound, not an asserted tokenizer count.
   // Reject rather than silently truncating evidence. Callers may split attributable sections.
   if (Buffer.byteLength(JSON.stringify(state), "utf8") > MAX_EVIDENCE_STATE_BYTES
@@ -270,6 +293,52 @@ function prepare(input: EvaluateEvidenceInput): { state: Record<string, string>;
 export function estimateEvidenceInputTokens(input: EvaluateEvidenceInput): number | null {
   const prepared = prepare(input);
   return prepared ? Buffer.byteLength(JSON.stringify(prepared), "utf8") + 1_024 : null;
+}
+
+export type PreparedJevRequest = Pick<JevEvaluationRequest, "model" | "state" | "questions"> & { questionVersion: string };
+
+function evidenceQuestionVersion(input: EvaluateEvidenceInput): string {
+  return input?.questionPack === "business-services-v3" ? JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION
+    : input?.questionPack === "business-services-v2" ? JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION
+    : input?.questionPack === "business-services-v1" ? JEV_BUSINESS_SERVICES_QUESTION_VERSION
+    : input?.publicScaleContext !== undefined ? JEV_PUBLIC_SCALE_QUESTION_VERSION : JEV_QUESTION_VERSION;
+}
+
+/** The complete semantic request, without credentials, timeouts or abort signals.
+ * Cache consumers must include this model and contract alongside all state. */
+export function prepareEvidenceRequest(input: EvaluateEvidenceInput): PreparedJevRequest | null {
+  const model = process.env.TYPESAFE_MODEL?.trim() || JEV_MODEL;
+  const prepared = prepare(input);
+  return prepared && PINNED_JEV_MODEL.test(model) ? { model, questionVersion: evidenceQuestionVersion(input), ...prepared } : null;
+}
+
+function requestFingerprint(request: PreparedJevRequest | null, privacy: EvaluateEvidenceInput["privacy"]): string | null {
+  return request ? createHash("sha256").update(JSON.stringify({ privacy: privacy ?? "public", ...request })).digest("hex") : null;
+}
+
+export function evidenceRequestFingerprint(input: EvaluateEvidenceInput): string | null {
+  return requestFingerprint(prepareEvidenceRequest(input), input?.privacy);
+}
+
+/** A separate native pack asks exactly the ranking questions the caller uses.
+ * Keep their useful grounding and company context; omit unrelated event labels. */
+export function prepareResearchRankingRequest(input: EvaluateEvidenceInput): PreparedJevRequest | null {
+  if (!input || input.privacy === "private_excerpt" || input.questionPack !== undefined
+    || !input.criteria?.length || input.sections !== undefined) return null;
+  const model = process.env.TYPESAFE_MODEL?.trim() || JEV_MODEL;
+  const prepared = prepare(input, value => Object.fromEntries((value.criteria ?? []).map(criterion => [
+    `criterion_${criterion.id}`, { type: "noul" as const, instructions: grounding + criterion.instructions },
+  ])));
+  return prepared && PINNED_JEV_MODEL.test(model) ? { model, questionVersion: JEV_RESEARCH_RANKING_QUESTION_VERSION, ...prepared } : null;
+}
+
+export function researchRankingRequestFingerprint(input: EvaluateEvidenceInput): string | null {
+  return requestFingerprint(prepareResearchRankingRequest(input), input?.privacy);
+}
+
+export function estimateResearchRankingInputTokens(input: EvaluateEvidenceInput): number | null {
+  const prepared = prepareResearchRankingRequest(input);
+  return prepared ? Buffer.byteLength(JSON.stringify({ state: prepared.state, questions: prepared.questions }), "utf8") + 1_024 : null;
 }
 
 function usageFrom(value: unknown): EvaluationUsage | null {
@@ -413,7 +482,7 @@ async function directEvaluate(request: JevEvaluationRequest, fetcher: typeof fet
 export async function evaluateEvidence(input: EvaluateEvidenceInput, dependencies: JevDependencies = {}): Promise<EvaluateEvidenceResult> {
   const configuredModel = process.env.TYPESAFE_MODEL?.trim() || JEV_MODEL;
   const base = { model: PINNED_JEV_MODEL.test(configuredModel) ? configuredModel : JEV_MODEL,
-    questionVersion: input?.questionPack === "business-services-v2" ? JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION : input?.questionPack === "business-services-v1" ? JEV_BUSINESS_SERVICES_QUESTION_VERSION : input?.publicScaleContext !== undefined ? JEV_PUBLIC_SCALE_QUESTION_VERSION : JEV_QUESTION_VERSION };
+    questionVersion: evidenceQuestionVersion(input) };
   // Local rejection proves no billable dispatch. Unknown provider/transport
   // outcomes still retain null usage and the conservative reservation.
   const zeroUsage: EvaluationUsage = { inputTokens: 0, outputTokens: 0 };
@@ -441,7 +510,7 @@ export async function evaluateEvidence(input: EvaluateEvidenceInput, dependencie
   if (!answers) return invalid();
   const signalType = choice(answers, "signalType", EVIDENCE_SIGNAL_TYPES);
   const companyRelationship = choice(answers, "companyRelationship", Object.keys(relationshipOptions));
-  const classification = input.questionPack === "business-services-v2" ? {
+  const classification = input.questionPack === "business-services-v2" || input.questionPack === "business-services-v3" ? {
     contentClass: choice(answers, "contentClass", EVIDENCE_CONTENT_CLASSES),
     companyRole: choice(answers, "companyRole", EVIDENCE_COMPANY_ROLES),
     contractActivity: choice(answers, "contractActivity", EVIDENCE_CONTRACT_ACTIVITIES),
@@ -481,4 +550,41 @@ export async function evaluateEvidence(input: EvaluateEvidenceInput, dependencie
       ...values as { [K in keyof typeof values]: number },
     },
   };
+}
+
+/** One direct native call, with the same transport, wire validation and usage
+ * accounting as evidence evaluation. No event classifier or second judge. */
+export async function evaluateResearchRanking(input: EvaluateEvidenceInput, dependencies: JevDependencies = {}): Promise<EvaluateCriteriaResult> {
+  const configuredModel = process.env.TYPESAFE_MODEL?.trim() || JEV_MODEL;
+  const base = { model: PINNED_JEV_MODEL.test(configuredModel) ? configuredModel : JEV_MODEL,
+    questionVersion: JEV_RESEARCH_RANKING_QUESTION_VERSION };
+  const zeroUsage: EvaluationUsage = { inputTokens: 0, outputTokens: 0 };
+  if (!PINNED_JEV_MODEL.test(configuredModel)) return { ...base, ok: false, usage: zeroUsage, error: { kind: "invalid_request", retryable: false } };
+  const prepared = prepareResearchRankingRequest(input);
+  if (!prepared) return { ...base, ok: false, usage: zeroUsage, error: { kind: "invalid_input", retryable: false } };
+  if (input.abortSignal?.aborted) return { ...base, ok: false, usage: zeroUsage, error: { kind: "cancelled", retryable: false } };
+  const timeout = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+  const abortSignal = input.abortSignal ? AbortSignal.any([input.abortSignal, timeout]) : timeout;
+  let result: unknown;
+  try {
+    result = await (dependencies.evaluate ?? ((request) => directEvaluate(request, dependencies.fetch ?? fetch)))({
+      model: prepared.model, state: prepared.state, questions: prepared.questions, maxRetries: 0, abortSignal,
+    });
+  } catch (error) {
+    return { ...base, ok: false, usage: record(error)?.preDispatch === true ? zeroUsage : null,
+      error: classifyFailure(error, Boolean(input.abortSignal?.aborted), timeout.aborted) };
+  }
+  const usage = usageFrom(result);
+  const invalid = (): EvaluateCriteriaResult => ({ ...base, ok: false, usage, error: { kind: "invalid_response", retryable: false } });
+  const answers = record(record(result)?.answers);
+  if (!answers) return invalid();
+  const criteria: Record<string, number> = {};
+  for (const criterion of input.criteria ?? []) {
+    const value = probability(answers, `criterion_${criterion.id}`);
+    if (value === null) return invalid();
+    Object.defineProperty(criteria, criterion.id, { value, enumerable: true, writable: true, configurable: true });
+  }
+  const rawAnswers = rawAnswersFrom(answers, prepared.questions);
+  if (!rawAnswers) return invalid();
+  return { ...base, ok: true, usage, criteria, metadata: metadataFrom(result, rawAnswers) };
 }

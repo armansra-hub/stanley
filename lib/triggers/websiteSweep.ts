@@ -81,8 +81,11 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
               }
               if (outcome.outcome !== "success") { failedPending.push(url); return; }
               const page = sitePageEvidence(response.body, response.finalUrl);
+              page.requestedUrls = [url];
               if (!page.text.trim()) throw new Error("Website page has no evidence");
-              if (!scan.pages.some(existing => existing.url === page.url)) scan.pages.push(page);
+              const existing = scan.pages.find(existing => existing.url === page.url);
+              if (existing) existing.requestedUrls = [...new Set([...(existing.requestedUrls ?? [existing.url]), url])].sort();
+              else scan.pages.push(page);
               fetchedPending.push(url);
             } catch (error) { failedPending.push(url); urlOutcomes.push({ url, outcome: "unavailable", code: sourceErrorCode(error) }); }
           }));
@@ -97,7 +100,8 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
                 text: page.text, eventDate: published.length === 1 ? published[0] : null,
                 metadata: { sourceDates: page.sourceDates, meaningfulContentHash: page.contentHash, textTruncated: page.truncated,
                   ...(page.companyIdentity ? { companyIdentity: page.companyIdentity } : {}),
-                  eventDateBasis: published.length === 1 ? "page_publication" : "unknown", collectionMode: baseline ? "baseline" : "deep" },
+                  eventDateBasis: published.length === 1 ? "page_publication" : "unknown", collectionMode: baseline ? "baseline" : "deep",
+                  discovery: { collector: "website", url: page.url, requestedUrls: page.requestedUrls ?? [page.url], title: page.title, eventDate: published.length === 1 ? published[0] : null } },
               });
               if (!stored) captureFailed = true;
               else savedUrls.push(page.url);

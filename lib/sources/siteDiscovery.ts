@@ -18,6 +18,7 @@ export interface SitePageEvidence {
   sourceDates: SiteDateReference[];
   truncated: boolean;
   companyIdentity?: SiteCompanyIdentity;
+  requestedUrls?: string[];
 }
 
 /** Keep company identity attached to the supplied domain, including its subdomains. */

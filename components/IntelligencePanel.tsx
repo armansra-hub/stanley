@@ -5,6 +5,8 @@ import Link from "next/link";
 import AccountResearchPanel from "./AccountResearchPanel";
 import OperatingMatches from "./OperatingMatches";
 import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceHealth";
+import IntelligenceCost from "./IntelligenceCost";
+import type { JevCostSnapshot } from "@/lib/intelligence/costMetricsTypes";
 import { EvidenceCard, type FeedbackReason, type Observation } from "./IntelligenceEvidenceCard";
 
 type SavedView = { id: string; name: string; question: string; active: boolean; backfill_complete: boolean };
@@ -13,10 +15,11 @@ type IntelligenceData = {
   views: SavedView[];
   observations: Observation[];
   hasMore: boolean;
-  spend: { usedUsd: number; reservedUsd: number; limitUsd: number };
+  spend: { available?: boolean; usedUsd: number; reservedUsd: number; limitUsd: number };
   jobs: { queued: number; running: number; failed: number };
   sourceCoverage: { complete: number; partial: number; failed: number; empty?: number; unavailable?: number; unsupported?: number; unknown?: number; withWarnings?: number; accountsWithSuccess48h?: number; scope?: string };
   health?: IntelligenceHealthData;
+  jevCost?: JevCostSnapshot;
 };
 
 const API = "/api/headhunter/intelligence";
@@ -158,9 +161,12 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
 
       {data && <section aria-label="Intelligence activity" className="mb-6 grid gap-px overflow-hidden rounded-lg border bg-[var(--border)] text-sm sm:grid-cols-3">
         <div className="bg-[var(--surface)] p-4">
-          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global monthly intelligence budget</div>
-          <div className="mt-1"><strong className="text-lg">{dollars(data.spend.usedUsd)}</strong><span className="text-[var(--text-muted)]"> used of {dollars(data.spend.limitUsd)}</span></div>
-          <div className="mt-1 text-xs text-[var(--text-muted)]">{dollars(data.spend.reservedUsd)} reserved for work in progress</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global monthly budget accounting</div>
+          {data.spend.available === false ? <p className="mt-1 text-sm text-[var(--text-muted)]">Global budget details are unavailable.</p> : <>
+            <div className="mt-1"><strong className="text-lg">{dollars(data.spend.usedUsd)}</strong><span className="text-[var(--text-muted)]"> accounted against {dollars(data.spend.limitUsd)}</span></div>
+            <div className="mt-1 text-xs text-[var(--text-muted)]">{dollars(data.spend.reservedUsd)} reserved for work in progress</div>
+          </>}
+          <div className="mt-1 text-xs text-[var(--text-muted)]">All intelligence models; includes conservative allowances when usage is unknown.</div>
         </div>
         <div className="bg-[var(--surface)] p-4">
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global evidence / view jobs</div>
@@ -177,6 +183,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       </section>}
 
       {data?.health && <IntelligenceHealth health={data.health} />}
+      {data && <IntelligenceCost cost={data.jevCost} />}
       <OperatingMatches onOpenAccount={onOpenAccount} enabled={data?.enabled === true} refreshKey={updatedAt} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>

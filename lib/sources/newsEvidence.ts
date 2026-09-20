@@ -28,7 +28,7 @@ export function publisherArticleLinks(html: string, publisherUrl?: string): stri
 /** Fetch a real publisher body when ordinary public redirects/links provide it.
  * Google public link resolution enriches ordinary redirects. No invented
  * publisher URL, consent bypass, or unrelated third-party crawler. */
-export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_excerpt" | "publisher_url" | "feed_excerpt">) {
+export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_excerpt" | "publisher_url" | "feed_excerpt"> & Partial<Pick<NewsItem, "signal_date">>) {
   let failure: SourceErrorCode = "publisher_unresolved";
   let httpStatus: number | undefined;
   const id = googleArticleId(item.source_url);
@@ -53,15 +53,17 @@ export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_
       }
       const page = sitePageEvidence(response.body, final.toString());
       if (final.pathname.replace(/\/+$/, "").length < 2 || page.text.length < 160) { failure = "empty_body"; continue; }
-      return { sourceUrl: page.url, text: page.text, metadata: { evidenceKind: "article_body", articleBodyAvailable: true,
+      return { sourceUrl: page.url, title: item.raw_excerpt, eventDate: item.signal_date ?? null, text: page.text, metadata: { evidenceKind: "article_body", articleBodyAvailable: true,
         feedUrl: item.source_url, publisherUrl: item.publisher_url ?? null, sourceDates: page.sourceDates, textTruncated: page.truncated,
+        discovery: { collector: "news", url: item.source_url, title: item.raw_excerpt, eventDate: item.signal_date ?? null },
         ...(page.companyIdentity ? { publisherIdentity: page.companyIdentity } : {}),
         eventDateBasis: "feed_publication", publisherResolution: resolutionMethod }, bodyAvailable: true, error: null };
     } catch (error) { failure = sourceErrorCode(error); }
   }
   // Exact feed headline only; no HTML gateway, cookie/consent text or invented
   // article body is supplied to Jev. A later body capture can enrich this finding.
-  return { sourceUrl: item.source_url, text: item.raw_excerpt, metadata: { evidenceKind: "headline_only", articleBodyAvailable: false,
+  return { sourceUrl: item.source_url, title: item.raw_excerpt, eventDate: item.signal_date ?? null, text: item.raw_excerpt, metadata: { evidenceKind: "headline_only", articleBodyAvailable: false,
     feedUrl: item.source_url, publisherUrl: item.publisher_url ?? null, eventDateBasis: "feed_publication",
+    discovery: { collector: "news", url: item.source_url, title: item.raw_excerpt, eventDate: item.signal_date ?? null },
     articleFetchError: failure, httpStatus: httpStatus ?? null, publisherResolution: resolutionMethod }, bodyAvailable: false, error: failure };
 }

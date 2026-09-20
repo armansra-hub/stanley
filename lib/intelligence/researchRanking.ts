@@ -1,16 +1,16 @@
 import "server-only";
-import { evaluateEvidence, estimateEvidenceInputTokens } from "./jev";
-import { reserveJev, settleJev } from "./budget";
+import { evaluateResearchRanking, estimateResearchRankingInputTokens, researchRankingRequestFingerprint } from "./jev";
+import { durableJevRequest } from "./jevRequests";
 import type { EvaluateEvidenceInput, EvaluationUsage, RawEvaluationAnswer } from "./evaluation";
 
-export const RESEARCH_RANKING_VERSION = "next-source-business-services-v2";
+export const RESEARCH_RANKING_VERSION = "next-source-business-services-v3";
 export const MAX_RANKED_RESEARCH_CANDIDATES = 8;
-export type ResearchRankingInput = { companyName: string; companyDomain?: string | null;
+export type ResearchRankingInput = { companyName: string; companyDomain?: string | null; companyId?: string; automaticResearch?: boolean;
   researchContext?: string; candidateTitles?: Readonly<Record<string, string>>;
   missingTopics: readonly string[]; candidates: readonly string[] };
 export type ResearchCandidateScore = { url: string; optionId: string; score: number; rawAnswer: RawEvaluationAnswer | null };
 export type ResearchRankingResult = { candidates: string[]; providerUsed: boolean; scores: ResearchCandidateScore[];
-  outcome: string; rankingVersion: string; model?: string; questionVersion?: string; usage?: EvaluationUsage | null };
+  outcome: string; rankingVersion: string; reused?: boolean; model?: string; questionVersion?: string; usage?: EvaluationUsage | null };
 
 /** The caller supplies already discovered/verified source URLs. This constructs
  * options for what to read next; it does not fetch, invent links, or re-evaluate
@@ -43,7 +43,7 @@ export function researchRankingInput(input: ResearchRankingInput): EvaluateEvide
       `Would reading supplied option ${option.id} next likely help investigate at least one explicitly listed missing topic for this company? Rate only expected research usefulness from the supplied URL/path clues. Unclear paths have uncertain usefulness. Do not answer whether a topic is true, reevaluate prior Jev findings, infer unseen page content, or treat the research gap as a company fact. Use the exact option ${option.id} in state.evidence.` })),
     privacy: "public",
   };
-  return estimateEvidenceInputTokens(request) === null ? null : request;
+  return estimateResearchRankingInputTokens(request) === null ? null : request;
 }
 
 /** Native Jev rankings only change reading order. Every candidate survives;
@@ -53,33 +53,35 @@ export async function rankResearchCandidates(input: ResearchRankingInput): Promi
   const fallback = (outcome: string, providerUsed = false, extra: Partial<ResearchRankingResult> = {}): ResearchRankingResult => ({
     candidates: original, providerUsed, scores: [], outcome, rankingVersion: RESEARCH_RANKING_VERSION, ...extra,
   });
-  if (original.length < 2 || input.missingTopics.length === 0) return fallback("not_needed");
+  // The research claim reads up to three URLs concurrently. Ordering three or
+  // fewer cannot change what gets read and must not consume a paid request.
+  if (original.length <= 3 || input.missingTopics.length === 0) return fallback("not_needed");
   const request = researchRankingInput(input);
   if (!request) return fallback("invalid_input");
+  const fingerprint = researchRankingRequestFingerprint(request);
+  if (!fingerprint) return fallback("invalid_input");
   if (!process.env.TYPESAFE_API_KEY) return fallback("provider_unconfigured");
-  let reservation: string | null;
-  try { reservation = await reserveJev(); }
-  catch { return fallback("budget_unavailable"); }
-  if (!reservation) return fallback("budget_deferred");
-  let result;
-  try { result = await evaluateEvidence({ ...request, abortSignal: AbortSignal.timeout(15_000) }); }
-  catch {
-    try { await settleJev(reservation, null); }
-    catch { return fallback("settlement_unavailable", true); }
-    return fallback("provider_unavailable", true);
-  }
-  const metadata = { model: result.model, questionVersion: result.questionVersion, usage: result.usage };
+  let receipt;
+  try {
+    receipt = await durableJevRequest({ fingerprint,
+      context: { purpose: "research_ranking", companyId: input.companyId, sourceKind: "discovered_research_options",
+        workload: input.automaticResearch ? "monitoring" : "manual" },
+      execute: () => evaluateResearchRanking({ ...request, abortSignal: AbortSignal.timeout(15_000) }),
+    });
+  } catch { return fallback("request_persistence_unavailable"); }
+  if (receipt.status !== "complete") return fallback(receipt.status);
+  const result = receipt.evaluation;
+  const providerUsed = !receipt.reused;
+  const metadata = { model: result.model, questionVersion: result.questionVersion, usage: result.usage, reused: receipt.reused };
   const scores: ResearchCandidateScore[] = result.ok ? original.slice(0, MAX_RANKED_RESEARCH_CANDIDATES).map((url, index) => {
     const optionId = `source_${index + 1}`;
     return { url, optionId, score: result.criteria[optionId], rawAnswer: result.metadata.rawAnswers?.[`criterion_${optionId}`] ?? null };
   }) : [];
-  try { await settleJev(reservation, result.usage?.inputTokens ?? null); }
-  catch { return fallback("settlement_unavailable", true, { ...metadata, scores }); }
-  if (!result.ok) return fallback(result.error.kind, true, metadata);
+  if (!result.ok) return fallback(result.error.kind, providerUsed, metadata);
   // The adapter validates wire types; this also prevents a missing option from
   // silently being demoted if an alternate test/transport returns a partial map.
-  if (scores.some(item => !Number.isFinite(item.score) || item.score < 0 || item.score > 1)) return fallback("invalid_response", true, metadata);
+  if (scores.some(item => !Number.isFinite(item.score) || item.score < 0 || item.score > 1)) return fallback("invalid_response", providerUsed, metadata);
   const ranked = scores.map((item, index) => ({ ...item, index })).sort((a, b) => b.score - a.score || a.index - b.index);
-  return { ...fallback("ranked", true, { ...metadata, scores }),
+  return { ...fallback("ranked", providerUsed, { ...metadata, scores }),
     candidates: [...ranked.map(item => item.url), ...original.slice(MAX_RANKED_RESEARCH_CANDIDATES)] };
 }

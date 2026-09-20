@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_criteria" }, { status: 400 });
   }
   try {
-    const reservation = await reserveJev();
+    const reservation = await reserveJev({ purpose: "private_tam", workload: "manual" });
     if (!reservation) return NextResponse.json({ error: "budget_deferred" }, { status: 429 });
     const result = await evaluateEvidence({ text: body.text, criteria, privacy: "private_excerpt" });
     await settleJev(reservation, result.usage?.inputTokens ?? null);

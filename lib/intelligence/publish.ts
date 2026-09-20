@@ -28,7 +28,7 @@ export type JevPublicationReceipt = { status: "published" | "already_published" 
 /** Existing feed-routing rules; these do not alter Jev output or add a second opinion. */
 export function jevPublicationRoute(result: Evaluation, eventDate: string | null, now = Date.now()): { type: string | null; reason: string } {
   const a = result.attributes;
-  const classified = result.questionVersion === "stanley-business-services-v2";
+  const classified = ["stanley-business-services-v2", "stanley-business-services-v3"].includes(result.questionVersion);
   if (classified) {
     // These are Jev's choices from the original evidence request, not another
     // interpretation or a headline/keyword filter. Old paid contracts are unchanged.

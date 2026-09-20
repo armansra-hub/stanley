@@ -200,7 +200,7 @@ async function observeHeadline(company: NewsCompany, item: HeadlineItem) {
   const stored = await enqueueObservation({
     companyId: company.id, companyName: company.name, companyDomain: company.domain,
     netsuiteInternalId: company.netsuite_internal_id, sourceKind: "news", sourceUrl: evidence.sourceUrl,
-    title: item.raw_excerpt, text: evidence.text, eventDate: item.signal_date,
+    title: evidence.title, text: evidence.text, eventDate: evidence.eventDate,
     metadata: { sourceName: item.source_name, ...evidence.metadata },
   });
   if (!stored) throw new Error("News observation persistence disabled");

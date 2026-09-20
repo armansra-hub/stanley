@@ -20,6 +20,13 @@ describe("public publisher resolution", () => {
     expect(result.text).toBe(item.raw_excerpt);
     expect(result.metadata).toMatchObject({ evidenceKind: "headline_only", articleFetchError: "blocked", articleBodyAvailable: false });
   });
+  it("retains a meaningful feed headline/date alongside a conflicting page publication date", async () => {
+    fetch.mockResolvedValue({ body: `<title>Publisher headline</title><meta property="article:published_time" content="2026-09-16"><main>${"Acme announced a new services contract. ".repeat(6)}</main>`, status: 200, finalUrl: "https://publisher.com/news/acme", contentType: "text/html" });
+    const result = await readNewsEvidence({ ...item, signal_date: "2026-09-17" });
+    expect(result).toMatchObject({ sourceUrl: "https://publisher.com/news/acme", title: item.raw_excerpt, eventDate: "2026-09-17",
+      metadata: { eventDateBasis: "feed_publication", sourceDates: [{ kind: "published", value: "2026-09-16T00:00:00.000Z", source: "article:published_time" }],
+        discovery: { collector: "news", url: item.source_url, title: item.raw_excerpt, eventDate: "2026-09-17" } } });
+  });
   it("does not select unrelated or ambiguous publisher navigation", () => {
     expect(publisherArticleLinks('<a href="https://other.com/news/acme">Story</a>', item.publisher_url)).toEqual([]);
     expect(publisherArticleLinks('<a href="https://publisher.com/news/one">One</a><a href="https://publisher.com/news/two">Two</a>', item.publisher_url)).toEqual([]);

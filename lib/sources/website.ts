@@ -147,7 +147,13 @@ export async function fetchSiteSignals(domain: string, companyName?: string, opt
     else if (page.status === 404 || page.status === 410) candidates.delete(url);
     else failedUrls.push(url);
   }
-  const evidence = [...new Map(pages.map((page) => [page.finalUrl, sitePageEvidence(page.html, page.finalUrl)])).values()];
+  const evidenceByUrl = new Map<string, SitePageEvidence>();
+  for (const page of pages) {
+    const captured = sitePageEvidence(page.html, page.finalUrl);
+    captured.requestedUrls = [...new Set([...(evidenceByUrl.get(page.finalUrl)?.requestedUrls ?? []), page.outcome.url])].sort();
+    evidenceByUrl.set(page.finalUrl, captured);
+  }
+  const evidence = [...evidenceByUrl.values()];
   const rawText = evidence.filter((page) => !isCareerEvidenceUrl(page.url)).map((page) => page.text).join(" ");
   const growth: { type: "press" | "new_entity" | "ma"; label: string; snippet?: string }[] = [];
   if (rawText.trim()) {

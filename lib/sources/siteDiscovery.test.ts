@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { companyPageUrl, discoverSiteLinks, sitePageEvidence, sitemapLocations } from "./siteDiscovery";
 
 describe("company source discovery and evidence", () => {
+  it("does not trust canonical tags to collapse unrelated or distinct documents", () => {
+    for (const canonical of ["https://foreign.example/story", "https://acme.com/"]) {
+      const page = sitePageEvidence(`<title>New office</title><link rel="canonical" href="${canonical}"><main>Office announcement.</main>`, "https://acme.com/news/office");
+      expect(page.url).toBe("https://acme.com/news/office");
+    }
+  });
   it("discovers relevant same-company PDFs only when deeper research requests them", () => {
     const html = '<a href="/capabilities.pdf">Capability statement</a><a href="https://foreign.com/annual.pdf">Annual report</a>';
     expect(discoverSiteLinks(html, "https://acme.com")).toEqual([]);

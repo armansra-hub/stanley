@@ -1,11 +1,12 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { evaluateEvidence, estimateEvidenceInputTokens, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION } from "./jev";
+import { evaluateEvidence, estimateEvidenceInputTokens, evidenceRequestFingerprint, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION } from "./jev";
 import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
 import { publishJevFinding, jevSignalType, type JevPublicationReceipt } from "./publish";
 import type { EvaluateEvidenceInput, EvaluateEvidenceResult } from "./evaluation";
 import { intelligenceEnabled, INTELLIGENCE_VERSION } from "./observations";
-import { reserveJev, settleJev, secondsUntilNextMonth } from "./budget";
+import { secondsUntilNextMonth } from "./budget";
+import { durableJevRequest, reconcileJevReceipts, type JevWorkload } from "./jevRequests";
 import { OPERATING_CRITERIA, OPERATING_TOPICS, operatingCriteria, type OperatingTopic } from "./profiles";
 import { businessServicesResearchContext } from "./businessServices";
 import { loadFeedbackExamples } from "./feedback";
@@ -16,8 +17,10 @@ import { buildPublicScaleContext, loadPublicScaleObservations, type PublicScaleC
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 export type PartResult = { start: number; end: number; evaluation: Evaluation };
 type PacketPublication = { start: number; end: number; questionVersion: string; attemptedAt: string; outcome: JevPublicationReceipt };
+type PendingRequest = { start: number; end: number; input: EvaluateEvidenceInput; fingerprint: string };
 type Job = { id: string; observation_id: string; view_id: string | null; kind: "interpret" | "view"; lease_token: string; attempts: number;
-  result: { parts?: PartResult[]; publications?: PacketPublication[]; publicScaleContext?: PublicScaleContext; companyIdentityContext?: string; routingBackfill?: string } | null };
+  result: { parts?: PartResult[]; publications?: PacketPublication[]; publicScaleContext?: PublicScaleContext; companyIdentityContext?: string;
+    pendingRequest?: PendingRequest; routingBackfill?: string } | null };
 type Observation = { id: string; company_id: string; source_kind: string; source_url: string; title: string; evidence_text: string;
   event_date: string | null; observed_at: string; is_current: boolean; feedback_excluded?: boolean; metadata: Record<string, unknown> };
 
@@ -42,6 +45,13 @@ export function nextRetrySeconds(attempt: number): number {
   return Math.min(86_400, 60 * 2 ** Math.min(Math.max(attempt, 1), 10));
 }
 
+/** Only explicit collector provenance identifies a baseline. */
+export function observationWorkload(metadata: Record<string, unknown>): JevWorkload {
+  if (metadata.collectionMode === "baseline") return "initial_coverage";
+  if (metadata.focusedResearch === true && metadata.automaticResearch === false) return "manual";
+  return "monitoring";
+}
+
 /** Assemble the actual worker request before reserving any paid-call budget. */
 export function workerEvidenceInput(
   observation: Pick<Observation, "evidence_text" | "source_kind" | "source_url" | "title" | "event_date" | "observed_at"> & { metadata?: Record<string, unknown> },
@@ -49,10 +59,10 @@ export function workerEvidenceInput(
   packet: { start: number; end: number; text: string }, question: string | null,
   feedback: EvaluateEvidenceInput["feedbackExamples"],
   publicScaleContext?: PublicScaleContext,
-  businessServices: boolean | "business-services-v1" | "business-services-v2" = "business-services-v2",
+  businessServices: boolean | "business-services-v1" | "business-services-v2" | "business-services-v3" = "business-services-v3",
   companyIdentityContext?: string,
 ): EvaluateEvidenceInput {
-  const questionPack = businessServices === true ? "business-services-v2" : businessServices || undefined;
+  const questionPack = businessServices === true ? "business-services-v3" : businessServices || undefined;
   const sourceDates = (Array.isArray(observation.metadata?.sourceDates) ? observation.metadata.sourceDates : [])
     .filter((value): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value))
     .slice(0, 12).map(value => Object.fromEntries(["kind", "value", "source"].flatMap(key =>
@@ -74,7 +84,7 @@ export function workerEvidenceInput(
     ...(surroundingContext ? { surroundingContext } : {}),
     sections: evidencePackets(packet.text, 1200).map(({ text }, i) => ({ id: `s${i + 1}`, text })),
     ...(questionPack ? { questionPack } : {}),
-    ...(questionPack === "business-services-v2" ? {
+    ...(["business-services-v2", "business-services-v3"].includes(questionPack || "") ? {
       ...(companyIdentityContext ? { companyIdentityContext } : {}),
       eventDateBasis: typeof observation.metadata?.eventDateBasis === "string" && Buffer.byteLength(observation.metadata.eventDateBasis, "utf8") <= 128 ? observation.metadata.eventDateBasis : "unknown",
       ...(sourceDates.length ? { sourceDateContext: JSON.stringify(sourceDates) } : {}),
@@ -137,12 +147,15 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     question = view.question;
   }
   const feedback = await loadFeedbackExamples(observation.company_id);
-  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION].includes(part.evaluation.questionVersion));
+  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION].includes(part.evaluation.questionVersion));
   // Preserve already-paid v2 work under its original contract. New jobs receive
   // public baseline context; no completed Jev finding is reviewed again.
-  const contract = priorParts[0]?.evaluation.questionVersion ?? JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION;
+  const pendingPack = job.result?.pendingRequest?.input.questionPack;
+  const contract = priorParts[0]?.evaluation.questionVersion
+    ?? (pendingPack === "business-services-v2" ? JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION
+      : pendingPack === "business-services-v1" ? JEV_BUSINESS_SERVICES_QUESTION_VERSION : JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION);
   const usePublicScale = contract !== JEV_QUESTION_VERSION;
-  const businessServices = contract === JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION ? "business-services-v2" : contract === JEV_BUSINESS_SERVICES_QUESTION_VERSION ? "business-services-v1" : false;
+  const businessServices = contract === JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION ? "business-services-v3" : contract === JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION ? "business-services-v2" : contract === JEV_BUSINESS_SERVICES_QUESTION_VERSION ? "business-services-v1" : false;
   const parts = priorParts.filter(part => part.evaluation.questionVersion === contract);
   const publications = job.result?.publications ?? [];
   let publicScaleContext: PublicScaleContext | undefined;
@@ -155,7 +168,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     }
   }
   let companyIdentityContext: string | undefined;
-  if (businessServices === "business-services-v2") {
+  if (businessServices === "business-services-v2" || businessServices === "business-services-v3") {
     companyIdentityContext = job.result?.companyIdentityContext;
     if (!companyIdentityContext) {
       if (!identityContexts.has(observation.company_id)) identityContexts.set(observation.company_id,
@@ -166,8 +179,10 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       companyIdentityContext = await identityContexts.get(observation.company_id)!;
     }
   }
+  let pendingRequest = job.result?.pendingRequest;
   const checkpoint = () => ({ parts, publications, ...(publicScaleContext ? { publicScaleContext } : {}),
     ...(companyIdentityContext ? { companyIdentityContext } : {}),
+    ...(pendingRequest ? { pendingRequest } : {}),
     ...(job.result?.routingBackfill ? { routingBackfill: job.result.routingBackfill } : {}) });
   const persistCheckpoint = async () => {
     const { data: saved, error: saveError } = await db.from("intelligence_jobs").update({ result: checkpoint() })
@@ -185,20 +200,43 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       await finish(job, "queued", checkpoint(), { p_error: "continuation", p_retry_seconds: 30 });
       return "continued";
     }
-    const input = workerEvidenceInput(observation, company, packet, question, feedback, publicScaleContext, businessServices, companyIdentityContext);
+    if (pendingRequest && (pendingRequest.start !== packet.start || pendingRequest.end !== packet.end || pendingRequest.input.text !== packet.text))
+      throw new Error("Pending Jev evidence does not match the exact packet");
+    const input = pendingRequest?.input ?? workerEvidenceInput(observation, company, packet, question, feedback, publicScaleContext, businessServices, companyIdentityContext);
     if (estimateEvidenceInputTokens(input) === null) {
       await finish(job, "failed", checkpoint(), { p_error: "invalid_input" });
       return "invalid_input";
     }
-    const reservation = await reserveJev();
-    if (!reservation) {
+    const fingerprint = pendingRequest?.fingerprint ?? evidenceRequestFingerprint(input);
+    if (!fingerprint) {
+      await finish(job, "failed", checkpoint(), { p_error: "invalid_request" });
+      return "invalid_request";
+    }
+    if (!pendingRequest) {
+      pendingRequest = { start: packet.start, end: packet.end, input, fingerprint };
+      // Preserve the exact request before dispatch. A later identity/feedback/
+      // baseline update must not turn checkpoint recovery into another paid call.
+      await persistCheckpoint();
+    }
+    const response = await durableJevRequest({ fingerprint,
+      context: { purpose: job.kind === "view" ? "saved_view" : "public_interpretation", companyId: observation.company_id,
+        observationId: observation.id, sourceKind: observation.source_kind, workload: observationWorkload(observation.metadata) },
+      execute: () => {
+        if (evidenceRequestFingerprint(input) !== fingerprint) throw new Error("Pending Jev request contract changed");
+        return evaluateEvidence({ ...input,
+          abortSignal: AbortSignal.timeout(Math.min(20_000, Math.max(1, deadline - Date.now()))),
+        });
+      },
+    });
+    if (response.status === "budget_deferred") {
       await finish(job, "queued", checkpoint(), { p_error: "budget_deferred", p_retry_seconds: secondsUntilNextMonth() });
       return "budget_deferred";
     }
-    const evaluation = await evaluateEvidence({ ...input,
-      abortSignal: AbortSignal.timeout(Math.min(20_000, Math.max(1, deadline - Date.now()))),
-    });
-    await settleJev(reservation, evaluation.usage?.inputTokens ?? null);
+    if (response.status === "busy") {
+      await finish(job, "queued", checkpoint(), { p_error: "continuation", p_retry_seconds: 30 });
+      return "request_in_progress";
+    }
+    const evaluation = response.evaluation;
     if (!evaluation.ok) {
       await finish(job, evaluation.error.retryable ? "queued" : "failed", checkpoint(), {
         p_error: evaluation.error.kind, p_retry_seconds: Math.max(nextRetrySeconds(job.attempts), Math.ceil((evaluation.error.retryAfterMs ?? 0) / 1000)),
@@ -206,6 +244,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       return evaluation.error.kind;
     }
     parts.push({ start: packet.start, end: packet.end, evaluation });
+    pendingRequest = undefined;
     // Persist each paid result under its exact live lease before another call.
     await persistCheckpoint();
   }
@@ -266,6 +305,7 @@ export async function runIntelligenceWorker(limit = 96, deadlineMs = Date.now() 
     const { data: config, error: configError } = await db.from("intelligence_config").select("enabled").eq("id", 1).single();
     if (configError) throw new Error("Intelligence schema/configuration unavailable");
     if (!config.enabled) return { enabled: false, processed: 0, outcomes: {} as Record<string, number> };
+    await reconcileJevReceipts().catch(() => {});
     const { data: views, error: viewsError } = await db.from("intelligence_views").select("id").eq("active", true).eq("backfill_complete", false).limit(3);
     if (viewsError) throw new Error("Saved view queue unavailable");
     for (const view of views ?? []) {

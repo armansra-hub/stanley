@@ -10,7 +10,8 @@ vi.mock("@/lib/intelligence/http", () => ({ intelligenceUiAuthorized: () => true
 vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: m.sourceState }));
 vi.mock("@/lib/triggers/urlSafety", () => ({ fetchPublicHttpText: m.fetch }));
 vi.mock("@/lib/sources/publicPdf", () => ({ fetchPublicPdfEvidence: m.pdf }));
-vi.mock("@/lib/sources/siteDiscovery", () => ({ sameCompanySite: (url: string) => url.startsWith("https://example.test/"), sitePageKind: () => "services",
+vi.mock("@/lib/sources/siteDiscovery", async original => ({ ...await original<typeof import("@/lib/sources/siteDiscovery")>(),
+  sameCompanySite: (url: string) => url.startsWith("https://example.test/"), sitePageKind: () => "services",
   discoverSiteLinks: m.discover,
   sitePageEvidence: () => ({ url: "https://example.test/locations", text: "Public business operations.", title: "Locations", sourceDates: [], truncated: false }) }));
 vi.mock("@/lib/db/events", () => ({ logEvent: m.log }));

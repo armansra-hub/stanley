@@ -71,6 +71,13 @@ describe("reversible intelligence feedback API", () => {
     expect(m.calls).toContainEqual({ table: "intelligence_observations", method: "neq", args: ["companies.status", "removed_from_tam"] });
     expect(await response.json()).toMatchObject({ views: [], health: null, observations: [{ company_id: company }] });
   });
+  it("keeps evidence readable when cost attribution is temporarily unavailable", async () => {
+    m.rpc.mockImplementation((name: string) => Promise.resolve(name === "intelligence_jev_cost_metrics"
+      ? { data: null, error: { code: "PGRST202" } } : { data: { enabled: true }, error: null }));
+    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ jevCost: { available: false }, observations: [{ id: observation }] });
+  });
   it("rejects an unbound account scope", async () => {
     expect((await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence?scope=account"))).status).toBe(400);
     expect(m.rpc).not.toHaveBeenCalled();

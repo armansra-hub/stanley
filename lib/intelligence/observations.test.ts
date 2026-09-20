@@ -25,6 +25,27 @@ describe("durable observation identity", () => {
     expect(() => prepareObservation({ ...base, eventDate: "not a date" })).toThrow();
     expect(prepareObservation(base).eventDate).toBeNull();
   });
+  it("keeps the legacy base identity stable when only discovery provenance differs", () => {
+    const a = prepareObservation({ ...base, metadata: { discovery: { collector: "website" } } });
+    const b = prepareObservation({ ...base, metadata: { discovery: { collector: "directed_research", url: "https://example.com/redirect" } } });
+    expect(a.sourceKey).toBe(b.sourceKey);
+    expect(a.contentHash).toBe(b.contentHash);
+    expect(b.metadata.discovery).toEqual({ collector: "directed_research", url: "https://example.com/redirect" });
+    // No version bump or historical reset is needed to reuse an existing page.
+    expect(a.contentHash).toBe(prepareObservation(base).contentHash);
+  });
+  it("keeps genuinely changed publisher facts, company context and documents distinct", () => {
+    const original = prepareObservation(base);
+    for (const update of [{ title: "New acquisition" }, { text: "A different operating model." }, { eventDate: "2026-09-19" }, { companyName: "Different Services" }]) {
+      expect(prepareObservation({ ...base, ...update }).contentHash).not.toBe(original.contentHash);
+    }
+    expect(prepareObservation({ ...base, sourceUrl: "https://example.com/distinct-document" }).sourceKey).not.toBe(original.sourceKey);
+  });
+  it("preserves original fetch truncation and discovery provenance independently of body clipping", () => {
+    const prepared = prepareObservation({ ...base, metadata: { textTruncated: true, feedUrl: "https://feed.example/article" } });
+    expect(prepared.metadata.textTruncated).toBe(true);
+    expect(prepared.metadata.discovery).toMatchObject({ url: base.sourceUrl, title: base.title });
+  });
 });
 describe("Jev cost accounting", () => {
   it("rounds reservations upward and uses UTC calendar months", () => {

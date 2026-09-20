@@ -42,7 +42,7 @@ export interface EvaluateEvidenceInput {
    * Absent for the private-excerpt v2 contract; never private CRM size fields. */
   publicScaleContext?: string;
   /** Narrow public territory pack. Private excerpts retain their original contract. */
-  questionPack?: "business-services-v1" | "business-services-v2";
+  questionPack?: "business-services-v1" | "business-services-v2" | "business-services-v3";
   /** Collector-declared content boundary; a headline is never passed as a full article. */
   evidenceKind?: string;
   /** Verbatim nearby text from this same source, supplied by the caller for attribution. */
@@ -118,6 +118,21 @@ export type EvaluateEvidenceResult = {
 } & ({
   ok: true;
   attributes: EvidenceAttributes;
+  criteria: Record<string, number>;
+  metadata: EvaluationMetadata;
+} | {
+  ok: false;
+  error: EvaluationFailure;
+});
+
+/** Native semantic answers for a next-source decision. This pack does not
+ * fabricate event attributes that the caller never uses. */
+export type EvaluateCriteriaResult = {
+  model: string;
+  questionVersion: string;
+  usage: EvaluationUsage | null;
+} & ({
+  ok: true;
   criteria: Record<string, number>;
   metadata: EvaluationMetadata;
 } | {

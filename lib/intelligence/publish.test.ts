@@ -55,6 +55,14 @@ describe("direct Jev publication", () => {
     // Older paid contracts have no new native fields and retain their original routing.
     expect(jevSignalType({ ...evaluation, questionVersion: "stanley-business-services-v1" }, observation.event_date, now)).toBe("press");
   });
+  it("keeps the same native classification routing on the efficient v3 representation", () => {
+    for (const patch of [{ contentClass: "holiday_greeting" as const }, { operatingChangeType: "closure_or_wind_down" as const },
+      { contractActivity: "bid_opportunity" as const, operatingChangeType: "contract_award" as const }]) {
+      const old = classified(patch);
+      expect(jevPublicationRoute({ ...old, questionVersion: "stanley-business-services-v3" }, observation.event_date, now))
+        .toEqual(jevPublicationRoute(old, observation.event_date, now));
+    }
+  });
   it("persists exact native content, role, contract and direction choices alongside their distributions", async () => {
     const deps = fixture(); const request = input(); request.evaluation = classified({ operatingChangeType: "closure_or_wind_down" });
     request.observation.title = "July 4, 1776 through July 4, 2026";

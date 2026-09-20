@@ -57,13 +57,19 @@ export function prepareObservation(input: ObservationInput) {
     // A publisher page found through a feed and through site discovery is one
     // source. Context/date/body changes still produce a new observation version.
     sourceKey: createHash("sha256").update(url).digest("hex"),
-    // Context/date changes invalidate semantic reuse even when source text is identical.
+    // This legacy base identity remains stable. The observation RPC separately
+    // compares material question/date/identity metadata before semantic reuse.
     // The public company ID is already the database partition. An optional CRM
     // locator is provenance, not semantic evidence; collectors must not create
     // new versions of identical public pages merely by supplying that locator.
     contentHash: createHash("sha256").update(JSON.stringify([text, input.title, event?.toISOString(),
       { companyName: context.companyName, companyDomain: context.companyDomain }])).digest("hex"),
-    metadata: { ...input.metadata, ...context, retainedCharacters: text.length, sourceCharacters: normalized.length, textTruncated: normalized.length > text.length },
+    metadata: { ...input.metadata, ...context,
+      // Collector provenance is persisted independently from semantic document
+      // identity; rediscovery must not erase the first collector's evidence.
+      discovery: input.metadata?.discovery ?? { collector: input.sourceKind, url: input.sourceUrl, title: input.title, eventDate: event?.toISOString() ?? null },
+      retainedCharacters: text.length, sourceCharacters: normalized.length,
+      textTruncated: input.metadata?.textTruncated === true || input.metadata?.sourceTruncated === true || normalized.length > text.length },
   };
 }
 

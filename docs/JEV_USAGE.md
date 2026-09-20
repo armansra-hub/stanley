@@ -1,6 +1,6 @@
 # Where Stanley uses Jev
 
-Reviewed September 18, 2026 (Pacific), against the checked-in implementation. This page maps actual call sites and consumers; configuration, deployed activation, and successful live outcomes remain separate facts.
+Reviewed September 19, 2026 (Pacific), against the checked-in implementation. This page maps actual call sites and consumers; configuration, deployed activation, and successful live outcomes remain separate facts.
 
 Stanley uses **Jev through the direct TypeSafe API** for structured evidence interpretation and research decisions. Claude supplies chat, cited account-story writing, and the separate legacy generative classification/review path. A Jev finding does not receive a second model's review before publication, and neither public intelligence model changes TAM or Old Gold grades.
 
@@ -20,12 +20,20 @@ The public evidence pipeline also interprets derived ATS listing/pace observatio
 ## Connection and model roles
 
 - The [adapter](../lib/intelligence/jev.ts) calls `https://api.typesafe.ai/v1/systemone` with server-only `TYPESAFE_API_KEY`. `TYPESAFE_MODEL` accepts a pinned versioned Jev ID; the checked-in default is `jev-1.13.0`. The adapter uses direct HTTP, so a separate Jev npm SDK or Vercel AI Gateway dependency is not required.
-- New business-services requests use `stanley-business-services-v2`, with native content class, company role, contract stage and operating-change subtype choices alongside at most ten operating questions per packet. The adapter retains business-services-v1, public-scale and evidence-v2 contracts for already-paid continuations. A 21-topic library does not mean every packet asks all 21 questions.
+- New business-services requests use `stanley-business-services-v3`, with native content class, company role, contract stage and operating-change subtype choices alongside at most ten operating questions per packet. It sends one complete section-labeled copy of the source instead of duplicating the body in a second sections field. The adapter retains business-services-v2/v1, public-scale and evidence-v2 contracts for already-paid continuations. A 21-topic library does not mean every packet asks all 21 questions.
 - Identity context combines the account name/domain with the labelled business address from its latest stored exact NetSuite record and named same-company website structured data. It is separate from event evidence; CRM notes are not included. Federal matching uses sourced legal/DBA names with a company domain or street/postal/location evidence. A city/state-only name match and a shared domain alone remain candidates, not verified direct recipients. Existing verified federal identifiers retain their bindings; this change does not retroactively reclassify paid Jev findings or historical government links.
 - [Claude account stories](../lib/intelligence/narratives.ts) turn supplied evidence and Jev judgments into cited overviews, developments, hypotheses, conflicts and unknowns. This writer does not rescore Jev or decide its trigger eligibility.
 - [Chat tools](../lib/chat/run.ts) and the [legacy candidate reviewer](../lib/triggers/candidateReview.ts) remain distinct generative paths. Jev is not the outbound email/LinkedIn sender, the final full-record TAM grader, or a replacement for those existing workflow gates.
 
 ## Runtime and controls
+
+Public collectors retain their original headlines, dates, source text and date provenance. Shared feeds now use the actual fetched publisher URL after redirects, so equivalent redirect aliases can reuse one interpretation when the body, headline, date, target company and material context match. Different source kinds, targeted operating questions, publication/update dates and company/publisher identity evidence are kept distinct; website identity remains available to the account-identity reader. Separate discovery receipts retain every collector's original provenance. Equivalent legacy captures retain their existing answers without a global rehash or paid backfill. There is no fuzzy body-only matching or normalization that drops a useful feed headline or conflicting date.
+
+The [durable request service](../lib/intelligence/jevRequests.ts) coalesces exact prepared requests within the same company and purpose. A pending worker input is checkpointed before dispatch; the returned native answer is committed before accounting and publication. Retries can recover that exact answer even if account context subsequently changes. Provider timeouts and a process loss before any answer can be saved remain uncertain outcomes, with conservative reservations. Private TAM excerpts do not enter the public response cache.
+
+Next-page ranking uses a dedicated question pack and exact-request cache. Three or fewer candidates are read together without paying to rank their order. All candidates remain available, and existing collection schedules and source breadth are unchanged.
+
+The global Intelligence page's **Jev usage and cost** panel reports month/24-hour spending by website/news/hiring research, next-page ranking, saved questions and private TAM excerpts. It separates known provider token estimates, unknown usage allowances and unsettled reservations. Explicit baseline website passes are initial coverage; earlier untagged costs remain unattributed history. The panel uses migrations 0081–0083; missing metrics are shown as unavailable rather than zero. Account-story and chat generation costs are separate from Jev.
 
 [Vercel cron configuration](../vercel.json) schedules interpretation, baseline collection and directed research every five minutes, and shared-feed collection every fifteen minutes. Source capture, queueing, interpretation and publication are different stages; the schedule is not a guarantee of real-time coverage or successful findings.
 

@@ -45,6 +45,6 @@ export default function IntelligenceHealth({ health }: { health: IntelligenceHea
         <p className="mt-1 text-xs text-[var(--text-muted)]">Successful checks in 48 hr: {count(coverage.websiteSuccess48h)} accounts’ websites · {count(coverage.atsSuccess48h)} accounts with completed job-board scans. A successful check can find no new evidence.</p>
       </div>
     </div>
-    <p className="mt-4 border-t pt-3 text-xs text-[var(--text-muted)]">{count(freshness.capturedLast24h)} current sources captured and {count(freshness.interpretedLast24h)} interpreted in 24 hr · ${output.modelCostLast24h.toFixed(3)} global model spend/reservations. Timing starts at capture; publisher delays are outside this measurement.</p>
+    <p className="mt-4 border-t pt-3 text-xs text-[var(--text-muted)]">{count(freshness.capturedLast24h)} current sources captured and {count(freshness.interpretedLast24h)} interpreted in 24 hr · ${output.modelCostLast24h.toFixed(3)} global model budget accounting, including uncertain usage and reservations. Timing starts at capture; publisher delays are outside this measurement.</p>
   </section>;
 }
