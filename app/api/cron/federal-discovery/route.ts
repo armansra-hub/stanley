@@ -155,6 +155,7 @@ type Outcome = {
   mayHaveWritten: boolean | null;
   httpStatus?: number | null;
   continuation?: FederalDiscoveryContinuation;
+  candidateDecision?: unknown;
 };
 
 function debtOutcome(row: Outcome): PublicGrowthCompanyOutcome {
@@ -427,7 +428,7 @@ async function run(req: NextRequest) {
         // Compare the exact nested continuation structurally after readback.
         const signature = (rows: Outcome[]) => rows.map((row) => [row.companyId, row.status,
           row.reason, row.stage, row.sourceRequests, row.elapsedMs, row.verified, row.historyComplete, row.exhaustive,
-          row.httpStatus ?? null, row.mayHaveWritten, row.continuation ?? null]);
+          row.httpStatus ?? null, row.mayHaveWritten, row.continuation ?? null, row.candidateDecision ?? null]);
         if (eventError || event?.id !== eventId || !Array.isArray(event.meta?.attemptedCompanies)
             || event.meta.coverageVerified !== false || event.meta.historyComplete !== false || event.meta.requestStrategy !== REQUEST_STRATEGY
             || JSON.stringify(event.meta.newStrategyHeldCompanyIds) !== JSON.stringify(newlyHeldCompanyIds)
@@ -452,8 +453,8 @@ async function run(req: NextRequest) {
       for (const row of wave) attempted.add(row.companyId);
       const nextContinuations = { ...continuations };
       for (const row of wave) {
-        if (row.status === "matched" || row.status === "no_candidate") delete nextContinuations[row.companyId];
-        else if (row.continuation) nextContinuations[row.companyId] = row.continuation;
+        if (row.continuation) nextContinuations[row.companyId] = row.continuation;
+        else if (row.status === "matched" || row.status === "no_candidate") delete nextContinuations[row.companyId];
       }
       readFederalDiscoveryContinuations({ discoveryContinuations: nextContinuations });
       // Only journal-verified, known-no-write outcomes contribute. Legacy retry

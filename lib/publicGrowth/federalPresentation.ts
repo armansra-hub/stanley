@@ -32,6 +32,7 @@ export interface FederalSourceCoverage {
   source: string; status: "unsearched" | "partial" | "complete" | "no_match" | "ambiguous" | "failed";
   scope: string; searched_from: string | null; searched_through: string | null;
   last_attempted_at: string | null; last_completed_at: string | null;
+  detail?: Record<string, unknown> | null;
 }
 
 const nonblank = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;

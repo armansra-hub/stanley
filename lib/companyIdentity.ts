@@ -2,7 +2,7 @@ import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 
 export type IdentityAddress = {
-  addressLine1: string; city?: string; state?: string; postalCode?: string; countryCode?: string;
+  addressLine1: string; addressLine2?: string; city?: string; state?: string; postalCode?: string; countryCode?: string;
   sourceKind: "netsuite_record" | "company_website"; sourceUrl?: string; sourceId: string; capturedAt: string;
 };
 type Company = { id: string; name: string; domain?: string | null; website_raw?: string | null; city?: string | null; state?: string | null; netsuite_internal_id?: string | null };
@@ -45,11 +45,13 @@ export function parseNetSuiteIdentityHeader(header: string, source: { id: string
   const location = block[locationIndex].match(/^(.+?)\s+([A-Z]{2})\s+(\d{5}(?:[- ]?\d{4})?|[A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i)!;
   const country = block[locationIndex + 1]?.trim();
   const countryCode = /^(United States(?: of America)?|USA?|U\.S\.?A?\.?)$/i.test(country ?? "") ? "US" : /^(Canada|CA)$/i.test(country ?? "") ? "CA" : undefined;
-  const addressLine1 = clean(block.slice(streetIndex, locationIndex).join(" "));
-  if (!addressLine1 || !countryCode) return { aliases: [] as string[], addresses: [] as IdentityAddress[] };
+  const addressLine1 = clean(block[streetIndex]);
+  const secondLine = block.slice(streetIndex + 1, locationIndex).join(" ");
+  const addressLine2 = clean(secondLine);
+  if (!addressLine1 || !countryCode || secondLine && !addressLine2) return { aliases: [] as string[], addresses: [] as IdentityAddress[] };
   const label = clean(block.slice(0, streetIndex).join(" "));
   const aliases = label && /\b(?:inc\.?|incorporated|llc|ltd\.?|limited|corp\.?|corporation|llp|pllc|pc)\.?$/i.test(label) ? [label] : [];
-  return { aliases, addresses: [{ addressLine1, city: location[1], state: location[2].toUpperCase(), postalCode: location[3], countryCode,
+  return { aliases, addresses: [{ addressLine1, ...(addressLine2 ? { addressLine2 } : {}), city: location[1], state: location[2].toUpperCase(), postalCode: location[3], countryCode,
     sourceKind: "netsuite_record" as const, sourceId: source.id, capturedAt: source.capturedAt }] };
 }
 
@@ -71,9 +73,9 @@ export function buildCompanyIdentityContext(company: Company, sources: SourceCon
     const targetNames = [company.name, ...aliases].map(identityName);
     if (!Array.isArray(identity.names) || !identity.names.some(name => typeof name === "string" && targetNames.includes(identityName(name)))) continue;
     for (const raw of Array.isArray(identity.addresses) ? identity.addresses.slice(0, 4) : []) {
-      const address = object(raw), addressLine1 = clean(address.addressLine1);
-      if (!addressLine1) continue;
-      addresses.push({ addressLine1, city: clean(address.city), state: clean(address.state), postalCode: clean(address.postalCode, 20),
+      const address = object(raw), addressLine1 = clean(address.addressLine1), addressLine2 = clean(address.addressLine2);
+      if (!addressLine1 || address.addressLine2 && !addressLine2) continue;
+      addresses.push({ addressLine1, ...(addressLine2 ? { addressLine2 } : {}), city: clean(address.city), state: clean(address.state), postalCode: clean(address.postalCode, 20),
         countryCode: clean(address.countryCode, 40), sourceKind: "company_website", sourceUrl: source.url, sourceId: source.id, capturedAt: source.capturedAt });
     }
   }

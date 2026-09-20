@@ -21,7 +21,15 @@ describe("sourced business identity", () => {
     expect(parsed.aliases).toEqual([]); expect(parsed.addresses).toHaveLength(1);
   });
   it("keeps Canadian postal and country evidence", () => {
-    expect(parseNetSuiteIdentityHeader("Address Example Inc.\n42 King St\nSuite 100\nToronto ON M5H 1J9\nCanada", source).addresses[0]).toMatchObject({ addressLine1: "42 King St Suite 100", city: "Toronto", state: "ON", postalCode: "M5H 1J9", countryCode: "CA" });
+    expect(parseNetSuiteIdentityHeader("Address Example Inc.\n42 King St\nSuite 100\nToronto ON M5H 1J9\nCanada", source).addresses[0]).toMatchObject({ addressLine1: "42 King St", addressLine2: "Suite 100", city: "Toronto", state: "ON", postalCode: "M5H 1J9", countryCode: "CA" });
+  });
+  it("preserves sourced website second lines and never silently discards an unusable unit line", () => {
+    const context = buildCompanyIdentityContext(company, { websites: [{ id: "page", url: "https://example.test/contact", capturedAt: source.capturedAt,
+      identity: { names: [company.name], addresses: [{ addressLine1: "100 Main St", addressLine2: "Suite 240" },
+        { addressLine1: "200 Main St", addressLine2: "x".repeat(181) }] } }] });
+    expect(context.addresses).toHaveLength(1);
+    expect(context.addresses[0]).toMatchObject({ addressLine1: "100 Main St", addressLine2: "Suite 240" });
+    expect(parseNetSuiteIdentityHeader(`Address Example Inc.\n42 King St\n${"x".repeat(181)}\nToronto ON M5H 1J9\nCanada`, source).addresses).toEqual([]);
   });
   it("does not admit another publisher or another entity on a shared site", () => {
     const make = (url: string, name: string) => ({ id: "page", url, capturedAt: source.capturedAt, identity: { names: [name], addresses: [{ addressLine1: "1 Broadway", city: "New York" }] } });

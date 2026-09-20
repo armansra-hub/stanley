@@ -45,6 +45,7 @@ export function compactSamEntity(row: any) {
     registrationStatus: reg.registrationStatus ?? null, registrationDate: reg.registrationDate ?? reg.activationDate ?? null,
     expirationDate: reg.registrationExpirationDate ?? reg.expirationDate ?? null, entityStartDate: info.entityStartDate ?? null,
     website: info.entityURL ?? null, domain: normalizeDomain(info.entityURL), address: address.addressLine1 ?? null,
+    addressLine2: address.addressLine2 ?? null,
     city: address.city ?? null, state: address.stateOrProvinceCode ?? null, postalCode: address.zipCode ?? null, countryCode: address.countryCode ?? null,
     parentUei: core.entityHierarchyInformation?.immediateParentEntity?.ueiSAM ?? core.entityHierarchyInformation?.ultimateParentEntity?.ueiSAM ?? null,
     parentName: core.entityHierarchyInformation?.immediateParentEntity?.legalBusinessName ?? core.entityHierarchyInformation?.ultimateParentEntity?.legalBusinessName ?? null,

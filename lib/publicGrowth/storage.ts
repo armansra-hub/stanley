@@ -9,36 +9,28 @@ import type { DerivedGrowthEvent } from "./types";
 export const stableHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export async function saveGovernmentEntity(entity: Record<string, any>): Promise<string> {
-  const db = serviceClient();
-  let existing: any = null;
-  if (entity.uei) ({ data: existing } = await db.from("government_entities").select("id").eq("uei", entity.uei).maybeSingle());
-  if (!existing && entity.usaspending_recipient_id) ({ data: existing } = await db.from("government_entities").select("id").eq("usaspending_recipient_id", entity.usaspending_recipient_id).maybeSingle());
-  const payload = { ...entity, observed_at: new Date().toISOString(), payload_hash: stableHash(entity) };
-  if (existing?.id) {
-    const { error } = await db.from("government_entities").update(payload).eq("id", existing.id);
-    if (error) throw new Error(`government entity update failed: ${error.message}`);
-    return String(existing.id);
-  }
-  const { data, error } = await db.from("government_entities").insert(payload).select("id").single();
-  if (error?.code === "23505") {
-    // Two matched TAM records can legitimately point at the same SAM entity
-    // (for example, duplicate domains or parent/division records). A bounded
-    // parallel batch may race after both initial lookups see no row. Resolve
-    // the winner deterministically instead of failing the whole checkpoint.
-    let collision: any = null;
-    if (entity.uei) ({ data: collision } = await db.from("government_entities").select("id").eq("uei", entity.uei).maybeSingle());
-    if (!collision && entity.cage_code) ({ data: collision } = await db.from("government_entities").select("id").eq("cage_code", entity.cage_code).maybeSingle());
-    if (!collision && entity.usaspending_recipient_id) ({ data: collision } = await db.from("government_entities").select("id").eq("usaspending_recipient_id", entity.usaspending_recipient_id).maybeSingle());
-    if (collision?.id) return String(collision.id);
-  }
-  if (error || !data) throw new Error(`government entity insert failed: ${error?.message}`);
-  return String(data.id);
+  // The database resolves every supplied identifier under one transaction;
+  // neither an initial lookup nor a unique-conflict winner is trusted alone.
+  const { data, error } = await serviceClient().rpc("government_identity_save_entity", {
+    p_entity: { ...entity, payload_hash: stableHash(entity) },
+  });
+  if (error || typeof data !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data)) throw new Error(`government entity save failed: ${error?.message ?? "invalid identity receipt"}`);
+  return data;
 }
 
-export async function saveCompanyGovernmentMatch(companyId: string, entityId: string, decision: { status: string; method: string; confidence: number; evidence: Record<string, unknown> }) {
-  const db = serviceClient();
-  const { error } = await db.from("company_government_matches").upsert({ company_id: companyId, government_entity_id: entityId, match_status: decision.status, match_method: decision.method, confidence: decision.confidence, evidence: decision.evidence, verified_by: decision.status === "verified" ? "deterministic" : null, verified_at: decision.status === "verified" ? new Date().toISOString() : null, updated_at: new Date().toISOString() }, { onConflict: "company_id,government_entity_id" });
-  if (error) throw new Error(`government match upsert failed: ${error.message}`);
+export type StoredGovernmentMatchDecision = { status: "pending" | "verified" | "rejected"; method: string; confidence: number; evidence: Record<string, unknown> };
+
+export async function saveCompanyGovernmentMatch(companyId: string, entityId: string, decision: { status: string; method: string; confidence: number; evidence: Record<string, unknown> }): Promise<StoredGovernmentMatchDecision> {
+  const { data, error } = await serviceClient().rpc("government_identity_save_match", { p_company: companyId, p_entity: entityId, p_decision: decision });
+  if (error) throw new Error(`government match save failed: ${error.message}`);
+  const saved = data?.match;
+  if (!saved || saved.company_id !== companyId || saved.government_entity_id !== entityId
+    || !["pending", "verified", "rejected"].includes(saved.match_status) || typeof saved.match_method !== "string"
+    || (typeof saved.confidence !== "number" && typeof saved.confidence !== "string") || saved.confidence === ""
+    || !Number.isFinite(Number(saved.confidence)) || saved.confidence < 0 || saved.confidence > 1
+    || !saved.evidence || typeof saved.evidence !== "object" || Array.isArray(saved.evidence)) throw new Error("government match save returned invalid identity receipt");
+  if (data.disposition === "preserved_rejected" && decision.status !== "rejected") throw new Error("government match remains explicitly rejected");
+  return { status: saved.match_status, method: saved.match_method, confidence: Number(saved.confidence), evidence: saved.evidence };
 }
 
 export async function saveFederalAward(entityId: string, award: Record<string, any>): Promise<string> {

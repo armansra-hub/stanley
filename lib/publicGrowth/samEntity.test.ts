@@ -2,13 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 vi.mock("@/lib/companyIdentity", () => ({ enrichCompanyIdentity: async (company: any) => ({ ...company,
   legalNames: company.legalNames ?? [], addresses: company.addresses ?? [] }) }));
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), from: vi.fn(), entity: vi.fn(), match: vi.fn() }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), from: vi.fn(), entity: vi.fn(), match: vi.fn(), resolve: vi.fn() }));
 vi.mock("./http", async (original) => ({ ...await original<typeof import("./http")>(), fetchJson: mocks.fetch }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: mocks.from }) }));
 vi.mock("@/lib/db/triggers", () => ({ recomputePriority: vi.fn() }));
+vi.mock("./federalIdentityResolution", () => ({ resolveFederalIdentity: mocks.resolve,
+  FederalIdentityDeferredError: class extends Error { constructor(readonly reason: string) { super(`federal_identity_deferred:${reason}`); } } }));
 vi.mock("./storage", () => ({ saveGovernmentEntity: mocks.entity, saveCompanyGovernmentMatch: mocks.match,
   recordPublicGrowthTriggersBulk: vi.fn(), stableHash: (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex") }));
 import { searchSamEntitiesPage } from "./sam";
+import { decideIdentityMatch } from "./identity";
+import { FederalIdentityDeferredError } from "./federalIdentityResolution";
 import { sweepSamCompany } from "./samSweep";
 import { parseSamEntityContinuation, samBindingMatches } from "./samEntityState";
 import { applyPublicGrowthRetryOutcomes, queuePublicGrowthMainFailures, readPublicGrowthRetryState } from "./sweepState";
@@ -22,7 +26,10 @@ beforeEach(() => {
   vi.clearAllMocks(); vi.stubEnv("SAM_API_KEY", "test-key"); links = [];
   const q: any = {}; for (const method of ["select", "eq", "limit"]) q[method] = () => q;
   q.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: links, error: null }).then(resolve);
-  mocks.from.mockReturnValue(q); mocks.entity.mockResolvedValue(ENTITY); mocks.match.mockResolvedValue(undefined);
+  mocks.from.mockReturnValue(q); mocks.entity.mockResolvedValue(ENTITY); mocks.match.mockImplementation(async (_company, _entity, decision) => decision);
+  // SAM orchestration uses the real deterministic primitives. Separate native
+  // resolver suites own source loading/model transport; no live model here.
+  mocks.resolve.mockReset().mockImplementation(async (identity, candidate) => decideIdentityMatch(identity, candidate));
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("SAM source-scoped continuation", () => {
@@ -56,10 +63,12 @@ describe("SAM source-scoped continuation", () => {
       .mockResolvedValueOnce({ entityData: [row("Legal Company")] }).mockResolvedValueOnce({ entityData: [] });
     const first = await sweepSamCompany(company);
     expect(first).toMatchObject({ samDone: false, samContinuation: { targetIndex: 0, page: 1 } });
-    expect(mocks.entity).not.toHaveBeenCalled();
+    expect(first).toMatchObject({ status: "ambiguous", entities: 10 });
+    expect(mocks.match).toHaveBeenCalledTimes(10);
+    expect(mocks.match.mock.calls.every(call => call[2].status === "pending" && call[2].method === "domain_only")).toBe(true);
     const second = await sweepSamCompany(company, { samContinuation: first.samContinuation });
     expect(second).toMatchObject({ status: "matched", entities: 1, samContinuation: { targetIndex: 1, page: 0 } });
-    expect(mocks.match.mock.calls[0][2].status).toBe("verified");
+    expect(mocks.match.mock.calls[10][2].status).toBe("verified");
     const final = await sweepSamCompany(company, { samContinuation: second.samContinuation });
     expect(final.samDone).toBe(true); expect(final.samContinuation).toBeUndefined();
     expect(new URL(mocks.fetch.mock.calls[2][0]).searchParams.get("dbaName")).toBe("Brand");
@@ -90,5 +99,29 @@ describe("SAM source-scoped continuation", () => {
     const changed = await sweepSamCompany(company, { samContinuation: continuation });
     expect(changed).toMatchObject({ status: "error", error: "frozen SAM entity binding changed" });
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([["200", "matched"], ["300", "ambiguous"]])("propagates SAM suite %s through matching and stored evidence", async (suite, status) => {
+    const candidate = row("Legal Company"); candidate.coreData.entityInformation.entityURL = "";
+    Object.assign(candidate.coreData.physicalAddress, { addressLine1: "100 Main St", addressLine2: `Suite ${suite}`, zipCode: "78701", countryCode: "US" });
+    mocks.fetch.mockResolvedValue({ entityData: [candidate] });
+    const result = await sweepSamCompany({ ...company, addresses: [{ addressLine1: "100 Main Street Suite 200", city: "Austin", state: "TX", postalCode: "78701",
+      sourceKind: "netsuite_record", sourceId: "exact-record", capturedAt: "2026-09-20" }] });
+    expect(result).toMatchObject({ status, entities: 1 });
+    expect(mocks.resolve.mock.calls[0][1]).toMatchObject({ addressLine1: "100 Main St", addressLine2: `Suite ${suite}` });
+    expect(mocks.entity.mock.calls[0][0].evidence.addressLine2).toBe(`Suite ${suite}`);
+    expect(mocks.match.mock.calls[0][2].evidence.addressEvidence[0]).toMatchObject({ streetMatch: true, unitConflict: suite !== "200", supportsIdentity: suite === "200" });
+  });
+  it("defers unavailable native identity work without advancing the frozen page, then resumes once", async () => {
+    mocks.fetch.mockResolvedValue({ entityData: [row("Brand Services LLC")] });
+    mocks.resolve.mockRejectedValueOnce(new FederalIdentityDeferredError("budget_unavailable"));
+    const deferred = await sweepSamCompany(company);
+    expect(deferred).toMatchObject({ samDone: false, entities: 0, samContinuation: { targetIndex: 0, page: 0, lastPageHash: null } });
+    expect(deferred.error).toBeUndefined(); expect(mocks.entity).not.toHaveBeenCalled();
+    const native = { status: "verified", method: "jev_identity", confidence: .93, evidence: { provider_result: { answers: { identity: "same_legal_entity" } } } };
+    mocks.resolve.mockResolvedValueOnce(native);
+    const resumed = await sweepSamCompany(company, { samContinuation: deferred.samContinuation });
+    expect(resumed).toMatchObject({ status: "matched", entities: 1, samContinuation: { targetIndex: 1, page: 0 } });
+    expect(mocks.match.mock.calls[0][2]).toEqual(native); expect(mocks.entity).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch.mock.calls.map(call => new URL(call[0]).searchParams.get("page"))).toEqual(["0", "0"]);
   });
 });

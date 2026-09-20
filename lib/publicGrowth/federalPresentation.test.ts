@@ -42,7 +42,8 @@ describe("federal activity provenance and coverage display", () => {
       coverage: federalCoverage([entity], [], []) }));
     expect(html).toContain("Federal registration on file"); expect(html).toContain("SAM registration: "); expect(html).toContain("Expired");
     expect(html).toContain("Related-company federal context"); expect(html).toContain("Reported parent of");
-    expect(html).toContain("excluded from this account"); expect(html).toContain("Federal coverage: partial");
+    expect(html).toContain("excluded from this account"); expect(html).toContain("Federal source coverage");
+    expect(html).toContain("Not searched yet");
     expect(html).toContain("Contract vehicle (IDV)"); expect(html).toContain("relationship evidence");
     expect(html).not.toContain("Federal contractor confirmed");
   });

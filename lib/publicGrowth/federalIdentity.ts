@@ -1,6 +1,6 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
-import { companyIdentityNames, normalizeName } from "./identity";
+import { companyIdentityNames, normalizeName, plausibleIdentityName } from "./identity";
 
 export interface VerifiedFederalIdentity {
   entityId: string;
@@ -61,9 +61,9 @@ export function matchesFederalIdentifiers(frozen: Pick<VerifiedFederalIdentity, 
 export function targetAcceptsSearchRow(target: FederalSearchTarget, row: { recipientName: string; recipientUei: string | null }): boolean {
   if (target.identity) {
     // Older awards sometimes omit UEI in search but provide a recipient ID in detail.
-    return !row.recipientUei || !target.identity.uei || identifier(row.recipientUei) === target.identity.uei;
+    return !row.recipientUei || !target.identity.uei || identifier(row.recipientUei) === identifier(target.identity.uei);
   }
-  return normalizeName(row.recipientName) === normalizeName(target.query);
+  return plausibleIdentityName(target.query, row.recipientName);
 }
 
 export function assertFrozenFederalIdentities(frozen: VerifiedFederalIdentity[], current: VerifiedFederalIdentity[]): void {

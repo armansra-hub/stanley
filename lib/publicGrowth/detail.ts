@@ -30,7 +30,7 @@ export async function getPublicGrowthDetail(companyId: string): Promise<PublicGr
     db.from("company_revenue_observations").select("*").eq("company_id", companyId).order("observed_on", { ascending: false }).limit(100),
     db.from("company_opportunity_matches").select("relationship,confidence,evidence,status,sam_opportunities(*)").eq("company_id", companyId).eq("status", "active").order("confidence", { ascending: false }).limit(100),
     db.from("companies").select("state").eq("id", companyId).maybeSingle(),
-    db.from("company_federal_source_coverage").select("source,status,scope,searched_from,searched_through,last_attempted_at,last_completed_at").eq("company_id", companyId),
+    db.from("company_federal_source_coverage").select("source,status,scope,searched_from,searched_through,last_attempted_at,last_completed_at,detail").eq("company_id", companyId),
   ]);
   if (companyError) throw new Error(`Form 5500 detail company read failed: ${companyError.message}`);
   if (headcountError) throw new Error(`Form 5500 detail history read failed: ${headcountError.message}`);

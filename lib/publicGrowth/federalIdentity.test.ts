@@ -26,6 +26,13 @@ describe("verified federal retrieval identities", () => {
     expect(targetAcceptsSearchRow({ query: "Acme", identity }, { recipientName: "New Legal Name", recipientUei: null })).toBe(true);
     expect(targetAcceptsSearchRow({ query: "Acme", identity: null }, { recipientName: "Other", recipientUei: identity.uei })).toBe(false);
   });
+  it("lets bounded name variants reach full detail but preserves exact-identifier conflict checks", () => {
+    expect(targetAcceptsSearchRow({ query: "Blue Heron Mgmt", identity: null }, { recipientName: "Blue Heron Management LLC", recipientUei: null })).toBe(true);
+    expect(targetAcceptsSearchRow({ query: "Acme", identity: null }, { recipientName: "Acme Holdings", recipientUei: null })).toBe(true);
+    expect(targetAcceptsSearchRow({ query: "Global Services", identity: null }, { recipientName: "Quality Services", recipientUei: null })).toBe(false);
+    expect(targetAcceptsSearchRow({ query: "Brand", identity: { ...identity, uei: identity.uei.toLowerCase() } }, { recipientName: "Completely Renamed", recipientUei: identity.uei })).toBe(true);
+    expect(targetAcceptsSearchRow({ query: "Brand", identity }, { recipientName: identity.legalName, recipientUei: "ZZZZZZZZZZZZ" })).toBe(false);
+  });
   it("allows legal-name refreshes but fails closed on changed or removed verified identifiers", () => {
     expect(() => assertFrozenFederalIdentities([identity], [{ ...identity, legalName: "Renamed" }])).not.toThrow();
     expect(() => assertFrozenFederalIdentities([identity], [{ ...identity, recipientId: "another" }])).toThrow();

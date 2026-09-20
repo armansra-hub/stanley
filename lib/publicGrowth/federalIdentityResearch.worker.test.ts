@@ -4,14 +4,14 @@ const mocks = vi.hoisted(() => ({ search: vi.fn(), detail: vi.fn(), saveAward: v
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({
   rpc: (...args: any[]) => mocks.bind(...args),
   from(table: string) {
-    let update: any, upsert: any;
+    let update: any, upsert: any, list = false;
     const result = () => {
       if (update) { mocks.updates.push({ table, payload: structuredClone(update) }); if (table === "company_federal_identity_claims") Object.assign(mocks.claim,structuredClone(update)); }
       if (upsert) mocks.receipts.push(structuredClone(upsert));
-      return { error: null, data: table === "intelligence_observations" ? { is_current: mocks.sourceCurrent, feedback_excluded: false, source_url: "https://acme.com/about" }
+      return { error: null, data: table === "intelligence_observations" ? list ? [] : { is_current: mocks.sourceCurrent, feedback_excluded: false, source_url: "https://acme.com/about" }
         : table === "federal_awards" ? mocks.prior : null };
     };
-    const q = { select: () => q, eq: () => q, single: async () => result(), maybeSingle: async () => result(),
+    const q = { select: () => q, eq: () => q, order: () => q, range: () => { list = true; return q; }, single: async () => result(), maybeSingle: async () => result(),
       update: (value: any) => { update = value; return q; }, upsert: (value: any) => { upsert = value; return q; },
       then: (resolve: any) => Promise.resolve(result()).then(resolve) };
     return q;

@@ -1,5 +1,7 @@
 import type { FederalSearchTarget, VerifiedFederalIdentity } from "./federalIdentity";
-import { usaspendingCursorField, type UsaspendingSearchCursor } from "./usaspendingCursor";
+import { parseUsaspendingSearchAfter, usaspendingCursorField, type UsaspendingSearchCursor } from "./usaspendingCursor";
+
+export type FederalDiscoveryCandidate = { id: string; name: string; uei: string | null };
 
 export interface FederalDiscoveryContinuation {
   searchAfter?: UsaspendingSearchCursor | null;
@@ -11,12 +13,22 @@ export interface FederalDiscoveryContinuation {
   targets: FederalSearchTarget[];
   targetIndex: number;
   page: number;
-  candidate: { id: string; name: string; uei: string | null } | null;
+  candidate: FederalDiscoveryCandidate | null;
   lastPageHash: string | null;
+  candidateQueue?: FederalDiscoveryCandidate[];
+  pendingPage?: { hasNext: boolean; pageHash: string; nextCursor?: UsaspendingSearchCursor };
+  evaluatedRecipients?: string[];
+  foundVerified?: boolean;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const text = (value: unknown, max: number): value is string => typeof value === "string" && Boolean(value.trim()) && value.length <= max;
 const nullableText = (value: unknown, max: number) => value === null || text(value, max);
+function parseCandidate(value: unknown): FederalDiscoveryCandidate {
+  const candidate = value as FederalDiscoveryCandidate;
+  if (!candidate || !text(candidate.id, 500) || !text(candidate.name, 500)
+    || (candidate.uei !== null && !/^[A-Z0-9]{12}$/i.test(candidate.uei))) throw new Error("invalid discovery candidate");
+  return { id: candidate.id, name: candidate.name, uei: candidate.uei };
+}
 function identity(value: unknown): VerifiedFederalIdentity | null {
   if (value === null) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid discovery identity");
@@ -45,10 +57,25 @@ export function parseFederalDiscoveryContinuation(value: unknown, companyId: str
   });
   const candidate = row.candidate;
   if (row.collection !== undefined && row.collection !== "contracts" && row.collection !== "idvs") throw new Error("invalid discovery collection");
-  if (candidate !== null && (!candidate || !text(candidate.id, 500) || !text(candidate.name, 500)
-      || (candidate.uei !== null && !/^[A-Z0-9]{12}$/i.test(candidate.uei)))) throw new Error("invalid discovery candidate");
+  const queue = row.candidateQueue;
+  if (queue !== undefined && (!Array.isArray(queue) || queue.length > 100)) throw new Error("invalid discovery candidate queue");
+  const candidates = queue?.map(parseCandidate);
+  if (candidates?.length && (!candidate || !row.pendingPage)) throw new Error("discovery candidate queue lacks its current page");
+  const pending = row.pendingPage;
+  if (pending !== undefined && (!pending || typeof pending.hasNext !== "boolean" || !text(pending.pageHash, 64)
+    || !candidate || pending.hasNext && row.searchAfter !== undefined && !pending.nextCursor)) throw new Error("invalid discovery pending page");
+  const nextCursor = pending?.nextCursor === undefined ? undefined : parseUsaspendingSearchAfter(pending.nextCursor);
+  if (pending?.nextCursor !== undefined && !nextCursor) throw new Error("invalid discovery next cursor");
+  if (row.evaluatedRecipients !== undefined && (!Array.isArray(row.evaluatedRecipients) || row.evaluatedRecipients.length > 1000
+    || row.evaluatedRecipients.some(key => !text(key, 510) || !/^(uei:|award:)/.test(key))
+    || new Set(row.evaluatedRecipients).size !== row.evaluatedRecipients.length)) throw new Error("invalid discovery evaluated recipients");
+  if (row.foundVerified !== undefined && typeof row.foundVerified !== "boolean") throw new Error("invalid discovery verified progress");
   return { version: 1, companyId, companyIdentity: row.companyIdentity, searchEndDate: row.searchEndDate,
-    targets, targetIndex: row.targetIndex, page: row.page, candidate: candidate ? { ...candidate } : null, lastPageHash: row.lastPageHash,
+    targets, targetIndex: row.targetIndex, page: row.page, candidate: candidate === null ? null : parseCandidate(candidate), lastPageHash: row.lastPageHash,
+    ...(candidates === undefined ? {} : { candidateQueue: candidates }),
+    ...(pending === undefined ? {} : { pendingPage: { hasNext: pending.hasNext, pageHash: pending.pageHash, ...(nextCursor ? { nextCursor } : {}) } }),
+    ...(row.evaluatedRecipients === undefined ? {} : { evaluatedRecipients: [...row.evaluatedRecipients] }),
+    ...(row.foundVerified === undefined ? {} : { foundVerified: row.foundVerified }),
     ...(row.collection === undefined ? {} : { collection: row.collection }),
     ...usaspendingCursorField(row) };
 }

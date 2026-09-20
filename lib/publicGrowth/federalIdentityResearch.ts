@@ -3,7 +3,8 @@ import { serviceClient } from "@/lib/supabase/server";
 import { enrichCompanyIdentity, isCompanyIdentitySource } from "@/lib/companyIdentity";
 import { evaluateNativeCached, type NativeQuestion } from "@/lib/intelligence/nativeJev";
 import { IDENTITY_RELATIONS, visibleIdentityClaims, type SiteIdentityClaim, type IdentityRelation } from "@/lib/sources/companyIdentityEvidence";
-import { decideIdentityMatch, companyIdentityNames, normalizeName } from "./identity";
+import { decideIdentityMatch, companyIdentityNames, normalizeName, plausibleIdentityName } from "./identity";
+import { resolveFederalIdentity } from "./federalIdentityResolution";
 import { matchesFederalIdentifiers } from "./federalIdentity";
 import { searchContractAwardsPage, fetchAwardDetail, compactAward, awardUrl, type FederalAwardCollection, type AwardSearchRow } from "./usaspending";
 import { stableHash, saveFederalAward } from "./storage";
@@ -57,7 +58,7 @@ async function ingestIdentityClaims(company: TamIdentity, observations: Observat
         division: "A separately named operating division; related context until legal identity is established", unrelated: "No relevant identity relationship", unknown: "The source does not establish the relationship" },
     }]));
     const result = await evaluateNativeCached({ state: { account: { name: company.name, domain: company.domain }, sourceUrl: observation.source_url,
-      capturedAt: observation.observed_at, candidates: pending.map(row => row.candidate) }, questions },
+      candidates: pending.map(row => row.candidate) }, questions },
     { purpose: "federal_identity", companyId: company.id, observationId: observation.id, sourceKind: "federal_identity", workload: "monitoring" });
     if (result.status !== "complete" || !result.evaluation.ok) throw new Error(result.status === "complete" ? "identity_interpretation_unavailable" : result.status);
     const raw = result.evaluation.provider_result;
@@ -129,7 +130,7 @@ export async function advanceIdentityClaim(company: TamIdentity, claim: Claim, l
     const page = await searchContractAwardsPage(claim.candidate_name, state.page, state.through, 100, deadline, state.searchAfter, state.collection);
     const pageHash = stableHash(page.rows);
     if (page.hasNext && (!page.rows.length || pageHash === state.lastPageHash)) throw new Error("identity_search_did_not_advance");
-    state.queue = [...new Map(page.rows.filter(row => normalizeName(row.recipientName) === normalizeName(claim.candidate_name)
+    state.queue = [...new Map(page.rows.filter(row => plausibleIdentityName(claim.candidate_name, row.recipientName)
       && /^[A-Z0-9]{12}$/i.test(row.recipientUei ?? "") && !state.seenUeis.includes(row.recipientUei!.toUpperCase()))
       .map(row => [row.recipientUei!.toUpperCase(), { generatedId: row.generatedId, recipientName: row.recipientName, recipientUei: row.recipientUei!.toUpperCase() }])).values()];
     state.hasNext = page.hasNext; state.nextCursor = page.nextCursor ?? null; state.pageLoaded = true; state.lastPageHash = pageHash;
@@ -139,8 +140,8 @@ export async function advanceIdentityClaim(company: TamIdentity, claim: Claim, l
     const award = { ...compactAward(await fetchAwardDetail(candidate.generatedId, 1, deadline)), sourceUrl: awardUrl(candidate.generatedId) };
     const recipient = award.recipient;
     if (award.generatedAwardId !== candidate.generatedId || recipient.uei?.toUpperCase() !== candidate.recipientUei
-      || normalizeName(recipient.legalName) !== normalizeName(claim.candidate_name)) throw new Error("identity_candidate_changed");
-    const decision = decideIdentityMatch(candidateAccount(company, claim), { ...recipient, addressLine1: recipient.address });
+      || !plausibleIdentityName(claim.candidate_name, recipient.legalName)) throw new Error("identity_candidate_changed");
+    const decision = await resolveFederalIdentity(candidateAccount(company, claim), { ...recipient, addressLine1: recipient.address }, { deadlineMs: deadline });
     if (decision.status === "verified") {
       const entityId = await data(db.rpc("federal_identity_bind_candidate", { p_company: company.id, p_lease: lease, p_claim: claim.id,
         p_entity: { uei: recipient.uei?.toUpperCase(), usaspending_recipient_id: recipient.recipientId, legal_name: recipient.legalName,
@@ -170,7 +171,7 @@ export function isWeakHistoricalMatch(match: { match_method: string; evidence?: 
     || match.match_method === "domain" && !(e.nameMatch === true && e.domainMatch === true);
 }
 
-export async function remediateOne(company: TamIdentity, lease: string, deadline: number) {
+export async function remediateOne(company: TamIdentity, lease: string, deadline: number, useJev = false) {
   const db = serviceClient();
   // Selection/exclusion happens against the complete database set under the
   // existing company lease. Large recipient families never require a truncated
@@ -184,7 +185,8 @@ export async function remediateOne(company: TamIdentity, lease: string, deadline
   if (latest) {
     const fresh = compactAward(await fetchAwardDetail(latest.generated_award_id, 1, deadline));
     if (fresh.generatedAwardId !== latest.generated_award_id || !matchesFederalIdentifiers({ uei: entity.uei, recipientId: entity.usaspending_recipient_id }, fresh.recipient)) throw new Error("remediation_source_identifier_changed");
-    decision = decideIdentityMatch(company, { ...fresh.recipient, addressLine1: fresh.recipient.address });
+    decision = useJev ? await resolveFederalIdentity(company, { ...fresh.recipient, addressLine1: fresh.recipient.address }, { deadlineMs: deadline })
+      : decideIdentityMatch(company, { ...fresh.recipient, addressLine1: fresh.recipient.address });
     sourceUrl = awardUrl(latest.generated_award_id);
   }
   const relatedRows: any[] = (await data(db.from("company_related_government_entities")
@@ -197,6 +199,25 @@ export async function remediateOne(company: TamIdentity, lease: string, deadline
     p_outcome: outcome, p_decision: decision ?? {}, p_evidence: { sourceUrl, sourceReadAt: new Date().toISOString(),
       candidateDecision: decision, relatedBindingIds: related.map(row => row.id), missing: latest ? null : "No stored award supplies a fresh source identifier/address; no demotion performed." } }));
   return { ...result, matchId: match.id, pending: result.outcome === "stale" || selection.pending === true };
+}
+
+/** Reconsider one unresolved recipient using current, already collected identity
+ * evidence. Same input reuses the native answer; failed calls retain eligibility. */
+export async function resolvePendingRecipient(company: TamIdentity, lease: string, deadline: number) {
+  const db = serviceClient();
+  const selected = await data(db.rpc("federal_identity_next_pending_match", { p_company: company.id, p_lease: lease }));
+  const match = selected?.match;
+  if (!match) return { status: "no_due_pending_recipient", pending: false };
+  const entity = await data(db.from("government_entities").select("*").eq("id", match.government_entity_id).single());
+  if (!entity) throw new Error("pending_recipient_missing");
+  const decision = await resolveFederalIdentity(company, { legalName: entity.legal_name, dbaName: entity.dba_name,
+    domain: entity.domain, uei: entity.uei, cageCode: entity.cage_code, recipientId: entity.usaspending_recipient_id,
+    addressLine1: entity.address_line1, addressLine2: entity.evidence?.addressLine2AddressLine1 === entity.address_line1 ? entity.evidence?.addressLine2 : null,
+    city: entity.city, state: entity.state, postalCode: entity.postal_code, countryCode: entity.country_code }, { deadlineMs: deadline });
+  const result = await data(db.rpc("federal_identity_finish_pending_match", { p_company: company.id, p_lease: lease,
+    p_before: match, p_decision: decision }));
+  return { status: result.outcome, matchId: match.id, matchStatus: result.matchStatus,
+    pending: result.outcome === "stale" || selected.pending === true };
 }
 
 /** One persisted company lease; source discovery, each recipient, and historical
@@ -221,10 +242,11 @@ export async function runFederalIdentityResearch() {
     const claims: Claim[] = (await data(db.from("company_federal_identity_claims").select("*").eq("company_id", job.company_id)
       .in("status", ["pending", "searching"]).order("updated_at").limit(2))) ?? [];
     const discovery = claims[0] ? await advanceIdentityClaim(company, claims[0], job.lease_token, deadline) : { pending: false, status: "no_pending_claim" };
-    const remediation = Date.now() < deadline - 25_000 ? await remediateOne(company, job.lease_token, deadline) : { status: "deferred_for_time", pending: true };
-    const receipt = { status: "complete", companyId: job.company_id, observations: observations.length, added, discovery, remediation };
+    const remediation = Date.now() < deadline - 25_000 ? await remediateOne(company, job.lease_token, deadline, true) : { status: "deferred_for_time", pending: true };
+    const recipients = Date.now() < deadline - 30_000 ? await resolvePendingRecipient(company, job.lease_token, deadline) : { status: "deferred_for_time", pending: true };
+    const receipt = { status: "complete", companyId: job.company_id, observations: observations.length, added, discovery, remediation, recipients };
     const completed = await data(db.rpc("federal_identity_finish_job", { p_company: job.company_id, p_lease: job.lease_token, p_cursor: cursor,
-      p_receipt: receipt, p_pending: observations.length === 6 || processed < observations.length || discovery.pending || claims.length > 1 || remediation.pending === true }));
+      p_receipt: receipt, p_pending: observations.length === 6 || processed < observations.length || discovery.pending || claims.length > 1 || remediation.pending === true || recipients.pending }));
     if (!completed) throw new Error("identity_lease_lost");
     return receipt;
   } catch (error) {

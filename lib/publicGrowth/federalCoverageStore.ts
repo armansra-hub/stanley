@@ -10,7 +10,7 @@ export const FEDERAL_SOURCE_SCOPE: Record<FederalCoverageSource, string> = {
 };
 type Receipt = Record<string, unknown> & { companyId: string; status: string };
 export function federalCoverageReceipt(source: FederalCoverageSource, receipt: Receipt, observedAt: string) {
-  const partial = receipt.awardDone === false || receipt.subawardDone === false || receipt.samDone === false || receipt.status === "in_progress";
+  const partial = Boolean(receipt.continuation) || receipt.awardDone === false || receipt.subawardDone === false || receipt.samDone === false || receipt.status === "in_progress";
   const complete = receipt.awardDone === true || receipt.subawardDone === true || receipt.samDone === true;
   const status = receipt.status === "error" ? "failed" : receipt.status === "ambiguous" ? "ambiguous" : receipt.status === "not_linked" ? "partial"
     : partial ? "partial" : receipt.status === "no_candidate" ? "no_match" : complete || source === "federal-discovery" && receipt.status === "matched" ? "complete" : "partial";
@@ -23,7 +23,7 @@ export function federalCoverageReceipt(source: FederalCoverageSource, receipt: R
     ...(status === "complete" || status === "no_match" ? { last_completed_at: observedAt } : {}),
     detail: { stage: typeof receipt.stage === "string" ? receipt.stage : null,
       reason: typeof receipt.reason === "string" ? receipt.reason : null,
-      collection: continuation.collection ?? null, exhaustiveFederalMarket: false } };
+      collection: continuation.collection ?? null, candidateDecision: receipt.candidateDecision ?? null, exhaustiveFederalMarket: false } };
 }
 
 export async function saveFederalCoverageReceipts(source: string, receipts: unknown[]): Promise<void> {

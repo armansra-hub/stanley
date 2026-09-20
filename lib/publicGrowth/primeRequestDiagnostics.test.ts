@@ -2,11 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/companyIdentity", () => ({ enrichCompanyIdentity: async (company: any) => company }));
 const mocks = vi.hoisted(() => ({ autocomplete: vi.fn(), search: vi.fn(), detail: vi.fn(), transactions: vi.fn(),
-  entity: vi.fn(), match: vi.fn(), award: vi.fn(), saveTransactions: vi.fn(), from: vi.fn() }));
+  entity: vi.fn(), match: vi.fn(), award: vi.fn(), saveTransactions: vi.fn(), from: vi.fn(), resolve: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: mocks.from }) }));
 vi.mock("@/lib/db/triggers", () => ({ recomputePriority: vi.fn() }));
-vi.mock("./identity", () => ({ normalizeName: (v: string) => v.toLowerCase(), companyIdentityNames: (company: any) => [...new Set([company.name, ...(company.legalNames ?? [])].filter((name: unknown) => typeof name === "string" && name.trim()))],
-  decideIdentityMatch: () => ({ status: "verified", confidence: 1 }) }));
+vi.mock("./federalIdentityResolution", async (original) => ({ ...await original<typeof import("./federalIdentityResolution")>(), resolveFederalIdentity: mocks.resolve }));
 vi.mock("./usaspending", () => ({ autocompleteRecipients: mocks.autocomplete, searchContractAwardsPage: mocks.search,
   fetchAwardDetail: mocks.detail, fetchAwardTransactionsPage: mocks.transactions, compactAward: (v: unknown) => v,
   awardUrl: () => "https://www.usaspending.gov/award/TEST", recipientProfileUrl: vi.fn(), searchReceivedContractSubawardsPage: vi.fn() }));
@@ -15,6 +14,7 @@ vi.mock("./storage", () => ({ saveGovernmentEntity: mocks.entity, saveCompanyGov
   saveFederalSubaward: vi.fn(), recordPublicGrowthTrigger: vi.fn(), stableHash: () => "hash" }));
 import { sweepUsaspendingCompany } from "./usaspendingSweep";
 import { queuePublicGrowthMainFailures, type PublicGrowthAwardContinuation } from "./sweepState";
+import { FederalIdentityDeferredError } from "./federalIdentityResolution";
 import { PublicGrowthDeadlineError } from "./http";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -29,9 +29,10 @@ let time: number;
 let verified: any[];
 beforeEach(() => {
   vi.resetAllMocks(); verified = []; time = 1000; vi.spyOn(Date, "now").mockImplementation(() => time);
+  mocks.resolve.mockResolvedValue({ status: "verified", method: "jev_identity", confidence: .9, evidence: {} });
   mocks.autocomplete.mockResolvedValue([]); mocks.search.mockResolvedValue({ rows: [], hasNext: false });
   mocks.detail.mockResolvedValue({ generatedAwardId: "A1", recipient: { legalName: "Acme", uei: "U1", recipientId: "R1" }, businessSizeStatus: "unknown" });
-  mocks.entity.mockResolvedValue(ENTITY); mocks.match.mockResolvedValue(undefined); mocks.award.mockResolvedValue("stored-A1");
+  mocks.entity.mockResolvedValue(ENTITY); mocks.match.mockImplementation(async (_company, _entity, decision) => decision); mocks.award.mockResolvedValue("stored-A1");
   const query: any = {};
   for (const method of ["select", "eq", "limit"]) query[method] = () => query;
   query.then = (resolve: any, reject: any) => Promise.resolve({ data: verified, error: null }).then(resolve, reject);
@@ -43,6 +44,26 @@ function timeout(mock: ReturnType<typeof vi.fn>) {
 }
 
 describe("prime request diagnostics", () => {
+  it("retains an exact pending award when Jev is deferred", async () => {
+    mocks.resolve.mockRejectedValue(new FederalIdentityDeferredError("budget_deferred"));
+    const before = continuation({ pendingAwardId: "A1", searchTargets: [{ query: "Acme", identity: null }], searchTargetIndex: 0 });
+    const result = await sweepUsaspendingCompany(company, { awardContinuation: before });
+    expect(result.awardDone).toBe(false);
+    expect(result.awardContinuation?.pendingAwardId).toBe("A1");
+    expect(result.awardContinuation?.ignoredAwardIds ?? []).toEqual([]);
+    expect(mocks.entity).not.toHaveBeenCalled();
+  });
+  it("does not freeze a name search to its first verified recipient", async () => {
+    mocks.transactions.mockResolvedValue({ rows: [], hasNext: false }); mocks.saveTransactions.mockResolvedValue(0);
+    const before = continuation({ pendingAwardId: "A1", searchTargets: [{ query: "Acme", identity: null }], searchTargetIndex: 0 });
+    const first = await sweepUsaspendingCompany(company, { awardContinuation: before });
+    expect(first.awardContinuation?.searchTargets?.[0].identity).toBeNull();
+    mocks.detail.mockResolvedValue({ generatedAwardId: "A2", recipient: { legalName: "Acme", uei: "U2", recipientId: "R2" }, businessSizeStatus: "unknown" });
+    const second = await sweepUsaspendingCompany(company, { awardContinuation: { ...first.awardContinuation!, pendingAwardId: "A2" } });
+    expect(second.status).toBe("matched");
+    expect(mocks.resolve).toHaveBeenCalledTimes(2);
+    expect(mocks.award.mock.calls.map(call => call[1].generatedAwardId)).toEqual(["A1", "A2"]);
+  });
   it("resumes a legacy identifier-bound checkpoint through its current verified link without rematching by name/address", async () => {
     verified = [{ government_entity_id: ENTITY, government_entities: {
       legal_name: "Different Legal Name", dba_name: null, uei: "U1", usaspending_recipient_id: "R1" } }];

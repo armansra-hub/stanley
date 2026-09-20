@@ -89,6 +89,26 @@ describe("federal discovery managed admission", () => {
     expect(final.pendingSearches).toBe(0); expect(lease.cursor.discoveryContinuations).toEqual({});
   });
 
+  it("keeps remaining recipients after the first verified enrollment", async () => {
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(1) }], error: null });
+    const state = searchContinuation(1);
+    mocks.worker.mockResolvedValueOnce({ ...row(1, "matched"), mayHaveWritten: true, continuation: state });
+    const result = await (await GET(request())).json();
+    expect(result.pendingSearches).toBe(1);
+    expect(lease.cursor.discoveryContinuations).toEqual({ [id(1)]: state });
+  });
+
+  it("does not advance when the saved candidate answer differs", async () => {
+    mocks.rpc.mockResolvedValue({ data: [{ id: id(1) }], error: null });
+    mocks.worker.mockResolvedValue({ ...row(1, "in_progress"), continuation: searchContinuation(1), candidateDecision: { outcome: "insufficient_evidence" } });
+    mocks.event.mockImplementation(async (record) => {
+      const meta = structuredClone(record.meta); meta.attemptedCompanies[0].candidateDecision = { outcome: "same_company" };
+      return { data: { id: record.id, meta }, error: null };
+    });
+    expect((await GET(request())).status).toBe(500);
+    expect(lease.cursor.discoveryContinuations).toBeUndefined();
+  });
+
   it("does not advance a page when its exact continuation journal readback differs", async () => {
     const before = searchContinuation(1), next = searchContinuation(1, 3);
     lease.cursor = { discoveryContinuations: { [id(1)]: before } };

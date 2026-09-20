@@ -1,12 +1,13 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { recomputePriority } from "@/lib/db/triggers";
-import { companyIdentityNames, decideIdentityMatch, normalizeName } from "./identity";
+import { companyIdentityNames, normalizeName } from "./identity";
+import { resolveFederalIdentity, FederalIdentityDeferredError } from "./federalIdentityResolution";
 import { enrichCompanyIdentity } from "@/lib/companyIdentity";
 import { calculateContractMetrics, deriveContractEvents } from "./metrics";
 import { awardUrl, autocompleteRecipients, compactAward, fetchAwardDetail, fetchAwardTransactionsPage, recipientProfileUrl, searchContractAwardsPage, searchReceivedContractSubawardsPage } from "./usaspending";
 import { PublicGrowthDeadlineError, requirePublicGrowthTime } from "./http";
-import { recordPublicGrowthTrigger, saveCompanyGovernmentMatch, saveFederalAward, saveFederalSubaward, saveFederalTransactions, saveGovernmentEntity, stableHash } from "./storage";
+import { recordPublicGrowthTrigger, saveCompanyGovernmentMatch, saveFederalAward, saveFederalSubaward, saveFederalTransactions, saveGovernmentEntity, stableHash, type StoredGovernmentMatchDecision } from "./storage";
 import { collectPublicGrowthKeysetPages, parsePublicGrowthSubawardContinuation, stableIdPageDecision, takeRecurringBatch, type PublicGrowthAwardContinuation, type PublicGrowthSubawardContinuation } from "./sweepState";
 import type { AwardFact, TamIdentity, TransactionFact } from "./types";
 import { assertFrozenFederalIdentities, federalSearchTargets, loadVerifiedFederalIdentities, matchesFederalIdentifiers,
@@ -258,7 +259,7 @@ export async function sweepUsaspendingCompany(
             receipt.awardDone = false; return receipt;
           }
           if (state.entityId || state.searchTargets?.some((entry) => entry.identity)) {
-            const entityIds = [...new Set([...(state.entityId ? [state.entityId] : []), ...(state.searchTargets ?? []).flatMap((entry) => entry.identity ? [entry.identity.entityId] : [])])];
+            const entityIds = [...new Set((await loadVerifiedFederalIdentities(company.id)).map(identity => identity.entityId))];
             const stored = { awards: [] as AwardFact[], transactions: [] as TransactionFact[], agencies: [] as string[] };
             for (const id of entityIds) {
               const facts = await loadStoredContractFacts(id, options.deadlineMs);
@@ -295,7 +296,7 @@ export async function sweepUsaspendingCompany(
     const seed = compactAward(await observePrimeRequest("award_detail", () => fetchAwardDetail(pendingAwardId, 1, options.deadlineMs)));
     if (state.collection === "idvs" && state.pendingOrderingEndDate) seed.orderingEndDate = state.pendingOrderingEndDate;
     if (seed.generatedAwardId !== pendingAwardId) throw new Error("award detail differs from requested stable ID");
-    if (state.entityId && !matchesFederalIdentifiers(
+    if (target?.identity && state.entityId && !matchesFederalIdentifiers(
       { uei: state.uei, recipientId: state.recipientId },
       { uei: seed.recipient.uei, recipientId: seed.recipient.recipientId },
     )) {
@@ -304,17 +305,17 @@ export async function sweepUsaspendingCompany(
       receipt.status = "ambiguous"; receipt.awardDone = false; receipt.awardContinuation = state; return receipt;
     }
     if (!target?.identity && !enrichedIdentity) company = await enrichCompanyIdentity(company);
-    const decision = target?.identity ? { status: "verified" as const, method: "verified_identifier", confidence: 1,
+    let decision: StoredGovernmentMatchDecision = target?.identity ? { status: "verified" as const, method: "verified_identifier", confidence: 1,
       evidence: { verifiedEntityId: target.identity.entityId, matchedIdentifiers: true } }
-      : decideIdentityMatch(company, { legalName: seed.recipient.legalName, city: seed.recipient.city, state: seed.recipient.state,
-        addressLine1: seed.recipient.address, postalCode: seed.recipient.postalCode, countryCode: seed.recipient.countryCode, uei: seed.recipient.uei });
+      : await resolveFederalIdentity(company, { recipientId: seed.recipient.recipientId, legalName: seed.recipient.legalName, city: seed.recipient.city, state: seed.recipient.state,
+        addressLine1: seed.recipient.address, postalCode: seed.recipient.postalCode, countryCode: seed.recipient.countryCode, uei: seed.recipient.uei }, { deadlineMs: options.deadlineMs });
     const entityId = target?.identity?.entityId ?? await saveGovernmentEntity({
       uei: seed.recipient.uei, usaspending_recipient_id: seed.recipient.recipientId, legal_name: seed.recipient.legalName,
       city: seed.recipient.city, state: seed.recipient.state, postal_code: seed.recipient.postalCode, country_code: seed.recipient.countryCode,
       address_line1: seed.recipient.address, parent_uei: seed.recipient.parentUei, parent_name: seed.recipient.parentName,
       source: "USAspending", source_url: awardUrl(seed.generatedAwardId), evidence: { businessCategories: seed.recipient.businessCategories },
     });
-    if (!target?.identity) await saveCompanyGovernmentMatch(company.id, entityId, decision);
+    if (!target?.identity) decision = await saveCompanyGovernmentMatch(company.id, entityId, decision);
     if (decision.status !== "verified") {
       ignoreAwardForTarget(state, pendingAwardId);
       state.pendingAwardId = null; state.seenTransactionIds = [];
@@ -323,8 +324,8 @@ export async function sweepUsaspendingCompany(
 
     state.entityId = entityId;
     if (!target?.identity) { state.uei = seed.recipient.uei; state.recipientId = seed.recipient.recipientId; }
-    if (target && !target.identity) target.identity = { entityId, legalName: seed.recipient.legalName, dbaName: null,
-      uei: seed.recipient.uei, recipientId: seed.recipient.recipientId };
+    // A name query stays unbound: its next award may belong to another
+    // legitimate recipient. Binding the query to the first match lost coverage.
     receipt.status = "matched"; receipt.entityId = entityId; receipt.uei = seed.recipient.uei;
     const sourceUrl = awardUrl(seed.generatedAwardId);
     const storedAwardId = await saveFederalAward(entityId, { ...seed, sourceUrl });
@@ -369,7 +370,7 @@ export async function sweepUsaspendingCompany(
     if (receipt.triggers) await recomputePriority(company.id);
     receipt.awardDone = false; receipt.awardContinuation = state; return receipt;
   } catch (error) {
-    if (error instanceof PublicGrowthDeadlineError && receipt.awardContinuation) {
+    if ((error instanceof PublicGrowthDeadlineError || error instanceof FederalIdentityDeferredError) && receipt.awardContinuation) {
       return { ...receipt, awardDone: false };
     }
     const requestDiagnostic = error instanceof PrimeRequestError ? error.diagnostic : undefined;

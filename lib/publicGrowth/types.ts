@@ -22,6 +22,7 @@ export interface GovernmentIdentityCandidate {
   city?: string | null;
   state?: string | null;
   addressLine1?: string | null;
+  addressLine2?: string | null;
   postalCode?: string | null;
   countryCode?: string | null;
   uei?: string | null;
@@ -30,7 +31,8 @@ export interface GovernmentIdentityCandidate {
 
 export interface IdentityDecision {
   status: "verified" | "pending" | "rejected";
-  method: "domain" | "domain_only" | "exact_name_address" | "exact_name_city_state" | "exact_name_state" | "name_only" | "conflict" | "none";
+  method: "domain" | "domain_only" | "exact_name_address" | "exact_name_city_state" | "exact_name_state" | "name_only" | "name_candidate" | "conflict" | "none"
+    | "jev_identity" | "jev_related" | "jev_insufficient" | "jev_different";
   confidence: number;
   evidence: Record<string, unknown>;
 }

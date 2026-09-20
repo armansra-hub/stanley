@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideIdentityMatch, normalizeDomain, normalizeName, normalizeStreetAddress } from "./identity";
+import { compareIdentityAddresses, decideIdentityMatch, isPlausibleIdentityCandidate, normalizeDomain, normalizeName, normalizeStreetAddress, plausibleIdentityName } from "./identity";
 import type { CompanyIdentityAddress } from "./types";
 
 const address: CompanyIdentityAddress = { addressLine1: "1200 North Main Street Suite 200", city: "Austin", state: "Texas", postalCode: "78701",
@@ -72,5 +72,56 @@ describe("public-growth identity matching", () => {
       { legalName: "Acme LLC", domain: "linkedin.com/company/other" }).status).toBe("pending");
     expect(decideIdentityMatch({ id: "1", name: "Acme", domain: null, addresses: [address] },
       { legalName: "Different Business", addressLine1: address.addressLine1, city: address.city, state: address.state, postalCode: address.postalCode }).status).toBe("rejected");
+  });
+  it("compares an inline suite against a separate provider address line without losing the unit", () => {
+    const company = { id: "1", name: "Acme", domain: null, addresses: [address] };
+    const candidate = { legalName: "Acme LLC", addressLine1: "1200 N Main St", addressLine2: "Ste 200", postalCode: "78701" };
+    expect(compareIdentityAddresses(company, candidate)[0]).toMatchObject({ streetMatch: true, unitMatch: true, unitConflict: false, unitMissingOn: null, supportsIdentity: true });
+    expect(decideIdentityMatch(company, candidate)).toMatchObject({ status: "verified", method: "exact_name_address" });
+    expect(JSON.stringify(compareIdentityAddresses(company, candidate))).not.toMatch(/1200|78701|Ste 200|Main/);
+  });
+  it("distinguishes a missing unit on either side from explicit conflicting units", () => {
+    const candidate = { legalName: "Acme", addressLine1: "1200 N Main St", postalCode: "78701" };
+    expect(compareIdentityAddresses({ addresses: [address] }, candidate)[0]).toMatchObject({ streetMatch: true, unitConflict: false, unitMissingOn: "candidate", supportsIdentity: false });
+    expect(compareIdentityAddresses({ addresses: [{ ...address, addressLine1: "1200 N Main St" }] }, { ...candidate, addressLine2: "Suite 200" })[0])
+      .toMatchObject({ unitConflict: false, unitMissingOn: "company", supportsIdentity: false });
+    expect(compareIdentityAddresses({ addresses: [address] }, { ...candidate, addressLine2: "Suite 300" })[0])
+      .toMatchObject({ streetMatch: true, unitConflict: true, unitMissingOn: null, supportsIdentity: false });
+    expect(decideIdentityMatch({ id: "1", name: "Acme", domain: null, addresses: [address] }, candidate).status).toBe("pending");
+  });
+  it("retains conflicting historical comparisons alongside a supported branch without rewriting either address", () => {
+    const addresses = [address, { ...address, addressLine1: "900 Market Road", addressLine2: "Floor 2", city: "Dallas", postalCode: "75201", sourceId: "current-branch" }];
+    const before = JSON.stringify(addresses);
+    const candidate = { legalName: "Acme", addressLine1: "900 Market Rd Fl 2", city: "Dallas", state: "TX", postalCode: "75201" };
+    const comparisons = compareIdentityAddresses({ addresses }, candidate);
+    expect(comparisons).toEqual([expect.objectContaining({ sourceId: "record-123", streetConflict: true, cityConflict: true, postalConflict: true, supportsIdentity: false }),
+      expect.objectContaining({ sourceId: "current-branch", streetMatch: true, unitMatch: true, supportsIdentity: true })]);
+    expect(JSON.stringify(addresses)).toBe(before);
+    expect(decideIdentityMatch({ id: "1", name: "Acme", domain: "acme.test", addresses }, { ...candidate, domain: "another.test" }))
+      .toMatchObject({ status: "pending", method: "conflict", evidence: { addressMatch: true, domainConflict: true } });
+  });
+  it.each([
+    ["Acme Staffing", "ACME Staffing Services LLC"],
+    ["Blue Heron Consulting", "Consulting Blue Heron, Inc."],
+    ["Pine Valley Mgmt", "Pine Valley Management Corporation"],
+    ["Bright-Line Media", "Brightline Media Inc."],
+    ["Acme", "Acme Holdings LLC"],
+  ])("retrieves plausible lexical variants without treating them as verified identities: %s / %s", (name, legalName) => {
+    expect(plausibleIdentityName(name, legalName)).toBe(true);
+    const company = { id: "1", name, domain: null, addresses: [address] };
+    const candidate = { legalName, addressLine1: address.addressLine1, postalCode: address.postalCode };
+    expect(isPlausibleIdentityCandidate(company, candidate)).toBe(true);
+    expect(decideIdentityMatch(company, candidate)).toMatchObject({ status: "pending", method: "name_candidate" });
+  });
+  it.each([
+    ["Global Services", "Quality Services"], ["Acme Staffing", "Acme Bakery"], ["Alpha Design", "Beta Design"],
+    ["Interstate", "Interstatewide"], ["Acme", "x".repeat(501)], ["", "Acme"], ["HKS", "HKS Architects"],
+  ])("does not fetch arbitrary unrelated/overlong names based on generic words: %s / %s", (a, b) => {
+    expect(plausibleIdentityName(a, b)).toBe(false);
+  });
+  it("admits a sourced alias or exact official domain for detail while refusing shared-platform domains", () => {
+    expect(isPlausibleIdentityCandidate({ name: "New Brand", legalNames: ["Old Brand Management"], domain: null }, { legalName: "Old Brand Mgmt LLC" })).toBe(true);
+    expect(isPlausibleIdentityCandidate({ name: "New Brand", domain: "brand.test" }, { legalName: "Distinct Legal Entity", domain: "www.brand.test" })).toBe(true);
+    expect(isPlausibleIdentityCandidate({ name: "New Brand", domain: "linkedin.com" }, { legalName: "Distinct Legal Entity", domain: "linkedin.com" })).toBe(false);
   });
 });
