@@ -20,6 +20,53 @@ def ref(path,root=None,expected=None):
     if expected: require(actual==expected,"retained artifact hash differs: "+path.name)
     return {"path":str(path),"sha256":actual,"bytes":len(raw)}
 
+def recovered_preparation(checkpoint,published,provenance,root):
+    """Resolve omitted locators from exact retained witnesses, without editing them."""
+    require(checkpoint.get("recoveredReadback") is True and published.get("recoveredReadback") is True,"required Jev preparation absent")
+    ident=checkpoint["exactId"]; evidence=checkpoint["evidence"]
+    def witness(folder,role,candidate_sha=None):
+        paths=list(io_path(root/"grading"/folder).glob(ident+".*.json.receipt.json"))
+        require(len(paths)<=20,"too many exact recovery artifact receipts")
+        matches=[]
+        for path in paths:
+            item=read(path); source=item.get("evidence",{}); navhash=source.get("evidenceNavigationSha256")
+            if (item.get("schema")!="tam-full-evidence-model-artifact" or item.get("version")!=1 or item.get("role")!=role
+                or item.get("readMode")!="direct-full-evidence" or item.get("completeRawEvidenceCoverage") is not True
+                or not isinstance(navhash,str) or len(navhash)!=64
+                or source!={**evidence,"evidenceNavigationSha256":navhash}):continue
+            if role=="reader" and item.get("artifactSha256")!=provenance["candidateFileSha256"]:continue
+            if role=="validator" and item.get("candidateSha256")!=candidate_sha:continue
+            artifact=Path(item["artifactPath"]).resolve()
+            require(artifact.parent==(root/"grading"/folder).resolve() and artifact.name.startswith(ident+".")
+                    and artifact.name.endswith(".json") and path.name==artifact.name+".receipt.json","recovery artifact locator differs")
+            artifact_ref=ref(artifact,root,item["artifactSha256"])
+            require(timestamp(item["createdAt"])<=timestamp(published["event"]["created_at"]),"recovery artifact postdates publication")
+            # Keep ordinary manifest paths even when io_path/glob used extended paths.
+            receipt_ref=ref(artifact.parent/path.name,root)
+            matches.append((item,artifact_ref,receipt_ref))
+        require(len(matches)==1,"recovery "+role+" receipt is missing or ambiguous")
+        return matches[0]
+    reader,candidate_ref,reader_ref=witness("candidates","reader")
+    validator,validator_ref,validator_receipt_ref=witness("validator_raw","validator",candidate_ref["sha256"])
+    require(reader["evidence"]==validator["evidence"],"recovery reader and validator source/navigation binding differs")
+    require(timestamp(reader["createdAt"])<=timestamp(validator["createdAt"]),"recovery validator predates reader")
+    navhash=reader["evidence"]["evidenceNavigationSha256"]
+    paths=list(io_path(root/"grading/navigation"/ident).glob("*/frozen-navigation.json"))
+    require(len(paths)<=20,"too many exact recovery navigation artifacts")
+    matches=[]
+    for path in paths:
+        frozen=read(path)
+        if frozen.get("navigation_sha256")==navhash and sha(encoded(frozen["view"]))==navhash:
+            matches.append(root/"grading/navigation"/ident/path.parent.name/"receipt.json")
+    require(len(matches)==1,"recovery frozen navigation is missing or ambiguous")
+    additions={"candidatePath":candidate_ref["path"],"candidateSha256":candidate_ref["sha256"],
+               "validatorPath":validator_ref["path"],"validatorSha256":validator_ref["sha256"]}
+    require(all(key not in checkpoint or checkpoint[key]==value for key,value in additions.items()),"recovery checkpoint contradicts retained artifact witnesses")
+    return {**checkpoint,**additions,"evidence":reader["evidence"],"navigationPreparation":{
+        "status":"required_jev_accepted","policy":"successor-jev-acceptance-v1","path":str(matches[0]),"navigation_sha256":navhash}}, {
+        "readerArtifactReceipt":reader_ref,"validatorArtifactReceipt":validator_receipt_ref}
+
+
 def carried_lineage(old,seed,plan,root,copied,cache):
     """Reuse only a fixed, verified immediate predecessor manifest and its plan."""
     path=root/"inherited_final_lineage.json"
@@ -73,6 +120,10 @@ def lineage(old,seed,plan,root,cache=None):
     context_path=root/"context.active.json"; context=read(context_path)
     context_ref=ref(context_path,root,evidence["roundContextSha256"])
     require(context["run_slug"]==provenance["runSlug"] and context["checkpoint_seed_id"]==old["checkpoint_seed_id"],"predecessor context differs")
+    recovery_artifacts={}
+    if "navigationPreparation" not in checkpoint:
+        checkpoint,recovery_artifacts=recovered_preparation(checkpoint,published,provenance,root)
+        evidence=checkpoint["evidence"]
     nav=checkpoint["navigationPreparation"]; require(nav.get("status")=="required_jev_accepted" and nav.get("policy")=="successor-jev-acceptance-v1","required Jev preparation absent")
     nav_path=Path(nav["path"]).resolve(); nav_ref=ref(nav_path,root); receipt=read(nav_path)
     frozen_path=nav_path.parent/"frozen-navigation.json"; frozen=read(frozen_path); frozen_ref=ref(frozen_path,root)
@@ -93,7 +144,8 @@ def lineage(old,seed,plan,root,cache=None):
     require(validation==validated.get("validation") and validation.get("status")=="passed" and all(validation.get(k) is True for k in ("full_pdf_reread","full_record_text_reread","source_hashes_verified","page_count_verified")),"published validation full-reread flags differ")
     require(candidate_ref["sha256"]==provenance["candidateFileSha256"]==validated["candidate_file_sha256"] and validated["pdf_sha256"]==evidence["pdfSha256"] and validated["record_text_sha256"]==evidence["recordTextSha256"] and validated["assessment_context"]["context_sha256"]==context_ref["sha256"],"validated artifact source binding differs")
     return {"internalId":ident,"companyId":old["company_id"],"predecessorProvenanceSha256":old["grade_provenance_sha256"],"publishedAt":old["published_at"],"successorProvenanceSha256":seed["provenance"]["sha256"],"copiedFrom":copied,
-      "artifacts":{"checkpoint":ref(checkpoint_path,root),"publication":ref(published_path,root),"context":context_ref,"navigationReceipt":nav_ref,"frozenNavigation":frozen_ref,"candidate":candidate_ref,"validator":validator_ref,"validated":validated_ref},
+      "artifacts":{"checkpoint":ref(checkpoint_path,root),"publication":ref(published_path,root),"context":context_ref,"navigationReceipt":nav_ref,"frozenNavigation":frozen_ref,"candidate":candidate_ref,"validator":validator_ref,"validated":validated_ref,**recovery_artifacts},
+      **({"lineageRecovery":{"method":"recovered_readback_source_bound_artifacts","checkpointUnmodified":True}} if recovery_artifacts else {}),
       "evidence":evidence,"navigation":{"status":nav["status"],"navigationSha256":nav["navigation_sha256"],"requestSha256":receipt["request_sha256"],"sourceSha256":receipt["source_sha256"]},
       "publication":{"eventId":event["id"],"eventMetadata":event["metadata"],"eventCreatedAt":event["created_at"],"payloadSha256":published["payloadSha256"],"receiptPublishedAt":published["publishedAt"]},"validation":validation}
 

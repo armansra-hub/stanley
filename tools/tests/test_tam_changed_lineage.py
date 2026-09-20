@@ -52,6 +52,45 @@ class Lineage(unittest.TestCase):
     def test_successor_cannot_change_preserved_assessment(self):
         self.seed['provenance']['data']['assessment']['validation']['full_pdf_reread']=False;text=m.encoded(self.seed['provenance']['data']).decode();self.seed['provenance'].update(canonicalJson=text,sha256=m.sha(text.encode()))
         with self.assertRaisesRegex(ValueError,'changed inherited'):m.lineage(self.old,self.seed,self.plan,self.root)
+    def recovered_fixture(self):
+        source=copy.deepcopy(self.checkpoint['evidence'])
+        for role,folder,pathkey in [('reader','candidates','candidatePath'),('validator','validator_raw','validatorPath')]:
+            artifact=self.put('grading/'+folder+'/123.original.json',m.read(self.checkpoint[pathkey]))
+            receipt={'schema':'tam-full-evidence-model-artifact','version':1,'role':role,'readMode':'direct-full-evidence','completeRawEvidenceCoverage':True,
+                     'artifactPath':str(artifact),'artifactSha256':m.ref(artifact)['sha256'],'candidateSha256':self.old['grade_provenance']['candidateFileSha256'] if role=='validator' else None,
+                     'evidence':source,'createdAt':self.time}
+            self.put('grading/'+folder+'/123.original.json.receipt.json',receipt)
+        for name in ('receipt.json','frozen-navigation.json'):
+            self.put('grading/navigation/123/original/'+name,m.read(self.root/'grading/navigation'/name))
+        cp=copy.deepcopy(self.checkpoint)
+        for key in ('navigationPreparation','candidatePath','candidateSha256','validatorPath','validatorSha256'):cp.pop(key)
+        cp['evidence'].pop('evidenceNavigationSha256');cp['recoveredReadback']=True
+        self.put('grading/checkpoints/123.json',cp)
+        pub=m.read(self.root/'grading/published/123.json');pub['recoveredReadback']=True;self.put('grading/published/123.json',pub)
+        return cp
+    def test_recovered_readback_uses_original_witnesses_without_checkpoint_edit(self):
+        cp=self.recovered_fixture();before=m.ref(self.root/'grading/checkpoints/123.json')
+        result=m.lineage(self.old,self.seed,self.plan,self.root)
+        self.assertEqual(result['artifacts']['checkpoint'],before);self.assertEqual(m.read(before['path']),cp)
+        self.assertEqual(len(result['artifacts']),10);self.assertEqual(result['lineageRecovery']['method'],'recovered_readback_source_bound_artifacts')
+        self.assertEqual(result['navigation']['navigationSha256'],self.checkpoint['evidence']['evidenceNavigationSha256'])
+    def test_recovery_rejects_source_mismatch(self):
+        self.recovered_fixture();name='grading/candidates/123.original.json.receipt.json';receipt=m.read(self.root/name)
+        receipt['evidence']['recordTextSha256']='different';self.put(name,receipt)
+        with self.assertRaisesRegex(ValueError,'reader receipt is missing'):m.lineage(self.old,self.seed,self.plan,self.root)
+    def test_recovery_rejects_validator_navigation_mismatch(self):
+        self.recovered_fixture();name='grading/validator_raw/123.original.json.receipt.json';receipt=m.read(self.root/name)
+        receipt['evidence']['evidenceNavigationSha256']='0'*64;self.put(name,receipt)
+        with self.assertRaisesRegex(ValueError,'source/navigation binding differs'):m.lineage(self.old,self.seed,self.plan,self.root)
+    def test_recovery_rejects_ambiguous_reader_witness(self):
+        self.recovered_fixture();name='grading/candidates/123.original.json.receipt.json';receipt=m.read(self.root/name)
+        artifact=self.put('grading/candidates/123.other.json',m.read(receipt['artifactPath']));receipt['artifactPath']=str(artifact)
+        self.put('grading/candidates/123.other.json.receipt.json',receipt)
+        with self.assertRaisesRegex(ValueError,'reader receipt is missing or ambiguous'):m.lineage(self.old,self.seed,self.plan,self.root)
+    def test_recovery_requires_accepted_jev_receipt(self):
+        self.recovered_fixture();name='grading/navigation/123/original/receipt.json';receipt=m.read(self.root/name)
+        receipt['request_sha256']=['wrong'];self.put(name,receipt)
+        with self.assertRaisesRegex(ValueError,'Jev receipt and frozen navigation differ'):m.lineage(self.old,self.seed,self.plan,self.root)
     def second_successor(self):
         first=m.lineage(self.old,self.seed,self.plan,self.root)
         root=self.root/'successor';root.mkdir();plan_path=self.put('successor/plan.json',self.plan)
