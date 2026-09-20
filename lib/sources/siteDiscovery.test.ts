@@ -78,6 +78,47 @@ describe("company source discovery and evidence", () => {
     expect(first.contentHash).toBe(second.contentHash);
   });
 
+  it("does not version an unchanged article for rotating related-post timestamps or JSON payloads", () => {
+    const html = (widgetDate: string) => `<head><meta property="article:published_time" content="2026-09-17"></head>
+      <script type="application/ld+json">${JSON.stringify({ "@graph": [
+        { "@type": "BlogPosting", "@id": "https://acme.com/news/service#article", datePublished: "2026-09-17", dateModified: "2026-09-18" },
+        { "@type": "BlogPosting", url: "https://acme.com/news/unrelated", datePublished: widgetDate },
+        { "@type": "Organization", url: "https://acme.com", dateModified: widgetDate },
+      ] })}</script><script>window.related = {"dateModified":"${widgetDate}"}</script>
+      <article><p>Our company added a new service.</p><time itemprop="datePublished" datetime="2026-09-17"></time>
+      <div class="related-posts"><meta itemprop="datePublished" content="${widgetDate}"><time itemprop="datePublished" datetime="${widgetDate}">Read another story</time></div></article>`;
+    const first = sitePageEvidence(html("2026-09-19"), "https://acme.com/news/service");
+    const second = sitePageEvidence(html("2026-09-20"), "https://acme.com/news/service");
+    expect(first.text).toBe(second.text);
+    expect(first.sourceDates).toEqual(second.sourceDates);
+    expect(first.sourceDates.map(({ kind, value }) => [kind, value])).toEqual([
+      ["published", "2026-09-17T00:00:00.000Z"], ["modified", "2026-09-18T00:00:00.000Z"],
+    ]);
+  });
+
+  it("retains genuine article publication and modification changes, including a sole URL-less schema", () => {
+    const page = (modified: string) => sitePageEvidence(`<script type="application/ld+json">${JSON.stringify({
+      "@type": "NewsArticle", datePublished: "2026-09-17", dateModified: modified,
+    })}</script><article>Same retained announcement.</article>`, "https://acme.com/news/service");
+    expect(page("2026-09-18").sourceDates).not.toEqual(page("2026-09-19").sourceDates);
+    expect(page("2026-09-18").sourceDates).toHaveLength(2);
+    const unrelated = sitePageEvidence(`<script type="application/ld+json">${JSON.stringify({
+      "@type": "NewsArticle", url: "https://acme.com/another-article", datePublished: "2026-09-20",
+    })}</script><article>Undated announcement.</article>`, "https://acme.com/news/service");
+    expect(unrelated.sourceDates).toEqual([]);
+  });
+
+  it("keeps related articles discoverable without treating their rotating dates as this article's dates", () => {
+    const url = "https://acme.com/news/older-article";
+    const html = (date: string) => `<head><meta property="article:published_time" content="2015-10-23"></head>
+      <article><p>The original dated company announcement.</p><time datetime="2015-10-23"></time></article>
+      <aside><a href="/news/new-company-announcement">Company news</a><time datetime="${date}"></time></aside>`;
+    const first = sitePageEvidence(html("2016-10-20"), url);
+    const second = sitePageEvidence(html("2021-09-04"), url);
+    expect(first.sourceDates).toEqual(second.sourceDates);
+    expect(discoverSiteLinks(html("2021-09-04"), url)).toContainEqual({ url: "https://acme.com/news/new-company-announcement", kind: "news", label: "Company news" });
+  });
+
   it("accepts only addresses directly attached to named same-site organizations", () => {
     const schema = { "@graph": [
       { "@type": "Organization", "@id": "https://acme.com/#organization", name: "Acme Services", alternateName: "Acme", url: "https://www.acme.com", address: { "@type": "PostalAddress", streetAddress: "100 Main Street", addressLocality: "Denver", addressRegion: "CO", postalCode: "80202", addressCountry: "United States" } },

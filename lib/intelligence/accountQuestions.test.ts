@@ -4,7 +4,7 @@ vi.mock('@/lib/supabase/server',()=>({serviceClient:()=>({rpc:m.rpc,from:m.from}
 vi.mock('./observations',()=>({intelligenceEnabled:()=>true}));
 vi.mock('./nativeJev',async original=>({...await original<typeof import('./nativeJev')>(),evaluateNativeCached:m.native}));
 import {accountSelectionInput,accountAnswerInput,questionSections,runAccountQuestionWorker} from './accountQuestions';
-import {nativeJevBody} from './nativeJev';
+import {nativeJevBody,nativeJevFingerprint} from './nativeJev';
 beforeEach(()=>{vi.clearAllMocks();});
 describe('account-wide custom questions',()=>{
  it('combines complementary facts from different sources and preserves native answers and precise citations',async()=>{
@@ -21,6 +21,21 @@ describe('account-wide custom questions',()=>{
   expect(finished.p_result.probability).toBe(.83);expect(finished.p_result.citations.map((s:any)=>s.observationId)).toEqual(['one','two']);
   expect(finished.p_result.selectionReceipts).toHaveLength(2);expect(checkpoint.source).toBe(2);
   expect(Object.keys(answer.questions)).toEqual(['account_match','evidence_sufficiency']);
+  expect(answer.state.coverage).not.toHaveProperty('evidenceSnapshotAt');
+  expect(finished.p_result.coverage.evidenceSnapshotAt).toBeTruthy();
+ });
+ it('reuses an unchanged answer across job clocks while preserving meaningful source and coverage changes',()=>{
+  const passage={observationId:'one',url:'https://example.test/award',title:'Award',date:'2026-09-01',start:0,end:32,text:'Synthetic serves public agencies.',relevance:.8};
+  const coverage={evidenceSnapshotAt:'2026-09-19T01:02:03Z',sourceCount:1,selectedSources:1,skippedSources:0,basis:'Captured source passages'};
+  const input=accountAnswerInput('Synthetic','Does Synthetic serve agencies?',[passage],coverage);
+  const fingerprint=nativeJevFingerprint(input);
+  expect(nativeJevFingerprint(accountAnswerInput('Synthetic','Does Synthetic serve agencies?',[passage],{...coverage,evidenceSnapshotAt:'2026-09-20T04:05:06Z'}))).toBe(fingerprint);
+  for(const change of [{text:'Synthetic no longer serves public agencies.'},{date:'2026-09-19'},{url:'https://different.test/award'},{observationId:'different'}])
+   expect(nativeJevFingerprint(accountAnswerInput('Synthetic','Does Synthetic serve agencies?',[{...passage,...change}],coverage))).not.toBe(fingerprint);
+  expect(nativeJevFingerprint(accountAnswerInput('Other company','Does Synthetic serve agencies?',[passage],coverage))).not.toBe(fingerprint);
+  expect(nativeJevFingerprint(accountAnswerInput('Synthetic','Does Synthetic bill projects?',[passage],coverage))).not.toBe(fingerprint);
+  expect(nativeJevFingerprint(accountAnswerInput('Synthetic','Does Synthetic serve agencies?',[passage],{...coverage,skippedSources:1}))).not.toBe(fingerprint);
+  expect((input.state as any).sources[0]).toEqual({observationId:'one',url:passage.url,title:'Award',date:'2026-09-01',start:0,end:32,text:passage.text});
  });
  it('keeps compound source selection permissive and request size bounded for multilingual evidence',()=>{
   const source={id:'x',title:'Title',source_url:'https://test.test/',event_date:null,evidence_text:'𠜎'.repeat(15000)};

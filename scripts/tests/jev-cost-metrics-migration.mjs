@@ -25,7 +25,7 @@ try {
   await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
     create table companies(id uuid primary key,status text not null);
     create table trigger_candidates(id uuid primary key,created_at timestamptz,verdict text,promoted_trigger_id uuid);`);
-  for (const file of ["0059_intelligence_evidence_and_work.sql", "0082_jev_request_receipts.sql", "0083_intelligence_jev_cost_metrics.sql"]) {
+  for (const file of ["0059_intelligence_evidence_and_work.sql", "0082_jev_request_receipts.sql", "0083_intelligence_jev_cost_metrics.sql", "0106_jev_recent_cost_window.sql"]) {
     await db.exec(await readFile(new URL(`../../supabase/migrations/${file}`, import.meta.url), "utf8"));
   }
   await db.exec("update intelligence_config set enabled=true");
@@ -33,6 +33,7 @@ try {
     const metrics = await scalar("select intelligence_jev_cost_metrics()");
     assert.equal(metrics.month.totals.requests, 0);
     assert.equal(metrics.last24h.totals.reportedInputTokens, 0);
+    assert.equal(metrics.last1h.totals.reportedInputTokens, 0);
     assert.deepEqual(metrics.month.byActivity, []);
     assert.equal(metrics.attributionStartedAt, null);
   });
@@ -54,6 +55,7 @@ try {
       unknownUsageRequests: 1, unknownUsageReserveUsd: .002753, inFlightRequests: 1, inFlightReserveUsd: .002753 };
     assert.deepEqual(metrics.month.totals, expected);
     assert.deepEqual(metrics.last24h.totals, expected);
+    assert.deepEqual(metrics.last1h.totals, expected);
     assert.equal(metrics.usdPerMillionInputTokens, .042);
     assert.ok(metrics.attributionStartedAt);
   });
@@ -97,6 +99,18 @@ try {
       assert.equal(await scalar("select has_function_privilege($1,'intelligence_jev_cost_metrics()','EXECUTE')", [role]), false);
     }
     assert.equal(await scalar("select has_function_privilege('service_role','intelligence_jev_cost_metrics()','EXECUTE')"), true);
+  });
+  await test("current hourly spending excludes earlier work without changing history or unknown charges", async () => {
+    await db.query("update intelligence_spend set created_at=now()-interval '2 hours' where id=$1", [website.reservationId]);
+    const metrics = await scalar("select intelligence_jev_cost_metrics()");
+    assert.equal(metrics.last24h.totals.requests, 6);
+    assert.equal(metrics.last24h.totals.reportedInputTokens, 12500);
+    assert.equal(metrics.last1h.totals.requests, 5);
+    assert.equal(metrics.last1h.totals.reportedInputTokens, 10500);
+    assert.equal(metrics.last1h.totals.estimatedUsd, .000441);
+    assert.equal(metrics.last1h.totals.unknownUsageRequests, 1);
+    assert.equal(metrics.last1h.totals.inFlightRequests, 1);
+    assert.ok(!metrics.last1h.byActivity.some(row => row.key === 'website_research'));
   });
   console.log(`${passed} Jev cost metrics SQL tests passed`);
 } finally { await db.close(); }

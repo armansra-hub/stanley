@@ -1,7 +1,7 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
 import { intelligenceEnabled, enqueueObservation } from "./observations";
-import { buildOperatingProfile, type ProfileObservation } from "./profiles";
+import { buildOperatingProfile, operatingCriteria, type ProfileObservation } from "./profiles";
 import { readSourceState } from "./sourceState";
 import { researchCandidates, type ResearchAttempt } from "./research";
 import { rankResearchCandidates, type ResearchRankingResult } from "./researchRanking";
@@ -60,14 +60,16 @@ export async function loadResearchProfile(companyId: string, deadlineMs = Infini
   const available = [...new Set(urls)].sort((a, b) => priority(b) - priority(a) || a.localeCompare(b)).slice(0, 200);
   const candidateTitles = Object.fromEntries((discovered.data ?? []).map(row => [row.source_url, row.title]));
   const [attempts, pending] = await Promise.all([
-    available.length ? db.from("intelligence_research_attempts").select("source_url,next_attempt_at,last_attempt_at")
+    available.length ? db.from("intelligence_research_attempts").select("source_url,next_attempt_at,last_attempt_at,lease_until")
       .eq("company_id", companyId).in("source_url", available).limit(200) : Promise.resolve({ data: [], error: null }),
     db.from("intelligence_jobs").select("id,intelligence_observations:intelligence_observations!intelligence_jobs_observation_id_fkey!inner(company_id)", { count: "exact", head: true })
       .eq("intelligence_observations.company_id", companyId).in("status", ["queued", "running"]),
   ]);
   if (attempts.error || pending.error) throw new Error("research_state_unavailable");
   const candidates = researchCandidates(available, (attempts.data ?? []) as ResearchAttempt[], priority);
-  const nextAttempt = (attempts.data ?? []).map(row => Date.parse(row.next_attempt_at)).filter(date => Number.isFinite(date) && date > Date.now());
+  const nextAttempt = (attempts.data ?? []).flatMap(row => [row.next_attempt_at, row.lease_until])
+    .filter((value): value is string => typeof value === "string").map(value => Date.parse(value))
+    .filter(date => Number.isFinite(date) && date > Date.now());
   return { company, profile, nextSources: candidates.slice(0, 3), candidates, missingTopics, candidateTitles, sourceMetadata, eventTitles, researchQuestions,
     researchFocus: businessServicesResearchContext(company.subindustry),
     nextAttemptAt: new Date(nextAttempt.length ? Math.min(...nextAttempt) : Date.now() + (available.length ? 7 : 1) * 86400_000).toISOString(),
@@ -126,7 +128,9 @@ export async function refreshAccountResearch(companyId: string, options: {
             title: evidence.title, text: evidence.text, eventDate: evidence.eventDate,
             metadata: { ...evidence.metadata, focusedResearch: true, externalResearch: true, automaticResearch: options.automatic === true,
               researchPurpose: provenance.researchPurpose, researchQuery: provenance.query, researchQueryHash: provenance.queryHash,
-              researchTopics: loaded.missingTopics, researchRankingVersion: ranking.rankingVersion } });
+              researchTopics: loaded.missingTopics,
+              researchCriteria: operatingCriteria(loaded.company.subindustry, "news", loaded.missingTopics).map(criterion => criterion.id),
+              researchRankingVersion: ranking.rankingVersion } });
           if (!result) throw new Error("observation_not_persisted");
           outcome = result.queued ? "queued" : "unchanged";
         } else if (/\.pdf$/i.test(new URL(claim.source_url).pathname)) {
@@ -139,6 +143,7 @@ export async function refreshAccountResearch(companyId: string, options: {
               title: loaded.candidateTitles[claim.source_url] || `${loaded.company.name} public document`, text: pdf.text, eventDate: null,
               metadata: { focusedResearch: true, automaticResearch: options.automatic === true, researchRankingVersion: ranking.rankingVersion,
                 businessServicesResearchVersion: BUSINESS_SERVICES_RESEARCH_VERSION, researchTopics: loaded.missingTopics,
+                researchCriteria: operatingCriteria(loaded.company.subindustry, "website", loaded.missingTopics).map(criterion => criterion.id),
                 evidenceKind: pdf.evidenceKind, sourceTruncated: pdf.truncated, truncationReasons: pdf.truncationReasons,
                 pdfPagesRead: pdf.pagesRead, pdfTotalPages: pdf.totalPages, pdfBytes: pdf.bytes } });
             if (!result) throw new Error("observation_not_persisted");
@@ -162,14 +167,20 @@ export async function refreshAccountResearch(companyId: string, options: {
         }
         if (!page.text.trim()) outcome = "source_empty";
         else {
-          const published = page.sourceDates.find(date => date.kind === "published")?.value;
+          // Match the website collector's date contract. Choosing the first of
+          // conflicting page dates invents certainty and creates another paid
+          // version when the ordinary website scan revisits identical text.
+          const publicationDates = [...new Set(page.sourceDates.filter(date => date.kind === "published").map(date => date.value))];
+          const published = publicationDates.length === 1 ? publicationDates[0] : null;
           const result = await enqueueObservation({ companyId, companyName: loaded.company.name, companyDomain: loaded.company.domain,
-            netsuiteInternalId: loaded.company.netsuite_internal_id, sourceKind: "website", sourceUrl: page.url, title: page.title || loaded.company.name,
+            netsuiteInternalId: loaded.company.netsuite_internal_id, sourceKind: "website", sourceUrl: page.url, title: page.title || `${loaded.company.name} company website`,
             text: page.text, eventDate: published ?? null, metadata: { focusedResearch: true, automaticResearch: options.automatic === true,
               researchRankingVersion: ranking.rankingVersion, businessServicesResearchVersion: BUSINESS_SERVICES_RESEARCH_VERSION,
-              researchTopics: loaded.missingTopics, sourceDates: page.sourceDates, sourceTruncated: page.truncated,
+              researchTopics: loaded.missingTopics,
+              researchCriteria: operatingCriteria(loaded.company.subindustry, "website", loaded.missingTopics).map(criterion => criterion.id),
+              sourceDates: page.sourceDates, sourceTruncated: page.truncated,
               ...(page.identityClaims?.length ? { identityClaims: page.identityClaims } : {}),
-              eventDateBasis: published ? "source_publication" : "unknown",
+              eventDateBasis: published ? "page_publication" : "unknown",
               discovery: { collector: "directed_research", url: claim.source_url, title: loaded.candidateTitles[claim.source_url] ?? null, eventDate: null },
               ...(page.companyIdentity && loaded.company.domain && sameCompanySite(page.url, `https://${String(loaded.company.domain).replace(/^https?:\/\//, "")}`)
                 ? { companyIdentity: page.companyIdentity } : {}) } });

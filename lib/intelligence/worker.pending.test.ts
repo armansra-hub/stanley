@@ -13,14 +13,14 @@ vi.mock("./publicContext", () => ({ loadPublicScaleObservations: async () => [],
 vi.mock("./narratives", () => ({ queueAccountStory: async () => undefined }));
 vi.mock("./events", () => ({ attachObservationEvent: vi.fn(), bindEventTrigger: vi.fn() }));
 vi.mock("./publish", () => ({ jevSignalType: () => null, publishJevFinding: mocks.publish }));
-import { runIntelligenceWorker } from "./worker";
+import { runIntelligenceWorker, workerEvidenceInput, evidencePackets } from "./worker";
 import { evidenceRequestFingerprint } from "./jev";
 import type { EvaluateEvidenceInput, EvaluateEvidenceResult } from "./evaluation";
 
 const observation = { id: "observation", company_id: "company", evidence_text: "Synthetic Consulting delivers client projects and quarterly reporting.",
   source_kind: "website", source_url: "https://example.test/about", title: "Our services", event_date: null,
   observed_at: "2026-09-19T12:00:00Z", is_current: true, metadata: {} };
-const evaluation: EvaluateEvidenceResult = { ok: true, model: "jev-1.13.0", questionVersion: "stanley-business-services-v3",
+const evaluation: EvaluateEvidenceResult = { ok: true, model: "jev-1.13.0", questionVersion: "stanley-business-services-v4",
   usage: { inputTokens: 123, outputTokens: 0 }, metadata: { provider: "typesafe-direct", rawAnswers: { companyRelevance: { type: "noul", noul: .95 } } },
   criteria: { project_delivery: .9 }, attributes: { signalType: "none", companyRelationship: "direct", companyRelevance: .95,
     concreteEvent: .1, evidenceSectionId: "s1", isAcquirer: 0, operationalComplexity: .2, growthRelevance: .1,
@@ -87,7 +87,7 @@ describe("paid-request intent recovery", () => {
     expect(completion).toBeNull();
     expect(savedResult?.parts).toHaveLength(0);
     const original = structuredClone(savedResult?.pendingRequest) as PendingRequest;
-    expect(original).toMatchObject({ start: 0, end: observation.evidence_text.length, input: { questionPack: "business-services-v3" } });
+    expect(original).toMatchObject({ start: 0, end: observation.evidence_text.length, input: { questionPack: "business-services-v4" } });
     expect(original.fingerprint).toBe(evidenceRequestFingerprint(original.input));
 
     company.name = "Synthetic Consulting Updated";
@@ -109,6 +109,18 @@ describe("paid-request intent recovery", () => {
     expect(savedResult?.parts[0].evaluation).toEqual(evaluation);
   });
 
+  it("resumes a pending v3 request by its original fingerprint after v4 deployment", async () => {
+    const input = workerEvidenceInput(observation, { name: "Synthetic Consulting", domain: "example.test" },
+      evidencePackets(observation.evidence_text, 6000)[0], null, [], undefined, "business-services-v3", "Original business address.");
+    const fingerprint = evidenceRequestFingerprint(input)!;
+    savedResult = { parts: [], pendingRequest: { start: 0, end: observation.evidence_text.length, input, fingerprint } };
+    nativeCache.set(fingerprint, { ...evaluation, questionVersion: "stanley-business-services-v3" });
+    expect(await runIntelligenceWorker(1)).toMatchObject({ outcomes: { complete: 1 } });
+    expect(mocks.evaluate).not.toHaveBeenCalled();
+    expect(mocks.durable).toHaveBeenCalledWith(expect.objectContaining({ fingerprint }));
+    expect(savedResult?.parts[0].evaluation.questionVersion).toBe("stanley-business-services-v3");
+  });
+
   it("retains a newly checkpointed request while its exact durable request is busy", async () => {
     mocks.durable.mockImplementation(async ({ fingerprint }) => {
       expect(savedResult?.pendingRequest?.fingerprint).toBe(fingerprint);
@@ -119,6 +131,6 @@ describe("paid-request intent recovery", () => {
     expect(checkpoints).toHaveLength(1);
     expect(savedResult?.pendingRequest).toEqual(checkpoints[0].pendingRequest);
     expect(completion).toMatchObject({ p_status: "queued", p_retry_seconds: 30,
-      p_result: { pendingRequest: { start: 0, end: observation.evidence_text.length, input: { questionPack: "business-services-v3" } } } });
+      p_result: { pendingRequest: { start: 0, end: observation.evidence_text.length, input: { questionPack: "business-services-v4" } } } });
   });
 });

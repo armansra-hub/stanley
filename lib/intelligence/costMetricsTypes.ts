@@ -23,5 +23,7 @@ export type JevCostMetrics = {
   attributionStartedAt: string | null;
   month: JevCostPeriod;
   last24h: JevCostPeriod;
+  /** Optional during a rolling database/code deployment. */
+  last1h?: JevCostPeriod;
 };
 export type JevCostSnapshot = ({ available: true } & JevCostMetrics) | { available: false };

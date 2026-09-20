@@ -31,6 +31,14 @@ describe("Jev cost diagnostics", () => {
     const dollars = fixture(); dollars.month.totals.estimatedUsd = Number.NaN;
     expect(parseJevCostMetrics(dollars)).toEqual({ available: false });
   });
+  it("accepts rolling deployments without an hourly window but validates it when present", () => {
+    const value = fixture();
+    expect(parseJevCostMetrics(value).available).toBe(true);
+    value.last1h = structuredClone(value.last24h);
+    expect(parseJevCostMetrics(value)).toMatchObject({ available: true, last1h: value.last1h });
+    value.last1h.totals.requests = -1;
+    expect(parseJevCostMetrics(value)).toEqual({ available: false });
+  });
   it("marks a missing migration or network error unavailable without throwing into the evidence read", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: { code: "PGRST202" } }).mockRejectedValueOnce(new Error("private connection detail"));
     expect(await readJevCostMetrics()).toEqual({ available: false });

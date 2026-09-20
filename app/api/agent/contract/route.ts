@@ -35,6 +35,7 @@ export async function GET(req: Request) {
       "GET  /api/agent/messages?to=codex&unread=1": "read your inbox (marks read; add &peek=1 to leave unread)",
       "POST /api/agent/messages": "{ to: 'claude'|'codex'|'arman'|'all', subject, body?, kind?: note|status|question|answer|handoff|error|contract, ref?: {} }",
       "GET  /api/agent/status": "the live board — who is working on what, with stall detection",
+      "GET  /api/agent/intelligence/usage": "Read-only Jev cost aggregates for the last hour, 24 hours and month. No provider calls or work dispatch.",
       "POST /api/agent/status": "{ title, state?, done?, total?, note?, detail? } → returns taskId; pass taskId back to update/finish",
       "GET  /api/agent/read?table=companies&…": "Read allowlisted tables and scalar columns. Scalar PostgREST filters (eq/gt/like/in/or), order, and limit (max 1000) are supported; relationship embeds, aliases, spreads, casts, JSON paths, and computed selects are rejected. Call without ?table to list readable tables.",
       "GET  /api/agent/lead?internalId=123": "everything about one lead in one call — company rows, live triggers, record text, prior scores. Also ?name=<fuzzy>.",

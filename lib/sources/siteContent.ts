@@ -85,7 +85,7 @@ function withinArticle(node: HtmlNode): boolean {
 
 /** Retain the complete selected container and paragraph boundaries, including
  * editorial headers, footers and asides. Multiple article cards remain a list. */
-export function extractSiteText(html: string): string {
+function selectedSiteContent(html: string) {
   const root = htmlTree(html);
   const nodes: HtmlNode[] = [];
   const collect = (node: HtmlNode) => {
@@ -102,6 +102,44 @@ export function extractSiteText(html: string): string {
     : articleBodies.length === 1 ? articleBodies[0]
       : mains.length === 1 ? mains[0]
         : contentBodies.length === 1 ? contentBodies[0] : root;
+  return { root, selected };
+}
+
+/** Page dates follow the same structural source boundary as retained prose.
+ * A single unambiguous external byline remains usable, but widget calendars,
+ * comments and related-story timestamps cannot change the article's identity. */
+function siteTimes({ root, selected }: ReturnType<typeof selectedSiteContent>): { attributes: Record<string, string>; text: string }[] {
+  const collect = (node: HtmlNode, result: { attributes: Record<string, string>; text: string }[]) => {
+    if (omitted(node)) return;
+    if (selected === root && /^(?:header|footer)$/.test(node.tag) && !withinArticle(node)) return;
+    if (node.tag === "time") {
+      const strings = (value: HtmlNode): string => value.children.map(child => typeof child === "string" ? child : omitted(child) ? "" : strings(child)).join(" ");
+      result.push({ attributes: node.attrs, text: decodeEntities(strings(node)).replace(/\s+/g, " ").trim() });
+    }
+    for (const child of node.children) if (typeof child !== "string") collect(child, result);
+  };
+  const scoped: { attributes: Record<string, string>; text: string }[] = [];
+  collect(selected, scoped);
+  if (scoped.length || selected === root) return scoped;
+  const fallback: typeof scoped = [];
+  collect(root, fallback);
+  return fallback.length === 1 ? fallback : [];
+}
+
+function siteDateMeta(root: HtmlNode): Record<string, string>[] {
+  const result: Record<string, string>[] = [];
+  const collect = (node: HtmlNode) => {
+    // Document-head metadata is authoritative page context. Elsewhere, apply
+    // the same widget exclusions as prose instead of harvesting every card.
+    if (node.tag !== "head" && omitted(node)) return;
+    if (node.tag === "meta") result.push(node.attrs);
+    for (const child of node.children) if (typeof child !== "string") collect(child);
+  };
+  collect(root);
+  return result;
+}
+
+function renderSiteText({ root, selected }: ReturnType<typeof selectedSiteContent>): string {
   const pieces: string[] = [];
   const render = (node: HtmlNode) => {
     if (omitted(node)) return;
@@ -118,6 +156,16 @@ export function extractSiteText(html: string): string {
   return decodeEntities(pieces.join(""))
     .split(/\r?\n/).map(line => line.replace(/\s+/g, " ").trim())
     .filter(Boolean).join("\n\n").trim();
+}
+
+/** One parse supplies both retained text and its matching date boundaries. */
+export function extractSiteContent(html: string) {
+  const content = selectedSiteContent(html);
+  return { text: renderSiteText(content), times: siteTimes(content), dateMeta: siteDateMeta(content.root) };
+}
+
+export function extractSiteText(html: string): string {
+  return renderSiteText(selectedSiteContent(html));
 }
 
 const ORGANIZATIONS = new Set(["Organization", "LocalBusiness", "Corporation", "NewsMediaOrganization", "ProfessionalService", "LegalService", "EmploymentAgency", "FinancialService", "MedicalOrganization", "NGO", "EducationalOrganization", "SportsOrganization", "Store", "AutomotiveBusiness", "EntertainmentBusiness", "FoodEstablishment", "HealthAndBeautyBusiness", "HomeAndConstructionBusiness", "LodgingBusiness", "RealEstateAgent", "TravelAgency"]);

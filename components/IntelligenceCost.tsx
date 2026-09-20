@@ -39,22 +39,23 @@ function CostTable({ rows, label }: { rows: JevCostGroup[]; label: string }) {
 }
 
 export default function IntelligenceCost({ cost }: { cost: JevCostSnapshot | undefined }) {
-  const [period, setPeriod] = useState<"month" | "last24h">("month");
+  const [period, setPeriod] = useState<"month" | "last24h" | "last1h">("last1h");
   if (!cost?.available) return <section aria-label="Jev usage and cost" className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5">
     <h2 className="western text-2xl">Jev usage and cost</h2>
     <p className="mt-2 text-sm text-[var(--text-muted)]">Cost details are temporarily unavailable. Refresh to try again; this does not mean usage is zero.</p>
   </section>;
-  const selected = cost[period], totals = selected.totals;
+  const activePeriod = period === "last1h" && !cost.last1h ? "last24h" : period;
+  const selected = cost[activePeriod]!, totals = selected.totals;
   const hasUnattributedHistory = selected.byPurpose.some(group => group.key === "historical_unattributed");
   return <section aria-label="Jev usage and cost" className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="western text-2xl">Jev usage and cost</h2>
       <div className="flex gap-1 rounded-md border p-1 text-xs" aria-label="Cost period">
-        {([['month', 'This month (UTC)'], ['last24h', 'Last 24 hours']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={period === value}
-          onClick={() => setPeriod(value)} className={`rounded px-2 py-1 ${period === value ? "bg-[var(--surface-2)] text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>{label}</button>)}
+        {([['last1h', 'Last hour'], ['last24h', 'Last 24 hours'], ['month', 'This month (UTC)']] as const).filter(([value]) => value !== 'last1h' || cost.last1h).map(([value, label]) => <button key={value} type="button" aria-pressed={activePeriod === value}
+          onClick={() => setPeriod(value)} className={`rounded px-2 py-1 ${activePeriod === value ? "bg-[var(--surface-2)] text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>{label}</button>)}
       </div>
     </div>
-    <p className="mt-2 text-xs text-[var(--text-muted)]">Direct TypeSafe usage reported to Stanley. Claude and other providers are excluded.</p>
+    <p className="mt-2 text-xs text-[var(--text-muted)]">Direct TypeSafe usage reported to Stanley. Claude and other providers are excluded. The last hour shows the current spending rate; monthly totals include earlier work.</p>
     <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
       <div><p className="text-xs uppercase text-[var(--text-muted)]">Known usage estimate</p><p className="mt-1 text-xl font-semibold tabular-nums">{usd(totals.estimatedUsd)}</p><p className="mt-1 text-xs text-[var(--text-muted)]">{count(totals.knownUsageRequests)} requests with reported usage</p></div>
       <div><p className="text-xs uppercase text-[var(--text-muted)]">Reported input tokens</p><p className="mt-1 text-xl font-semibold tabular-nums">{count(totals.reportedInputTokens)}</p><p className="mt-1 text-xs text-[var(--text-muted)]">Provider-reported token counts</p></div>

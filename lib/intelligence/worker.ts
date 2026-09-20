@@ -1,6 +1,6 @@
 import "server-only";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { evaluateEvidence, estimateEvidenceInputTokens, evidenceRequestFingerprint, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION } from "./jev";
+import { evaluateEvidence, estimateEvidenceInputTokens, evidenceRequestFingerprint, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V4_QUESTION_VERSION } from "./jev";
 import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
 import { publishJevFinding, jevSignalType, type JevPublicationReceipt } from "./publish";
 import type { EvaluateEvidenceInput, EvaluateEvidenceResult } from "./evaluation";
@@ -60,10 +60,10 @@ export function workerEvidenceInput(
   packet: { start: number; end: number; text: string }, question: string | null,
   feedback: EvaluateEvidenceInput["feedbackExamples"],
   publicScaleContext?: PublicScaleContext,
-  businessServices: boolean | "business-services-v1" | "business-services-v2" | "business-services-v3" = "business-services-v3",
+  businessServices: boolean | "business-services-v1" | "business-services-v2" | "business-services-v3" | "business-services-v4" = "business-services-v4",
   companyIdentityContext?: string,
 ): EvaluateEvidenceInput {
-  const questionPack = businessServices === true ? "business-services-v3" : businessServices || undefined;
+  const questionPack = businessServices === true ? "business-services-v4" : businessServices || undefined;
   const sourceDates = (Array.isArray(observation.metadata?.sourceDates) ? observation.metadata.sourceDates : [])
     .filter((value): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value))
     .slice(0, 12).map(value => Object.fromEntries(["kind", "value", "source"].flatMap(key =>
@@ -85,7 +85,7 @@ export function workerEvidenceInput(
     ...(surroundingContext ? { surroundingContext } : {}),
     sections: evidencePackets(packet.text, 1200).map(({ text }, i) => ({ id: `s${i + 1}`, text })),
     ...(questionPack ? { questionPack } : {}),
-    ...(["business-services-v2", "business-services-v3"].includes(questionPack || "") ? {
+    ...(["business-services-v2", "business-services-v3", "business-services-v4"].includes(questionPack || "") ? {
       ...(companyIdentityContext ? { companyIdentityContext } : {}),
       eventDateBasis: typeof observation.metadata?.eventDateBasis === "string" && Buffer.byteLength(observation.metadata.eventDateBasis, "utf8") <= 128 ? observation.metadata.eventDateBasis : "unknown",
       ...(sourceDates.length ? { sourceDateContext: JSON.stringify(sourceDates) } : {}),
@@ -148,15 +148,16 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     question = view.question;
   }
   const feedback = await loadFeedbackExamples(observation.company_id);
-  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION].includes(part.evaluation.questionVersion));
+  const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V4_QUESTION_VERSION].includes(part.evaluation.questionVersion));
   // Preserve already-paid v2 work under its original contract. New jobs receive
   // public baseline context; no completed Jev finding is reviewed again.
   const pendingPack = job.result?.pendingRequest?.input.questionPack;
   const contract = priorParts[0]?.evaluation.questionVersion
-    ?? (pendingPack === "business-services-v2" ? JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION
-      : pendingPack === "business-services-v1" ? JEV_BUSINESS_SERVICES_QUESTION_VERSION : JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION);
+    ?? (pendingPack === "business-services-v3" ? JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION
+      : pendingPack === "business-services-v2" ? JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION
+      : pendingPack === "business-services-v1" ? JEV_BUSINESS_SERVICES_QUESTION_VERSION : JEV_BUSINESS_SERVICES_V4_QUESTION_VERSION);
   const usePublicScale = contract !== JEV_QUESTION_VERSION;
-  const businessServices = contract === JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION ? "business-services-v3" : contract === JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION ? "business-services-v2" : contract === JEV_BUSINESS_SERVICES_QUESTION_VERSION ? "business-services-v1" : false;
+  const businessServices = contract === JEV_BUSINESS_SERVICES_V4_QUESTION_VERSION ? "business-services-v4" : contract === JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION ? "business-services-v3" : contract === JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION ? "business-services-v2" : contract === JEV_BUSINESS_SERVICES_QUESTION_VERSION ? "business-services-v1" : false;
   const parts = priorParts.filter(part => part.evaluation.questionVersion === contract);
   const publications = job.result?.publications ?? [];
   let publicScaleContext: PublicScaleContext | undefined;
@@ -169,7 +170,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     }
   }
   let companyIdentityContext: string | undefined;
-  if (businessServices === "business-services-v2" || businessServices === "business-services-v3") {
+  if (businessServices === "business-services-v2" || businessServices === "business-services-v3" || businessServices === "business-services-v4") {
     companyIdentityContext = job.result?.companyIdentityContext;
     if (!companyIdentityContext) {
       if (!identityContexts.has(observation.company_id)) identityContexts.set(observation.company_id,

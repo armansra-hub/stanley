@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
-import { decodeEntities, htmlAttributes, extractSiteText, extractCompanyIdentity, type SiteCompanyIdentity } from "./siteContent";
+import { decodeEntities, htmlAttributes, extractSiteText, extractSiteContent, extractCompanyIdentity, type SiteCompanyIdentity } from "./siteContent";
 import { extractIdentityClaims, type SiteIdentityClaim } from "./companyIdentityEvidence";
 export { decodeEntities, htmlAttributes } from "./siteContent";
 
@@ -97,7 +97,8 @@ export function htmlToVisibleText(html: string): string {
 
 /** Stable content excludes navigation/footer chrome; dates retain their source kind. */
 export function sitePageEvidence(html: string, url: string): SitePageEvidence {
-  const text = extractSiteText(html);
+  const content = extractSiteContent(html);
+  const text = content.text;
   const companyIdentity = extractCompanyIdentity(html, url, candidate => sameCompanySite(candidate, url));
   const sourceDates: SiteDateReference[] = [];
   const add = (value: string | undefined, kind: SiteDateReference["kind"], source: string) => {
@@ -108,19 +109,18 @@ export function sitePageEvidence(html: string, url: string): SitePageEvidence {
     const normalized = new Date(/^\d{4}-/.test(raw) ? raw : `${raw} UTC`).toISOString();
     if (!sourceDates.some((date) => date.value === normalized && date.kind === kind)) sourceDates.push({ value: normalized, kind, source });
   };
-  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
-    const attrs = htmlAttributes(match[0]);
+  for (const attrs of content.dateMeta) {
     const name = (attrs.property ?? attrs.name ?? attrs.itemprop ?? "").toLowerCase();
     if (/^(article:published_time|datepublished|date|pubdate)$/.test(name)) add(attrs.content, "published", name);
     if (/^(article:modified_time|datemodified|last-modified)$/.test(name)) add(attrs.content, "modified", name);
   }
-  for (const match of html.matchAll(/<time\b([^>]*)>([\s\S]*?)<\/time\s*>/gi)) {
-    const attrs = htmlAttributes(match[1]);
+  for (const time of content.times) {
+    const attrs = time.attributes;
     const kind = attrs.itemprop?.toLowerCase() === "datepublished" ? "published" : attrs.itemprop?.toLowerCase() === "datemodified" ? "modified" : "time";
-    add(attrs.datetime ?? htmlToVisibleText(match[2]), kind, `time[${attrs.itemprop ?? "datetime"}]`);
+    add(attrs.datetime ?? time.text, kind, `time[${attrs.itemprop ?? "datetime"}]`);
   }
-  for (const match of html.matchAll(/"(datePublished|dateModified)"\s*:\s*"([^"]+)"/g)) {
-    add(match[2], match[1] === "datePublished" ? "published" : "modified", `json-ld.${match[1]}`);
+  for (const date of pageStructuredDates(html, url)) {
+    add(date.value, date.kind, date.source);
   }
   for (const match of text.slice(0, 3000).matchAll(/\b(Published|Posted|Last updated|Updated)(?:\s+on)?\s*:?\s*((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2})\b/gi)) {
     add(match[2], /updated/i.test(match[1]) ? "modified" : "published", "labeled_visible_date");
@@ -132,4 +132,43 @@ export function sitePageEvidence(html: string, url: string): SitePageEvidence {
     ...(companyIdentity ? { companyIdentity } : {}),
     identityClaims: extractIdentityClaims(html, url, companyIdentity),
   };
+}
+
+/** JSON dates must belong to this page, not related-post cards, publisher
+ * organizations, scripts or recommendation API payloads elsewhere in its HTML. */
+function pageStructuredDates(html: string, pageUrl: string): SiteDateReference[] {
+  const candidates: Record<string, unknown>[] = [];
+  const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+  let remaining = 300;
+  const visit = (value: unknown) => {
+    if (--remaining < 0) return;
+    if (Array.isArray(value)) { for (const child of value) visit(child); return; }
+    if (!object(value)) return;
+    const types = (Array.isArray(value["@type"]) ? value["@type"] : [value["@type"]]).filter(type => typeof type === "string");
+    if (types.some(type => /^(?:https?:\/\/schema\.org\/)?(?:Article|NewsArticle|BlogPosting|ScholarlyArticle|TechArticle|WebPage|AboutPage|ContactPage|FAQPage)$/.test(type as string))) candidates.push(value);
+    for (const child of Object.values(value)) if (object(child) || Array.isArray(child)) visit(child);
+  };
+  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+    if (htmlAttributes(match[1]).type?.toLowerCase() !== "application/ld+json" || match[2].length > 200_000) continue;
+    try { visit(JSON.parse(match[2])); } catch { /* Malformed schema is not a date source. */ }
+  }
+  const key = (value: string) => {
+    try { const parsed = new URL(value, pageUrl); parsed.hash = ""; parsed.hostname = parsed.hostname.replace(/^www\./, "");
+      return `${parsed.hostname}${parsed.pathname.replace(/\/$/, "")}${parsed.search}`;
+    } catch { return null; }
+  };
+  const pageKey = key(pageUrl);
+  const references = (node: Record<string, unknown>) => {
+    // An explicit different article URL overrides a same-document fragment ID.
+    if (typeof node.url === "string") return [node.url];
+    const main = typeof node.mainEntityOfPage === "string" ? node.mainEntityOfPage
+      : object(node.mainEntityOfPage) ? node.mainEntityOfPage["@id"] ?? node.mainEntityOfPage.url : null;
+    return [typeof main === "string" ? main : node["@id"]].filter((value): value is string => typeof value === "string");
+  };
+  const exact = candidates.filter(node => references(node).some(value => key(value) === pageKey));
+  // Common simple Article schema omits URL; accept only a single unambiguous
+  // document entity. Lists of unbound related articles do not date this page.
+  const selected = exact.length ? exact : candidates.length === 1 && !references(candidates[0]).length ? candidates : [];
+  return selected.flatMap(node => (["datePublished", "dateModified"] as const).flatMap(property => typeof node[property] === "string"
+    ? [{ value: node[property] as string, kind: property === "datePublished" ? "published" as const : "modified" as const, source: `json-ld.${property}` }] : []));
 }

@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), evaluate: vi.fn(), reserve: vi.fn(), publish: vi.fn(), attach: vi.fn(), bind: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }), withServiceDeadline: (_deadline: number, run: () => unknown) => run() }));
 vi.mock("./observations", () => ({ intelligenceEnabled: () => true, INTELLIGENCE_VERSION: "evidence-v2" }));
-vi.mock("./jev", () => ({ evaluateEvidence: mocks.evaluate, estimateEvidenceInputTokens: () => 100, evidenceRequestFingerprint: () => "a".repeat(64),
-  JEV_QUESTION_VERSION: "stanley-evidence-v2", JEV_PUBLIC_SCALE_QUESTION_VERSION: "stanley-public-scale-v1", JEV_BUSINESS_SERVICES_QUESTION_VERSION: "stanley-business-services-v1", JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION: "stanley-business-services-v2", JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION: "stanley-business-services-v3" }));
+vi.mock("./jev", async importOriginal => ({ ...await importOriginal<typeof import("./jev")>(),
+  evaluateEvidence: mocks.evaluate, estimateEvidenceInputTokens: () => 100, evidenceRequestFingerprint: () => "a".repeat(64) }));
 vi.mock("./budget", () => ({ reserveJev: mocks.reserve, settleJev: vi.fn(), secondsUntilNextMonth: () => 9999 }));
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => undefined }));

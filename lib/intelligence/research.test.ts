@@ -14,4 +14,12 @@ describe("directed research rotation", () => {
     expect(researchCandidates([], [{ source_url: "https://unverified.test/", next_attempt_at: "2026-09-01", last_attempt_at: null }], () => 1, now)).toEqual([]);
     expect(researchCandidates(Array.from({ length: 150 }, (_, i) => `https://example.test/${i}`), [], () => 1, now)).toHaveLength(100);
   });
+  it("does not rank another refresh's leased pages and makes them available at lease expiry", () => {
+    const attempts = [
+      { source_url: "leased", next_attempt_at: "2026-09-18T11:00:00Z", last_attempt_at: "2026-09-18T11:59:00Z", lease_until: "2026-09-18T12:02:00Z" },
+      { source_url: "expired", next_attempt_at: "2026-09-18T11:00:00Z", last_attempt_at: "2026-09-18T11:00:00Z", lease_until: "2026-09-18T12:00:00Z" },
+    ];
+    expect(researchCandidates(["leased", "expired", "new"], attempts, () => 1, now)).toEqual(["new", "expired"]);
+    expect(researchCandidates(["leased", "expired", "new"], attempts, () => 1, now + 120_000)).toEqual(["new", "expired", "leased"]);
+  });
 });

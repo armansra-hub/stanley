@@ -9,7 +9,7 @@ export const visibilityPolicy = (mode:VisibilityMode) => mode === "explore" ? EX
 /** Existing feed-routing rules; these do not alter Jev output or add a second opinion. */
 export function jevPublicationRoute(result: VisibilityFinding, eventDate: string | null, now = Date.now(), policy: VisibilityPolicy = DEFAULT_VISIBILITY_POLICY): { type: string | null; reason: string } {
   const a = result.attributes;
-  const classified = ["stanley-business-services-v2", "stanley-business-services-v3"].includes(result.questionVersion);
+  const classified = ["stanley-business-services-v2", "stanley-business-services-v3", "stanley-business-services-v4"].includes(result.questionVersion);
   if (classified) {
     // These are Jev's choices from the original evidence request, not another
     // interpretation or a headline/keyword filter. Old paid contracts are unchanged.

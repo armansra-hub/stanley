@@ -8,7 +8,7 @@ const input = { companyName: "Synthetic Services", companyDomain: "example.test"
     "https://example.test/services/project-billing", "https://example.test/our-company"] };
 const raw = { type: "noul", noul: .92, confidence: .61 };
 const evaluation = () => ({ ok: true, model: "jev-1.13.0", questionVersion: "stanley-research-ranking-v1",
-  usage: { inputTokens: 2300, outputTokens: 0 }, criteria: { source_1: .2, source_2: .92, source_3: .8, source_4: .1 },
+  usage: { inputTokens: 2300, outputTokens: 0 }, criteria: { source_1: .2, source_2: .92, source_3: .1, source_4: .8 },
   metadata: { rawAnswers: { criterion_source_2: raw } } });
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubEnv("TYPESAFE_API_KEY", "synthetic-test-key");
@@ -49,6 +49,15 @@ describe("directed source selection", () => {
     mocks.evaluate.mockResolvedValue({ ...evaluation(), criteria: { source_1: .5, source_2: .5, source_3: .5, source_4: .5 } });
     expect((await rankResearchCandidates(input)).candidates).toEqual(input.candidates);
     expect(mocks.evaluate).toHaveBeenCalledOnce();
+  });
+  it("uses one exact request for an unchanged option/topic set while preserving each native URL score", async () => {
+    const reversed = { ...input, candidates: [...input.candidates].reverse(), missingTopics: [...input.missingTopics].reverse() };
+    expect(researchRankingInput(reversed)).toEqual(researchRankingInput(input));
+    const result = await rankResearchCandidates(reversed);
+    expect(result.candidates).toEqual([input.candidates[1], input.candidates[2], input.candidates[0], input.candidates[3]]);
+    expect(result.scores.find(score => score.url === input.candidates[1])).toMatchObject({ optionId: "source_2", score: .92, rawAnswer: raw });
+    expect(researchRankingInput({ ...input, missingTopics: [...input.missingTopics, "inventory"] })).not.toEqual(researchRankingInput(input));
+    expect(researchRankingInput({ ...input, candidateTitles: { [input.candidates[0]]: "New company systems project" } })).not.toEqual(researchRankingInput(input));
   });
   it.each([0, 1, 2, 3])("does not spend on %s options because they all fit the concurrent read batch", async count => {
     const candidates = input.candidates.slice(0, count);

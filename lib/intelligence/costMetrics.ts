@@ -23,7 +23,8 @@ export function parseJevCostMetrics(value: unknown): JevCostSnapshot {
   if (!record(value) || !timestamp(value.asOf) || !timestamp(value.monthStart)
     || (value.attributionStartedAt !== null && !timestamp(value.attributionStartedAt))
     || typeof value.usdPerMillionInputTokens !== "number" || !Number.isFinite(value.usdPerMillionInputTokens) || value.usdPerMillionInputTokens <= 0
-    || !validPeriod(value.month) || !validPeriod(value.last24h)) return { available: false };
+    || !validPeriod(value.month) || !validPeriod(value.last24h)
+    || (value.last1h !== undefined && !validPeriod(value.last1h))) return { available: false };
   return { ...(value as JevCostMetrics), available: true };
 }
 

@@ -31,4 +31,15 @@ describe("Jev spending presentation", () => {
     expect(text).toContain("they are not guessed into research or TAM");
     expect(text).toContain("Claude and other providers are excluded");
   });
+  it("opens on current hourly spending rather than cumulative monthly charges", () => {
+    const hourTotals: JevCostTotals = { requests: 1, knownUsageRequests: 1, reportedInputTokens: 1_000_000,
+      estimatedUsd: .042, unknownUsageRequests: 0, unknownUsageReserveUsd: 0, inFlightRequests: 0, inFlightReserveUsd: 0 };
+    const hour = { totals: hourTotals, byPurpose: [], byActivity: [], byWorkload: [] };
+    const history = { ...hour, totals: { ...hourTotals, estimatedUsd: 47.31 } };
+    const text = render({ available: true, asOf: "2026-09-20T01:00:00Z", monthStart: "2026-09-01T00:00:00Z",
+      usdPerMillionInputTokens: .042, attributionStartedAt: null, month: history, last24h: history, last1h: hour });
+    expect(text).toContain("Last hour");
+    expect(text).toContain("Known usage estimate$0.042");
+    expect(text).not.toContain("$47.31");
+  });
 });

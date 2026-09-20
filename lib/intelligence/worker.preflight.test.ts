@@ -74,7 +74,7 @@ describe("worker predispatch budget handling", () => {
     expect(finishes.every(([, args]) => args.p_result.companyIdentityContext.includes("unavailable"))).toBe(true);
     expect(mocks.settle.mock.calls.every(([, tokens]) => tokens === 0)).toBe(true);
   });
-  it.each(["stanley-evidence-v2", "stanley-public-scale-v1", "stanley-business-services-v1", "stanley-business-services-v2", "stanley-business-services-v3"])("resumes paid %s results without reinterpreting them or rereading the baseline", async (questionVersion) => {
+  it.each(["stanley-evidence-v2", "stanley-public-scale-v1", "stanley-business-services-v1", "stanley-business-services-v2", "stanley-business-services-v3", "stanley-business-services-v4"])("resumes paid %s results without reinterpreting them or rereading the baseline", async (questionVersion) => {
     const nativeAnswer = { type: "score", score: 2 };
     const evaluation = { ok: true, questionVersion, model: "jev-1.13.0", usage: { inputTokens: 500, outputTokens: 30 },
       attributes: { companyRelationship: "direct", companyRelevance: .96, concreteEvent: .9, operationalComplexity: .5,

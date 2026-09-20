@@ -56,6 +56,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   const [notice, setNotice] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [question, setQuestion] = useState("");
+  const [fallbackCost, setFallbackCost] = useState<JevCostSnapshot>();
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const requestId = useRef(0);
   const requestBusy = useRef(false);
@@ -91,7 +92,14 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       setUpdatedAt(new Date().toISOString());
       return next;
     } catch {
-      if (current === requestId.current) setError("Could not load intelligence. Try Refresh to get the latest findings.");
+      if (current === requestId.current) {
+        setError("Could not load intelligence. Try Refresh to get the latest findings.");
+        try {
+          const costResponse = await fetch(`${API}/cost`, { cache: "no-store" });
+          const cost: JevCostSnapshot = costResponse.ok ? await costResponse.json() : { available: false };
+          if (current === requestId.current) setFallbackCost(cost);
+        } catch { if (current === requestId.current) setFallbackCost({ available: false }); }
+      }
       return null;
     } finally {
       if (current === requestId.current) { setLoading(false); requestBusy.current = false; }
@@ -189,7 +197,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       </section>}
 
       {data?.health && <IntelligenceHealth health={data.health} />}
-      {data && <IntelligenceCost cost={data.jevCost} />}
+      <IntelligenceCost cost={data?.jevCost ?? fallbackCost} />
       <OperatingMatches onOpenAccount={onOpenAccount} enabled={data?.enabled === true} refreshKey={updatedAt} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>

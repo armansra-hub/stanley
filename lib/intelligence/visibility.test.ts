@@ -3,6 +3,12 @@ import {DEFAULT_VISIBILITY_POLICY,EXPLORATORY_VISIBILITY_POLICY,jevPublicationRo
 const now=Date.parse('2026-09-19T12:00:00Z');
 const finding=(patch:Record<string,unknown>={}):VisibilityFinding=>({questionVersion:'stanley-business-services-v3',criteria:{systems_project:.7},attributes:{signalType:'erp_tech',companyRelationship:'direct',contentClass:'actual_company_development',companyRole:'subject',contractActivity:'none',operatingChangeType:'systems_change',evidenceSectionId:'s1',companyRelevance:.7,concreteEvent:.7,isAcquirer:.1,operationalComplexity:.7,growthRelevance:.7,evidenceStrength:.8,requiresResearch:.7,...patch} as VisibilityFinding['attributes']});
 describe('native visibility policy',()=>{
+ it('keeps v4 classifications and routing identical to v3 including editorial exclusion',()=>{
+  for(const patch of [{companyRelevance:.95,concreteEvent:.9},{companyRelevance:.95,concreteEvent:.9,contentClass:'editorial_coverage'}]){
+   const old=finding(patch);
+   expect(jevPublicationRoute({...old,questionVersion:'stanley-business-services-v4'},'2026-09-18',now)).toEqual(jevPublicationRoute(old,'2026-09-18',now));
+  }
+ });
  it('preserves feed defaults while explicitly comparing a broader read-only policy',()=>{
   const value=finding();const saved=structuredClone(value);
   expect(DEFAULT_VISIBILITY_POLICY).toEqual({companyRelevance:.8,concreteEvent:.75,acquirerProbability:.8,topicProbability:.8,eventMaxAgeDays:180});
