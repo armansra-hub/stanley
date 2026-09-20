@@ -69,6 +69,12 @@ export function contractMilestones(award: ContractAward, now = Date.now()): Cont
   });
 }
 
+/** The signal is entry into a dated reminder window, not when a collector first
+ * discovers it. Historical windows must stay behind a later human dismissal. */
+export function contractTimingSignalDate(milestone: ContractMilestone): string {
+  return new Date(Date.parse(`${milestone.date}T00:00:00Z`) - milestone.stage * DAY).toISOString().slice(0, 10);
+}
+
 /** Fully sourced structured context goes to the normal native Jev interpretation
  * and research path once per material award version. No second grader. */
 export function contractObservation(company: Company, award: ContractAward, recipient: string) {
@@ -191,6 +197,7 @@ export async function runContractIntelligence(limit = 5, deadline = Date.now() +
         }
         for (const milestone of contractMilestones(award)) {
           stage = "milestone_save";
+          const windowEnteredOn = contractTimingSignalDate(milestone);
           const dedupe = `contract:${award.id}:${milestone.kind}:${milestone.date}:${milestone.stage}`;
           const receipt = await checked(db.from("contract_milestones").upsert({ company_id: company.id, federal_award_id: award.id,
             kind: milestone.kind, milestone_date: milestone.date, label: milestone.label, source_url: milestone.sourceUrl??award.source_url,
@@ -199,10 +206,11 @@ export async function runContractIntelligence(limit = 5, deadline = Date.now() +
           if (!receipt) throw new Error("contract_milestone_receipt_missing");
           stage = "milestone_trigger";
           const inserted = await recordPublicGrowthTrigger(company.id, { type: "contract_timing", family: "federal_contract",
-            dedupeKey: dedupe, strength: 70, signalDate: new Date().toISOString().slice(0, 10),
+            dedupeKey: dedupe, strength: 70, signalDate: windowEnteredOn,
             summary: `${milestone.label} ${milestone.date} · ${award.awarding_agency ?? "Government"} · ${award.award_id ?? "contract"}`,
             metadata: { milestoneId: receipt.id, federalAwardId: award.id, generatedAwardId: award.generated_award_id,
               milestoneDate: milestone.date, milestoneKind: milestone.kind, reminderWindowDays: milestone.stage,
+              reminderWindowEnteredOn: windowEnteredOn,
               milestoneSourceUrl: milestone.sourceUrl??award.source_url,
               factNotPrediction: true } }, "USAspending · known contract date", milestone.sourceUrl??award.source_url);
           if (inserted) milestones++;

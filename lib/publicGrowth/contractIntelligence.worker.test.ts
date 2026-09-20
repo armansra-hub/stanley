@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), enqueue: vi.fn(), native: vi.fn(), priority: vi.fn(), trigger: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }) }));
@@ -25,8 +25,19 @@ beforeEach(() => {
   mocks.priority.mockResolvedValue(0);
   mocks.from.mockImplementation((table: string) => query({ data: table === "triggers" ? [] : null, error: null }));
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("contract worker failure receipts", () => {
+  it("publishes the actual reminder-window date rather than the collection date", async () => {
+    vi.spyOn(Date,"now").mockReturnValue(Date.parse("2026-09-20T12:00:00Z"));
+    mocks.rpc.mockImplementation(async(name:string)=>({data:name==="contract_intelligence_claim"?claim([{...award,end_date:"2026-12-31"}]):true,error:null}));
+    mocks.from.mockImplementation((table:string)=>query({data:table==="contract_milestones"?{id:"milestone"}:table==="triggers"?[]:null,error:null}));
+    mocks.trigger.mockResolvedValue(true);
+    const result=await runContractIntelligence(1);
+    expect(result).toMatchObject({checkedAccounts:1,failedAccounts:0,milestones:1});
+    expect(mocks.trigger).toHaveBeenCalledWith(company.id,expect.objectContaining({type:"contract_timing",signalDate:"2026-07-04",
+      metadata:expect.objectContaining({milestoneDate:"2026-12-31",reminderWindowDays:180,reminderWindowEnteredOn:"2026-07-04"})}),expect.any(String),award.source_url);
+  });
   it("persists the failing stage and SQLSTATE without advancing the award or exposing database text", async () => {
     mocks.rpc.mockImplementation(async (name: string) => ({ data: name === "contract_intelligence_claim" ? claim() : true, error: null }));
     mocks.from.mockReturnValue(query({ data: null, error: { code: "57014", message: "private SQL and credential payload", details: "private" } }));

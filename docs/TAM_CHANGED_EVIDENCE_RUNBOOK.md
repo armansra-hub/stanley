@@ -8,6 +8,23 @@ The existing TAM task owns its coordinator and pending-intent reconciliation. Do
 
 The current Codex `finish-stanley-jev-build` heartbeat should perform the refresh and handoff below. The other TAM watchdog continues to own normal grading. Use the Codex automation service, not a new timer, background loop, or Windows scheduled task. Stay quiet when unchanged; notify only on meaningful progress, completion, repeated failure, or required user action.
 
+### Optional dispatch pause after owner review
+
+Migration 0098 adds an optional, exact-run/seed admission gate. It defaults to `paused:false`, revision0; deployment does not pause work. The canonical owner reviewed it without a blocking finding. At the recorded handoff checkpoint no gate pause had been executed, and the owner was allowing its current work to drain naturally.
+
+If the owner chooses to use it, `tools/tam_dispatch_gate.py` reads the active canonical run/seed, saves an operation intent, and changes only the broad pending-record selector. It does not revoke a claim, stop an admitted record, change a grade, edit runtime files or replace `quiesce`. **A selector can already be in flight when the pause takes effect.** Wait for the owner's actual terminal to become idle and verify zero reading/final records and all canonical locks before export or successor admission.
+
+Use the app helper only after the matching API deployment and owner agreement. Each change uses a new receipt directory:
+
+```powershell
+$py = 'C:/Users/Arman Sra/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
+$gate = 'C:/Users/Arman Sra/Documents/Stanley/stanley-jev-intelligence-20260918/tools/tam_dispatch_gate.py'
+& $py $gate snapshot
+& $py $gate pause --directory '<new-pause-receipt-directory>'
+```
+
+Confirm its exact run, seed, operation ID, next revision and `paused:true` readback. If the write is uncertain, run `reconcile --directory '<same-pause-receipt-directory>'`; this performs GET-only recovery and never repeats the POST. A missing or superseded operation stays unresolved until the owner reconciles it. If the handoff is abandoned while that same canonical round remains active, use `resume --directory '<new-resume-receipt-directory>'` and verify `paused:false`. After successful successor activation, the new run starts with its own default unpaused gate; do not resume the retired predecessor merely to remove its pause. This protocol supplements the existing idle-boundary and activation steps below.
+
 Cloud prerequisites: migrations0085,0088,0093,0094 and0097, the exact-byte document ingestion route, and the deployment containing `view=evidence_changes`, `action=evidence_change_admit` and `action=evidence_successor_initialize`. Migration0093 selects the newest completed canonical successor for carried finals whose original publication timestamp remains unchanged. Migration0094 preserves actual source observations when a record reverts to previously seen text during grading; the post-publication detector then finds that later observation without changing older document bytes or timestamps. Migration0097 copies exact unchanged membership/PDF registrations within the existing checkpoint lifecycle. Confirm its migration and application deployment receipts before using a newly prepared fast-path plan.
 
 Runtime locator and Windows long-path support were installed by the canonical owner at **2026-09-20T08:13:23Z**, according to `outputs/tam_refresh_2026-09-14/changed_evidence_runtime_long_paths_20260920/installation.json` (SHA256 `56c5d959618029ae8d216954d258cfcea6db4f2a748e62a484bd0c37d2bf41a4`). The installed bundle is:

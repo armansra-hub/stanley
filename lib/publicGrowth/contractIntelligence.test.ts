@@ -1,13 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/db/triggers", () => ({ recomputePriority: vi.fn() }));
-import { contractMilestones, contractObservation, exactAnnouncementAward, announcementLinkInput, type ContractAward } from "./contractIntelligence";
+import { contractMilestones, contractTimingSignalDate, contractObservation, exactAnnouncementAward, announcementLinkInput, type ContractAward } from "./contractIntelligence";
 import { nativeJevBody } from "@/lib/intelligence/nativeJev";
+import { triggerIsAfterReviewBoundary } from "@/lib/triggers/freshness";
 const award: ContractAward = { id: "award1", generated_award_id: "CONT_A_123", government_entity_id: "recipient", award_id: "47QRAA26D0001",
  awarding_agency: "Agency", description: "Staffing and project delivery services", start_date: "2026-09-24", end_date: "2026-10-20", potential_end_date: "2027-10-20",
  award_ceiling: 2000000, current_award_amount: 250000, total_obligations: 80000, source_url: "https://www.usaspending.gov/award/CONT_A_123", payload_hash: "hash",
  evidence: { optionSchedule: "not_provided_by_source" } };
 const now = Date.parse("2026-09-20T12:00:00Z");
 describe("contract intelligence", () => {
+ it("does not reheat a dismissal for a late-discovered historical window, but permits a later window", () => {
+  const contract={...award,start_date:null,end_date:"2026-12-31",potential_end_date:null};
+  const reviewedThrough="2026-09-19T19:28:11.920Z";
+  const historical=contractMilestones(contract,now)[0];
+  expect(historical.stage).toBe(180);expect(contractTimingSignalDate(historical)).toBe("2026-07-04");
+  expect(triggerIsAfterReviewBoundary({signal_date:contractTimingSignalDate(historical),detected_at:"2026-09-20T08:36:53Z"},reviewedThrough)).toBe(false);
+  const later=contractMilestones(contract,Date.parse("2026-10-02T12:00:00Z"))[0];
+  expect(later.stage).toBe(90);expect(contractTimingSignalDate(later)).toBe("2026-10-02");
+  expect(triggerIsAfterReviewBoundary({signal_date:contractTimingSignalDate(later),detected_at:"2026-10-02T12:00:00Z"},reviewedThrough)).toBe(true);
+ });
+ it("dates each threshold in UTC independently of first collection time", () => {
+  for(const [stage,date] of [[180,"2026-07-04"],[90,"2026-10-02"],[30,"2026-12-01"],[7,"2026-12-24"]] as const)
+   expect(contractTimingSignalDate({kind:"end",date:"2026-12-31",stage,label:"Performance ends"})).toBe(date);
+ });
  it("keeps sourced option URLs and rejects impossible dates and nonpublic source links",()=>{
   const dates=contractMilestones({...award,start_date:"2026-09-31",end_date:null,evidence:{optionDates:[
     {date:"2026-10-20",sourceUrl:"https://agency.test/options"},{date:"2026-10-21",sourceUrl:"javascript:bad"}] }},now);
