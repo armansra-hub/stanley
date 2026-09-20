@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+const local=createRequire(new URL('../../work/intelligence-sql-test/package.json',import.meta.url));
+const {PGlite}=local('@electric-sql/pglite');
+const db=await PGlite.create('memory://');
+const scalar=async(q,p=[])=>Object.values((await db.query(q,p)).rows[0])[0];
+let passed=0;
+try {
+ await db.exec(`create role anon;create role authenticated;create role service_role;
+  create table tam_regrade_runs(id uuid primary key,slug text unique,status text,completed_checkpoint_seed_id uuid);
+  create table tam_regrade_checkpoint_seeds(id uuid primary key,run_id uuid,status text);
+  create table tam_regrade_events(run_id uuid,actor_key text,kind text,summary text,metadata jsonb);
+  create table tam_regrade_records(run_id uuid,internal_id text,grade_status text,claim_token uuid,grade_provenance jsonb);`);
+ await db.exec(await readFile(new URL('../../supabase/migrations/0098_tam_dispatch_admission_gate.sql',import.meta.url),'utf8'));passed++;
+ const run=randomUUID(),seed=randomUUID(),otherRun=randomUUID(),otherSeed=randomUUID(),token=randomUUID(),pause=randomUUID(),resume=randomUUID();
+ await db.query("insert into tam_regrade_runs values($1,'active-run','grading',$2),($3,'other-run','grading',$4)",[run,seed,otherRun,otherSeed]);
+ await db.query("insert into tam_regrade_checkpoint_seeds values($1,$2,'complete'),($3,$4,'complete')",[seed,run,otherSeed,otherRun]);
+ await db.query("insert into tam_regrade_records values($1,'1','reading',$2,'{}'),($1,'2','pending',null,'{}'),($1,'3','published',null,'{\"retained\":true}')",[run,token]);
+ const originals=(await db.query('select * from tam_regrade_records order by internal_id')).rows;
+ const status=(slug='active-run',checkpoint=seed)=>scalar('select tam_dispatch_gate_status($1,$2)',[slug,checkpoint]);
+ const set=(op,revision,expected,paused,checkpoint=seed,slug='active-run')=>scalar("select tam_set_dispatch_gate($1,$2,$3,$4,$5,$6,'codex')",[slug,checkpoint,op,revision,expected,paused]);
+ const empty=await status();assert.equal(empty.paused,false);assert.equal(empty.revision,0);assert.equal(empty.operationId,null);passed++;
+ await assert.rejects(status('active-run',otherSeed),/seed differs/);passed++;
+ await assert.rejects(set(pause,0,false,true,otherSeed),/completed run\/seed/);passed++;
+ await assert.rejects(set(pause,1,false,true),/expected previous state/);
+ assert.equal(await scalar('select count(*)::int from tam_dispatch_gates'),0);assert.equal(await scalar('select count(*)::int from tam_dispatch_gate_operations'),0);passed++;
+ const first=await set(pause,0,false,true);assert.equal(first.applied,true);assert.equal(first.gate.paused,true);assert.equal(first.gate.revision,1);assert.equal(first.gate.operationId,pause);passed++;
+ assert.deepEqual((await db.query('select * from tam_regrade_records order by internal_id')).rows,originals);
+ assert.equal(await scalar('select status from tam_regrade_runs where id=$1',[run]),'grading');assert.equal((await status('other-run',otherSeed)).paused,false);passed++;
+ const replay=await set(pause,0,false,true);assert.equal(replay.alreadyApplied,true);assert.equal(replay.gate.revision,1);assert.equal(await scalar('select count(*)::int from tam_regrade_events'),1);passed++;
+ await assert.rejects(set(pause,0,false,false),/operation identity differs/);passed++;
+ await assert.rejects(set(pause,0,false,true,otherSeed,'other-run'),/operation identity differs/);passed++;
+ await assert.rejects(set(resume,0,false,false),/expected previous state/);assert.equal((await status()).paused,true);passed++;
+ const resumed=await set(resume,1,true,false);assert.equal(resumed.gate.revision,2);assert.equal(resumed.gate.paused,false);passed++;
+ const staleReplay=await set(pause,0,false,true);assert.equal(staleReplay.operation.paused,true);assert.equal(staleReplay.gate.paused,false);assert.equal(staleReplay.gate.operationId,resume);passed++;
+ assert.equal(await scalar('select count(*)::int from tam_dispatch_gate_operations'),2);assert.equal(await scalar('select count(*)::int from tam_regrade_events'),2);passed++;
+ // Failure of the audit write must roll back gate state and operation receipt.
+ await db.exec("create function reject_gate_audit() returns trigger language plpgsql as $$begin raise exception 'audit unavailable';end$$;create trigger reject_gate_audit before insert on tam_regrade_events for each row execute function reject_gate_audit()");
+ await assert.rejects(set(randomUUID(),2,false,true),/audit unavailable/);
+ assert.equal((await status()).revision,2);assert.equal((await status()).paused,false);assert.equal(await scalar('select count(*)::int from tam_dispatch_gate_operations'),2);passed++;
+ for(const role of ['anon','authenticated']) assert.equal(await scalar(`select has_function_privilege('${role}','tam_set_dispatch_gate(text,uuid,uuid,bigint,boolean,boolean,text)','EXECUTE')`),false);
+ assert.equal(await scalar("select has_function_privilege('service_role','tam_set_dispatch_gate(text,uuid,uuid,bigint,boolean,boolean,text)','EXECUTE')"),true);
+ assert.equal(await scalar("select has_table_privilege('service_role','tam_dispatch_gates','UPDATE')"),false);passed++;
+ console.log(JSON.stringify({passed,scope:'default-off, exact run/seed, optimistic state, durable idempotence, wrong-operation rejection, active rows unchanged, rollback and service-only grants'}));
+} finally {await db.close();}

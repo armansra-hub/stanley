@@ -3,6 +3,7 @@ import { z } from "zod";
 import { tamMachineAuthOk } from "@/lib/agent/auth";
 import { admitTamEvidenceChanges, listTamEvidenceChanges } from "@/lib/db/tamEvidenceChanges";
 import { initializeChangedSuccessor } from "@/lib/db/tamSuccessor";
+import { getTamDispatchGate, isTamPendingDispatchSelector, setTamDispatchGate } from "@/lib/db/tamDispatchGate";
 import {
   appendTamEvent,
   beginTamCheckpointSeed,
@@ -50,6 +51,10 @@ export async function GET(req: NextRequest) {
   }
   const url = new URL(req.url);
   const runSlug = url.searchParams.get("run") || DEFAULT_TAM_RUN_SLUG;
+  if (url.searchParams.get("view") === "dispatch_gate") {
+    try { return NextResponse.json({ gate: await getTamDispatchGate({ runSlug, seedId: url.searchParams.get("seed") || undefined }) }); }
+    catch (error) { return errorResponse(error); }
+  }
   if (url.searchParams.get("view") === "evidence_changes") {
     try { return NextResponse.json(await listTamEvidenceChanges(url.searchParams.get("id") || undefined, Number(url.searchParams.get("offset") ?? 0))); }
     catch (error) { return errorResponse(error); }
@@ -67,6 +72,10 @@ export async function GET(req: NextRequest) {
   }
   if (url.searchParams.get("view") === "records") {
     try {
+      if (isTamPendingDispatchSelector(url.searchParams)) {
+        const gate = await getTamDispatchGate({ runSlug });
+        if (gate.paused) return NextResponse.json({ error: "tam_dispatch_paused", gate }, { status: 409 });
+      }
       const currentParam = url.searchParams.get("current");
       const isCurrent = currentParam == null
         ? undefined
@@ -133,6 +142,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    if (body && typeof body === "object" && "action" in body && body.action === "dispatch_gate_set")
+      return NextResponse.json(await setTamDispatchGate(body));
     if (body && typeof body === "object" && "action" in body && body.action === "evidence_successor_initialize")
       return NextResponse.json(await initializeChangedSuccessor(body));
     if (body && typeof body === "object" && "action" in body && body.action === "evidence_change_admit")
