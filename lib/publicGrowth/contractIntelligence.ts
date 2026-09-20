@@ -21,8 +21,29 @@ const isoDate = (value: unknown): string | null => {
 const publicUrl=(value:unknown):value is string=>{try{const url=new URL(String(value));return ["http:","https:"].includes(url.protocol)&&!url.username&&!url.password;}catch{return false;}};
 const excerpt=(text:unknown,bytes:number)=>{const value=typeof text==="string"?text:"";let end=Math.min(value.length,bytes);while(Buffer.byteLength(value.slice(0,end))>bytes)end--;if(/[\uD800-\uDBFF]/.test(value[end-1]))end--;return value.slice(0,end);};
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-async function checked<T>(query: PromiseLike<{ data: T; error: unknown }>): Promise<T> {
-  const result = await query; if (result.error) throw new Error("contract_intelligence_persistence_failed"); return result.data;
+type ContractStage = "claim" | "delivery_lookup" | "observation_enqueue" | "delivery_save" | "milestone_save"
+  | "milestone_trigger" | "timing_sync" | "award_checkpoint" | "announcement_lookup" | "announcement_bindings"
+  | "announcement_awards" | "announcement_evaluation" | "announcement_link" | "priority_recompute" | "account_checkpoint";
+class ContractProcessingError extends Error {
+  constructor(readonly stage: ContractStage, readonly failure: unknown) { super(`contract_${stage}_failed`); }
+}
+/** Persist only an allowlisted stage and a database protocol code. Error messages,
+ * source excerpts, provider replies and credentials never enter these receipts. */
+function failureCode(stage: ContractStage, error: unknown): string {
+  if (error instanceof ContractProcessingError) return failureCode(error.stage, error.failure);
+  const code = error && typeof error === "object" && "code" in error ? error.code : null;
+  const observationCode = error instanceof Error
+    ? /^Observation persistence failed: ([A-Z0-9]{5}|PGRST\d{3})$/.exec(error.message)?.[1] : null;
+  const safeCode = typeof code === "string" && /^(?:[A-Z0-9]{5}|PGRST\d{3})$/.test(code) ? code : observationCode;
+  return `contract_${stage}_${safeCode ?? "failed"}`;
+}
+async function checked<T>(query: PromiseLike<{ data: T; error: unknown }>, stage: ContractStage): Promise<T> {
+  try {
+    const result = await query; if (result.error) throw result.error; return result.data;
+  } catch (error) { throw new ContractProcessingError(stage, error); }
+}
+function requireAck(result: { data: unknown; error: unknown }, stage: ContractStage) {
+  if (result.error || result.data !== true) throw new ContractProcessingError(stage, result.error);
 }
 
 /** Dates are facts from the source, not predictions of renewal or an ERP need. */
@@ -91,16 +112,16 @@ async function reconcileAnnouncements(company: Company, _awards: ContractAward[]
   const db = serviceClient();
   const rows = await checked(db.from("triggers").select("id,summary,source_url,signal_date,metadata")
     .eq("company_id", company.id).eq("type", "government_announcement").is("metadata->officialAward", null)
-    .gte("signal_date", new Date(Date.now() - 180 * DAY).toISOString()).order("detected_at", { ascending: false }).limit(20)) as Announcement[];
+    .gte("signal_date", new Date(Date.now() - 180 * DAY).toISOString()).order("detected_at", { ascending: false }).limit(20), "announcement_lookup") as Announcement[];
   if (!rows?.length) return 0;
-  const bindings = await checked(db.from("company_government_matches").select("government_entity_id").eq("company_id", company.id).eq("match_status", "verified"));
+  const bindings = await checked(db.from("company_government_matches").select("government_entity_id").eq("company_id", company.id).eq("match_status", "verified"), "announcement_bindings");
   const entityIds = (bindings ?? []).map(row => row.government_entity_id);
   if (!entityIds.length) return 0;
   const awards: ContractAward[] = [];
   for (let offset = 0; ; offset += 500) {
     if (Date.now() >= deadline - 35_000) return 0;
     const page = await checked(db.from("federal_awards").select("*").in("government_entity_id", entityIds)
-      .order("id").range(offset, offset + 499)) as ContractAward[];
+      .order("id").range(offset, offset + 499), "announcement_awards") as ContractAward[];
     awards.push(...page);
     if (page.length < 500) break;
   }
@@ -130,9 +151,9 @@ async function reconcileAnnouncements(company: Company, _awards: ContractAward[]
     if (!fullyCompared) continue;
     selected ??= selectedIds.size === 1 ? candidates.find(a => selectedIds.has(a.id)) ?? null : null;
     if (!selected) continue;
-    const saved = await db.rpc("contract_announcement_link", { p_company: company.id, p_trigger: row.id, p_award: selected.id,
-      p_method: nativeReceipts.length ? "jev_source_correspondence" : "exact_award_identifier", p_native: nativeReceipts.length ? nativeReceipts : null });
-    if (saved.error || saved.data !== true) throw new Error("contract_announcement_link_failed");
+    const saved = await checked(db.rpc("contract_announcement_link", { p_company: company.id, p_trigger: row.id, p_award: selected.id,
+      p_method: nativeReceipts.length ? "jev_source_correspondence" : "exact_award_identifier", p_native: nativeReceipts.length ? nativeReceipts : null }), "announcement_link");
+    if (saved !== true) throw new ContractProcessingError("announcement_link", null);
     linked++;
   }
   return linked;
@@ -141,34 +162,42 @@ async function reconcileAnnouncements(company: Company, _awards: ContractAward[]
 /** One leased account at a time. No offset cap, so small accounts cannot starve
  * large ones; award delivery checkpoints and timing receipts survive restarts. */
 export async function runContractIntelligence(limit = 5, deadline = Date.now() + 160_000) {
-  const db = serviceClient(); let checkedAccounts = 0, observations = 0, milestones = 0, links = 0;
+  const db = serviceClient(); let checkedAccounts = 0, failedAccounts = 0, observations = 0, milestones = 0, links = 0;
+  const failures: Array<{ companyId: string; errorCode: string; checkpointed: boolean }> = [];
   for (let i = 0; i < limit && Date.now() < deadline - 35_000; i++) {
     const claim = await db.rpc("contract_intelligence_claim");
-    if (claim.error) throw new Error("contract_intelligence_claim_failed");
+    if (claim.error) throw new ContractProcessingError("claim", claim.error);
     if (!claim.data) break;
     const { company, lease_token: lease, awards, recipients } = claim.data as {
       company: Company; lease_token: string; awards: ContractAward[]; recipients: Record<string, string> };
+    let stage: ContractStage = "observation_enqueue";
     try {
       for (const award of awards) {
         if (Date.now() >= deadline - 35_000) break;
+        stage = "observation_enqueue";
         const prepared = contractObservation(company, award, recipients[award.government_entity_id] ?? company.name);
         const deliveryKey = hash([company.id, award.id, prepared.text, prepared.eventDate, "contract-work-v1"]);
-        const prior = await checked(db.from("contract_intelligence_deliveries").select("delivery_key").eq("delivery_key", deliveryKey).maybeSingle());
+        stage = "delivery_lookup";
+        const prior = await checked(db.from("contract_intelligence_deliveries").select("delivery_key").eq("delivery_key", deliveryKey).maybeSingle(), stage);
         if (!prior) {
+          stage = "observation_enqueue";
           const observation = await enqueueObservation(prepared);
           if (observation) {
+            stage = "delivery_save";
             await checked(db.from("contract_intelligence_deliveries").upsert({ delivery_key: deliveryKey, company_id: company.id,
-              federal_award_id: award.id, observation_id: observation.id }, { onConflict: "delivery_key" }).select("delivery_key"));
+              federal_award_id: award.id, observation_id: observation.id }, { onConflict: "delivery_key" }).select("delivery_key"), stage);
             observations++;
           }
         }
         for (const milestone of contractMilestones(award)) {
+          stage = "milestone_save";
           const dedupe = `contract:${award.id}:${milestone.kind}:${milestone.date}:${milestone.stage}`;
           const receipt = await checked(db.from("contract_milestones").upsert({ company_id: company.id, federal_award_id: award.id,
             kind: milestone.kind, milestone_date: milestone.date, label: milestone.label, source_url: milestone.sourceUrl??award.source_url,
             evidence: { awardIdentifier: award.award_id, dateKind: milestone.kind, optionSchedule: award.evidence?.optionSchedule ?? "not_provided_by_source" } },
-            { onConflict: "company_id,federal_award_id,kind,milestone_date" }).select("id").single());
+            { onConflict: "company_id,federal_award_id,kind,milestone_date" }).select("id").single(), stage);
           if (!receipt) throw new Error("contract_milestone_receipt_missing");
+          stage = "milestone_trigger";
           const inserted = await recordPublicGrowthTrigger(company.id, { type: "contract_timing", family: "federal_contract",
             dedupeKey: dedupe, strength: 70, signalDate: new Date().toISOString().slice(0, 10),
             summary: `${milestone.label} ${milestone.date} · ${award.awarding_agency ?? "Government"} · ${award.award_id ?? "contract"}`,
@@ -178,19 +207,31 @@ export async function runContractIntelligence(limit = 5, deadline = Date.now() +
               factNotPrediction: true } }, "USAspending · known contract date", milestone.sourceUrl??award.source_url);
           if (inserted) milestones++;
         }
+        stage = "timing_sync";
         const timing = await db.rpc("contract_timing_sync", {p_company:company.id,p_lease:lease,p_award:award.id});
-        if(timing.error||timing.data!==true)throw new Error("contract_timing_sync_failed");
+        requireAck(timing, stage);
+        stage = "award_checkpoint";
         const ack = await db.rpc("contract_intelligence_award_done", { p_company: company.id, p_lease: lease, p_award: award.id });
-        if (ack.error || ack.data !== true) throw new Error("contract_intelligence_progress_failed");
+        requireAck(ack, stage);
       }
+      stage = "announcement_evaluation";
       links += await reconcileAnnouncements(company, awards, deadline);
+      stage = "priority_recompute";
       await recomputePriority(company.id);
+      stage = "account_checkpoint";
       const finish = await db.rpc("contract_intelligence_finish", { p_company: company.id, p_lease: lease, p_error: null });
-      if (finish.error || finish.data !== true) throw new Error("contract_intelligence_checkpoint_failed");
+      requireAck(finish, stage);
       checkedAccounts++;
-    } catch {
-      await db.rpc("contract_intelligence_finish", { p_company: company.id, p_lease: lease, p_error: "contract_processing_failed" });
+    } catch (error) {
+      failedAccounts++;
+      const errorCode = failureCode(stage, error);
+      let checkpointed = false;
+      try {
+        const saved = await db.rpc("contract_intelligence_finish", { p_company: company.id, p_lease: lease, p_error: errorCode });
+        checkpointed = !saved.error && saved.data === true;
+      } catch { /* The live lease remains authoritative; never claim a saved receipt. */ }
+      failures.push({ companyId: company.id, errorCode, checkpointed });
     }
   }
-  return { checkedAccounts, observations, milestones, links };
+  return { checkedAccounts, failedAccounts, observations, milestones, links, failures };
 }
