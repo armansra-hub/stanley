@@ -30,9 +30,21 @@ def timestamp(value):
     require(isinstance(value,str),"Source observation timestamp required")
     parsed=datetime.fromisoformat(value.replace("Z","+00:00"));require(parsed.tzinfo is not None,"Source observation timestamp needs timezone")
     return parsed.astimezone(timezone.utc)
-def read(path): return json.loads(Path(path).read_bytes())
+def io_path(path):
+    """Use Win32 extended-length paths only at the filesystem boundary.
+
+    Canonical locators and immutable references retain ordinary relative paths.
+    Callers still validate containment before converting a path for I/O.
+    """
+    path=Path(path)
+    if os.name!="nt": return path
+    value=os.path.abspath(path)
+    if value.startswith("\\\\?\\"): return Path(value)
+    return Path("\\\\?\\UNC\\"+value[2:] if value.startswith("\\\\") else "\\\\?\\"+value)
+
+def read(path): return json.loads(io_path(path).read_bytes())
 def write(path, value):
-    path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
+    path=io_path(path); path.parent.mkdir(parents=True,exist_ok=True)
     pending=path.with_name(path.name+".pending"); pending.write_bytes(raw(value)); os.replace(pending,path)
 def workspace():
     for parent in Path(__file__).resolve().parents:
@@ -41,9 +53,9 @@ def workspace():
 def inside(root, path):
     result=Path(path).resolve(); require(result.is_relative_to(root.resolve()),"Path escapes canonical workspace"); return result
 def reference(root,path):
-    path=inside(root,path); return {"path":path.relative_to(root).as_posix(),"sha256":sha(path.read_bytes())}
+    path=inside(root,path); return {"path":path.relative_to(root).as_posix(),"sha256":sha(io_path(path).read_bytes())}
 def bound(root,ref):
-    path=inside(root,root/ref["path"]); require(sha(path.read_bytes())==ref["sha256"],"Immutable reference changed"); return path
+    path=inside(root,root/ref["path"]); require(sha(io_path(path).read_bytes())==ref["sha256"],"Immutable reference changed"); return path
 def canonical(root):
     mission_path=root/"stanley-source/stanley-main/config/tam-regrade-mission.json"
     mission=read(mission_path); context_path=bound(root,mission["activeGradingRound"]["context"])
@@ -74,18 +86,38 @@ def safe_boundary(root, extra_roots=()):
 
 def bundle(root, output):
     output=inside(root,output); require(not output.exists(),"Use a new runtime bundle directory"); output.mkdir(parents=True)
+    # This remains a prepared, reviewed bundle. It never patches live runtime
+    # files and accepts the exact earlier locator/policy extension if installed.
+    core_io='''def _evidence_io_path(path: Path) -> Path:
+    """Keep canonical paths ordinary; extend only Windows filesystem I/O."""
+    if os.name != "nt":
+        return Path(path)
+    value = os.path.abspath(path)
+    if value.startswith("\\\\\\\\?\\\\"):
+        return Path(value)
+    return Path("\\\\\\\\?\\\\UNC\\\\" + value[2:] if value.startswith("\\\\\\\\") else "\\\\\\\\?\\\\" + value)
+
+
+'''
     replacements={
       "tam_grading_round.py":[
        ('require(parts == lead or parts == lead + ("snapshots", snapshot),',
         'versioned = (len(parts) == len(lead) + 4 and parts[:len(lead)+3] == lead + ("snapshots", snapshot, "captures") and bool(re.fullmatch(r"[a-f0-9]{64}", parts[-1])))\n    require(parts == lead or parts == lead + ("snapshots", snapshot) or versioned,'),
        ('context.get("evidence_policy") == POLICY',f'context.get("evidence_policy") in (POLICY, "{POLICY}")')],
-      "tam_record_core.py":[('value.get("evidence_policy") != EVIDENCE_POLICY',f'value.get("evidence_policy") not in (EVIDENCE_POLICY, "{POLICY}")')],
+      "tam_record_core.py":[
+       ('value.get("evidence_policy") != EVIDENCE_POLICY',f'value.get("evidence_policy") not in (EVIDENCE_POLICY, "{POLICY}")'),
+       ('def sha256_file(path: Path) -> str:',core_io+'def sha256_file(path: Path) -> str:'),
+       ('with path.open("rb") as handle:','with _evidence_io_path(path).open("rb") as handle:'),
+       ('capture_raw = capture_path.read_bytes()','capture_raw = _evidence_io_path(capture_path).read_bytes()'),
+       ('record_raw = record_path.read_bytes()','record_raw = _evidence_io_path(record_path).read_bytes()'),
+       ('pdf = PdfReader(str(pdf_path))','pdf = PdfReader(str(_evidence_io_path(pdf_path)))')],
     }
     files=[]
     for name,changes in replacements.items():
         target=root/"tools"/name; original=target.read_bytes(); candidate=original.decode("utf-8")
         for old,new in changes:
-            require(candidate.count(old)==1,f"Runtime precondition changed: {name}"); candidate=candidate.replace(old,new)
+            if candidate.count(new)==1: continue
+            require(candidate.count(old)==1 and new not in candidate,f"Runtime precondition changed: {name}"); candidate=candidate.replace(old,new)
         compile(candidate,name,"exec")
         source=output/name; source.write_bytes(candidate.encode("utf-8"))
         files.append({"target":target.relative_to(root).as_posix(),"beforeSha256":sha(original),"candidate":reference(root,source)})
@@ -118,6 +150,57 @@ def install(root, bundle_path):
         receipt={"status":"installed","bundle":reference(root,bundle_path),"files":[reference(root,t) for t,_,_ in pairs],"beforeImages":[reference(root,before_dir/t.name) for t,_,_ in pairs],"at":datetime.now(timezone.utc).isoformat()}
         write(Path(bundle_path).parent/"installation.json",receipt); return receipt
 
+def fresh_capture_entry(root, destination, inherited, receipt, verified, pdf, text):
+    """Derive fresh physical/source metadata; never relabel inherited capture facts."""
+    ident=receipt["internal_id"]
+    require(receipt.get("status")=="verified" and timestamp(receipt["captured_at_utc"])==timestamp(receipt["observed_at_utc"]),"Fresh source capture date differs")
+    require(receipt.get("renderer",{}).get("version")==5,"Fresh capture renderer must be version5")
+    require(receipt["pdf"]["sha256"]==sha(pdf) and receipt["pdf"]["bytes"]==len(pdf)
+      and receipt["record_text"]["sha256"]==sha(text) and receipt["record_text"]["bytes"]==len(text),"Fresh capture byte metadata differs")
+    characters=len(text.decode("utf-8").encode("utf-16-le"))//2
+    require(receipt["record_text"]["characters"]==characters,"Fresh text character metadata differs")
+    require(verified.get("status")=="verified" and verified.get("every_page_parsed") is True
+      and verified.get("internal_id")==ident and verified.get("pdf_sha256")==sha(pdf)
+      and verified.get("record_text_sha256")==sha(text) and verified.get("page_count")==receipt["pdf"]["page_count"],"Exact fresh page verification required")
+    # The canonical reader still consumes these supplement_* keys. Their own
+    # dates/hashes remain unchanged and are explicitly separate from this capture.
+    supplement={k:copy.deepcopy(v) for k,v in inherited.items() if k.startswith("supplement_")}
+    membership={k:copy.deepcopy(v) for k,v in inherited.items() if k.startswith("membership_")}
+    return {**supplement,**membership,"company_id":inherited["company_id"],"internal_id":ident,
+      "package_path":destination.relative_to(root).as_posix(),"capture_sha256":sha(io_path(destination/"capture.json").read_bytes()),
+      "pdf_sha256":sha(pdf),"pdf_bytes":len(pdf),"pdf_pages":receipt["pdf"]["page_count"],
+      "record_text_sha256":sha(text),"record_text_bytes":len(text),"record_text_characters":characters,
+      "captured_at":receipt["observed_at_utc"],"observed_at":receipt["observed_at_utc"],"rendered_at":receipt.get("rendered_at_utc"),
+      "renderer_version":receipt["renderer"]["version"],"source_snapshot_sha256":receipt["snapshot_sha256"],
+      "freshness":"fresh_full_record_capture","provenance_kind":"fresh_observed_print_dom_capture",
+      "verification_status":"verified","physical_integrity_verified":True,"verified_at":verified["verified_at_utc"],"pdf_verified_at":verified["verified_at_utc"],
+      "physical_checks":{"signature":pdf.startswith(b"%PDF-"),"eof":b"%%EOF" in pdf[-4096:],"hashes":True,"full_text_bytes":True,"exact_id_capture":True,"not_encrypted":True,"page_count":True},
+      "anomalies":[],"provenance_receipts":[{"kind":name,**reference(root,destination/name)} for name in ("capture.json","artifact_verification.json","layout_verification.json","page_verification.json","visual_qa_receipt.json")],
+      "membership_provenance":{k:copy.deepcopy(receipt[k]) for k in ("snapshot_sha256","table_rows_sha256","saved_search_row_count","source_coordinates","source_record_path","source_latest_page_captured_at_utc") if k in receipt},
+      "inherited_supplement_provenance":supplement}
+
+def rebuild_registration(root, registration_path, output):
+    """Write corrected derived metadata elsewhere; registered source bytes stay immutable."""
+    registration_path=inside(root,registration_path);prior=read(registration_path);change=prior["change"];ident=change["netsuite_internal_id"]
+    _,_,_,context=canonical(root);inherited=read(bound(root,context["evidence_index_reference"]))["records"][ident]
+    require(inherited["company_id"]==change["company_id"],"Registration exact company differs")
+    destination=inside(root,root/prior["entry"]["package_path"])
+    corpus=root/"outputs/tam_refresh_2026-07-27/current_lead_records_v6/leads"/ident/"snapshots"/context["snapshot_sha256"]/"captures"
+    require(destination.parent==corpus and SHA.fullmatch(destination.name),"Registration is not an exact versioned capture")
+    receipt=read(destination/"capture.json");pdf=io_path(destination/"print.pdf").read_bytes();text=io_path(destination/"record_text.txt").read_bytes()
+    require(receipt["internal_id"]==ident and receipt["snapshot_sha256"]==context["snapshot_sha256"]
+      and prior["entry"]["capture_sha256"]==sha(io_path(destination/"capture.json").read_bytes())
+      and prior["entry"]["pdf_sha256"]==sha(pdf) and prior["entry"]["record_text_sha256"]==sha(text)==change["record_text_sha256"]
+      and timestamp(receipt["observed_at_utc"])==timestamp(change["captured_at"]),"Registered immutable source binding differs")
+    qa_path=bound(root,prior["visualQa"]);verified_path=bound(root,prior["pageVerification"])
+    require(qa_path==destination/"visual_qa_receipt.json" and verified_path==destination/"page_verification.json","Registration verification references differ")
+    qa=read(qa_path);verified=read(verified_path);pages=receipt["pdf"]["page_count"]
+    require(qa.get("status")=="passed" and qa.get("internalId")==ident and qa.get("rendererVersion")==5 and qa.get("pdfSha256")==sha(pdf)
+      and qa.get("pages")==pages and qa.get("visuallyInspectedPages")==list(range(1,pages+1)) and qa.get("blockingFindings")==[],"Exact stored visual QA required")
+    result={**prior,"entry":fresh_capture_entry(root,destination,inherited,receipt,verified,pdf,text),"supersedesRegistration":reference(root,registration_path)}
+    output=inside(root,output);require(not output.is_relative_to(destination) and not io_path(output).exists(),"Use a new metadata output outside the immutable package")
+    write(output,result);return {"status":"registration_metadata_rebuilt","registration":reference(root,output),"sourcePackageUnchanged":True,"entry":result["entry"]}
+
 def register_capture(root, preview, change, visual_qa):
     """Promote exact reviewed fresh bytes to a new immutable locator. Never replace
     the package bound to the active round. Existing verifier parses every page."""
@@ -127,10 +210,10 @@ def register_capture(root, preview, change, visual_qa):
     index=read(bound(root,context["evidence_index_reference"]))["records"]
     require(ident in index and index[ident]["company_id"]==change["company_id"],"Capture is not a current exact company")
     require(receipt.get("status")=="verified" and receipt.get("internal_id")==ident and receipt.get("snapshot_sha256")==context["snapshot_sha256"],"Capture ID/snapshot differs")
-    pdf=(preview/"print.pdf").read_bytes(); text=(preview/"record_text.txt").read_bytes()
+    pdf=io_path(preview/"print.pdf").read_bytes(); text=io_path(preview/"record_text.txt").read_bytes()
     require(sha(text)==change["record_text_sha256"]==receipt["record_text"]["sha256"],"Fresh full-record bytes differ from change receipt")
     require(sha(pdf)==receipt["pdf"]["sha256"] and pdf.startswith(b"%PDF-") and b"%%EOF" in pdf[-4096:],"Fresh PDF integrity differs")
-    reader=PdfReader(preview/"print.pdf",strict=True); pages=len(reader.pages)
+    reader=PdfReader(io_path(preview/"print.pdf"),strict=True); pages=len(reader.pages)
     require(not reader.is_encrypted and pages==receipt["pdf"]["page_count"] and pages>0,"Full PDF page count differs")
     for page in reader.pages:
         page.extract_text(); contents=page.get_contents()
@@ -144,26 +227,24 @@ def register_capture(root, preview, change, visual_qa):
     corpus=root/"outputs/tam_refresh_2026-07-27/current_lead_records_v6"
     version=sha(raw({"recordTextSha256":sha(text),"pdfSha256":sha(pdf),"capturedAt":receipt["captured_at_utc"]}))
     destination=inside(corpus,corpus/"leads"/ident/"snapshots"/context["snapshot_sha256"]/"captures"/version)
-    require(not destination.exists(),"Exact immutable capture already exists; inspect/reuse its receipt, never overwrite")
-    destination.mkdir(parents=True)
+    require(not io_path(destination).exists(),"Exact immutable capture already exists; inspect/reuse its receipt, never overwrite")
+    io_path(destination).mkdir(parents=True)
     for name in ("print.pdf","record_text.txt","print_css.css","artifact_verification.json","layout_verification.json"):
-        require((preview/name).is_file(),f"Capture evidence missing {name}"); shutil.copyfile(preview/name,destination/name)
+        require(io_path(preview/name).is_file(),f"Capture evidence missing {name}"); shutil.copyfile(io_path(preview/name),io_path(destination/name))
     for field,filename in (("pdf","print.pdf"),("record_text","record_text.txt"),("shared_print_css","print_css.css")):
-        require(sha((destination/filename).read_bytes())==receipt[field]["sha256"],f"Capture {field} changed")
+        require(sha(io_path(destination/filename).read_bytes())==receipt[field]["sha256"],f"Capture {field} changed")
         receipt[field]["path"]=(destination/filename).relative_to(corpus).as_posix()
-    write(destination/"capture.json",receipt); shutil.copyfile(visual_qa,destination/"visual_qa_receipt.json")
+    write(destination/"capture.json",receipt); shutil.copyfile(io_path(visual_qa),io_path(destination/"visual_qa_receipt.json"))
     artifact=read(destination/"artifact_verification.json"); artifact.update(pdf=receipt["pdf"],record_text=receipt["record_text"])
     write(destination/"artifact_verification.json",artifact)
     single,_=modules(root)
     import tam_verify_captured_pdf_pages as verifier
     prior=verifier.resolve_package_path
     try:
-        verifier.resolve_package_path=lambda internal_id,snapshot=None: destination if internal_id==ident and snapshot==context["snapshot_sha256"] else prior(internal_id,snapshot)
+        verifier.resolve_package_path=lambda internal_id,snapshot=None: io_path(destination) if internal_id==ident and snapshot==context["snapshot_sha256"] else prior(internal_id,snapshot)
         verified=verifier.verify(ident,write=True,snapshot=context["snapshot_sha256"])
     finally: verifier.resolve_package_path=prior
-    entry={**index[ident],"package_path":destination.relative_to(root).as_posix(),"capture_sha256":sha((destination/"capture.json").read_bytes()),
-           "record_text_sha256":sha(text),"pdf_sha256":sha(pdf),"pdf_pages":pages,"captured_at":receipt["captured_at_utc"],
-           "source_snapshot_sha256":context["snapshot_sha256"],"pdf_verified_at":verified["verified_at_utc"],"verification_status":"verified"}
+    entry=fresh_capture_entry(root,destination,index[ident],receipt,verified,pdf,text)
     result={"change":change,"entry":entry,"visualQa":reference(root,destination/"visual_qa_receipt.json"),"pageVerification":reference(root,destination/"page_verification.json")}
     write(destination/"changed_evidence_registration.json",result); return result
 
@@ -181,6 +262,25 @@ def published_seed(row, base, successor, root, output):
       "scoreAdjustNote":assessment.get("score_adjust_note"),"recordDigest":assessment["record_digest"],
       "provenance":{"sha256":sha(path.read_bytes()),"objectPath":path.relative_to(root).as_posix(),"canonicalJson":path.read_text(encoding="utf-8"),"data":provenance},
       "validation":{"status":"passed","validatedBy":assessment["validation"]["validated_by"],"validatedAt":assessment["validation"]["validated_at"]}}
+
+def predecessor_fingerprint(row):
+    """Match the server's compact exact predecessor binding, without CRM text."""
+    fields=[str(row[k]) for k in ("run_id","checkpoint_seed_id","netsuite_internal_id","company_id","membership_ordinal","table_rows_sha256","pdf_sha256","pdf_object_path","pdf_page_count")]
+    require(all(row[k] is not None for k in ("run_id","checkpoint_seed_id","pdf_sha256","pdf_object_path","pdf_page_count")),"Predecessor lacks exact completed seed/PDF binding")
+    fields.extend([timestamp(row["pdf_verified_at"]).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),row["grade_status"],row.get("grade_provenance_sha256") or "",sha(row["hold_reason"].encode()) if row.get("hold_reason") is not None else ""])
+    return sha("\n".join(fields).encode())
+
+def successor_initialize_payload(plan, records, registrations, manifest_json):
+    manifest=plan["seedManifest"];common={"runSlug":plan["runSlug"],"actorKey":plan["actorKey"]}
+    seeds={r["netsuiteInternalId"]:r for r in plan["seedRows"]}
+    payload={"action":"evidence_successor_initialize","predecessorRunSlug":plan["oldRun"]["slug"],"predecessorSeedId":plan["oldRun"]["completed_checkpoint_seed_id"],
+      "bootstrap":{k:plan[k] for k in ("runSlug","searchId","mission","sourceTotal","sourceSnapshotSha256")},
+      "seed":{**common,"manifestSha256":plan["seedManifestSha256"],"manifestObjectPath":plan["seedManifestPath"],**{k:manifest[k] for k in ("releaseCommit","expectedCounts","cohortHashes","captureSnapshotHashes","sourceHashes")}},
+      "manifestCanonicalJson":manifest_json,"expectedPredecessorBindings":[{"internalId":r["netsuite_internal_id"],"sha256":predecessor_fingerprint(r)} for r in sorted(records,key=lambda r:r["membership_ordinal"])],
+      "changes":[{"receiptId":r["change"]["id"],"internalId":r["change"]["netsuite_internal_id"],"recordTextSha256":r["entry"]["record_text_sha256"],**{k:seeds[r["change"]["netsuite_internal_id"]][k] for k in ("pdfObjectPath","pdfSha256","pdfPageCount","pdfVerifiedAt","pdfCaptureSnapshotSha256")}} for r in registrations]}
+    require(sha(manifest_json.encode())==plan["seedManifestSha256"],"Exact seed manifest bytes differ")
+    require(len(raw(payload))<=4_000_000,"Successor initialization payload exceeds bounded transport")
+    return payload
 
 def prepare(root, board_path, records_path, registrations_path, release_commit, output):
     _,mission,context_path,context=canonical(root); _,initializer=modules(root)
@@ -202,7 +302,7 @@ def prepare(root, board_path, records_path, registrations_path, release_commit, 
         require(entry["package_path"]!=index["records"][ident]["package_path"],"Fresh evidence cannot overwrite a predecessor locator")
         package=inside(root,root/entry["package_path"])
         for filename,key in (("capture.json","capture_sha256"),("print.pdf","pdf_sha256"),("record_text.txt","record_text_sha256")):
-            require(sha((package/filename).read_bytes())==entry[key],"Registered capture bytes changed")
+            require(sha(io_path(package/filename).read_bytes())==entry[key],"Registered capture bytes changed")
         bound(root,item["visualQa"]); bound(root,item["pageVerification"])
         new_index["records"][ident]=entry
     new_index["changed_evidence_registration_sha256"]=changed_hash
@@ -239,6 +339,7 @@ def prepare(root, board_path, records_path, registrations_path, release_commit, 
       "sourceTotal":mission["membershipSource"]["currentSnapshot"]["sourceRows"],"sourceSnapshotSha256":context["snapshot_sha256"],"searchId":mission["membershipSource"]["currentSnapshot"]["savedSearchId"],
       "companies":{r["netsuite_internal_id"]:r["company_id"] for r in records},"membership":membership,"seedRows":seeds,"seedManifest":manifest,"seedManifestPath":(output/"seed_manifest.json").relative_to(root).as_posix(),
       "seedManifestSha256":sha(raw(manifest)),"actorKey":"codex","changedEvidenceBindings":[{"receiptId":r["change"]["id"],"recordTextSha256":r["entry"]["record_text_sha256"],"pdfSha256":r["entry"]["pdf_sha256"]} for r in registrations]}
+    plan["successorInitialize"]=successor_initialize_payload(plan,records,registrations,(output/"seed_manifest.json").read_bytes().decode())
     write(output/"plan.json",plan); return {"status":"prepared","plan":reference(root,output/"plan.json"),"runSlug":successor,"counts":counts}
 
 @contextmanager
@@ -247,6 +348,7 @@ def initializer_adapter(initializer,plan):
     and final readback for unchanged historical published cohorts in this process."""
     successor=plan["runSlug"]; predecessor=plan["oldRun"]["slug"]
     previous=initializer.PREDECESSORS.copy(); verify=initializer.verify_board_records; operations=initializer.operations
+    verify_ack=initializer.verify_ack; reconcile=initializer.reconcile
     initializer.PREDECESSORS[successor]=predecessor
     def verify_rows(rows, expected, final=False):
         verify(rows,expected,False)
@@ -263,10 +365,39 @@ def initializer_adapter(initializer,plan):
     def steps(expected):
         for step in operations(expected):
             if expected["oldRun"]["status"]=="complete" and step.get("action")=="bootstrap" and step.get("runSlug")==predecessor: continue
+            if expected.get("successorInitialize"):
+                if step.get("action")=="bootstrap" and step.get("runSlug")==successor:
+                    yield expected["successorInitialize"]; continue
+                if step.get("action") in ("membership","pdf","checkpoint_seed_begin"): continue
             yield step
-    initializer.verify_board_records=verify_rows; initializer.operations=steps
+    def ack(payload,result,expected,state):
+        if payload.get("action")!="evidence_successor_initialize":return verify_ack(payload,result,expected,state)
+        bootstrap=payload["bootstrap"];run=result.get("run",{})
+        for key,field in (("runSlug","slug"),("searchId","search_id"),("mission","mission"),("sourceTotal","source_total"),("sourceSnapshotSha256","source_snapshot_sha256")):
+            require(run.get(field)==bootstrap[key],"Copied successor run identity differs")
+        require(result.get("copied")==len(expected["companies"]) and result.get("changed")==len(payload["changes"]),"Copied successor counts differ")
+        verify_ack({"action":"checkpoint_seed_begin"},result,expected,state)
+    def recover(directory,*,api=None):
+        directory=Path(directory);state=read(directory/"state.json");pending=state.get("pending_action") or {}
+        if pending.get("action")!="evidence_successor_initialize":return reconcile(directory,api=api)
+        with initializer.initialization_lock(directory):
+            state=read(directory/"state.json");expected=read(directory/"plan.json");pending=state.get("pending_action") or {}
+            require(pending.get("action")=="evidence_successor_initialize" and sha((directory/"plan.json").read_bytes())==state["plan_sha256"],"Pending successor plan differs")
+            index=pending["operation_index"];payload=list(steps(expected))[index]
+            require(payload.get("action")==pending["action"] and sha(initializer.raw_json(payload))==pending["payload_sha256"],"Pending successor payload differs")
+            response_path=directory/f"response_{index:05d}.json"
+            require(response_path.exists(),"Successor token response unavailable; manual exact seed-token recovery required, no replay")
+            result=read(response_path);ack(payload,result,expected,state)
+            status=initializer.board(api or initializer.Api(),expected["runSlug"]);seed=status.get("checkpointSeed") or {}
+            require(seed.get("id")==state["seed_id"] and seed.get("manifest_sha256")==expected["seedManifestSha256"] and seed.get("status")=="building","Pending successor seed identity not proven")
+            require(status.get("run",{}).get("id")==result["run"].get("id"),"Pending successor run differs")
+            receipt=directory/f"reconciled_{index:05d}.json"
+            initializer.exclusive(receipt,{"at":datetime.now(timezone.utc).isoformat(),"pending":pending,"result":result,"readOnlyVerified":True})
+            state.update(next_operation=index+1,pending_action=None,status="running",last_reconciliation=receipt.name)
+            initializer.atomic(directory/"state.json",state);return initializer.public_state(state)
+    initializer.verify_board_records=verify_rows; initializer.operations=steps;initializer.verify_ack=ack;initializer.reconcile=recover
     try: yield
-    finally: initializer.PREDECESSORS.clear(); initializer.PREDECESSORS.update(previous); initializer.verify_board_records=verify; initializer.operations=operations
+    finally: initializer.PREDECESSORS.clear(); initializer.PREDECESSORS.update(previous); initializer.verify_board_records=verify; initializer.operations=operations;initializer.verify_ack=verify_ack;initializer.reconcile=reconcile
 
 def apply(root,directory,maximum=250,reconcile=False):
     directory=inside(root,directory); plan=read(directory/"plan.json"); _,initializer=modules(root)
@@ -479,15 +610,17 @@ def export_boundary(root,directory):
         return {"status":"exported","board":reference(root,directory/"board.json"),"records":reference(root,directory/"records.json"),"count":len(rows)}
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("command",choices=["bundle","install","register","prepare","apply","reconcile","activate","refresh-snapshot","refresh-ingest","quiesce","reconcile-admission","reconcile-activation","export-boundary"])
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("command",choices=["bundle","install","register","rebuild-registration","prepare","apply","reconcile","activate","refresh-snapshot","refresh-ingest","quiesce","reconcile-admission","reconcile-activation","export-boundary"])
     parser.add_argument("--directory",type=Path); parser.add_argument("--preview",type=Path); parser.add_argument("--change",type=Path); parser.add_argument("--visual-qa",type=Path)
     parser.add_argument("--board",type=Path); parser.add_argument("--records",type=Path); parser.add_argument("--registrations",type=Path); parser.add_argument("--release-commit"); parser.add_argument("--max-operations",type=int,default=250)
     parser.add_argument("--row-observation",type=Path); parser.add_argument("--dom",type=Path)
+    parser.add_argument("--registration",type=Path);parser.add_argument("--output",type=Path)
     args=parser.parse_args(); root=workspace()
     if args.command=="bundle": result=bundle(root,args.directory)
     elif args.command=="install": result=install(root,args.directory/"bundle.json")
     elif args.command=="register":
         change=read(args.change);result=register_capture(root,args.preview,change.get("change",change),args.visual_qa)
+    elif args.command=="rebuild-registration":result=rebuild_registration(root,args.registration,args.output)
     elif args.command=="prepare": result=prepare(root,args.board,args.records,args.registrations,args.release_commit,args.directory)
     elif args.command in ("apply","reconcile"): result=apply(root,args.directory,args.max_operations,args.command=="reconcile")
     elif args.command=="refresh-snapshot": result=refresh_snapshot(root,args.directory,args.row_observation)

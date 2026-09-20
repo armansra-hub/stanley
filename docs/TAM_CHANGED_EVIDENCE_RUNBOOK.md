@@ -8,13 +8,15 @@ The existing TAM task owns its coordinator and pending-intent reconciliation. Do
 
 The current Codex `finish-stanley-jev-build` heartbeat should perform the refresh and handoff below. The other TAM watchdog continues to own normal grading. Use the Codex automation service, not a new timer, background loop, or Windows scheduled task. Stay quiet when unchanged; notify only on meaningful progress, completion, repeated failure, or required user action.
 
-Cloud prerequisites: migrations0085,0088,0093 and0094, the exact-byte document ingestion route, and the deployment containing `view=evidence_changes`/`action=evidence_change_admit`. Migration0093 selects the newest completed canonical successor for carried finals whose original publication timestamp remains unchanged. Migration0094 preserves actual source observations when a record reverts to previously seen text during grading; the post-publication detector then finds that later observation without changing older document bytes or timestamps. Runtime locator support is a separate local installation. Its candidate bundle is:
+Cloud prerequisites: migrations0085,0088,0093,0094 and0097, the exact-byte document ingestion route, and the deployment containing `view=evidence_changes`, `action=evidence_change_admit` and `action=evidence_successor_initialize`. Migration0093 selects the newest completed canonical successor for carried finals whose original publication timestamp remains unchanged. Migration0094 preserves actual source observations when a record reverts to previously seen text during grading; the post-publication detector then finds that later observation without changing older document bytes or timestamps. Migration0097 copies exact unchanged membership/PDF registrations within the existing checkpoint lifecycle. Confirm its migration and application deployment receipts before using a newly prepared fast-path plan.
 
-`C:/Users/Arman Sra/Documents/Stanley/outputs/tam_refresh_2026-09-14/changed_evidence_runtime_20260920_v1/bundle.json`
+Runtime locator and Windows long-path support were installed by the canonical owner at **2026-09-20T08:13:23Z**, according to `outputs/tam_refresh_2026-09-14/changed_evidence_runtime_long_paths_20260920/installation.json` (SHA256 `56c5d959618029ae8d216954d258cfcea6db4f2a748e62a484bd0c37d2bf41a4`). The installed bundle is:
 
-SHA256 `4ecbc0b398a1b7331946f8eb22ae5a2cf4d32549e61614eeb37fe13a422ecbb6`.
+`C:/Users/Arman Sra/Documents/Stanley/outputs/tam_refresh_2026-09-14/changed_evidence_runtime_long_paths_20260920/bundle.json`
 
-This bundle contains only `tam_grading_round.py` and `tam_record_core.py` candidates. It permits exact-ID `snapshots/<snapshot>/captures/<64hex>` locators and the new `fresh-full-record-changes-v1` evidence policy. Existing rules, model/validator behavior, locks, reads and publication remain unchanged. Each target is bound to its current before-hash. A hash mismatch requires regenerating and reviewing the candidate against the newly owned runtime; never bypass it. Installation preserves both before-images, checks readback and rolls back a partial replacement. No live runtime installation was performed when this runbook was prepared.
+SHA256 `bf978295abd9fa51f624dea9cd8e8de097d5aae9b2356ad73291d40a7e007876`.
+
+This bundle contains only `tam_grading_round.py` and `tam_record_core.py`. It permits exact-ID `snapshots/<snapshot>/captures/<64hex>` locators and the `fresh-full-record-changes-v1` evidence policy. Windows extended paths are used only for file I/O; stored canonical locators remain ordinary relative paths. Existing model/validator behavior, locks, reads and publication remain unchanged. Installation retained both before-images and exact readback. Do not reinstall or alter the owner's active runtime for the server fast path. **The first changed-evidence successor activation remains pending a coordinated idle handoff and its separate completion receipt.**
 
 ## Commands and compact state
 
@@ -24,7 +26,6 @@ Run from the Stanley workspace. These variables are ordinary local paths, not se
 $py = 'C:/Users/Arman Sra/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe'
 $helper = 'C:/Users/Arman Sra/Documents/Stanley/stanley-jev-intelligence-20260918/tools/tam_changed_evidence.py'
 $refresh = 'C:/Users/Arman Sra/Documents/Stanley/outputs/tam_refresh_2026-09-14/changed_evidence_refresh'
-$bundle = 'C:/Users/Arman Sra/Documents/Stanley/outputs/tam_refresh_2026-09-14/changed_evidence_runtime_20260920_v1'
 & $py $helper refresh-snapshot --directory $refresh
 ```
 
@@ -48,19 +49,22 @@ For each detected change belonging to the current predecessor, use the existing 
 & $py $helper register --preview '<preview-dir>/leads/<exact-ID>' --change '<saved-refresh-result.json>' --visual-qa '<exact-visual-QA.json>'
 ```
 
-The command validates exact ID/snapshot/full-text/PDF hashes and dates, parses all pages with the existing verifier and writes a **new immutable version** inside that same company's canonical corpus. Its output is also saved as `changed_evidence_registration.json`. Aggregate those exact registration objects into a JSON array (maximum200), with one current receipt per exact ID. Registrations are evidence bindings, not grading jobs. Retain source dates and source file hashes.
+The command validates exact ID/snapshot/full-text/PDF hashes and dates, parses all pages with the existing verifier and writes a **new immutable version** inside that same company's canonical corpus. Its output is also saved as `changed_evidence_registration.json`. Registration metadata comes from the fresh source: actual PDF/text byte sizes, UTF16 character count, renderer version, observation/render times and page-verification date. Membership and supplemental-record provenance retain their own dates and hashes separately. Aggregate those exact registration objects into a JSON array (maximum200), with one current receipt per exact ID. Registrations are evidence bindings, not grading jobs.
+
+If an already registered capture has inherited stale display metadata, use `rebuild-registration --registration '<existing-registration.json>' --output '<new-metadata.json>'`, then aggregate the new output object. This verifies exact immutable source and QA bindings and writes a new metadata file outside the package. It does not re-copy, re-render or overwrite source files or the original registration.
 
 At the handoff window, reconcile the existing TAM task's exact pending intents first. Set `$handoff` to a new directory beneath the same September14 output root. These commands do not bypass active locks:
 
 ```powershell
 & $py $helper quiesce --directory $handoff
-& $py $helper install --directory $bundle
 & $py $helper export-boundary --directory $handoff
 & $py $helper prepare --board "$handoff/board.json" --records "$handoff/records.json" --registrations '<registration-array.json>' --release-commit '<verified-40-character-production-commit>' --directory '<new-successor-directory>'
-& $py $helper apply --directory '<new-successor-directory>' --max-operations 250
+& $py $helper apply --directory '<new-successor-directory>' --max-operations 5
 ```
 
-Repeat only the bounded canonical `apply` continuation when its durable state says no uncertain action. A pending action is resolved with the existing read-only `reconcile` command; never clear it or blindly repeat a POST. This reuses the current membership/PDF/seed transport and its existing exact company grade readback. Old published finals carry forward unchanged as historical completed evidence; changed IDs become canonical pending work; previous pending IDs remain pending; existing holds retain their exact reason. Old seed/grade/history remains intact.
+New plans pause the predecessor, perform one atomic `evidence_successor_initialize` call, verify copied membership, then retain the canonical checkpoint batches, finalization and exact company-grade readback. The one copy call is limited to a4MB request and200 changed records; it fingerprints the exact completed predecessor seed, current IDs, membership ordinals/hashes, PDFs, grades, provenance and holds. Unchanged PDFs are copied in the database instead of re-registered individually. For7441 members, the plan has80 parent operations when predecessor pause is needed, including75 existing100-row seed batches. Those seed batches still use the canonical20-row transport; this is not80 total HTTP requests. Continue in bounded five-operation invocations.
+
+Repeat only the canonical `apply` continuation when durable state says no uncertain action. A pending action is resolved with read-only `reconcile`; never clear it or blindly repeat a POST. Fast-init recovery requires the saved response's fencing token and exact live seed/manifest. If the response was lost, retain the intent for explicit token recovery. Existing plans without `successorInitialize` retain their original operation indexes and transport; never convert an in-progress journal in place. Old published finals carry forward unchanged as historical completed evidence; changed IDs become canonical pending work; previous pending IDs remain pending; existing holds retain their exact reason. Old seed/grade/history remains intact.
 
 ```powershell
 & $py $helper reconcile --directory '<new-successor-directory>'
@@ -73,6 +77,6 @@ Activation requires a complete existing seed and exact final readback. It admits
 
 Source refresh is bounded browser rotation plus visible activity prioritization, not a NetSuite webhook or a guarantee of real-time CRM changes across all7441 accounts. Three refreshes per15-minute run provide at most288/day before page/render/lease failures; attention to changed LSAD rows reduces latency for active accounts. Public monitoring has its separate faster cloud schedule. Capture/upload blockers preserve the source target; two runs with the same failure require a specific repair instead of another blind retry.
 
-The current round may remain active while source refresh collects durable changed evidence. Successor activation requires a coordinated drain window; repeatedly postponing that window indefinitely is not completion. Expose pending-change counts and the exact outstanding canonical reconciliation step in the heartbeat's meaningful status. Browser capture, final runtime installation and first successor activation require execution by the owning task; a prepared bundle is not an activated pipeline.
+The current round may remain active while source refresh collects durable changed evidence. Successor activation requires a coordinated drain window; repeatedly postponing that window indefinitely is not completion. Expose pending-change counts and the exact outstanding canonical reconciliation step in the heartbeat's meaningful status. Long-path runtime installation is complete; browser refresh and the first successor activation remain owned by the canonical task. The installation receipt does not establish successor activation.
 
-Local checks: nine offline lifecycle tests cover exact successor selection/carry-forward/holds, active-read refusal, versioned-locator confinement, source-upload uncertainty/no replay, actual browser observation freshness, atomic installer before-hashes/rollback and activation receipt loss. SQL fixture checks detection, deduplication, exact admission, unchanged old grades, matching publication, edits during grading, full-record reversion and carried-final predecessor selection.
+Local checks: twelve offline lifecycle tests cover exact successor selection/carry-forward/holds, active-read refusal, real Windows paths beyond260 characters through the canonical PDF reader, fresh metadata repair without source changes, source-upload uncertainty/no replay, browser observation freshness, installer before-hashes/rollback, activation receipt loss, fast-path fingerprint/operation compatibility and saved-response recovery without reposting. Separate SQL fixtures exercise the actual canonical checkpoint lifecycle. These tests establish implementation behavior, not a completed production successor or a measured refresh rate.

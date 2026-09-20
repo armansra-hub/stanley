@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { tamMachineAuthOk } from "@/lib/agent/auth";
 import { admitTamEvidenceChanges, listTamEvidenceChanges } from "@/lib/db/tamEvidenceChanges";
+import { initializeChangedSuccessor } from "@/lib/db/tamSuccessor";
 import {
   appendTamEvent,
   beginTamCheckpointSeed,
@@ -132,6 +133,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    if (body && typeof body === "object" && "action" in body && body.action === "evidence_successor_initialize")
+      return NextResponse.json(await initializeChangedSuccessor(body));
     if (body && typeof body === "object" && "action" in body && body.action === "evidence_change_admit")
       return NextResponse.json(await admitTamEvidenceChanges(body));
     const action = tamCoordinationActionSchema.parse(body);
