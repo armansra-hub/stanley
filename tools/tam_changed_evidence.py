@@ -6,6 +6,7 @@ belongs to the existing Codex heartbeat, never a process/service in this helper.
 """
 from __future__ import annotations
 import argparse
+import base64
 import copy
 import hashlib
 import json
@@ -348,7 +349,7 @@ def initializer_adapter(initializer,plan):
     and final readback for unchanged historical published cohorts in this process."""
     successor=plan["runSlug"]; predecessor=plan["oldRun"]["slug"]
     previous=initializer.PREDECESSORS.copy(); verify=initializer.verify_board_records; operations=initializer.operations
-    verify_ack=initializer.verify_ack; reconcile=initializer.reconcile
+    verify_ack=initializer.verify_ack; reconcile=initializer.reconcile; original_apply=initializer.apply
     initializer.PREDECESSORS[successor]=predecessor
     def verify_rows(rows, expected, final=False):
         verify(rows,expected,False)
@@ -395,9 +396,102 @@ def initializer_adapter(initializer,plan):
             initializer.exclusive(receipt,{"at":datetime.now(timezone.utc).isoformat(),"pending":pending,"result":result,"readOnlyVerified":True})
             state.update(next_operation=index+1,pending_action=None,status="running",last_reconciliation=receipt.name)
             initializer.atomic(directory/"state.json",state);return initializer.public_state(state)
-    initializer.verify_board_records=verify_rows; initializer.operations=steps;initializer.verify_ack=ack;initializer.reconcile=recover
+    def apply_with_failure_receipt(directory,plan_hash,maximum=250,*,api=None):
+        try:return original_apply(directory,plan_hash,maximum,api=api)
+        except Exception as error:
+            # Preserve actual HTTP evidence, not a reconstructed response. An
+            # absent HTTP receipt remains ambiguous and cannot authorize retry.
+            directory=Path(directory);state_path=directory/"state.json"
+            if state_path.exists():
+                failed=read(state_path);pending=failed.get("pending_action")
+                if pending:
+                    receipt=directory/("apply_failure_"+sha(raw(pending))+".json")
+                    if not receipt.exists():initializer.exclusive(receipt,{"schema":"tam-initializer-apply-failure","version":1,"planSha256":plan_hash,"pendingAction":pending,"stateSha256":sha(state_path.read_bytes()),"exceptionType":type(error).__name__,"http_failure":getattr(error,"http_failure",None),"recordedAt":datetime.now(timezone.utc).isoformat()})
+            raise
+    initializer.verify_board_records=verify_rows; initializer.operations=steps;initializer.verify_ack=ack;initializer.reconcile=recover;initializer.apply=apply_with_failure_receipt
     try: yield
-    finally: initializer.PREDECESSORS.clear(); initializer.PREDECESSORS.update(previous); initializer.verify_board_records=verify; initializer.operations=operations;initializer.verify_ack=verify_ack;initializer.reconcile=reconcile
+    finally: initializer.PREDECESSORS.clear(); initializer.PREDECESSORS.update(previous); initializer.verify_board_records=verify; initializer.operations=operations;initializer.verify_ack=verify_ack;initializer.reconcile=reconcile;initializer.apply=original_apply
+
+def verify_init_rejection(root,review,plan_hash,pending):
+    """Recognize only the exact atomic pre-write rejection, never a timeout."""
+    require(review.get("schema")=="tam-successor-init-rejection-review" and review.get("version")==1
+      and isinstance(review.get("reviewedBy"),str) and review["reviewedBy"].strip(),"Explicit reviewed rejection receipt required")
+    reviewed_at=timestamp(review.get("reviewedAt"))
+    require(review.get("planSha256")==plan_hash and review.get("pendingAction")==pending,"Reviewed rejection does not bind this exact plan/intent")
+    rejection=review.get("rejection") or {};source=bound(root,rejection["source"])
+    message="predecessor membership or idle boundary differs"
+    if rejection.get("kind")=="database_log":
+        log=source.read_text(encoding="utf-8")
+        def field(key):
+            values=re.findall(r'"'+re.escape(key)+r'"\s*:\s*("(?:\\.|[^"\\])*")',log)
+            values={json.loads(v) for v in values}
+            require(len(values)==1,"Exact database log field missing or ambiguous: "+key)
+            return values.pop()
+        require(field("id")==rejection.get("logId") and field("parsed.sql_state_code")=="P0001"
+          and field("parsed.error_severity")=="ERROR" and field("event_message")==message
+          and re.fullmatch(r"PL/pgSQL function tam_initialize_changed_successor\(jsonb\) line \d+ at RAISE",field("parsed.context")),"Not the exact atomic successor rejection")
+        require(field("parsed.transaction_id").isdigit(),"Exact rejected database transaction required")
+        observed=timestamp(field("parsed.timestamp").replace(" UTC","+00:00"))
+    elif rejection.get("kind")=="http_failure":
+        failure=read(source)
+        require(failure.get("schema")=="tam-initializer-apply-failure" and failure.get("planSha256")==plan_hash and failure.get("pendingAction")==pending,"HTTP failure does not bind exact pending operation")
+        http=failure.get("http_failure") or {}
+        require(http.get("http_status")==409 and http.get("body_truncated") is False,"Definitive complete HTTP rejection required")
+        body=base64.b64decode(http.get("body_base64",""),validate=True)
+        require(sha(body)==http.get("body_sha256") and body.decode("utf-8")==http.get("body_utf8")
+          and json.loads(body)=={"error":"Changed successor initialization failed: "+message},"HTTP rejection bytes/message differ")
+        observed=timestamp(failure["recordedAt"])
+    else:raise ValueError("Only exact reviewed database or HTTP rejection evidence is supported")
+    delta=(observed-timestamp(pending["started_at"])).total_seconds()
+    require(0<=delta<=120 and observed<=reviewed_at<=datetime.now(timezone.utc),"Rejection timestamp does not bind the original request window")
+
+def recover_rejected_init(root,directory,rejection_path,rejection_sha256):
+    """Rearm one proven rejected init only; no POST, runtime or plan mutation."""
+    directory=inside(root,directory);rejection_path=inside(root,rejection_path)
+    require(SHA.fullmatch(rejection_sha256 or "") and sha(io_path(rejection_path).read_bytes())==rejection_sha256,"Explicit rejection receipt hash differs")
+    review=read(rejection_path);_,initializer=modules(root)
+    with safe_boundary(root,(directory,)),initializer.initialization_lock(directory):
+        require(read(root/"automation-control.json")["tamRegrade"].get("enabled") is False,"Dispatch must remain disabled during rejection recovery")
+        plan=read(directory/"plan.json");state_path=directory/"state.json";state=read(state_path);plan_hash=sha((directory/"plan.json").read_bytes())
+        require(plan_hash==state.get("plan_sha256"),"Pending initialization plan changed")
+        pending=state.get("pending_action")
+        if pending is None:
+            prior_ref=state.get("rejected_init_recovery")
+            require(prior_ref is not None,"No rejected initialization is pending")
+            prior=read(bound(root,prior_ref))
+            require(prior["rejection"]["sha256"]==rejection_sha256 and prior.get("planSha256")==plan_hash and review.get("pendingAction")==prior.get("pendingAction") and state.get("next_operation")==prior["operationIndex"]
+              and not any(state.get(k) for k in ("seed_id","seed_token","checkpoint_seed_id")),"Rejected operation already progressed or differs")
+            return {"status":"already_rearmed_rejected_initialization","operationIndex":state["next_operation"],"recovery":prior_ref,"networkWrites":0}
+        index=pending.get("operation_index")
+        require(pending.get("action")=="evidence_successor_initialize" and type(index) is int and index==state.get("next_operation")
+          and not any(state.get(k) for k in ("seed_id","seed_token","checkpoint_seed_id")),"Only an unaccepted exact successor initialization can be recovered")
+        with initializer_adapter(initializer,plan):
+            steps=list(initializer.operations(plan));require(0<=index<len(steps),"Pending operation index differs");payload=steps[index]
+            require(payload.get("action")==pending["action"] and payload==plan.get("successorInitialize") and sha(initializer.raw_json(payload))==pending.get("payload_sha256"),"Pending initialization payload differs")
+            require(not (directory/f"response_{index:05d}.json").exists(),"Saved successor response exists; use accepted-operation reconciliation")
+            verify_init_rejection(root,review,plan_hash,pending)
+            _,_,_,context=canonical(root)
+            require(context["run_slug"]==plan["oldRun"]["slug"] and context["checkpoint_seed_id"]==plan["oldRun"]["completed_checkpoint_seed_id"],"Canonical predecessor changed")
+            api=initializer.Api();successor=initializer.board(api,plan["runSlug"])
+            require(successor=={"missingRun":plan["runSlug"]},"Successor exists or absence is unproven; never retry")
+            predecessor=initializer.board(api,plan["oldRun"]["slug"]);run=predecessor.get("run",{});counts=predecessor.get("counts",{})
+            require(run.get("id")==plan["oldRun"]["id"] and run.get("slug")==plan["oldRun"]["slug"] and run.get("status")=="paused"
+              and run.get("completed_checkpoint_seed_id")==plan["oldRun"]["completed_checkpoint_seed_id"]
+              and all(type(counts.get(k)) is int and counts[k]==0 for k in ("grade_reading","grade_final","lease_expired")),"Exact paused predecessor is not idle")
+        archive=directory/"rejected_initialization"/sha(raw(pending));archive.mkdir(parents=True,exist_ok=True)
+        before=archive/"state.before.json"
+        if before.exists():require(before.read_bytes()==state_path.read_bytes(),"Recovery before-image differs")
+        else:
+            with before.open("xb") as stream:stream.write(state_path.read_bytes())
+        recovery_path=archive/"recovery.json"
+        if recovery_path.exists():
+            recovery=read(recovery_path);require(recovery["beforeState"]==reference(root,before) and recovery["rejection"]["sha256"]==rejection_sha256,"Existing recovery proof differs")
+        else:
+            initializer.exclusive(recovery_path,{"schema":"tam-rejected-initialization-recovery","version":1,"operationIndex":index,"planSha256":plan_hash,"pendingAction":pending,"beforeState":reference(root,before),"rejection":reference(root,rejection_path),"successorReadback":successor,"predecessorReadback":{"runId":run["id"],"runSlug":run["slug"],"seedId":run["completed_checkpoint_seed_id"],"status":run["status"],"counts":counts},"networkWrites":0,"at":datetime.now(timezone.utc).isoformat()})
+        recovery_ref=reference(root,recovery_path)
+        state.update(pending_action=None,status="running",rejected_init_recovery=recovery_ref)
+        initializer.atomic(state_path,state)
+        return {"status":"rearmed_rejected_initialization","operationIndex":index,"recovery":recovery_ref,"networkWrites":0,"nextStep":"After the corrected server migration is confirmed, run one bounded apply; any new uncertainty retains a new intent."}
 
 def apply(root,directory,maximum=250,reconcile=False):
     directory=inside(root,directory); plan=read(directory/"plan.json"); _,initializer=modules(root)
@@ -614,12 +708,13 @@ def export_boundary(root,directory):
         return {"status":"exported","board":reference(root,directory/"board.json"),"records":reference(root,directory/"records.json"),"count":len(rows)}
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("command",choices=["bundle","install","register","rebuild-registration","prepare","apply","reconcile","activate","refresh-snapshot","refresh-ingest","quiesce","reconcile-admission","reconcile-activation","export-boundary"])
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("command",choices=["bundle","install","register","rebuild-registration","prepare","apply","reconcile","recover-rejected-init","activate","refresh-snapshot","refresh-ingest","quiesce","reconcile-admission","reconcile-activation","export-boundary"])
     parser.add_argument("--directory",type=Path); parser.add_argument("--preview",type=Path); parser.add_argument("--change",type=Path); parser.add_argument("--visual-qa",type=Path)
     parser.add_argument("--board",type=Path); parser.add_argument("--records",type=Path); parser.add_argument("--registrations",type=Path); parser.add_argument("--release-commit"); parser.add_argument("--max-operations",type=int,default=250)
     parser.add_argument("--row-observation",type=Path); parser.add_argument("--dom",type=Path)
     parser.add_argument("--registration",type=Path);parser.add_argument("--output",type=Path)
     parser.add_argument("--keep-dispatch-disabled",action="store_true",help="Activate canonical successor pointers but leave dispatch disabled for owner adapter repinning")
+    parser.add_argument("--rejection",type=Path);parser.add_argument("--rejection-sha256")
     args=parser.parse_args(); root=workspace()
     if args.command=="bundle": result=bundle(root,args.directory)
     elif args.command=="install": result=install(root,args.directory/"bundle.json")
@@ -628,6 +723,7 @@ def main():
     elif args.command=="rebuild-registration":result=rebuild_registration(root,args.registration,args.output)
     elif args.command=="prepare": result=prepare(root,args.board,args.records,args.registrations,args.release_commit,args.directory)
     elif args.command in ("apply","reconcile"): result=apply(root,args.directory,args.max_operations,args.command=="reconcile")
+    elif args.command=="recover-rejected-init":result=recover_rejected_init(root,args.directory,args.rejection,args.rejection_sha256)
     elif args.command=="refresh-snapshot": result=refresh_snapshot(root,args.directory,args.row_observation)
     elif args.command=="refresh-ingest": result=refresh_ingest(root,args.directory,args.dom)
     elif args.command=="quiesce": result=quiesce(root,args.directory)

@@ -1,5 +1,6 @@
 """Offline lifecycle tests; no canonical files, browser, credentials or APIs."""
 import importlib.util
+import base64
 import io
 import json
 import os
@@ -118,6 +119,72 @@ class Lifecycle(unittest.TestCase):
    (directory/"response_00001.json").unlink()
    with self.assertRaisesRegex(ValueError,"no replay"):initializer.reconcile(directory,api=Api())
    self.assertEqual(posts,["bootstrap","evidence_successor_initialize"])
+
+ def rejection_fixture(self):
+  self.prepare();directory=self.artifacts/"successor";plan=m.read(directory/"plan.json");initializer=self.load_initializer()
+  pending={"action":"evidence_successor_initialize","operation_index":1,"payload_sha256":m.sha(initializer.raw_json(plan["successorInitialize"])),"started_at":"2026-09-20T00:00:00Z"}
+  state={"schema":"tam-grading-round-initialization","version":1,"plan_sha256":m.sha((directory/"plan.json").read_bytes()),"next_operation":1,"pending_action":pending,"status":"running"}
+  m.write(directory/"state.json",state);m.write(self.root/"automation-control.json",{"tamRegrade":{"enabled":False}})
+  log={"id":"log-id","parsed.sql_state_code":"P0001","parsed.error_severity":"ERROR","event_message":"predecessor membership or idle boundary differs","parsed.context":"PL/pgSQL function tam_initialize_changed_successor(jsonb) line 60 at RAISE","parsed.transaction_id":"12345","parsed.timestamp":"2026-09-20 00:00:02 UTC"}
+  log_path=self.artifacts/"rejection-log.txt";log_path.write_text(json.dumps(log))
+  review={"schema":"tam-successor-init-rejection-review","version":1,"reviewedBy":"fixture-owner","reviewedAt":"2026-09-20T00:00:03Z","planSha256":state["plan_sha256"],"pendingAction":pending,"rejection":{"kind":"database_log","source":m.reference(self.root,log_path),"logId":"log-id"}}
+  review_path=self.artifacts/"review.json";m.write(review_path,review)
+  self.board["run"]["status"]="paused"
+  calls=[]
+  def board(api,slug):
+   calls.append(slug)
+   return self.board if slug=="old-run" else {"missingRun":slug}
+  @contextmanager
+  def boundary(*a,**kw):yield None
+  initializer.Api=lambda:SimpleNamespace(request=lambda *a,**k:self.fail("Recovery must not POST"))
+  return directory,plan,initializer,state,review_path,board,calls,boundary
+
+ def test_definitive_database_rejection_rearms_once_and_preserves_exact_intent(self):
+  directory,plan,initializer,state,review_path,board,calls,boundary=self.rejection_fixture()
+  before=(directory/"state.json").read_bytes();plan_before=(directory/"plan.json").read_bytes();review_hash=m.sha(review_path.read_bytes())
+  with patch.object(m,"modules",return_value=(None,initializer)),patch.object(m,"safe_boundary",boundary),patch.object(initializer,"board",board):
+   result=m.recover_rejected_init(self.root,directory,review_path,review_hash)
+   self.assertEqual(result["status"],"rearmed_rejected_initialization")
+   proof=m.read(m.bound(self.root,result["recovery"]))
+   self.assertEqual(m.bound(self.root,proof["beforeState"]).read_bytes(),before)
+   after=m.read(directory/"state.json");self.assertIsNone(after["pending_action"]);self.assertEqual(after["next_operation"],1)
+   self.assertEqual(m.recover_rejected_init(self.root,directory,review_path,review_hash)["status"],"already_rearmed_rejected_initialization")
+   self.assertEqual(calls,[plan["runSlug"],"old-run"],"Idempotent recovery performs no new writes or reads")
+   self.assertEqual((directory/"plan.json").read_bytes(),plan_before)
+   after["pending_action"]={**state["pending_action"],"started_at":"2026-09-20T00:01:00Z"};m.write(directory/"state.json",after)
+   with self.assertRaisesRegex(ValueError,"exact plan/intent"):m.recover_rejected_init(self.root,directory,review_path,review_hash)
+
+ def test_rejected_recovery_refuses_accepted_or_unproven_and_active_predecessor(self):
+  directory,plan,initializer,state,review_path,board,calls,boundary=self.rejection_fixture();before=(directory/"state.json").read_bytes();review_hash=m.sha(review_path.read_bytes())
+  with patch.object(m,"modules",return_value=(None,initializer)),patch.object(m,"safe_boundary",boundary):
+   for successor in ({"run":{"id":"accepted"},"checkpointSeed":{"status":"building"}},{"error":"timeout"}):
+    with patch.object(initializer,"board",return_value=successor):
+     with self.assertRaisesRegex(ValueError,"absence is unproven"):m.recover_rejected_init(self.root,directory,review_path,review_hash)
+    self.assertEqual((directory/"state.json").read_bytes(),before)
+   self.board["counts"]["grade_reading"]=1
+   with patch.object(initializer,"board",board):
+    with self.assertRaisesRegex(ValueError,"not idle"):m.recover_rejected_init(self.root,directory,review_path,review_hash)
+   self.assertEqual((directory/"state.json").read_bytes(),before)
+   m.write(directory/"response_00001.json",{"seed":{"seedId":"accepted"}})
+   with self.assertRaisesRegex(ValueError,"response exists"):m.recover_rejected_init(self.root,directory,review_path,review_hash)
+
+ def test_adapter_retains_real_http_error_and_ambiguous_transport_cannot_rearm(self):
+  directory,plan,initializer,state,review_path,board,calls,boundary=self.rejection_fixture()
+  failure=initializer.Blocked("API HTTP409");body=m.raw({"error":"Changed successor initialization failed: predecessor membership or idle boundary differs"})
+  failure.http_failure={"http_status":409,"body_base64":base64.b64encode(body).decode(),"body_utf8":body.decode(),"body_sha256":m.sha(body),"body_limit_bytes":4096,"body_truncated":False}
+  def rejected(*a,**kw):raise failure
+  original=initializer.apply;initializer.apply=rejected
+  with m.initializer_adapter(initializer,plan):
+   with self.assertRaises(initializer.Blocked):initializer.apply(directory,state["plan_sha256"],1)
+  initializer.apply=original
+  saved=directory/("apply_failure_"+m.sha(m.raw(state["pending_action"]))+".json")
+  receipt=m.read(saved);self.assertEqual(receipt["http_failure"],failure.http_failure);self.assertEqual(receipt["pendingAction"],state["pending_action"])
+  review=m.read(review_path);receipt["recordedAt"]="2026-09-20T00:00:02Z";m.write(saved,receipt)
+  review["rejection"]={"kind":"http_failure","source":m.reference(self.root,saved)}
+  m.verify_init_rejection(self.root,review,state["plan_sha256"],state["pending_action"])
+  for http in (None,{**failure.http_failure,"http_status":504},{**failure.http_failure,"body_truncated":True}):
+   m.write(saved,{**receipt,"http_failure":http});review["rejection"]["source"]=m.reference(self.root,saved)
+   with self.assertRaisesRegex(ValueError,"Definitive complete HTTP"):m.verify_init_rejection(self.root,review,state["plan_sha256"],state["pending_action"])
 
  def test_refuses_active_read_or_changed_prior_binding(self):
   self.board["counts"]["grade_reading"]=1;m.write(self.board_path,self.board)

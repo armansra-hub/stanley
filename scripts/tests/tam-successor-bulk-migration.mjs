@@ -49,6 +49,11 @@ try {
  await scalar('select seed_tam_regrade_checkpoint_batch($1,$2,$3,$4)',['predecessor','codex',started.seedToken,original]);
  await scalar('select finalize_tam_regrade_checkpoint_seed($1,$2,$3)',['predecessor','codex',started.seedToken]);
  await db.query("update tam_regrade_runs set status='paused' where id=$1",[pred.id]);
+ // The real publication RPC deliberately retains exact actor/token/lease
+ // metadata for idempotent publication retry, even after grade_status changes.
+ await db.query(`update tam_regrade_records set claim_actor='completed-reader',claim_token=gen_random_uuid(),
+  claim_started_at='2026-09-18T13:00:00Z',claim_heartbeat_at='2026-09-18T13:01:00Z',
+  claim_expires_at=now()+interval '1 day' where run_id=$1 and grade_status='published'`,[pred.id]);
  const before=(await db.query('select * from tam_regrade_records where run_id=$1 order by membership_ordinal',[pred.id])).rows;
  const companiesBefore=(await db.query('select * from companies order by netsuite_internal_id')).rows;
  const fingerprints=before.map(r=>({internalId:r.netsuite_internal_id,sha256:hash([r.run_id,r.checkpoint_seed_id,r.netsuite_internal_id,r.company_id,String(r.membership_ordinal),r.table_rows_sha256,r.pdf_sha256,r.pdf_object_path,String(r.pdf_page_count),new Date(r.pdf_verified_at).toISOString().replace('.000Z','.000000Z'),r.grade_status,r.grade_provenance_sha256??'',r.hold_reason==null?'':hash(r.hold_reason)].join('\n'))}));
@@ -66,6 +71,23 @@ try {
   seed:{runSlug:'successor',actorKey:'codex',manifestSha256:hash(manifestCanonicalJson),manifestObjectPath:'successor/manifest.json',releaseCommit:manifest.releaseCommit,expectedCounts:nextCounts,cohortHashes:nextHashes,captureSnapshotHashes:capture,sourceHashes},manifestCanonicalJson,
   expectedPredecessorBindings:fingerprints,changes:[{receiptId:receipt,internalId:'1',recordTextSha256:hash(freshText),pdfObjectPath:'fresh/1/print.pdf',pdfSha256:hash('fresh pdf'),pdfPageCount:3,pdfVerifiedAt:'2026-09-20T10:01:00Z',pdfCaptureSnapshotSha256:snapshot}]};
  const call=value=>scalar('select tam_initialize_changed_successor($1)',[value]);
+ await assert.rejects(call(input),/predecessor membership or idle boundary differs/);
+ assert.equal(await scalar("select count(*)::int from tam_regrade_runs where slug='successor'"),0);passed++;
+ await db.exec(await sql('0099_tam_successor_completed_claim_history.sql'));passed++;
+ for(const [id,patch] of [
+  ['4',"claim_token=gen_random_uuid()"],['3',"claim_actor='uncompleted-reader'"],
+  ['1',"grade_status='final'"],
+ ]) {
+  await db.exec('begin');
+  await db.query(`update tam_regrade_records set ${patch} where run_id=$1 and netsuite_internal_id=$2`,[pred.id,id]);
+  await assert.rejects(call(input),/predecessor membership or idle boundary differs/);
+  await db.exec('rollback');
+  assert.equal(await scalar("select count(*)::int from tam_regrade_runs where slug='successor'"),0);passed++;
+ }
+ // The existing schema itself disallows incomplete/failed publications.
+ for(const patch of ["validation_status='failed'","published_at=null"]) {
+  await assert.rejects(db.query(`update tam_regrade_records set ${patch} where run_id=$1 and netsuite_internal_id='1'`,[pred.id]),/check constraint/);passed++;
+ }
  const reject=async mutate=>{const invalid=structuredClone(input);mutate(invalid);await assert.rejects(call(invalid));assert.equal(await scalar("select count(*)::int from tam_regrade_runs where slug='successor'"),0);passed++;};
  await reject(v=>{v.expectedPredecessorBindings[1].sha256=hash('changed');});
  await reject(v=>{v.expectedPredecessorBindings.pop();});
