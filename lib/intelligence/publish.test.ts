@@ -46,12 +46,12 @@ describe("direct Jev publication", () => {
     // Real mixed-content source: the holiday headline does not erase an explicit closure.
     expect(jevSignalType(classified({ operatingChangeType: "closure_or_wind_down" }), observation.event_date, now)).toBe("operating_change");
   });
-  it("routes own commercial awards but not bids, registrations or unverified government identity", () => {
+  it("routes commercial awards and separately labeled government announcements, never bids or registrations", () => {
     const award = classified({ signalType: "news", companyRole: "service_provider", contractActivity: "commercial_award", operatingChangeType: "contract_award" });
     expect(jevSignalType(award, observation.event_date, now)).toBe("operating_change");
     for (const contractActivity of ["bid_opportunity", "bid_submission", "registration", "existing_contract_delivery", "unknown", "none"] as const)
       expect(jevPublicationRoute(classified({ contractActivity, operatingChangeType: "contract_award" }), observation.event_date, now).reason).toBe("contract_award_not_established");
-    expect(jevPublicationRoute(classified({ contractActivity: "government_award", operatingChangeType: "contract_award" }), observation.event_date, now).reason).toBe("government_publisher_required");
+    expect(jevSignalType(classified({ contractActivity: "government_award", operatingChangeType: "contract_award" }), observation.event_date, now)).toBe("government_announcement");
     // Older paid contracts have no new native fields and retain their original routing.
     expect(jevSignalType({ ...evaluation, questionVersion: "stanley-business-services-v1" }, observation.event_date, now)).toBe("press");
   });
@@ -176,13 +176,13 @@ describe("direct Jev publication", () => {
     await publishJevFinding(input(), deps);
     expect(deps.getSaved().metadata.jevContextFindings).toHaveLength(1);
   });
-  it("preserves verified-government publication for every government type and capture", async () => {
+  it("keeps legacy government labels out of automatic publication and structured awards in their source-owned path", async () => {
     for (const signalType of ["gov_contract", "federal_award", "federal_subaward", "sam_award_notice"] as const) {
       expect(jevSignalType({ ...evaluation, attributes: { ...evaluation.attributes, signalType } }, observation.event_date, now)).toBeNull();
     }
     const deps = fixture();
-    const request = input(); request.observation.source_kind = "government";
-    expect(await publishJevFinding(request, deps)).toMatchObject({ status: "not_eligible", reason: "government_publisher_required" });
+    const request = input(); request.observation.source_kind = "government"; request.observation.metadata.structuredAward = true;
+    expect(await publishJevFinding(request, deps)).toMatchObject({ status: "not_eligible", reason: "structured_award_context" });
     expect(deps.record).not.toHaveBeenCalled();
   });
   it("routes dated ERP/hiring/growth and substantive finance news without rewriting native labels", () => {

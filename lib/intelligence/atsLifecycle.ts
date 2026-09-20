@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import { scanJob, type AtsJob, type AtsJobBatch, type AtsType } from "@/lib/sources/ats";
 import { canonicalEvidenceUrl, enqueueObservation } from "./observations";
+import { workdayBoard } from "@/lib/sources/atsEnterprise";
+import { adpBoard } from "@/lib/sources/atsAdp";
 
 export type AtsRoleCategory = "finance" | "billing" | "project_accounting" | "implementation" | "integration" | "business_systems" | "operations";
 const rolePatterns: [AtsRoleCategory, RegExp][] = [
@@ -109,8 +111,10 @@ export function atsHiringPattern(summary: AtsScanSummary): { title: string; text
 }
 
 export function atsBoardSourceUrl(type: AtsType, token: string): string {
+  if (type === "workday") { const board = workdayBoard(token); if (!board) throw new Error("Invalid ATS board token"); return board.url; }
+  if (type === "adp") { const board = adpBoard(token); if (!board) throw new Error("Invalid ATS board token"); return board.url; }
   if (!/^[a-z0-9][a-z0-9_-]{1,100}$/i.test(token)) throw new Error("Invalid ATS board token");
-  const urls: Record<AtsType, string> = {
+  const urls: Record<Exclude<AtsType, "workday" | "adp">, string> = {
     greenhouse: `https://boards-api.greenhouse.io/v1/boards/${token}/jobs?content=true`,
     lever: `https://api.lever.co/v0/postings/${token}?mode=json`,
     ashby: `https://api.ashbyhq.com/posting-api/job-board/${token}?includeCompensation=false`,
@@ -118,6 +122,9 @@ export function atsBoardSourceUrl(type: AtsType, token: string): string {
     recruitee: `https://${token}.recruitee.com/api/offers/`,
     workable: `https://apply.workable.com/api/v1/widget/accounts/${token}?details=true`,
     wizehire: `https://wizehire.com/jobroll/v1/jobs/${token}/jsonp`,
+    jazzhr: `https://${token}.applytojob.com/apply/jobs/`,
+    jobvite: `https://jobs.jobvite.com/${token}/`,
+    icims: `https://${token}.icims.com/jobs/search?ss=1&in_iframe=1`,
   };
   return urls[type];
 }

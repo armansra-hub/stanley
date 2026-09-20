@@ -9,6 +9,7 @@ vi.mock("./atsLifecycle", () => ({ readAtsHiringContext: vi.fn() }));
 vi.mock("@/lib/triggers/urlSafety", () => ({ fetchPublicHttpText: mocks.fetch }));
 vi.mock("@/lib/sources/publicPdf", () => ({ fetchPublicPdfEvidence: vi.fn() }));
 vi.mock("@/lib/db/events", () => ({ logEvent: vi.fn() }));
+vi.mock("./researchExternal", () => ({ discoverExternalResearch: async () => ({sources:0}) }));
 import { refreshAccountResearch, type ResearchProfile } from "./researchRunner";
 
 const candidates = ["https://example.test/about", "https://example.test/team", "https://example.test/services", "https://example.test/billing"];

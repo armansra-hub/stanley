@@ -2,7 +2,7 @@ import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { summarizeContractRevenueByYear, type AnnualContractRevenue } from "./metrics";
 import { form5500ObservationExclusion } from "./form5500ObservationSafety";
-import { bindRelatedFederalEntities, federalCoverage, federalRelationshipWitness, type FederalCoverage, type FederalSourceCoverage, type RelatedFederalEntity } from "./federalPresentation";
+import { bindRelatedFederalEntities, mergeSourcedRelatedEntities, federalCoverage, federalRelationshipWitness, type FederalCoverage, type FederalSourceCoverage, type RelatedFederalEntity } from "./federalPresentation";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -95,7 +95,12 @@ export async function getPublicGrowthDetail(companyId: string): Promise<PublicGr
     if ((data ?? []).length > 100) relatedEntitiesTruncated = true;
     relatedCandidates.push(...(data ?? []).slice(0, 100));
   }
-  const relatedEntities = bindRelatedFederalEntities(entities, relatedCandidates);
+  const { data: sourcedLinks, error: sourcedError } = await db.from("company_related_government_entities")
+    .select("relationship,evidence,government_entities(*),company_federal_identity_claims!inner(intelligence_observations!inner(is_current,feedback_excluded))")
+    .eq("company_id", companyId).order("id").limit(101);
+  if (sourcedError) throw new Error(`sourced federal relationship load failed: ${sourcedError.message}`);
+  if ((sourcedLinks ?? []).length > 100) relatedEntitiesTruncated = true;
+  const relatedEntities = mergeSourcedRelatedEntities(entities, bindRelatedFederalEntities(entities, relatedCandidates), (sourcedLinks ?? []).slice(0, 100));
   // Bounded related context is separate from the complete stored direct-history read.
   if (relatedEntities.length > 20) relatedEntitiesTruncated = true;
   const visibleRelated = relatedEntities.slice(0, 20);
@@ -106,8 +111,12 @@ export async function getPublicGrowthDetail(companyId: string): Promise<PublicGr
     if (error) throw new Error(`related federal award detail load failed: ${error.message}`);
     related.awards = (data ?? []).slice(0, 20); related.awardsTruncated = (data ?? []).length > 20;
   }));
+  const { data: repairs, error: repairError } = await db.from("federal_identity_remediation_receipts")
+    .select("created_at").eq("company_id", companyId).eq("outcome", "related_context").order("created_at", { ascending: false }).limit(1);
+  if (repairError) throw new Error(`federal identity repair load failed: ${repairError.message}`);
+  const staleMetrics = repairs?.[0] && (!metrics?.observed_at || Date.parse(metrics.observed_at) <= Date.parse(repairs[0].created_at));
   return { entities, pendingEntities, relatedEntities: visibleRelated,
     federalCoverage: federalCoverage(entities, pendingEntities, awards, relatedEntitiesTruncated, (sourceCoverage ?? []) as FederalSourceCoverage[]),
-    contractMetrics: entities.length ? metrics ?? null : null, contractRevenueByYear, contractActions, awards, naicsSize,
+    contractMetrics: entities.length && !staleMetrics ? metrics ?? null : null, contractRevenueByYear, contractActions, awards, naicsSize,
     headcount: visibleHeadcount, revenue: revenue ?? [], opportunities: opportunityMatches ?? [] };
 }

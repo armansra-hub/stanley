@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({ autocomplete: vi.fn(), search: vi.fn(), detail
   entity: vi.fn(), match: vi.fn(), award: vi.fn(), saveTransactions: vi.fn(), from: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: mocks.from }) }));
 vi.mock("@/lib/db/triggers", () => ({ recomputePriority: vi.fn() }));
-vi.mock("./identity", () => ({ normalizeName: (v: string) => v.toLowerCase(), companyIdentityNames: (company: any) => [company.name],
+vi.mock("./identity", () => ({ normalizeName: (v: string) => v.toLowerCase(), companyIdentityNames: (company: any) => [...new Set([company.name, ...(company.legalNames ?? [])].filter((name: unknown) => typeof name === "string" && name.trim()))],
   decideIdentityMatch: () => ({ status: "verified", confidence: 1 }) }));
 vi.mock("./usaspending", () => ({ autocompleteRecipients: mocks.autocomplete, searchContractAwardsPage: mocks.search,
   fetchAwardDetail: mocks.detail, fetchAwardTransactionsPage: mocks.transactions, compactAward: (v: unknown) => v,

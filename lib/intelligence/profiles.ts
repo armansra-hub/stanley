@@ -1,5 +1,6 @@
 import type { SemanticCriterion } from "./evaluation";
 import { operatingTopicPriority } from "./businessServices";
+import { DEFAULT_VISIBILITY_POLICY, type VisibilityPolicy } from "./visibility";
 
 export const OPERATING_TOPICS = {
   multi_entity: ["Multiple operating entities", "Does this evidence explicitly establish that the specified company operates multiple legal entities, subsidiaries or business units? A customer or supplier's entities do not count."],
@@ -37,14 +38,14 @@ export function operatingCriteria(subindustry: string | null, sourceKind: string
 }
 export type TopicEvidence = { topic: OperatingTopic; probability: number; start: number; end: number;
   companyRelationship?: string; companyRelevance?: number };
-const supportedProbability = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= .8 && value <= 1;
+const supportedProbability = (value: unknown, minimum = DEFAULT_VISIBILITY_POLICY.topicProbability) => typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= 1;
 /** New references carry their own packet attribution. Legacy references fall
  * back to the old observation attribution until the saved-packet backfill runs. */
-export function topicReferenceSupported(reference: TopicEvidence, attributes: Record<string, unknown>, text: string): boolean {
+export function topicReferenceSupported(reference: TopicEvidence, attributes: Record<string, unknown>, text: string, policy: VisibilityPolicy = DEFAULT_VISIBILITY_POLICY): boolean {
   const hasOwnAttribution = Object.hasOwn(reference, "companyRelationship") || Object.hasOwn(reference, "companyRelevance");
   const relationship = hasOwnAttribution ? reference.companyRelationship : attributes.companyRelationship;
   const relevance = hasOwnAttribution ? reference.companyRelevance : attributes.companyRelevance;
-  return relationship === "direct" && supportedProbability(relevance) && supportedProbability(reference.probability)
+  return relationship === "direct" && supportedProbability(relevance, policy.companyRelevance) && supportedProbability(reference.probability, policy.topicProbability)
     && Number.isInteger(reference.start) && Number.isInteger(reference.end)
     && reference.start >= 0 && reference.end > reference.start && reference.end <= text.length;
 }
@@ -54,15 +55,30 @@ export type ProfileObservation = {
   feedback_excluded?: boolean;
 };
 
+/** Exploration reads already-paid packet answers, including values omitted from
+ * the supported-topic cache. It never changes those answers or their attribution. */
+export function topicReferences(attributes: Record<string, unknown>, includeAllNative = false): TopicEvidence[] {
+  const stored = Array.isArray(attributes.topicEvidence) ? attributes.topicEvidence as TopicEvidence[] : [];
+  if (!includeAllNative || !Array.isArray(attributes.packetFindings)) return stored;
+  const packets = attributes.packetFindings as Record<string, unknown>[];
+  return [...stored, ...packets.flatMap(packet => {
+    if (!packet || !packet.attributes || typeof packet.attributes !== "object" || !packet.criteria || typeof packet.criteria !== "object") return [];
+    const a = packet.attributes as Record<string, unknown>;
+    return Object.entries(packet.criteria).filter(([topic, value]) => Object.hasOwn(OPERATING_TOPICS, topic) && typeof value === "number" && Number.isFinite(value))
+      .map(([topic, probability]) => ({ topic: topic as OperatingTopic, probability: probability as number, start: packet.start as number, end: packet.end as number,
+        companyRelationship: a.companyRelationship as string, companyRelevance: a.companyRelevance as number }));
+  })];
+}
+
 /** Evidence-backed public context. It never writes a qualification grade. */
-export function buildOperatingProfile(rows: ProfileObservation[], now = Date.now()) {
+export function buildOperatingProfile(rows: ProfileObservation[], now = Date.now(), policy: VisibilityPolicy = DEFAULT_VISIBILITY_POLICY) {
   rows = rows.filter(row => !row.feedback_excluded);
   const topics = Object.entries(OPERATING_TOPICS).map(([id, [label]]) => {
     const sources = rows.flatMap(row => {
       const attributes = row.attributes;
       if (!attributes) return [];
-      const references = Array.isArray(attributes.topicEvidence) ? attributes.topicEvidence as TopicEvidence[] : [];
-      const match = references.filter(reference => reference && reference.topic === id && topicReferenceSupported(reference, attributes, row.evidence_text))
+      const references = topicReferences(attributes, policy.topicProbability < DEFAULT_VISIBILITY_POLICY.topicProbability);
+      const match = references.filter(reference => reference && reference.topic === id && topicReferenceSupported(reference, attributes, row.evidence_text, policy))
         .sort((a, b) => b.probability - a.probability)[0];
       if (!match) return [];
       const context = row.evidence_text.slice(match.start, match.end);
@@ -73,7 +89,8 @@ export function buildOperatingProfile(rows: ProfileObservation[], now = Date.now
     });
     // A feed and a site crawl can discover the same page; do not imply corroboration.
     const distinct = [...new Map(sources.map(source => [source.url, source])).values()].slice(0, 5);
-    return { id, label, state: distinct.length ? "supported" : "unknown", sources: distinct };
+    const supported = distinct.some(source => source.probability >= DEFAULT_VISIBILITY_POLICY.topicProbability && Number(source.companyRelevance) >= DEFAULT_VISIBILITY_POLICY.companyRelevance);
+    return { id, label, state: distinct.length ? supported ? "supported" : "exploratory" : "unknown", sources: distinct };
   });
   const present = new Set(topics.filter(topic => topic.state === "supported").map(topic => topic.id));
   const hypotheses: { text: string; topics: string[]; status: "unverified" }[] = [];
@@ -92,15 +109,15 @@ export function buildOperatingProfile(rows: ProfileObservation[], now = Date.now
       const attributes = (packet.attributes && typeof packet.attributes === "object" ? packet.attributes : packet) as Record<string, unknown>;
       return { id: `${row.id}:${index}`, observationId: row.id, title: row.title, url: row.source_url, eventDate: row.event_date,
         observedAt: row.observed_at, sourceKind: row.source_kind,
-        dateState: !row.event_date ? "unknown" : Date.parse(row.event_date) > now ? "future" : now - Date.parse(row.event_date) > 180 * 86400000 ? "historical" : "dated",
-        historical: row.event_date ? now - Date.parse(row.event_date) > 180 * 86400000 : null,
+        dateState: !row.event_date ? "unknown" : Date.parse(row.event_date) > now ? "future" : now - Date.parse(row.event_date) > DEFAULT_VISIBILITY_POLICY.eventMaxAgeDays * 86400000 ? "historical" : "dated",
+        historical: row.event_date ? now - Date.parse(row.event_date) > DEFAULT_VISIBILITY_POLICY.eventMaxAgeDays * 86400000 : null,
         signalType: attributes.signalType, attributes, criteria: packet.criteria ?? {}, rawAnswers: packet.rawAnswers ?? null,
         model: packet.model, questionVersion: packet.questionVersion, publication: packet.publication ?? null,
         excerpt: packet.evidenceExcerpt ?? null, start: packet.excerptStart ?? null, end: packet.excerptEnd ?? null };
     });
   });
   const developments = findings.filter(finding => finding.attributes.companyRelationship === "direct"
-    && supportedProbability(finding.attributes.companyRelevance) && Number(finding.attributes.concreteEvent) >= .75);
+    && supportedProbability(finding.attributes.companyRelevance, DEFAULT_VISIBILITY_POLICY.companyRelevance) && Number(finding.attributes.concreteEvent) >= DEFAULT_VISIBILITY_POLICY.concreteEvent);
   return { topics, hypotheses, developments, findings, unknowns: topics.filter(topic => topic.state === "unknown").map(topic => topic.label),
     coverage: { observations: rows.length, interpreted: rows.filter(row => row.attributes).length },
     note: "Public operating context; hypotheses remain unverified and do not change the TAM grade." };

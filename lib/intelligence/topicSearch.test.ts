@@ -6,6 +6,15 @@ const fixture = (): TopicSearchRaw => ({ enabled: true, topics: ["project_billin
   accounts: [{ companyId: "account", name: "Example Engineering", domain: "example.test", subindustry: "Engineering", internalId: "1", coverage: { observations: 8, interpreted: 5 }, observations: [source("project", "project_billing"), source("stock", "inventory")] }] });
 
 describe("cross-source operating matches", () => {
+  it("explores lower native packet probabilities without changing supported defaults or attribution", () => {
+    const raw = fixture(); raw.topics = ["project_billing"]; raw.accounts[0].observations = [{ ...source("moderate", "project_billing"), attributes: {
+      companyRelationship: "direct", companyRelevance: .2, topicEvidence: [], packetFindings: [{start:0,end:20,
+        criteria: { project_billing: .72 }, attributes: {companyRelationship:"direct",companyRelevance:.68}}] } }];
+    expect(buildTopicSearchResult(raw).accounts).toHaveLength(0);
+    const result = buildTopicSearchResult({...raw,visibility:"explore"});
+    expect(result.accounts[0].topics[0]).toMatchObject({state:"exploratory",sources:[{probability:.72,companyRelevance:.68}]});
+    expect(raw.accounts[0].observations[0].attributes!.topicEvidence).toEqual([]);
+  });
   it("supports AND across separate sources with exact context and honest cache coverage", () => {
     const result = buildTopicSearchResult(fixture());
     expect(result.accounts).toHaveLength(1);

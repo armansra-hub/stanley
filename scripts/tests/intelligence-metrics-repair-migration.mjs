@@ -1,4 +1,4 @@
-/** Local PostgreSQL semantics for the 0071/0072/0073/0074 integration; no live data. */
+/** Local PostgreSQL semantics for metrics integrations, including 0092; no live data. */
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
@@ -72,6 +72,27 @@ try {
   assert.equal(health.freshness.latestCohort.captured,6);assert.equal(health.coverage.accountsInterpreted,3);
   assert.equal(await scalar("select has_function_privilege('anon','intelligence_health()','EXECUTE')"),false);
   console.log('PASS TAM queue/account scope, both quarantines, primary/context Jev cards, real ATS completions and historical first-capture breadth');
+  await db.exec(await readFile(new URL('../../supabase/migrations/0092_intelligence_contract_health_counts.sql',import.meta.url),'utf8'));
+  const retainedBefore=await scalar('select count(*)::int from triggers');
+  // Only a boolean true or a string merge target is an explicit exclusion.
+  // A malformed/null marker must not silently remove an otherwise visible card.
+  for(const metadata of [
+    {jevFinding:{observationId:peer},contractTimingInactive:true},
+    {jevFinding:{observationId:peer},contractEventMergedInto:id(1)},
+    {jevContextFindings:[{}],contractTimingInactive:true,contractEventMergedInto:id(1)},
+  ])await db.query('insert into triggers(company_id,metadata) values($1,$2)',[id(2),metadata]);
+  for(const metadata of [
+    {contractTimingInactive:false},
+    {contractTimingInactive:null,contractEventMergedInto:null},
+    {jevFinding:{observationId:current},contractTimingInactive:'true'},
+    {jevContextFindings:[{}],contractEventMergedInto:false},
+  ])await db.query('insert into triggers(company_id,metadata) values($1,$2)',[id(1),metadata]);
+  health=await scalar('select intelligence_health()');
+  assert.equal(health.yield.allTriggersLast24h,7);assert.equal(health.yield.jevTriggersLast24h,4);
+  assert.equal(health.yield.allTriggeredAccountsLast24h,1);assert.equal(health.yield.distinctTriggeredAccountsLast24h,1);
+  assert.equal(await scalar('select count(*)::int from triggers'),retainedBefore+7);
+  assert.equal(await scalar("select has_function_privilege('anon','intelligence_health()','EXECUTE')"),false);
+  console.log('PASS 0092 excludes explicit inactive/merged contract receipts from all-card and Jev-card/account counts while preserving receipts and other JSON marker types');
   // The newest cohort can be entirely pending; never backfill its median from older work.
   await db.exec("update intelligence_observations set observed_at=now()-interval '2 hours',interpreted_at=case when interpreted_at is null then null else now()-interval '2 hours'+interval '20 seconds' end");
   await source(2,[],{ago:1,interpreted:false});health=await scalar('select intelligence_health()');

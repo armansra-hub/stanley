@@ -12,6 +12,9 @@ export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
   new_entity: { strength: 88, half_life_days: 120 }, // new subsidiary/division → multi-entity consolidation (classic QB killer)
   ma: { strength: 85, half_life_days: 90 },         // ACQUIRER only → multi-entity/consolidation pain
   gov_contract: { strength: 82, half_life_days: 120 }, // new federal award → revenue step-change + audit/DCAA → ERP
+  government_announcement: { strength: 74, half_life_days: 120 },
+  contract_timing: { strength: 70, half_life_days: 60 },
+  regional_award: { strength: 80, half_life_days: 180 },
   finance_hire: { strength: 80, half_life_days: 30 }, // hiring AP/controller → in-house finance scaling NOW
   fleet_expansion: { strength: 74, half_life_days: 150 }, // FMCSA fleet growth → multi-asset/maintenance accounting outgrows QB
   hiring_velocity: { strength: 70, half_life_days: 120 }, // FMCSA driver-count surge → payroll/ops complexity
@@ -48,6 +51,9 @@ export const TRIGGER_LABEL: Record<string, string> = {
   new_entity: "New entity / subsidiary",
   ma: "Acquired a company",
   gov_contract: "Gov contract award",
+  government_announcement: "Government award announcement · Jev",
+  contract_timing: "Upcoming contract milestone",
+  regional_award: "State / local contract award",
   finance_hire: "Finance hire",
   fleet_expansion: "Fleet growth (FMCSA)",
   hiring_velocity: "Driver-count surge (FMCSA)",

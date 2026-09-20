@@ -1,0 +1,36 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
+const requireLocal = createRequire(new URL("../../work/intelligence-sql-test/package.json", import.meta.url));
+const { PGlite } = requireLocal("@electric-sql/pglite");
+const db = await PGlite.create("memory://");
+let passed = 0;
+const scalar = async (sql, args = []) => Object.values((await db.query(sql, args)).rows[0])[0];
+const source = "gsa_news", key = "a".repeat(64), url = "https://www.gsa.gov/_rssfeed/hq_newsReleases.xml";
+const validators = { url, etag: '"valid-v1"' };
+try {
+  await db.exec(`create role anon; create role authenticated; create role service_role;
+    create table intelligence_config(id int,enabled boolean); insert into intelligence_config values(1,true);`);
+  for (const file of ["0060_intelligence_shared_sources.sql", "0084_conditional_source_fetch.sql"]) await db.exec(await readFile(new URL(`../../supabase/migrations/${file}`, import.meta.url), "utf8"));
+  const claim = await scalar("select intelligence_shared_claim($1)", [source]);
+  assert.ok(claim.lease_token); passed++;
+  await assert.rejects(db.query("select intelligence_shared_http_snapshot($1,$2,null,null,null,true)", [source, claim.lease_token]), /304_without_snapshot/); passed++;
+  const item = { item_key: key, payload: { url: "https://www.gsa.gov/news/example", title: "Services award", text: "Exact public feed excerpt", eventDate: "2026-09-18" } };
+  await db.query("select intelligence_shared_http_snapshot($1,$2,$3,null,$4,false,11)", [source, claim.lease_token, [item], validators]);
+  await db.query("select intelligence_shared_item($1,$2,$3,null,false,'temporary_article_failure')", [source, claim.lease_token, key]);
+  const before = (await db.query("select payload,attempts,next_attempt_at,complete from intelligence_shared_items where source_id=$1", [source])).rows;
+  await db.query("select intelligence_shared_http_snapshot($1,$2,null,null,$3,true)", [source, claim.lease_token, validators]);
+  const after = (await db.query("select payload,attempts,next_attempt_at,complete from intelligence_shared_items where source_id=$1", [source])).rows;
+  assert.deepEqual(after, before); passed++;
+  const retained = (await db.query("select last_item_count,last_http_status,last_fetch_status,last_entity_repairs,http_validators from intelligence_shared_sources where id=$1", [source])).rows[0];
+  assert.deepEqual(retained, { last_item_count: 1, last_http_status: 304, last_fetch_status: "success", last_entity_repairs: 11, http_validators: validators }); passed++;
+  await db.query("select intelligence_shared_http_snapshot($1,$2,null,'invalid_xml',$3,false)", [source, claim.lease_token, { url, etag: '"bad-v2"' }]);
+  assert.deepEqual(await scalar("select http_validators from intelligence_shared_sources where id=$1", [source]), validators); passed++;
+  await db.query("select intelligence_shared_http_snapshot($1,$2,null,null,$3,true)", [source, claim.lease_token, validators]);
+  assert.equal(await scalar("select last_fetch_status from intelligence_shared_sources where id=$1", [source]), "success"); passed++;
+  assert.equal(await scalar("select has_function_privilege('anon','intelligence_shared_http_snapshot(text,uuid,jsonb,text,jsonb,boolean,integer)','EXECUTE')"), false);
+  assert.equal(await scalar("select has_function_privilege('service_role','intelligence_shared_http_snapshot(text,uuid,jsonb,text,jsonb,boolean,integer)','EXECUTE')"), true); passed++;
+  await db.query("update intelligence_shared_sources set lease_until=now()-interval '1 second' where id=$1", [source]);
+  await assert.rejects(db.query("select intelligence_shared_http_snapshot($1,$2,null,null,$3,true)", [source, claim.lease_token, validators]), /lease_lost/); passed++;
+  console.log(`${passed} conditional source migration tests passed`);
+} finally { await db.close(); }

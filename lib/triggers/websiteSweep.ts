@@ -2,16 +2,16 @@ import "server-only";
 import { markSiteAttempted, pickSitesForRotation, setSiteChecked, setParent, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { setCompaniesStatus } from "@/lib/db/companies";
 import { getAppConfig } from "@/lib/db/settings";
-import { fetchSiteSignals } from "@/lib/sources/website";
-import { fetchFeed } from "@/lib/sources/googleNews";
+import { fetchSiteSignals, readWebsiteCache, type WebsiteCacheEntry } from "@/lib/sources/website";
+import { fetchFeed, fetchFeedResult, readNewsFeedCache } from "@/lib/sources/googleNews";
+import { fetchConditionalText, responseValidators } from "@/lib/sources/conditionalFetch";
 import { classifyAndRecordHeadline } from "@/lib/triggers/sweep";
 import { isFinanceHireEligible, isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
 import { rotationBatches } from "./rotationBatches";
 import { HEADLINE_CLASSIFIER_BATCH_BUDGET_MS } from "./classify";
 import { enqueueObservation, intelligenceEnabled } from "@/lib/intelligence/observations";
 import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
-import { companyPageUrl, sameCompanySite, sitePageEvidence } from "@/lib/sources/siteDiscovery";
-import { fetchPublicHttpText } from "./urlSafety";
+import { companyPageUrl, discoverSiteLinks, sameCompanySite, sitePageEvidence } from "@/lib/sources/siteDiscovery";
 import { nextRevisit, websiteChangeHistory } from "./adaptiveRevisit";
 import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from "@/lib/sources/outcomes";
 
@@ -56,15 +56,17 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           ? [...new Set(value.filter((url): url is string => typeof url === "string" && url.length <= 2048).map(url => companyPageUrl(url, base)).filter((url): url is string => Boolean(url)))].slice(0, 200) : [];
         const knownUrls = urls(state?.cursor?.knownUrls);
         const priorPending = urls(state?.cursor?.pendingUrls);
+        const priorCache = readWebsiteCache(state?.cursor?.httpCache, base);
         const baseline = captureEnabled && !state?.cursor?.baselineCapturedAt && !urls(state?.cursor?.verifiedUrls).length;
         const scan = captureEnabled
-          ? await fetchSiteSignals(c.domain, c.name, { knownUrls, maxPages: baseline ? 2 : 5, mode: baseline ? "baseline" : "deep" })
+          ? await fetchSiteSignals(c.domain, c.name, { knownUrls, httpCache: priorCache, maxPages: baseline ? 2 : 5, mode: baseline ? "baseline" : "deep" })
           : await fetchSiteSignals(c.domain, c.name);
         let captureFailed = stateReadFailed;
         const fetchedPending: string[] = [];
         const failedPending: string[] = [...(scan.coverage.failedUrls ?? [])];
         const urlOutcomes: SourceUrlOutcome[] = [...(scan.coverage.urlOutcomes ?? [])];
-        const savedUrls: string[] = [];
+        const savedUrls: string[] = [...(scan.coverage.notModifiedUrls ?? [])];
+        const pendingCache: Record<string, WebsiteCacheEntry> = {};
         if (captureEnabled) {
           // Reserve three slots for the prior backlog. Homepage discovery alone
           // must not keep selecting the same first few newsroom links forever.
@@ -72,7 +74,11 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
             .filter(url => !scan.coverage.attemptedUrls.includes(url)).slice(0, baseline ? 0 : 3);
           await Promise.all(pending.map(async url => {
             try {
-              const response = await fetchPublicHttpText(url, { timeoutMs: 3500, maxBytes: 1_000_000 });
+              const response = await fetchConditionalText(url, { timeoutMs: 3500, maxBytes: 1_000_000 }, priorCache[url]);
+              if (response.status === 304 && priorCache[url]?.retained && sameCompanySite(response.finalUrl, base)) {
+                savedUrls.push(priorCache[url].finalUrl); fetchedPending.push(url);
+                urlOutcomes.push({ url, outcome: "success", status: 304 }); return;
+              }
               const outcome = sameCompanySite(response.finalUrl, base) ? publicResponseOutcome(url, response.status, response.body)
                 : { url, outcome: "unavailable" as const, code: "cross_company_redirect" as const };
               urlOutcomes.push(outcome);
@@ -86,10 +92,11 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
               const existing = scan.pages.find(existing => existing.url === page.url);
               if (existing) existing.requestedUrls = [...new Set([...(existing.requestedUrls ?? [existing.url]), url])].sort();
               else scan.pages.push(page);
+              pendingCache[url] = { finalUrl: page.url, validators: responseValidators(response), discoveredUrls: discoverSiteLinks(response.body, page.url).map(link => link.url).slice(0, 24), feedUrl: null, retained: false };
               fetchedPending.push(url);
             } catch (error) { failedPending.push(url); urlOutcomes.push({ url, outcome: "unavailable", code: sourceErrorCode(error) }); }
           }));
-          if (!scan.pages.some(page => page.text.trim())) captureFailed = true;
+          if (!scan.pages.some(page => page.text.trim()) && !savedUrls.length) captureFailed = true;
           for (const page of scan.pages) {
             if (!page.text.trim()) continue;
             try {
@@ -100,6 +107,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
                 text: page.text, eventDate: published.length === 1 ? published[0] : null,
                 metadata: { sourceDates: page.sourceDates, meaningfulContentHash: page.contentHash, textTruncated: page.truncated,
                   ...(page.companyIdentity ? { companyIdentity: page.companyIdentity } : {}),
+                  ...(page.identityClaims?.length ? { identityClaims: page.identityClaims } : {}),
                   eventDateBasis: published.length === 1 ? "page_publication" : "unknown", collectionMode: baseline ? "baseline" : "deep",
                   discovery: { collector: "website", url: page.url, requestedUrls: page.requestedUrls ?? [page.url], title: page.title, eventDate: published.length === 1 ? published[0] : null } },
               });
@@ -111,7 +119,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         let touched = false;
 
         const current = [...new Set(scan.growth.map((h) => h.label))].sort();
-        const fingerprint = current.join("|");
+        const fingerprint = !scan.pages.length && savedUrls.length ? c.site_hash ?? "" : current.join("|");
         const priorSet = new Set((c.site_hash ?? "").split("|").filter(Boolean));
         if (!captureEnabled) await setSiteChecked(c.id, fingerprint);
         stats.changed += scan.growth.filter((x) => !priorSet.has(x.label)).length;
@@ -124,8 +132,12 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
 
         // Real newsroom/blog items retain the exact source page and the existing
         // event verifier, including the acquirer-position check for M&A.
+        let feedCache = state?.cursor?.feedUrl === scan.feedUrl ? readNewsFeedCache(state?.cursor?.feedCache) : undefined;
         if (scan.feedUrl && !baseline) {
-          const feedItems = (await fetchFeed(scan.feedUrl, captureEnabled ? 12 : 8)).filter(it => fresh(it.signal_date));
+          const feedResult = captureEnabled ? await fetchFeedResult(scan.feedUrl, 12, { cache: feedCache }) : null;
+          if (feedResult?.cache) feedCache = feedResult.cache;
+          if (feedResult?.status === "unavailable") captureFailed = true;
+          const feedItems = (feedResult?.items ?? await fetchFeed(scan.feedUrl, 8)).filter(it => fresh(it.signal_date));
           if (captureEnabled) {
             for (let from = 0; from < feedItems.length; from += 4) {
               const results = await Promise.allSettled(feedItems.slice(from, from + 4).map(it => classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false, classifierDeadlineMs })));
@@ -168,15 +180,24 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
             !complete ? "incomplete" : changedSinceComplete ? "changed" : changes.outcome);
           const consecutiveFailures = savedUrls.length ? 0 : Math.min(8, Number(state?.cursor?.consecutiveFailures ?? 0) + 1);
           const warningCodes = [...new Set(urlOutcomes.filter(outcome => outcome.outcome === "unavailable").map(outcome => outcome.code ?? "network"))];
+          const httpCache = Object.fromEntries(Object.entries({ ...priorCache, ...scan.httpCache, ...pendingCache })
+            .filter(([, entry]) => entry.retained || savedUrls.includes(entry.finalUrl))
+            .map(([url, entry]) => [url, { ...entry, retained: true }]).slice(-24));
+          const nameKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/(?:\s+(?:inc|llc|ltd|corp|corporation|incorporated))+$/, "");
+          const publicAliases = [...new Set([
+            ...(Array.isArray(state?.cursor?.publicAliases) ? state.cursor.publicAliases.filter((value): value is string => typeof value === "string") : []),
+            ...scan.pages.flatMap(page => page.companyIdentity?.names.some(name => nameKey(name) === nameKey(c.name)) ? page.companyIdentity.names : []),
+          ])].filter(name => name.length >= 3 && name.length <= 140).slice(0, 4);
           await writeSourceState(c.id, sourceKey, {
             cursor: { knownUrls: allKnown, verifiedUrls, pendingUrls: pending, attemptedPages: scan.coverage.attemptedUrls.length + fetchedPending.length + failedPending.length, retainedPages: scan.pages.length,
               baselineCapturedAt: state?.cursor?.baselineCapturedAt ?? (savedUrls.length ? new Date().toISOString() : null),
               collectionMode: baseline ? "baseline" : "deep", consecutiveFailures, urlOutcomes: urlOutcomes.slice(0, 16),
+              httpCache, publicAliases, feedUrl: scan.feedUrl ?? state?.cursor?.feedUrl ?? null, feedCache,
               pageHashes: captureFailed ? state?.cursor?.pageHashes ?? {} : changes.hashes,
               changedSinceComplete: !complete && changedSinceComplete, revisit },
             complete,
             status: savedUrls.length ? (complete ? "complete" : "partial") : "unavailable", successful: savedUrls.length > 0,
-            details: { urlOutcomes: urlOutcomes.slice(0, 16), savedPages: savedUrls.length, pendingPages: pending.length, storageError: captureFailed },
+            details: { urlOutcomes: urlOutcomes.slice(0, 16), savedPages: savedUrls.length, notModifiedPages: urlOutcomes.filter(outcome => outcome.status === 304).length, pendingPages: pending.length, storageError: captureFailed },
             nextAttemptAt: consecutiveFailures ? new Date(Date.now() + Math.min(24, 2 ** (consecutiveFailures - 1)) * 3600000).toISOString() : null,
             ...(incomplete ? { error: warningCodes.length ? `Website: ${warningCodes.join(", ")}` : captureFailed ? "Website evidence capture/storage incomplete" : "Website depth pending" } : {}),
           });

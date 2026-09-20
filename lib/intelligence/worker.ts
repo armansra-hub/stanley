@@ -10,9 +10,10 @@ import { durableJevRequest, reconcileJevReceipts, type JevWorkload } from "./jev
 import { OPERATING_CRITERIA, OPERATING_TOPICS, operatingCriteria, type OperatingTopic } from "./profiles";
 import { businessServicesResearchContext } from "./businessServices";
 import { loadFeedbackExamples } from "./feedback";
-import { attachObservationEvent, bindEventTrigger } from "./events";
+import { reconcileObservationEvent, EventReconciliationDeferred, bindEventTrigger } from "./events";
 import { queueAccountStory } from "./narratives";
 import { buildPublicScaleContext, loadPublicScaleObservations, type PublicScaleContext, type PublicContextObservation } from "./publicContext";
+import { DEFAULT_VISIBILITY_POLICY } from "./visibility";
 
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 export type PartResult = { start: number; end: number; evaluation: Evaluation };
@@ -114,8 +115,8 @@ export function packetFinding(observation: Pick<Observation, "evidence_text">, p
 export function aggregatePacketFindings(observation: Pick<Observation, "evidence_text">, parts: PartResult[], publications: PacketPublication[] = []) {
   return {
     packetFindings: parts.map(part => packetFinding(observation, part, publications.find(p => p.start === part.start && p.end === part.end && p.questionVersion === part.evaluation.questionVersion)?.outcome)),
-    topicEvidence: parts.filter(p => p.evaluation.attributes.companyRelationship === "direct" && p.evaluation.attributes.companyRelevance >= .8)
-      .flatMap(p => Object.entries(p.evaluation.criteria).filter(([topic, probability]) => Object.hasOwn(OPERATING_TOPICS, topic) && probability >= .8)
+    topicEvidence: parts.filter(p => p.evaluation.attributes.companyRelationship === "direct" && p.evaluation.attributes.companyRelevance >= DEFAULT_VISIBILITY_POLICY.companyRelevance)
+      .flatMap(p => Object.entries(p.evaluation.criteria).filter(([topic, probability]) => Object.hasOwn(OPERATING_TOPICS, topic) && probability >= DEFAULT_VISIBILITY_POLICY.topicProbability)
         .map(([topic, probability]) => ({ topic: topic as OperatingTopic, probability, start: p.start, end: p.end,
           companyRelationship: p.evaluation.attributes.companyRelationship, companyRelevance: p.evaluation.attributes.companyRelevance }))),
   };
@@ -268,8 +269,17 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
         return "continued";
       }
       const finding = packetFinding(observation, part);
-      const event = !grouped && jevSignalType(part.evaluation, observation.event_date)
-        ? await attachObservationEvent(observation.id, { ...part.evaluation.attributes, evidenceExcerpt: finding.evidenceExcerpt }) : null;
+      let event = null;
+      try {
+        event = !grouped && finding.evidenceExcerpt && observation.metadata.structuredAward !== true && jevSignalType(part.evaluation, observation.event_date)
+          ? await reconcileObservationEvent(observation.id, observation.company_id,
+            { ...part.evaluation.attributes, eventRoutingType: jevSignalType(part.evaluation, observation.event_date), evidenceExcerpt: finding.evidenceExcerpt }, deadline) : null;
+      } catch (error) {
+        if (!(error instanceof EventReconciliationDeferred)) throw error;
+        await finish(job, "queued", checkpoint(), { p_error: `event_match_${error.reason}`,
+          p_retry_seconds: error.reason === "budget_deferred" ? secondsUntilNextMonth() : 90 });
+        return `event_match_${error.reason}`;
+      }
       if (event) grouped = true;
       const publication = await publishJevFinding({ company, observation, evaluation: part.evaluation, event,
         passage: finding.excerptStart !== null && finding.excerptEnd !== null ? {

@@ -24,6 +24,13 @@ beforeEach(() => vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "true"));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("shared source parsing and account retrieval", () => {
+  it("repairs GSA-style XML ampersands and excludes dated archive rows before enforcing the fresh intake cap", async () => {
+    const old = '<item><title>Archive</title><link>https://gsa.gov/old</link><pubDate>Thu, 03 Jan 2019 00:00:00 GMT</pubDate></item>';
+    const recent = '<item><title>Research & consulting contract</title><link>https://gsa.gov/new?a=1&b=2</link><description><![CDATA[A & B operations]]></description><pubDate>Fri, 18 Sep 2026 00:00:00 GMT</pubDate></item>';
+    const items = await parseSharedFeed(`<rss version="2.0"><channel>${old.repeat(555)}${recent}</channel></rss>`, "https://gsa.gov/feed", { nowMs: now });
+    expect(items).toHaveLength(1);
+    expect(items[0].payload).toMatchObject({ title: "Research & consulting contract", text: "A & B operations", url: "https://gsa.gov/new?a=1&b=2" });
+  });
   it("preserves the oldest quiet source while recorded outcomes order remaining capacity", () => {
     const ranked = rankSharedSources([source("quiet", { states: ["VA"], next_fetch_at: "2026-09-16" }), source("useful"), source("not_now")], [account("1")]);
     const ordered = feedbackSourceOrder(ranked, { quiet: .9, useful: 1.02, not_now: .98 });
@@ -59,6 +66,17 @@ describe("shared source parsing and account retrieval", () => {
 });
 
 describe("durable shared collection", () => {
+  it("reuses a retained feed on 304 while continuing its durable pending article work", async () => {
+    const retained = source("state", { last_success_at: "2026-09-18T00:00:00Z", http_validators: { url: source().url, etag: '"feed-v1"' } });
+    const deps = fixture({ sources: vi.fn().mockResolvedValue([retained]), claim: vi.fn().mockResolvedValue(retained) });
+    deps.fetchText.mockImplementation(async url => url === retained.url ? { status: 304, body: "", finalUrl: url, contentType: "application/rss+xml" }
+      : { status: 200, body: `<article>${article}</article>`, finalUrl: url, contentType: "text/html" });
+    const result = await runSharedSources(deps);
+    expect(result).toMatchObject({ notModified: 1, empty: 0, processed: 1, observations: 1, failed: 0 });
+    expect(deps.store.snapshot).toHaveBeenCalledWith(retained, null, null, { validators: retained.http_validators, unchanged: true });
+    expect(deps.enqueue).toHaveBeenCalledTimes(1);
+    expect(deps.store.item).toHaveBeenCalledWith(retained, item.item_key, { done: true });
+  });
   it("requires both deployment and database gates before any feed or account access", async () => {
     const deps = fixture();
     vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "false");
@@ -78,7 +96,7 @@ describe("durable shared collection", () => {
     expect(result).toMatchObject({ fetched: 1, processed: 1, observations: 2, failed: 0 });
     expect(result.matchedAccounts).toBe(2);
     expect(result.sourceYield).toEqual([expect.objectContaining({ matchedAccounts: 2, observations: 2, processedItems: 1 })]);
-    expect(deps.store.snapshot).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining([expect.objectContaining({ item_key: expect.any(String) })]), null);
+    expect(deps.store.snapshot).toHaveBeenCalledWith(expect.anything(), expect.arrayContaining([expect.objectContaining({ item_key: expect.any(String) })]), null, expect.objectContaining({ entityRepairs: 0 }));
     expect(deps.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "news", text: expect.stringContaining("Tacoma Operations"),
       metadata: expect.objectContaining({ sourceRole: "announcement_context", identityVerified: false, governmentAwardVerified: false, candidateMatch: "exact_name" }) }));
     expect(deps.store.item).toHaveBeenLastCalledWith(expect.anything(), item.item_key, { done: true });
@@ -127,7 +145,7 @@ describe("durable shared collection", () => {
     const deps = fixture({ pending: vi.fn().mockResolvedValue([]) });
     deps.fetchText.mockResolvedValue({ status: 200, body: '<rss version="2.0"><channel><title>Empty</title></channel></rss>', finalUrl: source().url, contentType: "application/rss+xml" });
     expect(await runSharedSources(deps)).toMatchObject({ fetched: 1, empty: 1, failed: 0, observations: 0 });
-    expect(deps.store.snapshot).toHaveBeenCalledWith(expect.anything(), [], null);
+    expect(deps.store.snapshot).toHaveBeenCalledWith(expect.anything(), [], null, expect.objectContaining({ entityRepairs: 0 }));
   });
   it("retains unreadable article bodies instead of substituting the headline", async () => {
     const deps = fixture();

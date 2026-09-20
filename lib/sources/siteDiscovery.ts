@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
 import { decodeEntities, htmlAttributes, extractSiteText, extractCompanyIdentity, type SiteCompanyIdentity } from "./siteContent";
+import { extractIdentityClaims, type SiteIdentityClaim } from "./companyIdentityEvidence";
 export { decodeEntities, htmlAttributes } from "./siteContent";
 
 export type SitePageKind = "news" | "careers" | "about" | "locations" | "services";
@@ -18,6 +19,7 @@ export interface SitePageEvidence {
   sourceDates: SiteDateReference[];
   truncated: boolean;
   companyIdentity?: SiteCompanyIdentity;
+  identityClaims?: SiteIdentityClaim[];
   requestedUrls?: string[];
 }
 
@@ -128,5 +130,6 @@ export function sitePageEvidence(html: string, url: string): SitePageEvidence {
     text: text.slice(0, 24_000), contentHash: createHash("sha256").update(text).digest("hex"),
     sourceDates: sourceDates.slice(0, 12), truncated: text.length > 24_000,
     ...(companyIdentity ? { companyIdentity } : {}),
+    identityClaims: extractIdentityClaims(html, url, companyIdentity),
   };
 }

@@ -7,6 +7,8 @@ import { htmlToVisibleText, sitePageEvidence } from "@/lib/sources/siteDiscovery
 import { canonicalEvidenceUrl, enqueueObservation, intelligenceEnabled, type ObservationInput } from "./observations";
 import { getSourceAttentionWeights } from "./feedback";
 import { publicResponseOutcome } from "@/lib/sources/outcomes";
+import { fetchConditionalText, responseValidators, retainedValidators, type HttpValidators } from "@/lib/sources/conditionalFetch";
+import { normalizeFeedXml } from "@/lib/sources/feedXml";
 
 export type SharedSource = {
   id: string; name: string; url: string; enabled: boolean; format: string;
@@ -14,6 +16,8 @@ export type SharedSource = {
   states: string[]; cities: string[]; free_access: boolean; verified_at: string | null;
   verification_url: string; poll_minutes: number; next_fetch_at: string;
   lease_token?: string;
+  http_validators?: HttpValidators | null;
+  last_success_at?: string | null;
 };
 export type SharedAccount = { id: string; name: string; domain: string | null; netsuite_internal_id: string | null; state: string | null; city: string | null };
 export type FeedPayload = { url: string; title: string; text: string; eventDate: string | null; bodyFetched?: boolean; sourceDates?: unknown[];
@@ -91,12 +95,20 @@ export function buildSharedAccountIndex(accounts: SharedAccount[]) {
 
 const parser = new Parser({ timeout: 8_000 });
 /** A malformed/non-feed response is an error, while a valid empty feed is successful. */
-export async function parseSharedFeed(xml: string, sourceUrl: string): Promise<SharedItem[]> {
+export async function parseSharedFeed(xml: string, sourceUrl: string, options: { nowMs?: number } = {}): Promise<SharedItem[]> {
   if (!/<(?:rss|feed|rdf:RDF)\b/i.test(xml)) throw new Error("source_not_rss_or_atom");
-  const parsed = await parser.parseString(xml);
-  if ((parsed.items?.length ?? 0) > 250) throw new Error("source_item_capacity_exceeded");
+  const parsed = await parser.parseString(normalizeFeedXml(xml).xml);
+  // Monitor a stated recent window, not a publisher's entire multi-year archive.
+  // Unknown dates remain eligible; a large recent/undated feed still reports the
+  // capacity limit instead of silently truncating potentially useful items.
+  const cutoff = (options.nowMs ?? Date.now()) - 180 * 86400000;
+  const eligible = (parsed.items ?? []).filter(item => {
+    const timestamp = Date.parse(item.isoDate ?? item.pubDate ?? "");
+    return !Number.isFinite(timestamp) || timestamp >= cutoff;
+  });
+  if (eligible.length > 250) throw new Error("source_item_capacity_exceeded");
   const items = new Map<string, SharedItem>();
-  for (const item of parsed.items ?? []) {
+  for (const item of eligible) {
     if (!item.title?.trim() || !item.link) throw new Error("source_item_missing_identity");
     const url = canonicalEvidenceUrl(new URL(item.link, sourceUrl).toString());
     const title = htmlToVisibleText(item.title).slice(0, 500);
@@ -115,7 +127,7 @@ export interface SharedSourceStore {
   accounts(): Promise<SharedAccount[]>;
   attentionWeights?(): Promise<Record<string, number>>;
   claim(id: string): Promise<SharedSource | null>;
-  snapshot(source: SharedSource, items: SharedItem[] | null, error: string | null): Promise<void>;
+  snapshot(source: SharedSource, items: SharedItem[] | null, error: string | null, http?: { validators?: HttpValidators; unchanged?: boolean; entityRepairs?: number }): Promise<void>;
   pending(source: SharedSource, limit: number): Promise<SharedItem[]>;
   item(source: SharedSource, key: string, update: { payload?: FeedPayload; done?: boolean; error?: string }): Promise<void>;
   release(source: SharedSource, error: string | null): Promise<void>;
@@ -149,7 +161,8 @@ function databaseStore(): SharedSourceStore {
       throw new Error("shared_account_capacity_exceeded");
     },
     async claim(id) { return await rpc("intelligence_shared_claim", { p_source: id }); },
-    async snapshot(source, items, error) { await rpc("intelligence_shared_snapshot", { ...leaseArgs(source), p_items: items, p_error: error }); },
+    async snapshot(source, items, error, http) { await rpc("intelligence_shared_http_snapshot", { ...leaseArgs(source), p_items: items, p_error: error,
+      p_validators: http?.validators ?? null, p_not_modified: http?.unchanged ?? false, p_entity_repairs: http?.entityRepairs ?? 0 }); },
     async pending(source, limit) {
       const { data, error } = await db.from("intelligence_shared_items").select("item_key,payload").eq("source_id", source.id)
         .eq("complete", false).lte("next_attempt_at", new Date().toISOString()).order("created_at").order("item_key").limit(limit);
@@ -165,7 +178,7 @@ type Dependencies = { store?: SharedSourceStore; fetchText?: typeof fetchPublicH
 export async function runSharedSources(deps: Dependencies = {}) {
   // Returned metrics are persisted by the cron's existing intelligence.sources
   // event. Distinct matches are account counts; observations are evidence rows.
-  const result = { enabled: false, claimed: 0, fetched: 0, empty: 0, processed: 0, observations: 0, failed: 0, unmatched: 0,
+  const result = { enabled: false, claimed: 0, fetched: 0, notModified: 0, feedEntityRepairs: 0, feedWindowDays: 180, empty: 0, processed: 0, observations: 0, failed: 0, unmatched: 0,
     matchedAccounts: 0, sourceYield: [] as { sourceId: string; matchedAccounts: number; observations: number; processedItems: number; unmatchedItems: number; pendingFailures: number }[] };
   const matchedAccounts = new Set<string>();
   if (!intelligenceEnabled()) return result;
@@ -194,12 +207,20 @@ export async function runSharedSources(deps: Dependencies = {}) {
     try {
       if (Date.parse(source.next_fetch_at) <= now()) {
         try {
-          const response = await fetchText(source.url, { timeoutMs: 8_000, maxBytes: 2_000_000, accept: "application/rss+xml,application/atom+xml,application/xml,text/xml" });
-          if (response.status < 200 || response.status >= 300) throw new Error("source_fetch_failed");
-          const items = await parseSharedFeed(response.body, source.url);
-          await store.snapshot(source, items, null);
+          const response = await fetchConditionalText(source.url, { timeoutMs: 8_000, maxBytes: 2_000_000, accept: "application/rss+xml,application/atom+xml,application/xml,text/xml" },
+            { validators: retainedValidators(source.http_validators, source.url), retained: Boolean(source.last_success_at) }, fetchText);
+          if (response.status === 304) {
+            await store.snapshot(source, null, null, { validators: source.http_validators ?? undefined, unchanged: true });
+            result.notModified++;
+          } else {
+            if (response.status < 200 || response.status >= 300) throw new Error("source_fetch_failed");
+            const normalized = normalizeFeedXml(response.body);
+            const items = await parseSharedFeed(normalized.xml, source.url, { nowMs: now() });
+            await store.snapshot(source, items, null, { validators: responseValidators(response), entityRepairs: normalized.entityRepairs });
+            result.feedEntityRepairs += normalized.entityRepairs;
+            if (!items.length) result.empty++;
+          }
           result.fetched++;
-          if (!items.length) result.empty++;
         } catch (error) {
           sourceError = failureCode(error, "feed_fetch_or_persistence_failed");
           await store.snapshot(source, null, sourceError);

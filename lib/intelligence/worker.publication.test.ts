@@ -7,7 +7,7 @@ vi.mock("./jev", () => ({ evaluateEvidence: mocks.evaluate, estimateEvidenceInpu
 vi.mock("./budget", () => ({ reserveJev: mocks.reserve, settleJev: vi.fn(), secondsUntilNextMonth: () => 9999 }));
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => undefined }));
-vi.mock("./events", () => ({ attachObservationEvent: mocks.attach, bindEventTrigger: mocks.bind }));
+vi.mock("./events", () => ({ reconcileObservationEvent: mocks.attach, EventReconciliationDeferred: class extends Error {}, bindEventTrigger: mocks.bind }));
 vi.mock("./publish", async importOriginal => ({ ...await importOriginal<typeof import("./publish")>(), publishJevFinding: mocks.publish }));
 import { evidencePackets, runIntelligenceWorker, type PartResult } from "./worker";
 
@@ -49,7 +49,7 @@ describe("saved-packet publication recovery", () => {
     expect(await runIntelligenceWorker(1)).toMatchObject({ processed: 1, outcomes: { complete: 1 } });
     expect(mocks.evaluate).not.toHaveBeenCalled(); expect(mocks.reserve).not.toHaveBeenCalled();
     expect(mocks.publish.mock.calls.map(([value]) => value.evaluation.attributes.signalType)).toEqual(["erp_tech", "none"]);
-    expect(mocks.attach.mock.calls[0][1].signalType).toBe("erp_tech");
+    expect(mocks.attach.mock.calls[0][2].signalType).toBe("erp_tech");
     expect(checkpoints[0].result.publications).toHaveLength(1);
     expect(completion.p_result.publications).toHaveLength(2);
     expect(completion.p_attributes.signalType).toBe("none");

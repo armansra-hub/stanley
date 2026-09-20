@@ -10,6 +10,7 @@ export type CompanyIdentityContext = { aliases: string[]; addresses: IdentityAdd
 type SourceContext = {
   record?: { id: string; header: string; capturedAt: string } | null;
   websites?: { id: string; url: string; capturedAt: string; identity: unknown }[];
+  claims?: { id: string; name: string; subjectName: string; relationship: string; sourceUrl: string; capturedAt: string }[];
 };
 const clean = (value: unknown, limit = 180): string | undefined => typeof value === "string" && value.trim() && value.length <= limit
   ? value.replace(/\s+/g, " ").trim() : undefined;
@@ -55,6 +56,12 @@ export function parseNetSuiteIdentityHeader(header: string, source: { id: string
 export function buildCompanyIdentityContext(company: Company, sources: SourceContext): CompanyIdentityContext {
   const record = sources.record && typeof sources.record.header === "string" ? parseNetSuiteIdentityHeader(sources.record.header, sources.record) : { aliases: [], addresses: [] };
   const aliases: string[] = [...record.aliases], addresses: IdentityAddress[] = [...record.addresses];
+  const anchored = [company.name, ...record.aliases].map(identityName);
+  for (const claim of (sources.claims ?? []).slice(0, 20)) {
+    if (!["legal_name", "dba", "former_name"].includes(claim.relationship) || !clean(claim.name)
+      || !anchored.includes(identityName(claim.subjectName)) || !isCompanyIdentitySource(claim.sourceUrl, company.domain || company.website_raw)) continue;
+    aliases.push(claim.name);
+  }
   for (const source of (sources.websites ?? []).slice(0, 8)) {
     if (!isCompanyIdentitySource(source.url, company.domain || company.website_raw)) continue;
     const identity = object(source.identity);

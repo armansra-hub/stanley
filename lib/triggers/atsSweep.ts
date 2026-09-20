@@ -93,7 +93,7 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
           }
           // Recruiting delivery work and client placements are not an in-house
           // incumbent. New operating-role evidence stays in the research lane.
-          if (!financeEligible || scan.isClientPlacement) continue;
+          if (!financeEligible || scan.isClientPlacement || (["jazzhr", "jobvite", "workday", "icims", "adp"].includes(type) && !j.description.trim())) continue;
           if (scan.isFinance) {
             if (scan.incumbent === "quickbooks") incumbent = "quickbooks";
             else if (scan.incumbent === "erp" && incumbent !== "quickbooks") incumbent = "erp";
@@ -124,7 +124,8 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
             complete: lifecycle.complete === true,
             status: batch.status === "unavailable" ? "unavailable" : lifecycle.complete ? (jobs.length ? "complete" : "empty") : "partial",
             successful: batch.status !== "unavailable",
-            details: { providerStatus: batch.status, returnedJobs: jobs.length, offset, restart: lifecycle.restart === true },
+            details: { providerStatus: batch.status, returnedJobs: jobs.length, offset, restart: lifecycle.restart === true,
+              coverageKind: batch.coverageKind ?? "provider_api", descriptionsFetched: batch.descriptionsFetched ?? null, descriptionsUnavailable: batch.descriptionsUnavailable ?? null },
             ...(lifecycle.restart ? { error: "ATS board changed during pagination; restarting complete scan" } : {}),
             ...(batch.status === "unavailable" ? { error: "ATS retrieval unavailable; prior offset retained" } : {}),
           });

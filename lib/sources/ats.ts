@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { companyPageUrl, discoverSiteLinks, htmlToVisibleText, sameCompanySite } from "./siteDiscovery";
 import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from "./outcomes";
+import { fetchHostedAtsBatch } from "./atsHosted";
+import { enterpriseBoardFromHtml, fetchWorkdayBatch, fetchIcimsBatch } from "./atsEnterprise";
+import { adpBoardFromHtml, fetchAdpBatch } from "./atsAdp";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -17,7 +20,7 @@ import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from ".
  * No keys, no Apify. Source-isolated: any failure returns empty / null.
  */
 
-export type AtsType = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "recruitee" | "workable" | "wizehire";
+export type AtsType = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "recruitee" | "workable" | "wizehire" | "jazzhr" | "jobvite" | "workday" | "icims" | "adp";
 export interface AtsJob { id?: string; title: string; description: string; url: string; location: string; date: string | null }
 
 async function fetchText(url: string, ms = 7000, companyBase?: string): Promise<string | null> {
@@ -53,6 +56,8 @@ const ATS_PATTERNS: { type: AtsType; re: RegExp }[] = [
   { type: "recruitee", re: /([a-z0-9][a-z0-9_-]+)\.recruitee\.com/i },
   { type: "workable", re: /apply\.workable\.com\/([a-z0-9][a-z0-9_-]+)/i },
   { type: "wizehire", re: /wizehire\.com\/jobroll\/v1\/bootstrap\/(\d+)\/jobroll\.js/i },
+  { type: "jazzhr", re: /https?:\/\/([a-z0-9][a-z0-9_-]+)\.applytojob\.com\/apply(?:\/|[?"'])/i },
+  { type: "jobvite", re: /https?:\/\/jobs\.jobvite\.com\/([a-z0-9][a-z0-9_-]+)(?:\/|[?"'])/i },
 ];
 const BAD_TOKENS = new Set(["careers", "jobs", "company", "www", "embed", "job_board", "search", "about", "en-us", "en"]);
 
@@ -82,6 +87,8 @@ export async function detectAtsResult(domain: string): Promise<AtsDetection> {
       }
       continue;
     }
+    const enterpriseBoard = enterpriseBoardFromHtml(html) ?? adpBoardFromHtml(html);
+    if (enterpriseBoard) return { status: "detected", board: enterpriseBoard, outcomes };
     for (const { type, re } of ATS_PATTERNS) {
       const m = html.match(re);
       const token = m?.[1]?.toLowerCase();
@@ -113,6 +120,9 @@ export interface AtsJobBatch {
   status: "complete" | "partial" | "unavailable";
   snapshotKey?: string;
   expectedTotal?: number;
+  coverageKind?: "public_hosted_board" | "hosted_board_pagination_unresolved";
+  descriptionsFetched?: number;
+  descriptionsUnavailable?: number;
 }
 
 function jobDate(value: unknown): string | null {
@@ -146,7 +156,11 @@ export async function fetchAtsJobsBatch(type: AtsType, token: string, options: {
   const maxPages = Number.isFinite(options.maxPages) ? Math.max(1, Math.min(5, Math.floor(options.maxPages!))) : 3;
   const deadline = Date.now() + Math.max(1000, Math.min(20_000, options.budgetMs ?? 12_000));
   const unavailable: AtsJobBatch = { jobs: [], nextOffset: start, complete: false, status: "unavailable" };
+  if (type === "workday") return fetchWorkdayBatch(token, { offset: start, maxJobs, deadline });
+  if (type === "adp") return fetchAdpBatch(token, { offset: start, maxJobs, deadline });
+  if (type === "icims") return fetchIcimsBatch(token, { offset: start, maxJobs, deadline });
   if (!/^[a-z0-9][a-z0-9_-]{1,100}$/i.test(token)) return unavailable;
+  if (type === "jazzhr" || type === "jobvite") return fetchHostedAtsBatch(type, token, { offset: start, maxJobs, deadline });
   const json = (url: string) => Date.now() >= deadline ? Promise.resolve(null) : fetchJson(url, Math.min(5000, deadline - Date.now()));
   const out: AtsJob[] = [];
   const seen = new Set<string>();

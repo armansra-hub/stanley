@@ -5,6 +5,7 @@ import { intelligenceUiAuthorized, isUuid, sameOriginMutation, smallJson } from 
 import { runIntelligenceWorker } from "@/lib/intelligence/worker";
 import { recomputePriority } from "@/lib/db/triggers";
 import { readJevCostMetrics } from "@/lib/intelligence/costMetrics";
+import { runAccountQuestionWorker } from "@/lib/intelligence/accountQuestions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -49,6 +50,20 @@ export async function GET(req: NextRequest) {
     if (status.error) fail("status", status.error);
     if (views.error) fail("views", views.error);
     if (health.error) fail("health", health.error);
+    if (viewId) {
+      let matchesQuery = db.from("intelligence_account_question_matches")
+        .select("view_id,company_id,probability,result,evaluated_at,companies!inner(name,status)")
+        .eq("view_id", viewId).neq("companies.status", "removed_from_tam")
+        .order("probability", { ascending: false }).order("company_id").range(offset, offset + 49);
+      if (companyId) matchesQuery = matchesQuery.eq("company_id", companyId);
+      const [matches, queue] = await Promise.all([matchesQuery, db.from("intelligence_account_question_jobs")
+        .select("status", { count: "exact", head: true }).eq("view_id", viewId).in("status", ["queued", "running"])]);
+      if (matches.error || queue.error) fail("observations", matches.error ?? queue.error);
+      return NextResponse.json({ ...status.data, health: health.data, ...(jevCost ? { jevCost } : {}), enabled: intelligenceEnabled(),
+        views: views.data ?? [], observations: [], accountMatches: (matches.data ?? []).map(row => ({ ...row,
+          company_name: (row.companies as unknown as {name:string})?.name ?? "Unknown account", companies: undefined })),
+        accountQuestionPending: queue.count ?? 0, hasMore: (matches.data?.length ?? 0) === 50 });
+    }
     stage = "observations";
     let query = db.from("intelligence_observations")
       .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,feedback_excluded,public_priority_weight,companies:companies!intelligence_observations_company_id_fkey!inner(name,status)${viewId ? ",intelligence_view_matches:intelligence_view_matches!intelligence_view_matches_observation_id_fkey!inner(probability,view_id)" : ""}`)
@@ -96,7 +111,10 @@ export async function POST(req: NextRequest) {
       const { data, error } = await db.from("intelligence_views").upsert({ name, question, active: true }, { onConflict: "question" }).select("id").single();
       if (error) throw new Error("view_save_failed");
       // The cron consumer remains the durable recovery path if this wakeup fails.
-      after(async () => { await runIntelligenceWorker(3, Date.now() + 120_000).catch(() => {}); });
+      after(async () => {
+        await runIntelligenceWorker(1, Date.now() + 40_000).catch(() => {});
+        await runAccountQuestionWorker(1, Date.now() + 120_000).catch(() => {});
+      });
       return NextResponse.json({ ok: true, id: data.id });
     }
     if (body.action === "archive_view" && isUuid(body.viewId)) {

@@ -11,6 +11,10 @@ import {
 } from "./signalIntegrity";
 
 describe("finance-hire company eligibility", () => {
+  it("hides obsolete contract-date receipts only when the explicit inactivity marker is true",()=>{
+    expect(isPublishableTriggerEvidence({type:"contract_timing",metadata:{contractTimingInactive:true}})).toBe(false);
+    expect(isPublishableTriggerEvidence({type:"contract_timing",metadata:{contractTimingInactive:false}})).toBe(true);
+  });
   it("rejects record-dead companies without changing their TAM status", () => {
     expect(financeHireEligibility({ name: "Operating Co", record_dead: true })).toEqual({
       eligible: false,

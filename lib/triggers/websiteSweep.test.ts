@@ -10,8 +10,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db/triggers", () => ({ pickSitesForRotation: mocks.pick, setSiteChecked: mocks.checked, markSiteAttempted: mocks.attempted, setParent: mocks.parent, recordTrigger: mocks.trigger, recomputePriority: mocks.priority }));
 vi.mock("@/lib/db/companies", () => ({ setCompaniesStatus: mocks.status }));
 vi.mock("@/lib/db/settings", () => ({ getAppConfig: mocks.config }));
-vi.mock("@/lib/sources/website", () => ({ fetchSiteSignals: mocks.site }));
-vi.mock("@/lib/sources/googleNews", () => ({ fetchFeed: mocks.feed }));
+vi.mock("@/lib/sources/website", async original => ({ ...await original<typeof import("@/lib/sources/website")>(), fetchSiteSignals: mocks.site }));
+vi.mock("@/lib/sources/googleNews", async original => ({ ...await original<typeof import("@/lib/sources/googleNews")>(), fetchFeed: mocks.feed,
+  fetchFeedResult: async () => ({ items: await mocks.feed(), status: "success" }) }));
 vi.mock("@/lib/triggers/sweep", () => ({ classifyAndRecordHeadline: mocks.headline }));
 vi.mock("@/lib/triggers/classify", () => ({ HEADLINE_CLASSIFIER_BATCH_BUDGET_MS: 30_000 }));
 vi.mock("@/lib/intelligence/observations", () => ({ enqueueObservation: mocks.enqueue, intelligenceEnabled: () => process.env.STANLEY_INTELLIGENCE_ENABLED === "true" }));
@@ -40,6 +41,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("website evidence collection integration", () => {
+  it("preserves a captured page and advances its pending checkpoint on 304 without a fabricated capture", async () => {
+    const cached = { finalUrl: articleUrl, retained: true, validators: { url: articleUrl, etag: '"saved"' }, discoveredUrls: [], feedUrl: null };
+    mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18", knownUrls: [articleUrl], verifiedUrls: [articleUrl], pendingUrls: [articleUrl], httpCache: { [articleUrl]: cached } }, lastSuccessAt: "2026-09-18" });
+    mocks.site.mockResolvedValue({ ...scan(), pages: [], httpCache: { [articleUrl]: cached }, coverage: { ...scan().coverage, notModifiedUrls: [articleUrl], urlOutcomes: [{ url: articleUrl, outcome: "success", status: 304 }] } });
+    await sweepWebsites(1);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.write).toHaveBeenCalledWith(company.id, "website", expect.objectContaining({ status: "complete", successful: true,
+      cursor: expect.objectContaining({ pendingUrls: [], verifiedUrls: [articleUrl], httpCache: { [articleUrl]: cached } }), details: expect.objectContaining({ notModifiedPages: 1 }) }));
+  });
   it("stores source pages and their date provenance before successful checkpointing", async () => {
     await sweepWebsites(1);
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "website", sourceUrl: articleUrl, text: "Acme is introducing recurring billing.", eventDate: "2026-09-17", metadata: expect.objectContaining({ meaningfulContentHash: "meaningful-hash" }) }));

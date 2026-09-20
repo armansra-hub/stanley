@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), priority: vi.fn(), authorized: vi.fn(), failure: { table: "", code: "" }, calls: [] as { table: string; method: string; args: unknown[] }[] }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: m.from, rpc: m.rpc }) }));
 vi.mock("@/lib/intelligence/worker", () => ({ runIntelligenceWorker: vi.fn() }));
+vi.mock("@/lib/intelligence/accountQuestions", () => ({ runAccountQuestionWorker: vi.fn() }));
 vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: () => true }));
 vi.mock("@/lib/db/triggers", () => ({ recomputePriority: m.priority }));
 vi.mock("@/lib/intelligence/http", () => ({ intelligenceUiAuthorized: m.authorized, sameOriginMutation: () => true,
@@ -50,8 +51,8 @@ describe("reversible intelligence feedback API", () => {
     expect(log).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledWith("intelligence.read_failed", { stage: "status", code: "unknown" });
   });
-  it("filters exclusions before both saved-view pagination and all-evidence pagination", async () => {
-    for (const suffix of ["", `?viewId=${company}`]) {
+  it("filters exclusions before all-evidence pagination", async () => {
+    for (const suffix of [""]) {
       m.calls.length = 0;
       expect((await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence${suffix}`))).status).toBe(200);
       const index = m.calls.findIndex(call => call.table === "intelligence_observations" && call.method === "eq" && call.args[0] === "feedback_excluded");
@@ -61,6 +62,14 @@ describe("reversible intelligence feedback API", () => {
       expect(select).toContain("companies:companies!intelligence_observations_company_id_fkey!inner(name,status)");
       if (suffix) expect(select).toContain("intelligence_view_matches:intelligence_view_matches!intelligence_view_matches_observation_id_fkey!inner(probability,view_id)");
     }
+  });
+  it("returns native account-wide question results without a hard probability cutoff", async () => {
+    const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence?viewId=${company}`));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ observations: [], accountMatches: [] });
+    expect(m.calls).toContainEqual({ table: "intelligence_account_question_matches", method: "eq", args: ["view_id", company] });
+    expect(m.calls.some(call => call.table === "intelligence_observations")).toBe(false);
+    expect(m.calls.some(call => call.method === "gte")).toBe(false);
   });
   it("loads exact-account cached evidence without global status, health or saved views", async () => {
     const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence?scope=account&companyId=${company}`));

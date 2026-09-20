@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import type { EvaluationUsage } from "./evaluation";
 
-export type JevPurpose = "public_interpretation" | "research_ranking" | "saved_view" | "private_tam";
+export type JevPurpose = "public_interpretation" | "research_ranking" | "saved_view" | "private_tam" | "federal_identity" | "event_match" | "codex_connector";
 export type JevWorkload = "initial_coverage" | "monitoring" | "manual" | "unattributed";
 export type JevSpendContext = { purpose: JevPurpose; companyId?: string | null; observationId?: string | null;
   sourceKind?: string | null; workload?: JevWorkload };

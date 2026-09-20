@@ -8,6 +8,10 @@ import { rankResearchCandidates, type ResearchRankingResult } from "./researchRa
 import { sameCompanySite, sitePageEvidence, discoverSiteLinks } from "@/lib/sources/siteDiscovery";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { fetchPublicPdfEvidence } from "@/lib/sources/publicPdf";
+import { readNewsEvidence } from "@/lib/sources/newsEvidence";
+import type { NewsItem } from "@/lib/sources/googleNews";
+import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
+import { discoverExternalResearch } from "./researchExternal";
 import { logEvent } from "@/lib/db/events";
 import { readAtsHiringContext } from "./atsLifecycle";
 import { businessServicesResearchContext, operatingTopicPriority, researchSourcePriority, BUSINESS_SERVICES_RESEARCH_VERSION } from "./businessServices";
@@ -37,7 +41,7 @@ export async function loadResearchProfile(companyId: string, deadlineMs = Infini
   const profile = buildOperatingProfile(rows);
   const [state, hiring, discovered] = await Promise.all([
     readSourceState(companyId, "website"), readAtsHiringContext(companyId).catch(() => null),
-    db.from("intelligence_research_sources").select("source_url,title").eq("company_id", companyId).order("discovered_at", { ascending: false }).limit(200),
+    db.from("intelligence_research_sources").select("source_url,title,metadata").eq("company_id", companyId).order("discovered_at", { ascending: false }).limit(200),
   ]);
   if (discovered.error) throw new Error("research_discovery_unavailable");
   const home = company.domain ? `https://${String(company.domain).replace(/^https?:\/\//, "")}` : null;
@@ -45,11 +49,14 @@ export async function loadResearchProfile(companyId: string, deadlineMs = Infini
     typeof url === "string" && url.length <= 2048 && !!home && sameCompanySite(url, home)).slice(0, 100) : [];
   const relevant = new Set(["project_delivery", "multi_entity", "multi_location", ...operatingTopicPriority(company.subindustry, "website")]);
   const missingTopics = profile.topics.filter(topic => topic.state === "unknown" && relevant.has(topic.id)).map(topic => topic.id);
+  const eventTitles = [...new Set(profile.developments.filter(event => !event.historical).map(event => event.title))].slice(0, 3);
+  const researchQuestions = [...missingTopics, ...(eventTitles.length ? ["Follow up the company's recent development and resolve missing event context"] : []), "Resolve legal identity, former names and company-family relationships"];
+  const sourceMetadata = Object.fromEntries((discovered.data ?? []).map(row => [row.source_url, row.metadata ?? {}]));
   const previouslyRead = new Set([...verified, ...rows.map(row => row.source_url)]);
   const priority = (url: string) => researchSourcePriority(url, company.subindustry, missingTopics) + (previouslyRead.has(url) ? 0 : 8);
   const urls = [state.cursor?.pendingUrls, state.cursor?.knownUrls, (discovered.data ?? []).map(row => row.source_url), [...previouslyRead]]
     .flatMap(value => Array.isArray(value) ? value : []).filter((url): url is string => typeof url === "string"
-      && url.length <= 2048 && !!home && sameCompanySite(url, home));
+      && url.length <= 2048 && ((!!home && sameCompanySite(url, home)) || (() => { try { return sourceMetadata[url]?.researchOrigin === "external_search" && !!validatePublicHttpUrl(url); } catch { return false; } })()));
   const available = [...new Set(urls)].sort((a, b) => priority(b) - priority(a) || a.localeCompare(b)).slice(0, 200);
   const candidateTitles = Object.fromEntries((discovered.data ?? []).map(row => [row.source_url, row.title]));
   const [attempts, pending] = await Promise.all([
@@ -61,7 +68,7 @@ export async function loadResearchProfile(companyId: string, deadlineMs = Infini
   if (attempts.error || pending.error) throw new Error("research_state_unavailable");
   const candidates = researchCandidates(available, (attempts.data ?? []) as ResearchAttempt[], priority);
   const nextAttempt = (attempts.data ?? []).map(row => Date.parse(row.next_attempt_at)).filter(date => Number.isFinite(date) && date > Date.now());
-  return { company, profile, nextSources: candidates.slice(0, 3), candidates, missingTopics, candidateTitles,
+  return { company, profile, nextSources: candidates.slice(0, 3), candidates, missingTopics, candidateTitles, sourceMetadata, eventTitles, researchQuestions,
     researchFocus: businessServicesResearchContext(company.subindustry),
     nextAttemptAt: new Date(nextAttempt.length ? Math.min(...nextAttempt) : Date.now() + (available.length ? 7 : 1) * 86400_000).toISOString(),
     discoveredSourceCount: available.length, newSourceCount: available.filter(url => !previouslyRead.has(url)).length,
@@ -81,14 +88,21 @@ export async function refreshAccountResearch(companyId: string, options: {
     const empty = (outcome: ResearchRefreshResult["outcome"], nextAttemptAt = new Date(Date.now() + 600_000).toISOString()): ResearchRefreshResult =>
       ({ sources: 0, outcomes: [], ranking: null, outcome, remainingSources: 0, nextAttemptAt });
     if (Date.now() > options.deadlineMs - DIRECTED_RESEARCH_MINIMUM_MS) return empty("deadline_deferred");
-    const loaded = options.profile ?? await loadResearchProfile(companyId, options.deadlineMs);
+    let loaded = options.profile ?? await loadResearchProfile(companyId, options.deadlineMs);
     if (loaded.company.id !== companyId) throw new Error("research_account_mismatch");
-    if (options.automatic && !loaded.missingTopics.length) return empty("topics_supported");
+    // External discovery has its own durable per-query cadence. It can follow a
+    // newly observed event even when the account's stable operating topics are known.
+    if (Date.now() < options.deadlineMs - 55_000) {
+      const external = await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs);
+      if (external.sources) loaded = await loadResearchProfile(companyId, options.deadlineMs);
+      if (external.nextAttemptAt && Date.parse(external.nextAttemptAt) < Date.parse(loaded.nextAttemptAt))
+        loaded = { ...loaded, nextAttemptAt: external.nextAttemptAt };
+    }
     if (!loaded.candidates.length) return empty("no_sources_due", loaded.nextAttemptAt);
     if (Date.now() > options.deadlineMs - 32_000) return empty("deadline_deferred");
     const ranking = await rankResearchCandidates({ companyId, automaticResearch: options.automatic === true,
       companyName: loaded.company.name, companyDomain: loaded.company.domain,
-      missingTopics: loaded.missingTopics, candidates: loaded.candidates, candidateTitles: loaded.candidateTitles,
+      missingTopics: loaded.researchQuestions ?? loaded.missingTopics, candidates: loaded.candidates, candidateTitles: loaded.candidateTitles,
       researchContext: loaded.researchFocus });
     // An identical native ranking is already in flight. Let that invocation
     // choose its sources; do not race it using the unranked fallback order.
@@ -104,7 +118,18 @@ export async function refreshAccountResearch(companyId: string, options: {
     const outcomes = await Promise.all(claims.map(async claim => {
       let outcome: ResearchOutcome = "source_failed";
       try {
-        if (/\.pdf$/i.test(new URL(claim.source_url).pathname)) {
+        const provenance = loaded.sourceMetadata?.[claim.source_url];
+        if (provenance?.researchOrigin === "external_search" && provenance.newsItem) {
+          const evidence = await readNewsEvidence(provenance.newsItem as NewsItem, { deadlineMs: options.deadlineMs - 5000 });
+          const result = await enqueueObservation({ companyId, companyName: loaded.company.name, companyDomain: loaded.company.domain,
+            netsuiteInternalId: loaded.company.netsuite_internal_id, sourceKind: "news", sourceUrl: evidence.sourceUrl,
+            title: evidence.title, text: evidence.text, eventDate: evidence.eventDate,
+            metadata: { ...evidence.metadata, focusedResearch: true, externalResearch: true, automaticResearch: options.automatic === true,
+              researchPurpose: provenance.researchPurpose, researchQuery: provenance.query, researchQueryHash: provenance.queryHash,
+              researchTopics: loaded.missingTopics, researchRankingVersion: ranking.rankingVersion } });
+          if (!result) throw new Error("observation_not_persisted");
+          outcome = result.queued ? "queued" : "unchanged";
+        } else if (/\.pdf$/i.test(new URL(claim.source_url).pathname)) {
           const pdf = await fetchPublicPdfEvidence(claim.source_url, { mode: "deep", deadlineMs: options.deadlineMs - 5000 });
           if (!sameCompanySite(pdf.url, claim.source_url)) throw new Error("source_failed");
           if (pdf.status === "no_readable_text") outcome = "source_empty";
@@ -143,6 +168,7 @@ export async function refreshAccountResearch(companyId: string, options: {
             text: page.text, eventDate: published ?? null, metadata: { focusedResearch: true, automaticResearch: options.automatic === true,
               researchRankingVersion: ranking.rankingVersion, businessServicesResearchVersion: BUSINESS_SERVICES_RESEARCH_VERSION,
               researchTopics: loaded.missingTopics, sourceDates: page.sourceDates, sourceTruncated: page.truncated,
+              ...(page.identityClaims?.length ? { identityClaims: page.identityClaims } : {}),
               eventDateBasis: published ? "source_publication" : "unknown",
               discovery: { collector: "directed_research", url: claim.source_url, title: loaded.candidateTitles[claim.source_url] ?? null, eventDate: null },
               ...(page.companyIdentity && loaded.company.domain && sameCompanySite(page.url, `https://${String(loaded.company.domain).replace(/^https?:\/\//, "")}`)

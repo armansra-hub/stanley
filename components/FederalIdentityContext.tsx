@@ -34,7 +34,7 @@ export default function FederalIdentityContext({ entities, pendingEntities, rela
       {relatedEntities.map(({ entity, relationships, awards, awardsTruncated }) => <div key={String(entity.id)} className="mt-2 rounded border p-2" style={{ borderColor: "var(--border)" }}>
         <div className="font-semibold">{String(entity.legal_name)} · UEI {String(entity.uei)}</div>
         {relationships.map((relationship, index) => <p key={index} className="mt-1 text-[var(--text-muted)]">
-          {relationship.relationship === "reported_parent" ? "Reported parent of" : "Reported child of"} {String(entities.find((direct) => direct.id === relationship.directEntityId)?.legal_name ?? "verified entity")}
+          {{ reported_parent: "Reported parent of", reported_child: "Reported child of", parent: "Parent of", subsidiary: "Subsidiary of", joint_venture: "Joint venture involving", division: "Division of" }[relationship.relationship]} {relationship.subjectName ?? String(entities.find((direct) => direct.id === relationship.directEntityId)?.legal_name ?? "verified entity")}
           {" · "}<a href={relationship.sourceUrl} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">{relationship.source} relationship evidence ↗</a>
           {" · "}observed {date(relationship.observedAt)}
         </p>)}

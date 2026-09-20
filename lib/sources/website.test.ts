@@ -24,6 +24,19 @@ function response(body: string, finalUrl: string) {
 }
 
 describe("website career evidence redirects", () => {
+  it("uses retained homepage links on 304 and still captures the next useful page", async () => {
+    guardedFetch.mockImplementation(async input => String(input) === "https://acme.com"
+      ? { ...response("", String(input)), status: 304 }
+      : response("<main>New project delivery capability.</main>", String(input)));
+    const scan = await fetchSiteSignals("acme.com", "Acme", { mode: "baseline", httpCache: {
+      "https://acme.com": { finalUrl: "https://acme.com", retained: true, validators: { url: "https://acme.com", etag: '"home-v1"' }, discoveredUrls: ["https://acme.com/services"], feedUrl: "https://acme.com/feed" },
+    } });
+    expect(guardedFetch.mock.calls[0][1]).toMatchObject({ ifNoneMatch: '"home-v1"' });
+    expect(scan.coverage.notModifiedUrls).toEqual(["https://acme.com"]);
+    expect(scan.pages).toHaveLength(1);
+    expect(scan.pages[0].text).toBe("New project delivery capability.");
+    expect(scan.feedUrl).toBe("https://acme.com/feed");
+  });
   it("spends only two requests on baseline and retains deeper actual links", async () => {
     guardedFetch.mockImplementation(async input => {
       const url = String(input);

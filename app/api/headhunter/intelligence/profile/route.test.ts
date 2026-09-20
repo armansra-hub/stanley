@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), fetch: vi.fn(), pdf: vi.fn(), enqueue: vi.fn(), rank: vi.fn(), log: vi.fn(), discover: vi.fn(), sourceState: vi.fn(), calls: [] as { table: string; method: string; args: unknown[] }[] }));
+const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), fetch: vi.fn(), pdf: vi.fn(), enqueue: vi.fn(), rank: vi.fn(), log: vi.fn(), discover: vi.fn(), sourceState: vi.fn(), external: vi.fn(), newsEvidence: vi.fn(), researchSources: [] as Record<string, unknown>[], calls: [] as { table: string; method: string; args: unknown[] }[] }));
 vi.mock("next/server", async importOriginal => ({ ...await importOriginal<typeof import("next/server")>(), after: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: m.from, rpc: m.rpc }), withServiceDeadline: (_deadline: number, run: () => unknown) => run() }));
 vi.mock("@/lib/intelligence/worker", () => ({ runIntelligenceWorker: vi.fn() }));
@@ -8,7 +8,9 @@ vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: () => t
 vi.mock("@/lib/intelligence/http", () => ({ intelligenceUiAuthorized: () => true, sameOriginMutation: () => true,
   isUuid: (value: unknown) => typeof value === "string" && /^[a-f0-9-]{36}$/.test(value), smallJson: (request: Request) => request.json() }));
 vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: m.sourceState }));
-vi.mock("@/lib/triggers/urlSafety", () => ({ fetchPublicHttpText: m.fetch }));
+vi.mock("@/lib/triggers/urlSafety", async original => ({ ...await original<typeof import("@/lib/triggers/urlSafety")>(), fetchPublicHttpText: m.fetch }));
+vi.mock("@/lib/intelligence/researchExternal", () => ({ discoverExternalResearch: m.external }));
+vi.mock("@/lib/sources/newsEvidence", () => ({ readNewsEvidence: m.newsEvidence }));
 vi.mock("@/lib/sources/publicPdf", () => ({ fetchPublicPdfEvidence: m.pdf }));
 vi.mock("@/lib/sources/siteDiscovery", async original => ({ ...await original<typeof import("@/lib/sources/siteDiscovery")>(),
   sameCompanySite: (url: string) => url.startsWith("https://example.test/"), sitePageKind: () => "services",
@@ -22,6 +24,9 @@ import { refreshAccountResearch, runDirectedResearchWorker } from "@/lib/intelli
 const company = "10000000-0000-4000-8000-000000000001";
 beforeEach(() => {
   m.calls.length = 0; m.rpc.mockReset();
+  m.researchSources.length = 0;
+  m.external.mockReset().mockResolvedValue({ queries: 0, sources: 0, outcome: "not_due", nextAttemptAt: "2999-01-01T00:00:00Z" });
+  m.newsEvidence.mockReset();
   m.sourceState.mockReset().mockResolvedValue({ cursor: { verifiedUrls: ["https://example.test/services", "https://example.test/locations"] } });
   m.discover.mockReset().mockReturnValue([]);
   m.pdf.mockReset();
@@ -34,12 +39,38 @@ beforeEach(() => {
     const chain: Record<string, unknown> = {};
     for (const method of ["select", "eq", "neq", "order", "limit", "range", "in", "single", "upsert"]) chain[method] = (...args: unknown[]) => { m.calls.push({ table, method, args }); return chain; };
     chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: table === "companies" ? { id: company, name: "Synthetic", domain: "example.test", netsuite_internal_id: "1" }
-      : table === "intelligence_research_attempts" ? [{ source_url: "https://example.test/services", next_attempt_at: "2999-01-01", last_attempt_at: "2026-09-18" }] : [], count: table === "intelligence_jobs" ? 2 : null, error: null }).then(resolve);
+      : table === "intelligence_research_attempts" ? [{ source_url: "https://example.test/services", next_attempt_at: "2999-01-01", last_attempt_at: "2026-09-18" }]
+      : table === "intelligence_research_sources" ? m.researchSources : [], count: table === "intelligence_jobs" ? 2 : null, error: null }).then(resolve);
     return chain;
   });
   m.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_research_claim" ? [{ source_url: "https://example.test/locations", lease_token: "lease" }] : true, error: null }));
 });
 describe("focused research state and receipts", () => {
+  it("reloads durably discovered external candidates, reads their publisher evidence and preserves query attribution", async () => {
+    const wrapper = "https://news.google.com/rss/articles/synthetic";
+    const item = { source_name: "Google News", source_url: wrapper, raw_excerpt: "Synthetic awarded services contract", signal_date: "2026-09-19" };
+    m.external.mockImplementation(async () => {
+      m.researchSources.push({ source_url: wrapper, title: item.raw_excerpt, metadata: {
+        researchOrigin: "external_search", researchPurpose: "event_followup", query: '"Synthetic" contract', queryHash: "query-hash", newsItem: item,
+      } });
+      return { queries: 1, sources: 1, outcome: "searched", nextAttemptAt: "2999-01-01T00:00:00Z" };
+    });
+    m.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_research_claim"
+      ? [{ source_url: wrapper, lease_token: "external-source-lease" }] : true, error: null }));
+    m.newsEvidence.mockResolvedValue({ sourceUrl: "https://publisher.test/synthetic-contract", title: item.raw_excerpt,
+      text: "Synthetic will deliver project services for the agency.", eventDate: item.signal_date,
+      metadata: { evidenceKind: "publisher_body", bodyAvailable: true }, bodyAvailable: true });
+    const response = await POST(new NextRequest("https://stanley.test/api/headhunter/intelligence/profile", { method: "POST", body: JSON.stringify({ companyId: company }) }));
+    expect(await response.json()).toMatchObject({ sources: 1, outcomes: ["unchanged"] });
+    expect(m.external).toHaveBeenCalledOnce();
+    expect(m.external.mock.invocationCallOrder[0]).toBeLessThan(m.rank.mock.invocationCallOrder[0]);
+    expect(m.rank).toHaveBeenCalledWith(expect.objectContaining({ candidates: expect.arrayContaining([wrapper]) }));
+    expect(m.newsEvidence).toHaveBeenCalledWith(item, expect.objectContaining({ deadlineMs: expect.any(Number) }));
+    expect(m.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "news", sourceUrl: "https://publisher.test/synthetic-contract",
+      metadata: expect.objectContaining({ externalResearch: true, researchPurpose: "event_followup", researchQuery: '"Synthetic" contract', researchQueryHash: "query-hash" }) }));
+    expect(m.rpc).toHaveBeenCalledWith("intelligence_research_finish", { p_company: company, p_url: wrapper, p_lease: "external-source-lease", p_outcome: "unchanged" });
+    expect(m.fetch).not.toHaveBeenCalled();
+  });
   it("reads selected public PDFs only in deep research and retains limits without inventing a date", async () => {
     m.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_research_claim"
       ? [{ source_url: "https://example.test/capabilities.pdf", lease_token: "pdf-lease" }] : true, error: null }));
@@ -86,6 +117,7 @@ describe("focused research state and receipts", () => {
     ] });
     expect(m.fetch).not.toHaveBeenCalled();
     expect(m.rank).not.toHaveBeenCalled();
+    expect(m.external).not.toHaveBeenCalled();
   });
   it("uses a stored lease and records successful unchanged reads so the next request advances", async () => {
     const response = await POST(new NextRequest("https://stanley.test/api/headhunter/intelligence/profile", { method: "POST", body: JSON.stringify({ companyId: company }) }));
@@ -93,6 +125,7 @@ describe("focused research state and receipts", () => {
     expect(m.rpc).toHaveBeenCalledWith("intelligence_research_claim", { p_company: company, p_urls: ["https://example.test/locations"] });
     expect(m.rpc).toHaveBeenCalledWith("intelligence_research_finish", { p_company: company, p_url: "https://example.test/locations", p_lease: "lease", p_outcome: "unchanged" });
     expect(m.rank.mock.invocationCallOrder[0]).toBeLessThan(m.rpc.mock.invocationCallOrder[0]);
+    expect(m.external).toHaveBeenCalledWith(expect.objectContaining({ id: company }), expect.arrayContaining(["multi_location"]), [], expect.any(Number));
     expect(m.rank).toHaveBeenCalledWith(expect.objectContaining({ companyName: "Synthetic", missingTopics: expect.arrayContaining(["multi_location"]) }));
   });
   it("does not call a lost observation an unchanged success", async () => {
@@ -111,6 +144,7 @@ describe("focused research state and receipts", () => {
     expect(await refreshAccountResearch(company, { deadlineMs: Date.now() + 20000 })).toMatchObject({ outcome: "deadline_deferred", sources: 0 });
     expect(await runDirectedResearchWorker(1, Date.now() + 20000)).toMatchObject({ processed: 0 });
     expect(m.rpc).not.toHaveBeenCalled(); expect(m.rank).not.toHaveBeenCalled(); expect(m.fetch).not.toHaveBeenCalled();
+    expect(m.external).not.toHaveBeenCalled();
   });
   it("automatic account work shares the manual source lease and saves a deferred account receipt", async () => {
     let claimed = false;

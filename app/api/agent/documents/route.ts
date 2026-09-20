@@ -4,7 +4,8 @@ import { serviceClient } from "@/lib/supabase/server";
 import { logEvent } from "@/lib/db/events";
 import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
 import { reserveTicket } from "@/lib/agent/tickets";
-import { coerceDate, coerceText, pick } from "@/lib/agent/coerce";
+import { coerceText, pick } from "@/lib/agent/coerce";
+import { recordEvidenceText, recordEvidenceCapturedAt } from "@/lib/agent/documentEvidence";
 
 /**
  * Lead record TEXT, pushed by whichever agent can see the record and readable by
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
 
   (body.docs as Record<string, unknown>[]).forEach((raw, i) => {
     const internalId = coerceText(pick(raw, "internalId", "internal id", "nsid", "netsuiteInternalId"))?.replace(/\.0$/, "");
-    const text = coerceText(pick(raw, "body", "text", "content", "recordText"));
+    const text = recordEvidenceText(pick(raw, "body", "text", "content", "recordText"));
     if (!internalId || !/^\d+$/.test(internalId)) return void errors.push({ index: i, problem: "missing/invalid internalId" });
     if (!text) return void errors.push({ index: i, problem: "missing body text" });
     if (text.length > MAX_CHARS) return void errors.push({ index: i, problem: `body exceeds ${MAX_CHARS} chars (${text.length})` });
@@ -93,7 +94,7 @@ export async function POST(req: Request) {
       title: coerceText(pick(raw, "title")),
       body: text,
       sha256: createHash("sha256").update(text).digest("hex"),
-      captured_at: coerceDate(pick(raw, "capturedAt", "captured at", "date")) ?? null,
+      captured_at: recordEvidenceCapturedAt(pick(raw, "capturedAt", "captured at", "date")),
     });
   });
 
@@ -123,6 +124,10 @@ export async function POST(req: Request) {
     .from("lead_documents")
     .upsert(rows, { onConflict: "netsuite_internal_id,doc_type,sha256", ignoreDuplicates: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  const { error: captureError } = await db.rpc("tam_observe_document_captures", { p_captures: rows.map(row => ({
+    internalId: row.netsuite_internal_id, docType: row.doc_type, sha256: row.sha256, capturedAt: row.captured_at,
+  })) });
+  if (captureError) return NextResponse.json({ error: "Documents stored; capture-change observation unavailable. Preserve exact upload intent and reconcile." }, { status: 503 });
 
   const chars = rows.reduce((n, r) => n + String(r.body).length, 0);
   await logEvent("headhunter", "agent.documents_pushed", {

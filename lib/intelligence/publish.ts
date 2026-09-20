@@ -9,6 +9,7 @@ import { canonicalEvidenceUrl } from "./observations";
 import type { EvaluateEvidenceResult, EvidenceAttributes, RawEvaluationAnswer } from "./evaluation";
 import { readTriggerSourceEvidence, type TriggerSourceEvidence } from "./triggerEvidence";
 import type { IntelligenceEvent } from "./events";
+import { jevPublicationRoute } from "./visibility";
 
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 export type JevPublicationCompany = { id: string; name: string; status?: string; record_dead?: boolean | null; description?: string | null; subindustry?: string | null; ns_industry?: string | null };
@@ -25,35 +26,7 @@ export type JevFindingReceipt = {
 export type JevPublicationReceipt = { status: "published" | "already_published" | "context_attached"; triggerId: string; operationKey: string } |
   { status: "not_eligible"; reason: string; triggerId?: string };
 
-/** Existing feed-routing rules; these do not alter Jev output or add a second opinion. */
-export function jevPublicationRoute(result: Evaluation, eventDate: string | null, now = Date.now()): { type: string | null; reason: string } {
-  const a = result.attributes;
-  const classified = ["stanley-business-services-v2", "stanley-business-services-v3"].includes(result.questionVersion);
-  if (classified) {
-    // These are Jev's choices from the original evidence request, not another
-    // interpretation or a headline/keyword filter. Old paid contracts are unchanged.
-    if (a.contractActivity === "government_award") return { type: null, reason: "government_publisher_required" };
-    if (a.contentClass !== "actual_company_development") return { type: null, reason: `content_${a.contentClass ?? "unknown"}` };
-    if (!["subject", "service_provider", "customer", "partner"].includes(a.companyRole ?? "unknown"))
-      return { type: null, reason: `company_role_${a.companyRole ?? "unknown"}` };
-    if (a.operatingChangeType === "contract_award" && a.contractActivity !== "commercial_award")
-      return { type: null, reason: "contract_award_not_established" };
-  }
-  const allowed = new Set(["funding", "ma", "new_entity", "finance_hire", "press", "operating_change", "erp_tech", "hiring_velocity", "employee_growth"]);
-  const relevantChange = ["systems_project", "finance_leadership", "close_reporting", "financial_controls", "cash_working_capital", "investor_reporting", "project_financials", "unbilled_work"].some(id => (result.criteria[id] ?? 0) >= .8);
-  // Keep Jev's news label intact; this only selects an existing worklist category.
-  const type = a.signalType === "news" && (relevantChange || (classified && a.contractActivity === "commercial_award")) ? "operating_change" : a.signalType;
-  if (!allowed.has(type)) return { type: null, reason: "operating_context_only" };
-  if (a.companyRelationship !== "direct") return { type: null, reason: "not_direct_company" };
-  if (a.companyRelevance < .8) return { type: null, reason: "company_relevance" };
-  if (a.concreteEvent < .75) return { type: null, reason: "no_concrete_development" };
-  if (a.signalType === "ma" && a.isAcquirer < .8) return { type: null, reason: "not_acquirer" };
-  const age = eventDate ? now - Date.parse(eventDate) : NaN;
-  if (!Number.isFinite(age)) return { type: null, reason: "unknown_event_date" };
-  if (age < 0) return { type: null, reason: "future_event_date" };
-  if (age > 180 * 86_400_000) return { type: null, reason: "historical_event" };
-  return { type, reason: "dated_development" };
-}
+export { jevPublicationRoute } from "./visibility";
 export const jevSignalType = (result: Evaluation, eventDate: string | null, now = Date.now()) => jevPublicationRoute(result, eventDate, now).type;
 
 const SCORES = ["companyRelevance", "concreteEvent", "isAcquirer", "operationalComplexity", "growthRelevance", "evidenceStrength", "requiresResearch"] as const;
@@ -140,8 +113,10 @@ export async function publishJevFinding(input: { company: JevPublicationCompany;
   if (company.id !== observation.company_id) throw new Error("Jev publication account mismatch");
   if (input.event && input.event.company_id !== company.id) throw new Error("Jev event account mismatch");
   if (!observation.is_current || company.status === "removed_from_tam") return { status: "not_eligible", reason: "superseded" };
-  // Any government capture continues through the verified entity pipeline, including a model mislabel.
-  if (observation.source_kind === "government") return { status: "not_eligible", reason: "government_publisher_required" };
+  // Structured awards already have a source-owned publisher. Their Jev results
+  // enrich the account; news/agency announcements can become clearly labeled
+  // early signals without pretending to be a verified legal-recipient binding.
+  if (observation.metadata.structuredAward === true) return { status: "not_eligible", reason: "structured_award_context" };
   const route = jevPublicationRoute(evaluation, observation.event_date, (deps.now ?? Date.now)());
   const type = route.type;
   if (!type) return { status: "not_eligible", reason: route.reason };
@@ -149,7 +124,8 @@ export async function publishJevFinding(input: { company: JevPublicationCompany;
   const evidence: TriggerSourceEvidence = { observationId: observation.id, excerpt: passage.text, start: passage.start, end: passage.end, observedAt: observation.observed_at };
   if (!readTriggerSourceEvidence({ intelligenceEvidence: evidence }) || observation.evidence_text.slice(passage.start, passage.end) !== passage.text) throw new Error("Jev publication source passage mismatch");
   const url = canonicalEvidenceUrl(observation.source_url);
-  const sourceName = observation.source_kind === "job" ? "Jev · ATS job posting" : observation.source_kind === "website" ? "Jev · Company website" : "Jev · Public news";
+  const sourceName = type === "government_announcement" ? "Jev · Government award announcement"
+    : observation.source_kind === "job" ? "Jev · ATS job posting" : observation.source_kind === "website" ? "Jev · Company website" : "Jev · Public news";
   const finding = findingReceipt({ observation, evaluation, passage, eventId: input.event?.id });
   const trigger = { type, summary: observation.title.slice(0, 280), source_name: sourceName, source_url: url,
     signal_date: observation.event_date, intelligenceEvidence: evidence, jevFinding: finding };

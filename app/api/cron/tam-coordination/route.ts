@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { tamMachineAuthOk } from "@/lib/agent/auth";
+import { admitTamEvidenceChanges, listTamEvidenceChanges } from "@/lib/db/tamEvidenceChanges";
 import {
   appendTamEvent,
   beginTamCheckpointSeed,
@@ -48,6 +49,10 @@ export async function GET(req: NextRequest) {
   }
   const url = new URL(req.url);
   const runSlug = url.searchParams.get("run") || DEFAULT_TAM_RUN_SLUG;
+  if (url.searchParams.get("view") === "evidence_changes") {
+    try { return NextResponse.json(await listTamEvidenceChanges(url.searchParams.get("id") || undefined, Number(url.searchParams.get("offset") ?? 0))); }
+    catch (error) { return errorResponse(error); }
+  }
   if (url.searchParams.get("view") === "publish_event") {
     try {
       return NextResponse.json(await getTamPublishedEvent({
@@ -127,6 +132,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    if (body && typeof body === "object" && "action" in body && body.action === "evidence_change_admit")
+      return NextResponse.json(await admitTamEvidenceChanges(body));
     const action = tamCoordinationActionSchema.parse(body);
     switch (action.action) {
       case "bootstrap":

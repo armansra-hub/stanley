@@ -79,6 +79,11 @@ export async function saveFederalSubaward(row: Record<string, any>): Promise<voi
 
 export async function recordPublicGrowthTrigger(companyId: string, event: DerivedGrowthEvent, sourceName: string, sourceUrl: string, confidence = 1): Promise<boolean> {
   const db = serviceClient();
+  if (["federal_award", "federal_new_award", "sam_award_notice"].includes(event.type) && typeof event.metadata.generatedAwardId === "string") {
+    const linked = await db.rpc("contract_linked_trigger", { p_company: companyId, p_generated: event.metadata.generatedAwardId });
+    if (linked.error) throw new Error("Contract event correspondence lookup failed");
+    if (linked.data) return false;
+  }
   const { data: prior } = await db.from("triggers").select("id").eq("company_id", companyId).eq("dedupe_key", event.dedupeKey).maybeSingle();
   if (prior) return false;
   // Migration 0017 also dedupes (company_id, source_url). A single filing or

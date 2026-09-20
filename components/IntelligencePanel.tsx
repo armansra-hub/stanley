@@ -10,10 +10,14 @@ import type { JevCostSnapshot } from "@/lib/intelligence/costMetricsTypes";
 import { EvidenceCard, type FeedbackReason, type Observation } from "./IntelligenceEvidenceCard";
 
 type SavedView = { id: string; name: string; question: string; active: boolean; backfill_complete: boolean };
+type AccountMatch = { company_id: string; company_name: string; probability: number; evaluated_at: string;
+  result: { native: unknown; coverage: unknown; citations: Array<{ observationId: string; url: string; title: string; date: string | null; text: string }> } };
 type IntelligenceData = {
   enabled: boolean;
   views: SavedView[];
   observations: Observation[];
+  accountMatches?: AccountMatch[];
+  accountQuestionPending?: number;
   hasMore: boolean;
   spend: { available?: boolean; usedUsd: number; reservedUsd: number; limitUsd: number };
   jobs: { queued: number; running: number; failed: number };
@@ -80,7 +84,9 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       setSnapshot(previous => {
         if (!offset || previous?.key !== key) return { key, data: next };
         const seen = new Set(previous.data.observations.map(item => item.id));
-        return { key, data: { ...next, observations: [...previous.data.observations, ...next.observations.filter(item => !seen.has(item.id))] } };
+        const seenAccounts = new Set(previous.data.accountMatches?.map(item => item.company_id) ?? []);
+        return { key, data: { ...next, observations: [...previous.data.observations, ...next.observations.filter(item => !seen.has(item.id))],
+          accountMatches: [...(previous.data.accountMatches ?? []), ...(next.accountMatches ?? []).filter(item => !seenAccounts.has(item.company_id))] } };
       });
       setUpdatedAt(new Date().toISOString());
       return next;
@@ -199,7 +205,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
             </label>
             <button type="submit" disabled={!data?.enabled || busy || !name.trim() || question.trim().length < 8 || questionBytes > 1_200} className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">Save view</button>
           </div>
-          <p id="question-help" className={`text-xs ${questionBytes > 1_200 ? "text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>{questionBytes > 1_200 ? "Please shorten the question; it exceeds the text limit." : "Saved questions match one source at a time as processing completes. Use operating matches above to combine traits across an account’s sources."}</p>
+          <p id="question-help" className={`text-xs ${questionBytes > 1_200 ? "text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>{questionBytes > 1_200 ? "Please shorten the question; it exceeds the text limit." : "Jev combines relevant passages across each account’s sources. Results show its native answer, supporting passages and research coverage."}</p>
         </form>
       </section>
 
@@ -222,24 +228,30 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
         </div>
         {selectedView && <div className="mb-4 rounded-lg border bg-[var(--surface-2)] px-4 py-3 text-sm">
           <p>{selectedView.question}</p>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">{selectedView.backfill_complete ? "Historical evidence queued for matching. Results appear as processing completes." : "Historical evidence is still being queued. Results are incomplete."} Event dates show how old each match is.</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{selectedView.backfill_complete ? "Account evidence queued for matching. Results appear as processing completes." : "Historical evidence is still being queued. Results are incomplete."} {data?.accountQuestionPending ?? 0} accounts awaiting an updated answer. Source dates show how old the evidence is.</p>
         </div>}
         <div aria-live="polite" className="mb-3 text-xs text-[var(--text-muted)]">
-          {loading ? "Loading evidence…" : data ? `${data.observations.length.toLocaleString()} evidence items loaded` : "Evidence has not loaded yet."}
+          {loading ? "Loading evidence…" : data ? viewId ? `${(data.accountMatches?.length ?? 0).toLocaleString()} account answers loaded` : `${data.observations.length.toLocaleString()} evidence items loaded` : "Evidence has not loaded yet."}
           {updatedAt && ` · Updated ${new Date(updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
           <span className="ml-1">· Refreshes every minute while open</span>
         </div>
-        {data?.observations.length === 0 && <div className="rounded-lg border border-dashed bg-[var(--surface)] px-6 py-12 text-center">
+        {data?.observations.length === 0 && !data?.accountMatches?.length && <div className="rounded-lg border border-dashed bg-[var(--surface)] px-6 py-12 text-center">
           <h3 className="text-lg font-medium">{dismissed ? "No dismissed evidence in this view" : viewId ? "No matching evidence yet" : "No evidence captured yet"}</h3>
           <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-muted)]">{viewId ? "Matches will appear as source research and this view’s background processing complete." : "The feed will fill as sources are collected and processed."}</p>
         </div>}
         <div className="space-y-4">
+          {viewId && data?.accountMatches?.map(match => <article key={match.company_id} className="rounded-lg border bg-[var(--surface)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><button className="font-semibold text-[var(--gold)]" onClick={() => onOpenAccount(match.company_id, match.company_name)}>{match.company_name} →</button><span className="text-sm">Jev: {(match.probability * 100).toFixed(1)}% match</span></div>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">Native answer combining the account’s selected evidence · {new Date(match.evaluated_at).toLocaleString()}</p>
+            <div className="mt-3 space-y-2">{(match.result.citations ?? []).map((citation, index) => <details key={`${citation.observationId}:${index}`} className="rounded border p-2 text-xs"><summary className="cursor-pointer">{citation.title}{citation.date ? ` · ${citation.date.slice(0, 10)}` : " · date unknown"}</summary><p className="mt-2 whitespace-pre-wrap">{citation.text}</p><a href={citation.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--gold)]">Open source</a></details>)}</div>
+            <details className="mt-3 text-xs"><summary className="cursor-pointer text-[var(--gold)]">Raw Jev answer and coverage</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify({ native: match.result.native, coverage: match.result.coverage }, null, 2)}</pre></details>
+          </article>)}
           {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
             const result = await mutate({ action: reason === null ? "clear_feedback" : "feedback", observationId: observation.id, reason, ...(note.trim() ? { note: note.trim() } : {}) }, reason === null ? "Feedback cleared; evidence restored." : "Feedback saved.");
             return Boolean(result);
           }} />)}
         </div>
-        {data?.hasMore && <div className="mt-5 text-center"><button type="button" disabled={busy} className={buttonClass} onClick={() => void load(data.observations.length)}>{loading ? "Loading…" : "Load more evidence"}</button></div>}
+        {data?.hasMore && <div className="mt-5 text-center"><button type="button" disabled={busy} className={buttonClass} onClick={() => void load(viewId ? data.accountMatches?.length ?? 0 : data.observations.length)}>{loading ? "Loading…" : viewId ? "Load more accounts" : "Load more evidence"}</button></div>}
       </section>
     </main>
   );

@@ -242,12 +242,14 @@ function requestPinnedBytes(
   timeoutMs: number,
   maxBytes: number,
   accept: string,
-): Promise<{ status: number; location: string | null; body: Uint8Array; contentType: string | null }> {
+  conditional: { ifNoneMatch?: string; ifModifiedSince?: string } = {},
+  jsonBody?: string,
+): Promise<{ status: number; location: string | null; body: Uint8Array; contentType: string | null; etag?: string; lastModified?: string }> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (
-      result: { status: number; location: string | null; body: Uint8Array; contentType: string | null } | null,
+      result: { status: number; location: string | null; body: Uint8Array; contentType: string | null; etag?: string; lastModified?: string } | null,
       error?: Error,
     ) => {
       if (settled) return;
@@ -257,12 +259,15 @@ function requestPinnedBytes(
       else resolve(result!);
     };
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
-      method: "GET",
+      method: jsonBody === undefined ? "GET" : "POST",
       agent: false,
       maxHeaderSize: 16_384,
       headers: {
         "user-agent": "Mozilla/5.0 (compatible; StanleyTAMBot/1.0; +https://jarvis-sable-eta.vercel.app)",
         accept,
+        ...(jsonBody === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(jsonBody) }),
+        ...(conditional.ifNoneMatch ? { "if-none-match": conditional.ifNoneMatch } : {}),
+        ...(conditional.ifModifiedSince ? { "if-modified-since": conditional.ifModifiedSince } : {}),
       },
       // Connect only to the address set that passed the all-answers-public gate.
       // TLS certificate validation and SNI still use the original hostname.
@@ -275,10 +280,12 @@ function requestPinnedBytes(
       const location = Array.isArray(locationHeader) ? locationHeader[0] ?? null : locationHeader ?? null;
       const contentTypeHeader = response.headers["content-type"];
       const contentType = Array.isArray(contentTypeHeader) ? contentTypeHeader[0] ?? null : contentTypeHeader ?? null;
+      const validators = { ...(typeof response.headers.etag === "string" ? { etag: response.headers.etag.slice(0, 1000) } : {}),
+        ...(typeof response.headers["last-modified"] === "string" ? { lastModified: response.headers["last-modified"].slice(0, 100) } : {}) };
       const status = response.statusCode ?? 0;
       if ([301, 302, 303, 307, 308].includes(status) || status < 200 || status >= 300) {
         response.destroy();
-        finish({ status, location, body: new Uint8Array(), contentType });
+        finish({ status, location, body: new Uint8Array(), contentType, ...validators });
         return;
       }
 
@@ -298,6 +305,7 @@ function requestPinnedBytes(
         location,
         body: new Uint8Array(Buffer.concat(chunks)),
         contentType,
+        ...validators,
       }));
       response.once("error", (error) => finish(null, error));
     });
@@ -308,7 +316,7 @@ function requestPinnedBytes(
       timeoutMs,
     );
     request.once("error", (error) => finish(null, error));
-    request.end();
+    request.end(jsonBody);
   });
 }
 
@@ -320,16 +328,33 @@ export interface PublicHttpStatus {
 export interface PublicHttpTextResponse extends PublicHttpStatus {
   body: string;
   contentType: string | null;
+  etag?: string;
+  lastModified?: string;
 }
 
 export interface PublicHttpBytesResponse extends PublicHttpStatus {
   body: Uint8Array;
   contentType: string | null;
+  etag?: string;
+  lastModified?: string;
 }
 
 export async function fetchPublicHttpText(rawUrl: string, opts: PublicHttpFetchOptions = {}): Promise<PublicHttpTextResponse> {
   const response = await fetchPublicHttpBytes(rawUrl, opts);
   return { ...response, body: Buffer.from(response.body).toString("utf8") };
+}
+
+/** Public read-only JSON search endpoints (for example Workday CXS). No cookies,
+ * credentials or redirects; same DNS-pinning/body/deadline limits as public GET. */
+export async function postPublicHttpJson(rawUrl: string, payload: Record<string, unknown>, opts: Pick<PublicHttpFetchOptions, "timeoutMs" | "maxBytes" | "resolver"> = {}): Promise<PublicHttpTextResponse> {
+  const url = validatePublicHttpUrl(rawUrl), body = JSON.stringify(payload);
+  if (Buffer.byteLength(body) > 16000) throw new Error("Public search request exceeded size limit");
+  const deadline = Date.now() + Math.max(250, Math.min(opts.timeoutMs ?? 7000, 15000));
+  const addresses = await deadlinePromise(resolvePublicAddresses(url.hostname, opts.resolver), deadline - Date.now());
+  if (deadline <= Date.now()) throw new Error("HTTP fetch timed out");
+  const response = await requestPinnedBytes(url, addresses[0], deadline - Date.now(), Math.max(16384, Math.min(opts.maxBytes ?? 3000000, 5000000)), "application/json", {}, body);
+  if ([301,302,303,307,308].includes(response.status)) throw new UnsafeHttpTargetError("Public JSON search redirect refused");
+  return { ...response, body: Buffer.from(response.body).toString("utf8"), finalUrl: url.toString() };
 }
 
 export interface PublicHttpFetchOptions {
@@ -338,6 +363,8 @@ export interface PublicHttpFetchOptions {
   maxBytes?: number;
   accept?: string;
   resolver?: PublicHostResolver;
+  ifNoneMatch?: string;
+  ifModifiedSince?: string;
 }
 
 /**
@@ -358,6 +385,10 @@ export async function fetchPublicHttpBytes(
   const deadline = Date.now() + timeoutMs;
   const seen = new Set<string>();
   let current = validatePublicHttpUrl(rawUrl);
+  const conditional = {
+    ...(opts.ifNoneMatch && !/[\r\n]/.test(opts.ifNoneMatch) && opts.ifNoneMatch.length <= 1000 ? { ifNoneMatch: opts.ifNoneMatch } : {}),
+    ...(opts.ifModifiedSince && !/[\r\n]/.test(opts.ifModifiedSince) && opts.ifModifiedSince.length <= 100 ? { ifModifiedSince: opts.ifModifiedSince } : {}),
+  };
 
   for (let redirects = 0; ; redirects++) {
     const key = current.toString();
@@ -370,7 +401,9 @@ export async function fetchPublicHttpBytes(
     );
     const remainingForRequest = deadline - Date.now();
     if (remainingForRequest <= 0) throw new Error("HTTP fetch timed out");
-    const response = await requestPinnedBytes(current, addresses[0], remainingForRequest, maxBytes, accept);
+    // Validators describe this exact URL representation; never forward them to
+    // a redirect target whose previous representation has not been retained.
+    const response = await requestPinnedBytes(current, addresses[0], remainingForRequest, maxBytes, accept, redirects === 0 ? conditional : {});
     if (![301, 302, 303, 307, 308].includes(response.status) || !response.location) {
       return { ...response, finalUrl: current.toString() };
     }

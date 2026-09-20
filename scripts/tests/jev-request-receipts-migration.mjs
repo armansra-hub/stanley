@@ -20,7 +20,19 @@ try {
   await db.exec(await readFile(new URL("../../supabase/migrations/0059_intelligence_evidence_and_work.sql",import.meta.url),"utf8"));
   const originalReserve = await scalar("select prosrc from pg_proc where oid='intelligence_reserve(uuid,text,numeric)'::regprocedure");
   await db.exec(await readFile(new URL("../../supabase/migrations/0082_jev_request_receipts.sql",import.meta.url),"utf8"));
+  await db.exec(await readFile(new URL("../../supabase/migrations/0090_native_jev_purposes.sql",import.meta.url),"utf8"));
   await db.exec("update intelligence_config set enabled=true");
+  await test("new native workloads use the same fenced accounting without opening private response caching",async()=>{
+    for(const purpose of ['federal_identity','event_match','codex_connector']) {
+      const fp=randomUUID().replaceAll('-','').repeat(2);
+      const c=await scalar("select intelligence_jev_claim($1,$2,$3,null,'native','manual')",[fp,purpose,account]);
+      assert.equal(c.status,'execute');
+      assert.equal(await scalar("select purpose from intelligence_spend where id=$1",[c.reservationId]),purpose);
+      await scalar("select intelligence_jev_record($1,$2,$3,$4)",[fp,c.leaseToken,c.reservationId,result]);
+      assert.equal((await scalar("select intelligence_jev_claim($1,$2,$3,null,'native','manual')",[fp,purpose,account])).status,'complete');
+    }
+    await db.exec('delete from intelligence_jev_requests; delete from intelligence_spend;');
+  });
   await test("preserves the existing reservation implementation and saves task attribution atomically",async()=>{
     assert.equal(await scalar("select prosrc from pg_proc where oid='intelligence_reserve(uuid,text,numeric)'::regprocedure"),originalReserve);
     const c=await claim(); assert.equal(c.status,"execute");

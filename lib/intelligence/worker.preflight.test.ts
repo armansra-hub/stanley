@@ -5,7 +5,7 @@ vi.mock("./observations", () => ({ intelligenceEnabled: () => true, INTELLIGENCE
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("./budget", () => ({ reserveJev: mocks.reserve, settleJev: mocks.settle, secondsUntilNextMonth: () => 60 }));
 vi.mock("./publish", () => ({ publishJevFinding: vi.fn(async () => ({ status: "not_eligible", reason: "unknown_event_date" })), jevSignalType: vi.fn() }));
-vi.mock("./events", () => ({ attachObservationEvent: async () => null, bindEventTrigger: vi.fn() }));
+vi.mock("./events", () => ({ reconcileObservationEvent: async () => null, EventReconciliationDeferred: class extends Error {}, bindEventTrigger: vi.fn() }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => true }));
 import { runIntelligenceWorker } from "./worker";
 import { buildPublicScaleContext } from "./publicContext";

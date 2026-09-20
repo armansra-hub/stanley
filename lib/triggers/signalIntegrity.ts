@@ -58,7 +58,7 @@ export function isFinanceHireEligible(company: FinanceHireCompanyEvidence): bool
   return financeHireEligibility(company).eligible;
 }
 
-const CAREER_HOST = /(?:^|\.)(?:greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|recruitee\.com|workable\.com|myworkdayjobs\.com|workdayjobs\.com|icims\.com|jobvite\.com|bamboohr\.com|wizehire\.com|indeed\.com|linkedin\.com)$/i;
+const CAREER_HOST = /(?:^|\.)(?:greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|recruitee\.com|workable\.com|myworkdayjobs\.com|workdayjobs\.com|icims\.com|jobvite\.com|bamboohr\.com|wizehire\.com|applytojob\.com|indeed\.com|linkedin\.com)$/i;
 const CAREER_PATH = /(?:^|\/)(?:careers?|jobs?|job-openings?|open-positions?|openings?|employment|opportunities|join-(?:our-)?team|work-with-us)(?:\/|$)/i;
 
 function parsedHttpUrl(value: string | null | undefined): URL | null {
@@ -82,6 +82,7 @@ export function isFabricatedRootAnchor(value: string | null | undefined): boolea
 export function isCareerEvidenceUrl(value: string | null | undefined): boolean {
   const url = parsedHttpUrl(value);
   if (!url || isFabricatedRootAnchor(value)) return false;
+  if (url.hostname === "workforcenow.adp.com" && url.pathname === "/mascsr/default/mdf/recruitment/recruitment.html") return Boolean(url.searchParams.get("cid") && url.searchParams.get("jobId"));
   if (CAREER_HOST.test(url.hostname)) {
     return url.pathname !== "/" || url.search.length > 1;
   }
@@ -175,6 +176,8 @@ function hasQuarantineMarker(metadata: Record<string, unknown> | null | undefine
 
 /** Storage-level visibility/scoring gate that does not need company context. */
 export function isPublishableTriggerEvidence(trigger: TriggerEvidence): boolean {
+  if (typeof trigger.metadata?.contractEventMergedInto === "string") return false;
+  if (trigger.metadata?.contractTimingInactive === true) return false;
   if (trigger.metadata?.intelligenceFeedbackExcluded === true) return false;
   if (hasQuarantineMarker(trigger.metadata)) return false;
   if (isLegacyNameOnlyGovernmentTrigger(trigger)) return false;

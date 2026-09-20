@@ -15,9 +15,13 @@ describe("cached operating topic search route", () => {
     expect((await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics?topic=inventory"))).status).toBe(401);
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
-  it.each(["topic=constructor", "topic=inventory&limit=13", "topic=inventory&after=invalid", "topic=inventory&mode=none"])("rejects invalid query %s before storage", async query => {
+  it.each(["topic=constructor", "topic=inventory&limit=13", "topic=inventory&after=invalid", "topic=inventory&mode=none", "topic=inventory&visibility=approve"])("rejects invalid query %s before storage", async query => {
     expect((await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/topics?${query}`))).status).toBe(400);
     expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("uses the bounded read-only exploration RPC without changing default search", async () => {
+    await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics?topic=project_delivery&visibility=explore"));
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_topic_explore", {p_topics:["project_delivery"],p_after:null,p_limit:8,p_mode:"all"});
   });
   it("reads one bounded keyset page using only the cached search RPC", async () => {
     const after = "10000000-0000-4000-8000-000000000001";

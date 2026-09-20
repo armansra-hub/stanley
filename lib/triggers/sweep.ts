@@ -186,7 +186,7 @@ const PE_RE = /\b(private equity|pe firm|portfolio company|portfolio of|backed b
  * event. Shared by Google-News (requireNameMatch=true) and the company's own
  * newsroom RSS (requireNameMatch=false — it's already their feed). Returns true if a
  * NEW trigger landed. opts.llm = use the Opus verifier (budget-gated) on claimable. */
-type NewsCompany = { id: string; name: string; domain?: string | null; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence;
+type NewsCompany = { id: string; name: string; domain?: string | null; netsuite_internal_id?: string | null; publicAliases?: string[]; subindustry?: string | null; city?: string | null; state?: string | null } & FinanceHireCompanyEvidence;
 type HeadlineItem = NewsItem;
 type HeadlineOptions = { llm?: boolean; requireNameMatch?: boolean; classifierDeadlineMs?: number; captureIntelligence?: boolean };
 
@@ -201,7 +201,7 @@ async function observeHeadline(company: NewsCompany, item: HeadlineItem) {
     companyId: company.id, companyName: company.name, companyDomain: company.domain,
     netsuiteInternalId: company.netsuite_internal_id, sourceKind: "news", sourceUrl: evidence.sourceUrl,
     title: evidence.title, text: evidence.text, eventDate: evidence.eventDate,
-    metadata: { sourceName: item.source_name, ...evidence.metadata },
+    metadata: { sourceName: item.source_name, ...evidence.metadata, ...(item.discovery_query ? { discoveryQuery: item.discovery_query } : {}) },
   });
   if (!stored) throw new Error("News observation persistence disabled");
   return evidence;
@@ -257,7 +257,11 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
     const state = await readSourceState(company.id, sourceKey);
     const seen = new Set(Array.isArray(state.cursor?.seen) ? state.cursor.seen.filter((value): value is string => typeof value === "string").slice(-128) : []);
     const pending = Array.isArray(state.cursor?.pending) ? state.cursor.pending.filter((value): value is HeadlineItem => Boolean(value && typeof value === "object" && typeof value.raw_excerpt === "string" && typeof value.source_url === "string" && typeof value.source_name === "string" && (value.signal_date === null || typeof value.signal_date === "string"))).slice(0, 48) : [];
-    const fetched = await fetchNewsForCompanyResult(company.name, 24);
+    const websiteState = await readSourceState(company.id, "website");
+    const publicAliases = Array.isArray(websiteState.cursor?.publicAliases) ? websiteState.cursor.publicAliases.filter((alias): alias is string => typeof alias === "string" && alias.length <= 140).slice(0, 3) : company.publicAliases;
+    const fetched = await fetchNewsForCompanyResult({ ...company, publicAliases }, 24, {
+      cycle: Number(state.cursor?.queryCycle ?? 0), caches: (state.cursor?.queryCaches ?? {}) as Record<string, unknown>,
+    });
     const retries = (state.cursor?.retries ?? {}) as Record<string, { attempts?: number; after?: string }>;
     const nextRetries: typeof retries = {};
     const items = [...new Map([...pending, ...fetched.items].filter(item => isFresh(item.signal_date)).map(item => [headlineKey(item), item])).values()];
@@ -302,14 +306,15 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
         else failed.push(batch[index]);
       });
     }
-    const incomplete = failed.length > 0 || fetched.status === "unavailable";
+    const incomplete = failed.length > 0 || fetched.status === "unavailable" || fetched.partial;
     const status = !incomplete ? (items.length ? "complete" : "empty")
       : (saved > 0 || seen.size > 0 || failed.some(item => retries[headlineKey(item)])) ? "partial" : "unavailable";
     await writeSourceState(company.id, sourceKey, {
-      cursor: { seen: [...seen].slice(-128), pending: [...new Map(failed.map(item => [headlineKey(item), item])).values()].slice(0, 48), retries: nextRetries, scope: "latest_24_feed_items_and_pending" },
+      cursor: { seen: [...seen].slice(-128), pending: [...new Map(failed.map(item => [headlineKey(item), item])).values()].slice(0, 48), retries: nextRetries,
+        queryCycle: fetched.nextCycle, queryCaches: fetched.caches, scope: "broad_name_24_plus_rotating_targeted_12_and_pending" },
       complete: !incomplete,
       status, successful: saved > 0 || fetched.status !== "unavailable",
-      details: { feedStatus: fetched.status, feedError: fetched.error ?? null, httpStatus: fetched.httpStatus ?? null, saved, bodyCount, headlineOnly: saved - bodyCount, storageFailures, warningCodes },
+      details: { feedStatus: fetched.status, feedError: fetched.error ?? null, httpStatus: fetched.httpStatus ?? null, queries: fetched.queries, saved, bodyCount, headlineOnly: saved - bodyCount, storageFailures, warningCodes },
       ...(incomplete ? { error: fetched.error ? `News feed: ${fetched.error}` : storageFailures ? "News storage unavailable" : "Headline evidence saved; publisher bodies pending" } : {}),
     });
     if (storageFailures || fetched.status === "unavailable") throw new Error("News capture incomplete");

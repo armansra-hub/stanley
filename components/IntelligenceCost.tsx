@@ -8,6 +8,8 @@ const labels: Record<string, string> = {
   government_research: "Government research", public_research_other: "Other public research",
   public_interpretation: "Public research", research_ranking: "Choosing the next research page",
   saved_view: "Saved research questions", private_tam: "Private TAM excerpts",
+  federal_identity: "Company identity research", event_match: "Matching reports of the same event",
+  codex_connector: "Jev in Codex",
   initial_coverage: "Initial coverage", monitoring: "Ongoing monitoring", manual: "Requested manually",
   unattributed: "Other / unattributed", historical_unattributed: "Unattributed history",
 };

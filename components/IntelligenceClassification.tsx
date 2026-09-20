@@ -23,8 +23,12 @@ export default function IntelligenceClassification({ attributes }: { attributes:
     return typeof value === "string" && labels[value] && !(value === "contract_award" && values.contractActivity !== "none" && values.contractActivity !== "unknown")
       ? [{ field, value, label: labels[value] }] : [];
   });
-  if (!selected.length) return null;
+  const scores = [["companyRelevance", "Company relevance"], ["concreteEvent", "Concrete development"],
+    ...(values.signalType === "ma" ? [["isAcquirer", "Company is acquirer"]] : [])].flatMap(([field, label]) =>
+      typeof values[field] === "number" && Number.isFinite(values[field]) ? [{ field, label, value: values[field] as number }] : []);
+  if (!selected.length && !scores.length) return null;
   return <div className="mt-2 flex flex-wrap gap-1.5 text-xs" aria-label="Jev classifications">
     {selected.map(({ field, value, label }) => <span key={field} title="Jev's classification of the selected development" className={`rounded border px-2 py-1 ${["closure_or_wind_down", "downsizing"].includes(value) ? "font-semibold text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>{label}</span>)}
+    {scores.map(({ field, label, value }) => <span key={field} className="rounded border px-2 py-1 text-[var(--text-muted)]" title="Jev's native answer probability; not a factual accuracy score">{label} {Math.round(value * 100)}%</span>)}
   </div>;
 }

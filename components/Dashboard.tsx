@@ -2,6 +2,8 @@
 import AccountResearchPanel from "./AccountResearchPanel";
 import IntelligenceClassification from "./IntelligenceClassification";
 import FederalAwardLifecycle from "./FederalAwardLifecycle";
+import GovernmentIntelligence from "./GovernmentIntelligence";
+import RegionalContracts from "./RegionalContracts";
 import FederalIdentityContext from "@/components/FederalIdentityContext";
 import { federalAwardLabel, type FederalCoverage, type RelatedFederalEntity } from "@/lib/publicGrowth/federalPresentation";
 
@@ -1660,6 +1662,8 @@ function DetailDrawer({
         </div>
 
         <button type="button" className="mb-4 w-full rounded-md border border-[var(--gold)] px-3 py-2 text-sm text-[var(--gold)] hover:bg-[var(--surface-2)]" onClick={() => setResearchFrames([{ id: c.id, name: c.name }])}>Account intelligence →</button>
+        <GovernmentIntelligence companyId={c.id} />
+        <RegionalContracts companyId={c.id} />
 
         {publicGrowth && (publicGrowth.federalCoverage || publicGrowth.entities.length > 0 || publicGrowth.awards.length > 0 || publicGrowth.naicsSize.length > 0 || publicGrowth.headcount.length > 0 || publicGrowth.revenue.length > 0 || publicGrowth.opportunities.length > 0) && (
           <div className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "rgba(110,168,230,0.45)", background: "rgba(110,168,230,0.05)" }}>

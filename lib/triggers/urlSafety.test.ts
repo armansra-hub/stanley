@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   fetchPublicHttpText,
+  postPublicHttpJson,
   isPublicHostname,
   isPublicIpAddress,
   resolvePublicAddresses,
@@ -11,6 +12,11 @@ import {
 } from "./urlSafety";
 
 describe("career-link URL safety", () => {
+  it("validates public JSON search DNS and bounds request bodies before transmission", async () => {
+    await expect(postPublicHttpJson("http://127.0.0.1/api", {})).rejects.toBeInstanceOf(UnsafeHttpTargetError);
+    await expect(postPublicHttpJson("https://careers.acme.com/api", { text: "x".repeat(16001) })).rejects.toThrow("size limit");
+    await expect(postPublicHttpJson("https://careers.acme.com/api", {}, {resolver:async()=>[{address:"10.0.0.1",family:4}]})).rejects.toBeInstanceOf(UnsafeHttpTargetError);
+  });
   it("accepts ordinary public IPv4 and IPv6 addresses", () => {
     expect(isPublicIpAddress("8.8.8.8")).toBe(true);
     expect(isPublicIpAddress("93.184.216.34")).toBe(true);

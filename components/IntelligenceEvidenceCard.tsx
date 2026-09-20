@@ -2,6 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import IntelligenceClassification from "./IntelligenceClassification";
+import { DEFAULT_VISIBILITY_POLICY, jevPublicationRoute, visibilityReasonLabel, type VisibilityFinding } from "@/lib/intelligence/visibility";
 export type FeedbackReason = "useful" | "wrong_company" | "old_event" | "irrelevant" | "not_now";
 export type Observation = {
   id: string;
@@ -59,7 +60,7 @@ function ageLabel(value: string | null): string {
   const days = Math.floor((Date.now() - Date.parse(value)) / 86_400_000);
   if (days < 0) return "Future event date";
   if (days === 0) return "Today";
-  return `${days.toLocaleString()} ${days === 1 ? "day" : "days"} ago${days >= 90 ? " · Historical" : ""}`;
+  return `${days.toLocaleString()} ${days === 1 ? "day" : "days"} ago${days > DEFAULT_VISIBILITY_POLICY.eventMaxAgeDays ? " · Historical" : ""}`;
 }
 
 function probability(value: unknown): string | null {
@@ -81,6 +82,7 @@ export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount }: {
   const match = probability(observation.matchProbability);
   const relationship = attributes?.companyRelationship;
   const relationshipLabel = relationship === "direct" ? "Company itself" : relationship === "related" ? "Related company" : relationship === "unrelated" ? "Different company" : "Company relationship unknown";
+  const packets = (Array.isArray(attributes?.packetFindings) ? attributes.packetFindings : attributes ? [{ attributes, questionVersion: attributes.questionVersion, criteria: {} }] : []) as (VisibilityFinding & { publication?: { status?: string; reason?: string } })[];
   return <article className="rounded-lg border bg-[var(--surface)] p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0 flex-1">
@@ -95,6 +97,13 @@ export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount }: {
       {attributes && typeof attributes.requiresResearch === "number" && attributes.requiresResearch >= 0.7 && <span className="rounded border px-2 py-1 text-[var(--gold)]">More context needed</span>}
     </div>
     <IntelligenceClassification attributes={attributes} />
+    {packets.length > 0 && <details className="mt-3 rounded border p-3 text-xs">
+      <summary className="cursor-pointer font-medium">Why this appears here or in Triggers</summary>
+      <p className="mt-2 text-[var(--text-muted)]">All retained Jev findings remain available here. Trigger routing currently requires direct company attribution, at least 80% company relevance, 75% concrete development, a known date within 180 days, an eligible event classification and a selected source passage. Acquisitions require 80% acquirer probability. These are display rules, not another model review.</p>
+      {packets.map((packet, index) => { const route = typeof packet.questionVersion === "string" && packet.attributes ? jevPublicationRoute(packet, observation.event_date) : null;
+        return <div key={index} className="mt-3 border-t pt-2"><p>Packet {index + 1}: {packet.publication?.status ? packet.publication.status.replace(/_/g, " ") : "Publication not recorded"}{packet.publication?.reason ? ` · ${visibilityReasonLabel(packet.publication.reason)}` : route ? ` · Current routing: ${visibilityReasonLabel(route.reason)}` : ""}</p>
+          <IntelligenceClassification attributes={packet.attributes} /></div>; })}
+    </details>}
     <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[var(--text-muted)]">
       <div><dt className="inline">Event: </dt><dd className="inline text-[var(--text)]">{dateLabel(observation.event_date)} <span className="text-[var(--text-muted)]">· {ageLabel(observation.event_date)}</span></dd></div>
       <div><dt className="inline">Captured: </dt><dd className="inline">{dateLabel(observation.observed_at, true)}</dd></div>

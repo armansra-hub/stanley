@@ -39,8 +39,13 @@ export async function loadVerifiedFederalIdentities(companyId: string): Promise<
 
 export function federalSearchTargets(companyName: string, identities: VerifiedFederalIdentity[], legalNames: string[] = []): FederalSearchTarget[] {
   if (!identities.length) return companyIdentityNames({ name: companyName, legalNames }).map((query) => ({ query, identity: null }));
-  return identities.flatMap((identity) => [...new Set([identity.uei, identity.legalName, identity.dbaName].filter((v): v is string => Boolean(v)))]
+  const bound = identities.flatMap((identity) => [...new Set([identity.uei, identity.legalName, identity.dbaName].filter((v): v is string => Boolean(v)))]
     .map((query) => ({ query, identity: { ...identity } })));
+  // A verified operating entity must not prevent discovery of another sourced
+  // legal/DBA/former name. New names still use the strict candidate matcher.
+  const covered = new Set(bound.map(target => normalizeName(target.query)));
+  return [...bound, ...companyIdentityNames({ name: "", legalNames }).filter(query => !covered.has(normalizeName(query)))
+    .map(query => ({ query, identity: null }))];
 }
 
 /** Never accept one matching identifier when another present identifier conflicts. */

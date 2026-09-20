@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
-import { fetchNewsItemsResult, fetchFeed, fetchGoogleNewsCandidates, fetchNewsItems } from "./googleNews";
+import { companyNewsQueries, fetchNewsForCompanyResult, fetchNewsItemsResult, fetchFeed, fetchFeedResult, fetchGoogleNewsCandidates, fetchNewsItems } from "./googleNews";
+import { googleNewsRss } from "@/config/news";
 vi.mock("@/lib/triggers/urlSafety", async original => ({ ...await original<typeof import("@/lib/triggers/urlSafety")>(), fetchPublicHttpText: vi.fn() }));
 const fetch = vi.mocked(fetchPublicHttpText);
 const RSS = `<?xml version="1.0"?><rss version="2.0"><channel><item>
@@ -10,6 +11,28 @@ const RSS = `<?xml version="1.0"?><rss version="2.0"><channel><item>
 const response = (body: string, status = 200) => ({ body, status, finalUrl: "https://news.google.com/rss/search", contentType: "application/rss+xml" });
 beforeEach(() => { fetch.mockReset(); });
 describe("RSS outcome semantics", () => {
+  it("retains broad name recall while rotating domain, public alias and territory context queries", async () => {
+    const company = { name: "Acme Services", domain: "acme.com", publicAliases: ["Acme Consulting"], subindustry: "Consulting", city: "Denver" };
+    const queries = companyNewsQueries(company);
+    expect(queries).toEqual(['"Acme Services"', '"Acme Services" OR "acme.com"', '"Acme Consulting"', '"Acme Services" ("Consulting" OR "Denver")']);
+    fetch.mockResolvedValue(response(RSS));
+    const first = await fetchNewsForCompanyResult(company, 24, { cycle: 0 });
+    expect(first.items).toHaveLength(1); // same article discovered twice
+    expect(first.queries.map(entry => entry.query)).toEqual(queries.slice(0, 2));
+    expect((await fetchNewsForCompanyResult(company, 24, { cycle: 1 })).queries.map(entry => entry.query)).toEqual([queries[0], queries[2]]);
+  });
+  it("retains successful targeted discovery when one query fails and exposes partial coverage", async () => {
+    fetch.mockResolvedValueOnce(response("Blocked", 403)).mockResolvedValueOnce(response(RSS));
+    expect(await fetchNewsForCompanyResult({ name: "Acme", domain: "acme.com" })).toMatchObject({ status: "success", partial: true, items: [expect.anything()] });
+  });
+  it("reuses the exact saved Google/feed result on 304, including an empty successful snapshot", async () => {
+    const query = '"Acme"', url = googleNewsRss(query);
+    const item = { source_name: "Google News", source_url: "https://publisher.com/story", raw_excerpt: "Acme expands", signal_date: "2026-09-18" };
+    fetch.mockResolvedValue({ ...response("", 304), finalUrl: url });
+    expect(await fetchNewsItemsResult(query, 24, { cache: { items: [item], validators: { url, etag: '"feed-v1"' } } })).toMatchObject({ items: [item], status: "success", unchanged: true });
+    fetch.mockResolvedValue({ ...response("", 304), finalUrl: "https://acme.com/feed" });
+    expect(await fetchFeedResult("https://acme.com/feed", 8, { cache: { items: [], validators: { url: "https://acme.com/feed", etag: '"empty-v1"' } } })).toMatchObject({ items: [], status: "empty", unchanged: true });
+  });
   it("distinguishes a valid empty feed from a blocked or malformed response", async () => {
     fetch.mockResolvedValueOnce(response('<rss version="2.0"><channel><title>Search</title></channel></rss>'));
     expect(await fetchNewsItemsResult("Acme")).toMatchObject({ status: "empty", items: [] });

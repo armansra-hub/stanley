@@ -1,7 +1,8 @@
 /** Display-only federal provenance. Related entities never contribute to direct totals. */
 export type FederalRow = Record<string, unknown>;
 export interface FederalRelationshipEvidence {
-  relationship: "reported_parent" | "reported_child";
+  relationship: "reported_parent" | "reported_child" | "parent" | "subsidiary" | "joint_venture" | "division";
+  subjectName?: string;
   directEntityId: string;
   reportingEntityId: string;
   reportingUei: string;
@@ -76,6 +77,28 @@ export function bindRelatedFederalEntities(direct: FederalRow[], candidates: Fed
     if (relationships.length && !conflicting) related.set(candidate.id, { entity: candidate, relationships, awards: [], awardsTruncated: false });
   }
   return [...related.values()];
+}
+
+/** Separately sourced family/JV bindings never become direct account entities. */
+export function mergeSourcedRelatedEntities(direct: FederalRow[], reported: RelatedFederalEntity[], links: FederalRow[]): RelatedFederalEntity[] {
+  const result = new Map(reported.map(row => [String(row.entity.id), row]));
+  for (const link of links) {
+    const entity = link.government_entities as FederalRow | undefined;
+    const claim = link.company_federal_identity_claims as FederalRow | undefined;
+    const observation = claim?.intelligence_observations as FederalRow | undefined;
+    const evidence = link.evidence as FederalRow | undefined;
+    if (!entity || !nonblank(entity.id) || !uei(entity.uei) || direct.some(row => row.id === entity.id)
+      || !["parent", "subsidiary", "joint_venture", "division"].includes(String(link.relationship))
+      || observation?.is_current !== true || observation.feedback_excluded === true
+      || !nonblank(evidence?.sourceUrl) || !nonblank(evidence?.observedAt) || !nonblank(evidence?.subjectName)) continue;
+    const relationship: FederalRelationshipEvidence = { relationship: link.relationship as FederalRelationshipEvidence["relationship"],
+      directEntityId: "", reportingEntityId: entity.id, reportingUei: String(entity.uei), reportedParentUei: "",
+      source: "Official company declaration", sourceUrl: evidence.sourceUrl, observedAt: evidence.observedAt, subjectName: evidence.subjectName };
+    const existing = result.get(entity.id);
+    if (existing) existing.relationships.push(relationship);
+    else result.set(entity.id, { entity, relationships: [relationship], awards: [], awardsTruncated: false });
+  }
+  return [...result.values()];
 }
 
 export function federalAwardLabel(awardType: unknown): string {

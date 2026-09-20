@@ -59,11 +59,11 @@ export function parseGoogleDecodedUrl(body: string): string | null {
   return null;
 }
 
-async function postDecode(body: string): Promise<string> {
+async function postDecode(body: string, timeoutMs = 4000): Promise<string> {
   // Fixed public Google endpoint only; no credentials, cookies, redirects, or
   // browser state. Publisher bodies still use Stanley's DNS-pinned transport.
   const response = await fetch(ENDPOINT, { method: "POST", redirect: "error", cache: "no-store",
-    signal: AbortSignal.timeout(4000), headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8", referer: "https://news.google.com/" }, body });
+    signal: AbortSignal.timeout(timeoutMs), headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8", referer: "https://news.google.com/" }, body });
   if (!response.ok || !response.body) throw new Error("Google link resolver unavailable");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = []; let bytes = 0;
@@ -83,7 +83,7 @@ async function postDecode(body: string): Promise<string> {
  * https://github.com/dbernheisel/google_news_decoder/blob/main/lib/google_news_decoder.ex
  * Independently implemented with bounded transport; no consent/CAPTCHA bypass.
  */
-export async function resolveGoogleArticle(source: string, html: string, deps: { post?: (body: string) => Promise<string>; now?: () => number } = {}) {
+export async function resolveGoogleArticle(source: string, html: string, deps: { post?: (body: string) => Promise<string>; now?: () => number; deadlineMs?: number } = {}) {
   const id = googleArticleId(source); if (!id) return null;
   const now = deps.now?.() ?? Date.now();
   const cached = cache.get(id);
@@ -91,15 +91,19 @@ export async function resolveGoogleArticle(source: string, html: string, deps: {
   const legacy = legacyGoogleArticleUrl(id);
   if (legacy) return { url: legacy, method: "base64_protobuf" };
   let params = googleDecodingParameters(html);
+  const remaining = () => Math.min(4000, (deps.deadlineMs ?? Date.now() + 4000) - Date.now());
   try {
     if (!params) {
-      const page = await fetchPublicHttpText(`https://news.google.com/articles/${id}`, { timeoutMs: 4000, maxBytes: 1000000, maxRedirects: 2 });
+      if (remaining() < 250) return null;
+      const page = await fetchPublicHttpText(`https://news.google.com/articles/${id}`, { timeoutMs: remaining(), maxBytes: 1000000, maxRedirects: 2 });
       if (page.status === 200 && new URL(page.finalUrl).hostname === "news.google.com") params = googleDecodingParameters(page.body);
     }
     if (!params) return null;
+    if (remaining() < 250) return null;
     const context = [["X", "X", ["X", "X"], null, null, 1, 1, "US:en", null, 1, null, null, null, null, null, 0, 1], "X", "X", 1, [1, 1, 1], 1, 1, null, 0, 0, null, 0];
     const request = JSON.stringify([[ ["Fbv4je", JSON.stringify(["garturlreq", context, id, params.timestamp, params.signature])] ]]);
-    const url = parseGoogleDecodedUrl(await (deps.post ?? postDecode)(new URLSearchParams({ "f.req": request }).toString()));
+    const body = new URLSearchParams({ "f.req": request }).toString();
+    const url = parseGoogleDecodedUrl(await (deps.post ? deps.post(body) : postDecode(body, remaining())));
     if (!url) return null;
     if (cache.size >= 512) cache.delete(cache.keys().next().value!);
     cache.set(id, { url, expires: now + 7 * 86400000 });

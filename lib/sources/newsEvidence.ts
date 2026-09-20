@@ -28,7 +28,8 @@ export function publisherArticleLinks(html: string, publisherUrl?: string): stri
 /** Fetch a real publisher body when ordinary public redirects/links provide it.
  * Google public link resolution enriches ordinary redirects. No invented
  * publisher URL, consent bypass, or unrelated third-party crawler. */
-export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_excerpt" | "publisher_url" | "feed_excerpt"> & Partial<Pick<NewsItem, "signal_date">>) {
+export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_excerpt" | "publisher_url" | "feed_excerpt"> & Partial<Pick<NewsItem, "signal_date">>, options: { deadlineMs?: number } = {}) {
+  const deadline = options.deadlineMs ?? Date.now() + 20_000;
   let failure: SourceErrorCode = "publisher_unresolved";
   let httpStatus: number | undefined;
   const id = googleArticleId(item.source_url);
@@ -36,8 +37,9 @@ export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_
   const candidates = [legacy ?? item.source_url];
   let resolutionMethod = legacy ? "base64_protobuf" : "direct_or_redirect";
   for (let index = 0; index < candidates.length && index < 3; index++) {
+    if (deadline - Date.now() < 250) { failure = "timeout"; break; }
     try {
-      const response = await fetchPublicHttpText(candidates[index], { timeoutMs: index ? 4000 : 5000, maxRedirects: 6, maxBytes: 1000000 });
+      const response = await fetchPublicHttpText(candidates[index], { timeoutMs: Math.min(index ? 4000 : 5000, deadline - Date.now()), maxRedirects: 6, maxBytes: 1000000 });
       httpStatus = response.status;
       const outcome = publicResponseOutcome(candidates[index], response.status, response.body);
       if (outcome.outcome !== "success") { failure = outcome.code ?? "http_error"; continue; }
@@ -46,7 +48,7 @@ export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_
         const links = publisherArticleLinks(response.body, item.publisher_url);
         if (links.length) { candidates.push(...links.filter(url => !candidates.includes(url))); resolutionMethod = "publisher_link"; }
         else {
-          const resolved = await resolveGoogleArticle(item.source_url, response.body);
+          const resolved = await resolveGoogleArticle(item.source_url, response.body, { deadlineMs: deadline });
           if (resolved && !candidates.includes(resolved.url)) { candidates.push(resolved.url); resolutionMethod = resolved.method; }
         }
         continue;

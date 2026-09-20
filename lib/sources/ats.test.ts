@@ -23,8 +23,8 @@ describe("Wizehire ATS support", () => {
     expect((await detectAtsResult("dyadlaw.com")).status).toBe("none");
   });
   it("reports public career systems outside the supported adapters separately", async () => {
-    guardedFetch.mockImplementation(async input => response('<a href="https://acme.wd1.myworkdayjobs.com/en-US/Careers">Careers</a>', String(input)));
-    expect(await detectAtsResult("dyadlaw.com")).toMatchObject({ status: "unsupported", unsupportedProvider: "myworkdayjobs.com" });
+    guardedFetch.mockImplementation(async input => response('<a href="https://acme.bamboohr.com/careers">Careers</a>', String(input)));
+    expect(await detectAtsResult("dyadlaw.com")).toMatchObject({ status: "unsupported", unsupportedProvider: "bamboohr.com" });
   });
   it("detects the public jobroll company id", async () => {
     guardedFetch.mockResolvedValue(response(
