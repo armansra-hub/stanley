@@ -316,16 +316,19 @@ export type IntelligenceWorkerOptions = {
   limit?: number;
 };
 type WorkerStopReason = "disabled" | "batch_limit" | "deadline" | "budget" | "provider_pressure"
-  | "service_pressure" | "request_busy" | "queue_empty" | "queue_empty_or_capacity";
+  | "service_pressure" | "queue_empty" | "queue_empty_or_capacity";
 
 /** Stop accepting more work after shared service pressure. Already-owned jobs
  * still finish/checkpoint normally; none are cancelled or have their lease cleared. */
-function pressureStop(outcome: string): WorkerStopReason | null {
+function pressureStop(outcome: string, recentOutcomes: string[]): WorkerStopReason | null {
   if (outcome === "budget_deferred" || outcome === "event_match_budget_deferred") return "budget";
-  if (outcome === "checkpoint_or_service_error") return "service_pressure";
-  if (outcome === "request_in_progress" || outcome === "event_match_busy") return "request_busy";
-  if (["authentication", "billing", "rate_limit", "timeout", "cancelled", "provider_unavailable",
-    "provider_error", "invalid_response", "invalid_request", "event_match_provider_unavailable"].includes(outcome)) return "provider_pressure";
+  if (["authentication", "billing", "rate_limit"].includes(outcome)) return "provider_pressure";
+  // One timeout/malformed response may concern only one item. Its existing
+  // checkpoint/backoff remains authoritative; keep useful unrelated work moving.
+  // Busy request/event leases are normal deduplication contention, not failures.
+  const failures = recentOutcomes.filter(value => ["timeout", "cancelled", "provider_unavailable", "provider_error",
+    "invalid_response", "invalid_request", "event_match_provider_unavailable", "checkpoint_or_service_error"].includes(value));
+  if (failures.length >= 3) return failures.includes("checkpoint_or_service_error") ? "service_pressure" : "provider_pressure";
   return null;
 }
 
@@ -356,6 +359,7 @@ export async function runIntelligenceWorker(limitOrOptions: number | Intelligenc
     const identityContexts = new Map<string, Promise<string>>();
     let processed = 0, claimedCount = 0, peakInFlight = 0;
     let stoppedBy: WorkerStopReason | null = null;
+    const recentOutcomes: string[] = [];
     const active = new Set<Promise<void>>();
     const start = (job: Job, claimedAt: number) => {
       // A longer invocation never extends an individual database lease. Reserve
@@ -372,7 +376,9 @@ export async function runIntelligenceWorker(limitOrOptions: number | Intelligenc
         }
         outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
         processed++;
-        stoppedBy ??= pressureStop(outcome);
+        recentOutcomes.push(outcome);
+        if (recentOutcomes.length > 12) recentOutcomes.shift();
+        stoppedBy ??= pressureStop(outcome, recentOutcomes);
       })().finally(() => active.delete(work));
       active.add(work);
       peakInFlight = Math.max(peakInFlight, active.size);

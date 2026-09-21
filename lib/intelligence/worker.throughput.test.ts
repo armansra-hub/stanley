@@ -21,7 +21,7 @@ const deferred = () => {
 };
 let available: number;
 let nextId: number;
-let current: boolean;
+let current: boolean | ((id: string) => boolean);
 let read: (id: string) => Promise<void>;
 let finishes: string[];
 
@@ -47,7 +47,7 @@ beforeEach(() => {
     const result = async () => {
       if (table === "intelligence_observations") await read(id);
       return { data: table === "intelligence_config" ? { enabled: true } : table === "intelligence_views" ? []
-        : table === "intelligence_observations" ? { id, company_id: `company-${id}`, is_current: current, metadata: {},
+        : table === "intelligence_observations" ? { id, company_id: `company-${id}`, is_current: typeof current === "function" ? current(id) : current, metadata: {},
           evidence_text: "Acme opened a facility.", source_kind: "company_news", source_url: "https://acme.test/news",
           title: "New facility", event_date: null, observed_at: "2026-09-18T23:00:00Z" }
           : { id, name: "Acme", domain: "acme.test" }, error: null };
@@ -159,7 +159,7 @@ describe("runtime-bounded rolling intelligence throughput", () => {
   });
 
   it.each([
-    ["budget_deferred", "budget"], ["rate_limit", "provider_pressure"], ["provider_unavailable", "provider_pressure"], ["busy", "request_busy"],
+    ["budget_deferred", "budget"], ["rate_limit", "provider_pressure"], ["authentication", "provider_pressure"], ["billing", "provider_pressure"],
   ])("stops refilling after %s and preserves every already-owned completion", async (failure, stoppedBy) => {
     available = 30; current = true;
     mocks.durable.mockResolvedValue(failure === "budget_deferred" || failure === "busy" ? { status: failure }
@@ -169,6 +169,49 @@ describe("runtime-bounded rolling intelligence throughput", () => {
     expect(finishes).toHaveLength(6);
     expect(mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_claim")).toHaveLength(1);
     expect(mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_finish").every(([, args]) => args.p_status === "queued" && args.p_retry_seconds >= 30)).toBe(true);
+  });
+
+  it.each(["provider_unavailable", "timeout", "invalid_response", "invalid_request"])("continues draining after one %s and an unrelated busy cached request", async failure => {
+    available = 40;
+    current = id => id === "obs-0" || id === "obs-1";
+    mocks.durable.mockImplementation(async ({ context }: { context: { observationId: string } }) => context.observationId === "obs-1"
+      ? { status: "busy" }
+      : { status: "complete", evaluation: { ok: false, error: { kind: failure, retryable: true, retryAfterMs: 120_000 } } });
+    expect(await runIntelligenceWorker({ mode: "drain" })).toMatchObject({ processed: 40, claimed: 40,
+      stoppedBy: "queue_empty_or_capacity", outcomes: { [failure]: 1, request_in_progress: 1, superseded: 38 } });
+    expect(mocks.durable).toHaveBeenCalledTimes(2);
+    expect(finishes).toHaveLength(40);
+  });
+
+  it("continues after one uncertain item while leaving that exact lease available for recovery", async () => {
+    available = 40;
+    read = async id => { if (id === "obs-0") throw new Error("One observation read failed"); };
+    expect(await runIntelligenceWorker({ mode: "drain" })).toMatchObject({ processed: 40, claimed: 40,
+      stoppedBy: "queue_empty_or_capacity", outcomes: { checkpoint_or_service_error: 1, superseded: 39 } });
+    expect(finishes).toHaveLength(39);
+    expect(finishes).not.toContain("job-0");
+  });
+
+  it.each(["provider", "service"])("stops after three concentrated %s failures while preserving each item's recovery", async kind => {
+    available = 30;
+    if (kind === "service") read = async () => { throw new Error("Service unavailable"); };
+    else {
+      current = true;
+      mocks.durable.mockResolvedValue({ status: "complete", evaluation: { ok: false,
+        error: { kind: "provider_unavailable", retryable: true, retryAfterMs: 120_000 } } });
+    }
+    expect(await runIntelligenceWorker({ mode: "drain", concurrency: 1 })).toMatchObject({ processed: 3, claimed: 3,
+      stoppedBy: `${kind}_pressure`, outcomes: { [kind === "service" ? "checkpoint_or_service_error" : "provider_unavailable"]: 3 } });
+    expect(finishes).toHaveLength(kind === "service" ? 0 : 3);
+    expect(available).toBe(27);
+  });
+
+  it("forgets isolated failures outside the twelve-result pressure window", async () => {
+    available = 30;
+    read = async id => { if (["obs-0", "obs-12", "obs-24"].includes(id)) throw new Error("Isolated observation failure"); };
+    expect(await runIntelligenceWorker({ mode: "drain", concurrency: 1 })).toMatchObject({ processed: 30, claimed: 30,
+      stoppedBy: "queue_empty_or_capacity", outcomes: { checkpoint_or_service_error: 3, superseded: 27 } });
+    expect(finishes).toHaveLength(27);
   });
 
   it("awaits owned jobs if a later claim fails, without clearing or retrying any lease", async () => {
