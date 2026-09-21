@@ -19,7 +19,7 @@ type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 export type PartResult = { start: number; end: number; evaluation: Evaluation };
 type PacketPublication = { start: number; end: number; questionVersion: string; attemptedAt: string; outcome: JevPublicationReceipt };
 type PendingRequest = { start: number; end: number; input: EvaluateEvidenceInput; fingerprint: string };
-type Job = { id: string; observation_id: string; view_id: string | null; kind: "interpret" | "view"; lease_token: string; attempts: number;
+type Job = { id: string; observation_id: string; view_id: string | null; kind: "interpret" | "view"; lease_token: string; lease_until?: string | null; attempts: number;
   result: { parts?: PartResult[]; publications?: PacketPublication[]; publicScaleContext?: PublicScaleContext; companyIdentityContext?: string;
     pendingRequest?: PendingRequest; routingBackfill?: string } | null };
 type Observation = { id: string; company_id: string; source_kind: string; source_url: string; title: string; evidence_text: string;
@@ -309,13 +309,41 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
   return "complete";
 }
 
-export async function runIntelligenceWorker(limit = 96, deadlineMs = Date.now() + 210_000) {
-  if (!intelligenceEnabled()) return { enabled: false, processed: 0, outcomes: {} as Record<string, number> };
+export type IntelligenceWorkerOptions = {
+  /** Scheduled drains are bounded by runtime and leased capacity, not a job count. */
+  mode: "drain" | "finite";
+  concurrency?: number;
+  limit?: number;
+};
+type WorkerStopReason = "disabled" | "batch_limit" | "deadline" | "budget" | "provider_pressure"
+  | "service_pressure" | "request_busy" | "queue_empty" | "queue_empty_or_capacity";
+
+/** Stop accepting more work after shared service pressure. Already-owned jobs
+ * still finish/checkpoint normally; none are cancelled or have their lease cleared. */
+function pressureStop(outcome: string): WorkerStopReason | null {
+  if (outcome === "budget_deferred" || outcome === "event_match_budget_deferred") return "budget";
+  if (outcome === "checkpoint_or_service_error") return "service_pressure";
+  if (outcome === "request_in_progress" || outcome === "event_match_busy") return "request_busy";
+  if (["authentication", "billing", "rate_limit", "timeout", "cancelled", "provider_unavailable",
+    "provider_error", "invalid_response", "invalid_request", "event_match_provider_unavailable"].includes(outcome)) return "provider_pressure";
+  return null;
+}
+
+export async function runIntelligenceWorker(limitOrOptions: number | IntelligenceWorkerOptions = 96, deadlineMs = Date.now() + 210_000) {
+  const startedAt = Date.now();
+  const mode = typeof limitOrOptions === "number" ? "finite" : limitOrOptions.mode;
+  const requestedLimit = typeof limitOrOptions === "number" ? limitOrOptions : limitOrOptions.limit ?? 96;
+  const bound = mode === "drain" ? Infinity : Number.isFinite(requestedLimit) ? Math.max(1, Math.min(192, Math.floor(requestedLimit))) : 96;
+  const requestedConcurrency = typeof limitOrOptions === "number" ? 3 : limitOrOptions.concurrency ?? (mode === "drain" ? 6 : 3);
+  const concurrency = Number.isFinite(requestedConcurrency) ? Math.max(1, Math.min(6, Math.floor(requestedConcurrency))) : 3;
+  const disabled = () => ({ enabled: false, processed: 0, claimed: 0, peakInFlight: 0, durationMs: Date.now() - startedAt,
+    mode, concurrency, outcomes: {} as Record<string, number>, stoppedBy: "disabled" as WorkerStopReason, stopReason: "disabled" as WorkerStopReason });
+  if (!intelligenceEnabled()) return disabled();
   return withServiceDeadline(deadlineMs, async () => {
     const db = serviceClient();
     const { data: config, error: configError } = await db.from("intelligence_config").select("enabled").eq("id", 1).single();
     if (configError) throw new Error("Intelligence schema/configuration unavailable");
-    if (!config.enabled) return { enabled: false, processed: 0, outcomes: {} as Record<string, number> };
+    if (!config.enabled) return disabled();
     await reconcileJevReceipts().catch(() => {});
     const { data: views, error: viewsError } = await db.from("intelligence_views").select("id").eq("active", true).eq("backfill_complete", false).limit(3);
     if (viewsError) throw new Error("Saved view queue unavailable");
@@ -326,28 +354,66 @@ export async function runIntelligenceWorker(limit = 96, deadlineMs = Date.now() 
     const outcomes: Record<string, number> = {};
     const publicContexts = new Map<string, Promise<PublicContextObservation[]>>();
     const identityContexts = new Map<string, Promise<string>>();
-    let processed = 0;
-    // Capacity follows the time budget. Claim at most three immediately runnable
-    // jobs at once, but keep consuming while there is capacity for fresh evidence.
-    const bound = Number.isFinite(limit) ? Math.max(1, Math.min(192, Math.floor(limit))) : 96;
-    while (processed < bound && Date.now() < deadlineMs - 30_000) {
-      // Claim only immediately runnable concurrency, not an entire batch that can expire while waiting.
-      const { data: claimed, error: claimError } = await db.rpc("intelligence_claim", { p_limit: Math.min(3, bound - processed) });
-      if (claimError) throw new Error("Intelligence claim failed");
-      const jobs = (claimed ?? []) as Job[];
-      if (!jobs.length) break;
-      await Promise.all(jobs.map(async (job) => {
+    let processed = 0, claimedCount = 0, peakInFlight = 0;
+    let stoppedBy: WorkerStopReason | null = null;
+    const active = new Set<Promise<void>>();
+    const start = (job: Job, claimedAt: number) => {
+      // A longer invocation never extends an individual database lease. Reserve
+      // ten seconds for its final checkpoint, using the request start as the
+      // conservative fallback when an older claim response omits lease_until.
+      const leaseUntil = typeof job.lease_until === "string" ? Date.parse(job.lease_until) : NaN;
+      const jobDeadline = Math.min(deadlineMs, Number.isFinite(leaseUntil) ? leaseUntil - 10_000 : claimedAt + 230_000);
+      const work = (async () => {
         let outcome: string;
-        try { outcome = await runJob(job, deadlineMs, publicContexts, identityContexts); }
+        try { outcome = await withServiceDeadline(jobDeadline, () => runJob(job, jobDeadline, publicContexts, identityContexts)); }
         catch {
           // Uncertain work remains leased for recovery; never fake a completed receipt.
           outcome = "checkpoint_or_service_error";
         }
         outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
         processed++;
-      }));
-      if (outcomes.budget_deferred) break;
+        stoppedBy ??= pressureStop(outcome);
+      })().finally(() => active.delete(work));
+      active.add(work);
+      peakInFlight = Math.max(peakInFlight, active.size);
+    };
+    // A single claim loop serializes reservations. Finishing any job opens a
+    // slot immediately, without waiting for the slowest member of a batch.
+    try {
+      while (!stoppedBy) {
+        if (Date.now() >= deadlineMs - 30_000) { stoppedBy = "deadline"; break; }
+        if (claimedCount >= bound) { stoppedBy = "batch_limit"; break; }
+        const slots = Math.min(concurrency - active.size, bound - claimedCount);
+        if (slots > 0) {
+          let jobs: Job[];
+          const claimedAt = Date.now();
+          try {
+            const { data, error } = await db.rpc("intelligence_claim", { p_limit: slots });
+            if (error) throw new Error("Intelligence claim failed");
+            jobs = (data ?? []) as Job[];
+          } catch {
+            outcomes.claim_error = (outcomes.claim_error ?? 0) + 1;
+            stoppedBy = "service_pressure";
+            break;
+          }
+          claimedCount += jobs.length;
+          for (const job of jobs) start(job, claimedAt);
+          if (jobs.length) continue;
+          if (!active.size) {
+            // The shared claim RPC can also return none when other invocations
+            // own global capacity. Do not poll/spin against those healthy leases.
+            stoppedBy = mode === "drain" ? "queue_empty_or_capacity" : "queue_empty";
+            break;
+          }
+        }
+        if (active.size) await Promise.race(active);
+      }
+    } finally {
+      // Include every owned job in the receipt even if claims fail or the final
+      // claim crosses the cutoff. runJob retains its existing packet checkpoint.
+      await Promise.all(active);
     }
-    return { enabled: true, processed, outcomes, stoppedBy: processed >= bound ? "batch_limit" : Date.now() >= deadlineMs - 30_000 ? "deadline" : outcomes.budget_deferred ? "budget" : "queue_empty" };
+    return { enabled: true, processed, claimed: claimedCount, outcomes, stoppedBy, stopReason: stoppedBy,
+      mode, concurrency, peakInFlight, durationMs: Date.now() - startedAt };
   });
 }

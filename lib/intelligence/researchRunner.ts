@@ -18,7 +18,7 @@ import { businessServicesResearchContext, operatingTopicPriority, researchSource
 
 export const DIRECTED_RESEARCH_MINIMUM_MS = 40_000;
 type ResearchOutcome = "queued" | "unchanged" | "source_failed" | "source_empty";
-type ResearchJob = { company_id: string; desired_hash: string; lease_token: string; attempts: number };
+type ResearchJob = { company_id: string; desired_hash: string; lease_token: string; attempts: number; lease_until?: string | null };
 type SourceAttempt = ResearchAttempt & { outcome: ResearchOutcome | null; last_success_at: string | null };
 export type ResearchSweepState = { knownSources: number; dueSources: number; unreadSources: number;
   leasedSources: number; retrySources: number };
@@ -180,7 +180,7 @@ export async function refreshAccountResearch(companyId: string, options: {
     const claims = data as { source_url: string; lease_token: string }[];
     if (!claims.length) return { ...empty("sources_leased"), ranking };
     let discoveries = 0;
-    const outcomes = await Promise.all(claims.map(async claim => {
+    const reads = await Promise.allSettled(claims.map(async claim => {
       let outcome: ResearchOutcome = "source_failed";
       try {
         const provenance = loaded.sourceMetadata?.[claim.source_url];
@@ -259,6 +259,10 @@ export async function refreshAccountResearch(companyId: string, options: {
       if (finishError || saved !== true) throw new Error("research_completion_failed");
       return outcome;
     }));
+    // One failed durable finish must not release the account while its other
+    // leased source reads are still healthy and writing their own receipts.
+    if (reads.some(read => read.status === "rejected")) throw new Error("research_completion_failed");
+    const outcomes = reads.flatMap(read => read.status === "fulfilled" ? [read.value] : []);
     await logEvent("headhunter", "intelligence.focused_research", {
       summary: `Researched ${claims.length} public account sources`, entity_type: "company", entity_id: companyId,
       meta: { outcomes, discoveries, automatic: options.automatic === true, researchVersion: BUSINESS_SERVICES_RESEARCH_VERSION, ranking },
@@ -294,29 +298,84 @@ async function finishResearchJob(job: ResearchJob, status: "queued" | "complete"
   return data === true;
 }
 
-export async function runDirectedResearchWorker(limit = 1, deadlineMs = Date.now() + 90_000) {
-  if (!intelligenceEnabled()) return { enabled: false, processed: 0, outcomes: {} as Record<string, number> };
+export type DirectedResearchWorkerOptions = { mode: "drain"; concurrency?: number };
+export type DirectedResearchStopReason = "disabled" | "batch_limit" | "deadline" | "queue_empty" | "queue_empty_or_capacity" | "claim_error" | "duplicate_claim";
+
+/** Drain the existing leased queue for the request's available runtime. Finite
+ * callers keep their original sequential, at-most-eight-account contract. */
+export async function runDirectedResearchWorker(limit: number | DirectedResearchWorkerOptions = 1, deadlineMs = Date.now() + 90_000) {
+  const startedAt = Date.now();
+  const mode = typeof limit === "number" ? "bounded" : "drain";
+  const requestedConcurrency = typeof limit === "number" ? 1 : limit.concurrency ?? 2;
+  const concurrency = Number.isFinite(requestedConcurrency) ? Math.max(1, Math.min(2, Math.floor(requestedConcurrency))) : 2;
+  const bound = typeof limit === "number" ? Math.max(0, Math.min(8, Math.ceil(limit) || 0)) : Infinity;
+  const outcomes: Record<string, number> = {};
+  let processed = 0, claimed = 0, peakInFlight = 0;
+  let stoppedBy: DirectedResearchStopReason = "queue_empty";
+  const receipt = (enabled: boolean) => ({ enabled, processed, outcomes, claimed, mode, concurrency, peakInFlight,
+    durationMs: Math.max(0, Date.now() - startedAt), stoppedBy });
+  if (!intelligenceEnabled()) { stoppedBy = "disabled"; return receipt(false); }
   return withServiceDeadline(deadlineMs, async () => {
-    const outcomes: Record<string, number> = {};
-    let processed = 0;
-    while (processed < Math.max(0, Math.min(8, limit)) && Date.now() < deadlineMs - DIRECTED_RESEARCH_MINIMUM_MS) {
-      const { data, error } = await serviceClient().rpc("intelligence_directed_claim", { p_limit: 1 });
-      if (error) throw new Error("directed_research_claim_failed");
-      const job = (data as ResearchJob[] | null)?.[0];
-      if (!job) break;
+    const inFlight = new Map<string, Promise<string>>();
+    const process = async (job: ResearchJob, claimedAt: number) => {
+      const leaseTimestamp = job.lease_until ? Date.parse(job.lease_until) : NaN;
+      const leaseExpiresAt = Number.isFinite(leaseTimestamp) ? leaseTimestamp : claimedAt + 180_000;
+      const leaseDeadlineMs = Math.min(deadlineMs, leaseExpiresAt);
+      const accountDeadlineMs = Math.min(deadlineMs, leaseExpiresAt - 10_000);
+      const finish = (status: "queued" | "complete" | "failed", result: ResearchRefreshResult | null, error: string | null, retry: number) =>
+        withServiceDeadline(leaseDeadlineMs, () => finishResearchJob(job, status, result, error, retry));
       let outcome = "service_error";
       try {
-        const result = await refreshAccountResearch(job.company_id, { deadlineMs, automatic: true });
+        // The request may live longer than one account's three-minute lease.
+        // Reserve its final ten seconds for a durable completion/backoff; the
+        // next independent account can still use the request's remaining time.
+        const result = await refreshAccountResearch(job.company_id, { deadlineMs: accountDeadlineMs, automatic: true });
         const seconds = Math.max(60, Math.ceil((Date.parse(result.nextAttemptAt) - Date.now()) / 1000));
-        const saved = await finishResearchJob(job, result.outcome === "caught_up" ? "complete" : "queued", result, null, seconds);
+        const saved = await finish(result.outcome === "caught_up" ? "complete" : "queued", result, null, seconds);
         outcome = saved ? result.outcome : "superseded";
       } catch {
-        try { await finishResearchJob(job, job.attempts >= 6 ? "failed" : "queued", null, "research_service_error", Math.min(86400, 300 * 2 ** Math.min(job.attempts, 8))); }
+        try { await finish(job.attempts >= 6 ? "failed" : "queued", null, "research_service_error", Math.min(86400, 300 * 2 ** Math.min(job.attempts, 8))); }
         catch { /* The live lease remains the durable recovery path. */ }
       }
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
       processed++;
+      return job.company_id;
+    };
+    let stopped = false;
+    while (!stopped) {
+      while (inFlight.size < concurrency && !stopped) {
+        if (claimed >= bound) { stoppedBy = "batch_limit"; stopped = true; break; }
+        if (Date.now() >= deadlineMs - DIRECTED_RESEARCH_MINIMUM_MS) { stoppedBy = "deadline"; stopped = true; break; }
+        let job: ResearchJob | undefined;
+        const claimedAt = Date.now();
+        try {
+          const { data, error } = await serviceClient().rpc("intelligence_directed_claim", { p_limit: 1 });
+          if (error) throw new Error("directed_research_claim_failed");
+          job = (data as ResearchJob[] | null)?.[0];
+        } catch {
+          outcomes.claim_error = (outcomes.claim_error ?? 0) + 1;
+          stoppedBy = "claim_error"; stopped = true; break;
+        }
+        if (!job) { stoppedBy = mode === "drain" ? "queue_empty_or_capacity" : "queue_empty"; stopped = true; break; }
+        claimed++;
+        // The database owns cross-request exclusivity. This defensive guard
+        // also refuses an unexpected duplicate without touching the live lease.
+        if (inFlight.has(job.company_id)) {
+          outcomes.duplicate_claim = (outcomes.duplicate_claim ?? 0) + 1;
+          stoppedBy = "duplicate_claim"; stopped = true; break;
+        }
+        inFlight.set(job.company_id, process(job, claimedAt));
+        peakInFlight = Math.max(peakInFlight, inFlight.size);
+      }
+      if (!stopped && inFlight.size) {
+        // Refill the first completed slot; a slow account does not block the
+        // next independent account behind a fixed two-account batch.
+        inFlight.delete(await Promise.race(inFlight.values()));
+      }
     }
-    return { enabled: true, processed, outcomes };
+    // Never let a queue-empty/error/deadline stop abandon healthy owned work.
+    // Per-account finish/backoff and live leases remain the recovery authority.
+    await Promise.all(inFlight.values());
+    return receipt(true);
   });
 }

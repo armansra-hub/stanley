@@ -36,8 +36,8 @@ export async function GET(req: Request) {
     // The regular cron remains the durable recovery consumer if this wakeup fails.
     after(async () => {
       if (Date.now() >= deadlineMs - 30_000) return;
-      const processed = await runIntelligenceWorker(96, deadlineMs).catch(() => null);
-      if (processed?.processed) await logEvent("headhunter", "intelligence.processed", {
+      const processed = await runIntelligenceWorker({ mode: "drain", concurrency: 6 }, deadlineMs).catch(() => null);
+      if (processed) await logEvent("headhunter", "intelligence.processed", {
         summary: `Processed ${processed.processed} evidence jobs after collection`, meta: { ...processed, wakeup: "collection" },
       });
     });

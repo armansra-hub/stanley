@@ -1,0 +1,13 @@
+# Intelligence worker throughput
+
+Scheduled interpretation uses the existing cloud schedules and queues. Each invocation runs a rolling pool of at most six evidence jobs until its 280-second deadline, stopping new claims 30 seconds before that deadline. Completing one job immediately makes room for another; scheduled invocations no longer stop at 96 or 192 jobs. Numeric/manual callers retain their finite job limits and default concurrency of three.
+
+Directed research uses a rolling pool of two accounts with the same 280-second invocation deadline and existing 40-second admission margin. Scheduled runs no longer stop after eight accounts. Each account still receives the same research questions, source selection and three-source lease budget; subsequent passes continue from durable state. Numeric callers retain the previous sequential, eight-account maximum.
+
+Migration 0112 reserves capacity atomically using existing job leases. At most twelve live interpretation jobs and two live directed-research accounts may be owned across overlapping invocations. Already-owned healthy jobs are left intact. Claim functions preserve the oldest-work, first-reading and fresh-evidence selection rules, and use the same config-row then shared-capacity-lock order. Partial indexes make the capacity counts small. Per-job research/interpretation deadlines also respect the individual lease expiry so continuation checkpoints can be saved before ownership expires.
+
+The main interpretation route runs its existing two-story and eight-candidate auxiliary queues alongside interpretation instead of reserving its final 90 seconds for them. Their questions, limits and models are unchanged. Auxiliary failures are reported separately from successful interpretation receipts.
+
+Receipts record mode, concurrency, claimed and processed counts, peak in-flight work, duration and stop reason. Empty claim results may mean another invocation owns available capacity; workers do not poll or interfere with those leases. Interpretation stops claiming on shared provider, budget or service pressure and awaits already-owned jobs. Paid-answer checkpoints, exact-request reuse, evidence completeness and native Jev output remain unchanged. This does not change TAM grading, CRM refresh, source cadence or the spending policy.
+
+Higher throughput can concentrate necessary spend into fewer hours. It does not promise cheaper requests or a fixed completion time. Evaluate post-deployment durable receipts and net queue drain; first-reading account coverage is not research completion.

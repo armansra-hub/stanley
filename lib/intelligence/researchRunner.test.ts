@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), sourceState: vi.fn(), external: vi.fn(), rank: vi.fn(), fetch: vi.fn(), enqueue: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }),
-  withServiceDeadline: (_deadline: number, run: () => unknown) => run() }));
+  withServiceDeadline: vi.fn((_deadline: number, run: () => unknown) => run()) }));
 vi.mock("./researchRanking", () => ({ rankResearchCandidates: mocks.rank }));
 vi.mock("./observations", () => ({ intelligenceEnabled: () => true, enqueueObservation: mocks.enqueue }));
 vi.mock("./sourceState", () => ({ readSourceState: mocks.sourceState }));
@@ -11,6 +11,7 @@ vi.mock("@/lib/sources/publicPdf", () => ({ fetchPublicPdfEvidence: vi.fn() }));
 vi.mock("@/lib/db/events", () => ({ logEvent: vi.fn() }));
 vi.mock("./researchExternal", () => ({ discoverExternalResearch: mocks.external }));
 import { loadResearchProfile, refreshAccountResearch, researchSweepState, runDirectedResearchWorker, type ResearchProfile } from "./researchRunner";
+import { withServiceDeadline } from "@/lib/supabase/server";
 
 const candidates = ["https://example.com/about", "https://example.com/team", "https://example.com/services", "https://example.com/billing"];
 const profile = { company: { id: "company", name: "Synthetic Consulting", domain: "example.com" },
@@ -49,6 +50,7 @@ beforeEach(() => {
   pendingJobs = 0; inserted = [];
   mocks.from.mockImplementation(mockTable);
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("concurrent next-source research", () => {
   it("defers a duplicate refresh until its active native ranking is ready, then claims in the cached order", async () => {
@@ -94,6 +96,174 @@ describe("concurrent next-source research", () => {
     expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ title: "Synthetic Consulting company website", eventDate,
       metadata: expect.objectContaining({ eventDateBasis: basis,
         researchCriteria: expect.arrayContaining(["project_delivery", "multi_entity", "multi_location", "project_billing"]) }) }));
+  });
+});
+
+describe("deadline-driven account research", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>(done => { resolve = done; });
+    return { promise, resolve };
+  }
+  function jobs(count: number) {
+    const queue = Array.from({ length: count }, (_, index) => ({ company_id: `company-${index}`, desired_hash: `hash-${index}`,
+      lease_token: `lease-${index}`, attempts: 1 }));
+    tables.companies = queue.map(job => ({ id: job.company_id, name: job.company_id, domain: "example.com" }));
+    mocks.rpc.mockImplementation(async name => ({ data: name === "intelligence_directed_claim" ? queue.splice(0, 1) : true, error: null }));
+    return queue;
+  }
+
+  it("drains more than eight distinct accounts while retaining the same caught-up decisions and paid-call reuse", async () => {
+    jobs(13);
+    const result = await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000);
+    expect(result).toMatchObject({ mode: "drain", concurrency: 2, claimed: 13, processed: 13, peakInFlight: 2,
+      stoppedBy: "queue_empty_or_capacity", outcomes: { caught_up: 13 } });
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_directed_finish")).toHaveLength(13);
+    expect(new Set(mocks.external.mock.calls.map(([company]) => company.id)).size).toBe(13);
+    expect(mocks.rank).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("refills a free slot before a slower account completes, and awaits the slower account before returning", async () => {
+    jobs(3);
+    const slow = deferred<{ sources: number }>(), thirdStarted = deferred<void>();
+    mocks.external.mockImplementation((company: { id: string }) => {
+      if (company.id === "company-0") return slow.promise;
+      if (company.id === "company-2") thirdStarted.resolve();
+      return Promise.resolve({ sources: 0 });
+    });
+    let settled = false;
+    const running = runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000)
+      .then(result => { settled = true; return result; });
+    await thirdStarted.promise;
+    expect(settled).toBe(false);
+    expect(mocks.rpc.mock.calls.some(([name, args]) => name === "intelligence_directed_finish" && args.p_company === "company-0")).toBe(false);
+    slow.resolve({ sources: 0 });
+    expect(await running).toMatchObject({ processed: 3, peakInFlight: 2, stoppedBy: "queue_empty_or_capacity" });
+  });
+
+  it("preserves finite sequential callers and their eight-account maximum", async () => {
+    const queue = jobs(10);
+    expect(await runDirectedResearchWorker(100, Date.now() + 275_000)).toMatchObject({ mode: "bounded", processed: 8, claimed: 8,
+      concurrency: 1, peakInFlight: 1, stoppedBy: "batch_limit" });
+    expect(queue).toHaveLength(2);
+  });
+
+  it.each([
+    [150_000, 140_000, 150_000],
+    [null, 170_000, 180_000],
+    [500_000, 275_000, 275_000],
+  ])("bounds each account to its lease with a completion reserve: lease offset %s", async (leaseOffset, researchOffset, finishOffset) => {
+    const initial = Date.now(), queue = jobs(1);
+    vi.spyOn(Date, "now").mockReturnValue(initial);
+    Object.assign(queue[0], { lease_until: leaseOffset === null ? null : new Date(initial + leaseOffset).toISOString() });
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, initial + 275_000))
+      .toMatchObject({ processed: 1, outcomes: { caught_up: 1 } });
+    expect(mocks.external).toHaveBeenCalledWith(expect.objectContaining({ id: "company-0" }), expect.any(Array), expect.any(Array), initial + researchOffset);
+    expect(withServiceDeadline).toHaveBeenCalledWith(initial + finishOffset, expect.any(Function));
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_directed_finish", expect.objectContaining({ p_status: "complete" }));
+  });
+
+  it("defers an account whose returned lease has insufficient research time instead of outliving that lease", async () => {
+    const initial = Date.now(), queue = jobs(1);
+    vi.spyOn(Date, "now").mockReturnValue(initial);
+    Object.assign(queue[0], { lease_until: new Date(initial + 40_000).toISOString() });
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, initial + 275_000))
+      .toMatchObject({ processed: 1, outcomes: { deadline_deferred: 1 } });
+    expect(mocks.external).not.toHaveBeenCalled(); expect(mocks.rank).not.toHaveBeenCalled();
+    expect(withServiceDeadline).toHaveBeenCalledWith(initial + 40_000, expect.any(Function));
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_directed_finish", expect.objectContaining({ p_status: "queued" }));
+  });
+
+  it("does not reserve new work inside the minimum useful runtime", async () => {
+    jobs(2);
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 39_000))
+      .toMatchObject({ processed: 0, claimed: 0, peakInFlight: 0, stoppedBy: "deadline" });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("stops refilling at the deadline and durably defers a claim that arrives late", async () => {
+    const queue = jobs(3), initial = Date.now();
+    let now = initial;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    mocks.rpc.mockImplementation(async name => {
+      if (name === "intelligence_directed_claim") { now = initial + 70_000; return { data: queue.splice(0, 1), error: null }; }
+      return { data: true, error: null };
+    });
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, initial + 100_000))
+      .toMatchObject({ processed: 1, claimed: 1, stoppedBy: "deadline", outcomes: { deadline_deferred: 1 }, durationMs: 70_000 });
+    expect(queue).toHaveLength(2);
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_directed_finish", expect.objectContaining({ p_status: "queued",
+      p_result: expect.objectContaining({ outcome: "deadline_deferred" }) }));
+    expect(mocks.external).not.toHaveBeenCalled();
+  });
+
+  it("exits an empty queue without polling, ranking or source reads", async () => {
+    jobs(0);
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000))
+      .toMatchObject({ processed: 0, claimed: 0, peakInFlight: 0, stoppedBy: "queue_empty_or_capacity" });
+    expect(mocks.rpc).toHaveBeenCalledOnce(); expect(mocks.from).not.toHaveBeenCalled();
+  });
+
+  it("retains failure backoff and continues independent accounts", async () => {
+    const queue = jobs(3);
+    queue[0].attempts = 6;
+    tables.companies = tables.companies.filter(row => row.id !== "company-0");
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000))
+      .toMatchObject({ processed: 3, outcomes: { service_error: 1, caught_up: 2 }, stoppedBy: "queue_empty_or_capacity" });
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_directed_finish", expect.objectContaining({ p_company: "company-0",
+      p_status: "failed", p_error: "research_service_error", p_result: null, p_retry_seconds: 19_200 }));
+  });
+
+  it("awaits healthy owned work after a later claim fails and reports that stop", async () => {
+    const queue = jobs(2), slow = deferred<{ sources: number }>(), sourceStarted = deferred<void>();
+    let claims = 0, settled = false;
+    mocks.rpc.mockImplementation(async name => ({ data: name === "intelligence_directed_claim" ? (++claims === 1 ? queue.splice(0, 1) : null) : true,
+      error: name === "intelligence_directed_claim" && claims > 1 ? { message: "database unavailable" } : null }));
+    mocks.external.mockImplementation(() => { sourceStarted.resolve(); return slow.promise; });
+    const running = runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000)
+      .then(result => { settled = true; return result; });
+    await sourceStarted.promise;
+    expect(settled).toBe(false);
+    slow.resolve({ sources: 0 });
+    expect(await running).toMatchObject({ processed: 1, claimed: 1, stoppedBy: "claim_error", outcomes: { claim_error: 1, caught_up: 1 } });
+    expect(claims).toBe(2);
+  });
+
+  it("refuses an unexpected duplicate account claim without racing or finishing its active lease", async () => {
+    const queue = jobs(2);
+    queue[1] = { ...queue[0], lease_token: "unexpected-second-lease" };
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000))
+      .toMatchObject({ processed: 1, claimed: 2, peakInFlight: 1, stoppedBy: "duplicate_claim", outcomes: { duplicate_claim: 1, caught_up: 1 } });
+    expect(mocks.external).toHaveBeenCalledOnce();
+    expect(mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_directed_finish")).toHaveLength(1);
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_directed_finish", expect.objectContaining({ p_lease: "lease-0" }));
+  });
+
+  it("waits for every healthy source read before reporting one source's failed durable finish", async () => {
+    const slowSource = deferred<{ status: number; finalUrl: string; body: string }>(), failedFinish = deferred<void>();
+    mocks.rank.mockResolvedValue({ candidates: candidates.slice(0, 2), providerUsed: false, scores: [], outcome: "not_needed", rankingVersion: "current" });
+    mocks.rpc.mockImplementation(async (name, args) => {
+      if (name === "intelligence_research_claim") return { data: candidates.slice(0, 2).map(source_url => ({ source_url, lease_token: source_url })), error: null };
+      if (name === "intelligence_research_finish" && args.p_url === candidates[0]) {
+        failedFinish.resolve(); return { data: false, error: null };
+      }
+      return { data: true, error: null };
+    });
+    mocks.fetch.mockImplementation((url: string) => url === candidates[1] ? slowSource.promise
+      : Promise.resolve({ status: 200, finalUrl: url, body: "<main>Project services</main>" }));
+    mocks.enqueue.mockResolvedValue({ id: "observation", queued: false });
+    let settled = false;
+    const running = refreshAccountResearch("company", { profile, deadlineMs: Date.now() + 275_000, automatic: true })
+      .then(() => { settled = true; return "unexpected_success"; }, error => { settled = true; return error.message; });
+    await failedFinish.promise;
+    for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+    expect(settled).toBe(false);
+    slowSource.resolve({ status: 200, finalUrl: candidates[1], body: "<main>Project services</main>" });
+    expect(await running).toBe("research_completion_failed");
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_research_finish", expect.objectContaining({ p_url: candidates[1], p_outcome: "unchanged" }));
   });
 });
 

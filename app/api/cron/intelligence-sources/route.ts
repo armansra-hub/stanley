@@ -18,8 +18,8 @@ export async function GET(req: Request) {
     if (result.claimed) await logEvent("headhunter", "intelligence.sources", { summary: `Shared feeds: ${result.fetched} fetched, ${result.observations} account observations, ${result.failed} pending failures`, meta: result });
     if (result.observations) after(async () => {
       if (Date.now() >= deadlineMs - 30_000) return;
-      const processed = await runIntelligenceWorker(96, deadlineMs).catch(() => null);
-      if (processed?.processed) await logEvent("headhunter", "intelligence.processed", {
+      const processed = await runIntelligenceWorker({ mode: "drain", concurrency: 6 }, deadlineMs).catch(() => null);
+      if (processed) await logEvent("headhunter", "intelligence.processed", {
         summary: `Processed ${processed.processed} evidence jobs after shared feeds`, meta: { ...processed, wakeup: "shared_sources" },
       });
     });
