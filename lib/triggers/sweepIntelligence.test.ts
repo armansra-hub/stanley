@@ -59,8 +59,8 @@ describe("broader news observation intake", () => {
     expect(mocks.write).toHaveBeenLastCalledWith(company.id, "news:google", expect.objectContaining({ status: "partial", cursor: expect.objectContaining({ pending: [item] }) }));
   });
   it("captures actual article text before generic-news rejection without publishing a legacy trigger", async () => {
-    await expect(classifyAndRecordHeadline(company, item)).resolves.toBe(false);
-    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ companyId: company.id, sourceKind: "news", sourceUrl: item.source_url, text: article, eventDate: item.signal_date, metadata: expect.objectContaining({ articleBodyAvailable: true }) }));
+    await expect(classifyAndRecordHeadline({ ...company, subindustry: "Freight & Logistics" }, item)).resolves.toBe(false);
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ companyId: company.id, companySubindustry: "Freight & Logistics", sourceKind: "news", sourceUrl: item.source_url, text: article, eventDate: item.signal_date, metadata: expect.objectContaining({ articleBodyAvailable: true }) }));
     expect(mocks.queue).not.toHaveBeenCalled();
     expect(mocks.fetch).toHaveBeenCalledWith(item.source_url, expect.objectContaining({ maxBytes: 1_000_000, timeoutMs: 5000 }));
   });

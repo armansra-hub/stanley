@@ -37,10 +37,17 @@ beforeEach(() => {
   m.enqueue.mockReset().mockResolvedValue({ id: "observation", queued: false });
   m.from.mockImplementation((table: string) => {
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "eq", "neq", "order", "limit", "range", "in", "single", "upsert"]) chain[method] = (...args: unknown[]) => { m.calls.push({ table, method, args }); return chain; };
-    chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: table === "companies" ? { id: company, name: "Synthetic", domain: "example.test", netsuite_internal_id: "1" }
+    let inserted: unknown[] | null = null;
+    for (const method of ["select", "eq", "neq", "order", "limit", "range", "in", "single", "upsert"]) chain[method] = (...args: unknown[]) => {
+      m.calls.push({ table, method, args });
+      if (method === "upsert") inserted = args[0] as unknown[];
+      return chain;
+    };
+    chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: inserted ?? (table === "companies" ? { id: company, name: "Synthetic", domain: "example.test", netsuite_internal_id: "1" }
       : table === "intelligence_research_attempts" ? [{ source_url: "https://example.test/services", next_attempt_at: "2999-01-01", last_attempt_at: "2026-09-18" }]
-      : table === "intelligence_research_sources" ? m.researchSources : [], count: table === "intelligence_jobs" ? 2 : null, error: null }).then(resolve);
+      : table === "intelligence_research_sources" ? m.researchSources
+      : table === "intelligence_jobs" ? ["pending-1", "pending-2"].map(id => ({ id, observation_id: id, status: "queued", kind: "interpret",
+        intelligence_observations: { company_id: company, is_current: true, feedback_excluded: false } })) : []), error: null }).then(resolve);
     return chain;
   });
   m.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_research_claim" ? [{ source_url: "https://example.test/locations", lease_token: "lease" }] : true, error: null }));
@@ -113,8 +120,11 @@ describe("focused research state and receipts", () => {
       hiring: { boards: [], scans: [], basis: "Synthetic complete-scan context" }, hiringCoverage: "available" });
     expect(m.calls).toContainEqual({ table: "intelligence_observations", method: "eq", args: ["feedback_excluded", false] });
     expect(m.calls).toContainEqual({ table: "intelligence_jobs", method: "select", args: [
-      "id,intelligence_observations:intelligence_observations!intelligence_jobs_observation_id_fkey!inner(company_id)", { count: "exact", head: true },
+      "id,observation_id,status,intelligence_observations:intelligence_observations!intelligence_jobs_observation_id_fkey!inner(company_id,is_current,feedback_excluded)",
     ] });
+    expect(m.calls).toContainEqual({ table: "intelligence_jobs", method: "eq", args: ["intelligence_observations.is_current", true] });
+    expect(m.calls).toContainEqual({ table: "intelligence_jobs", method: "eq", args: ["intelligence_observations.feedback_excluded", false] });
+    expect(m.calls).toContainEqual({ table: "intelligence_jobs", method: "eq", args: ["kind", "interpret"] });
     expect(m.fetch).not.toHaveBeenCalled();
     expect(m.rank).not.toHaveBeenCalled();
     expect(m.external).not.toHaveBeenCalled();

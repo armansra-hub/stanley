@@ -198,7 +198,7 @@ function headlineKey(item: HeadlineItem): string {
 async function observeHeadline(company: NewsCompany, item: HeadlineItem) {
   const evidence = await readNewsEvidence(item);
   const stored = await enqueueObservation({
-    companyId: company.id, companyName: company.name, companyDomain: company.domain,
+    companyId: company.id, companyName: company.name, companyDomain: company.domain, companySubindustry: company.subindustry,
     netsuiteInternalId: company.netsuite_internal_id, sourceKind: "news", sourceUrl: evidence.sourceUrl,
     title: evidence.title, text: evidence.text, eventDate: evidence.eventDate,
     metadata: { sourceName: item.source_name, ...evidence.metadata, ...(item.discovery_query ? { discoveryQuery: item.discovery_query } : {}) },

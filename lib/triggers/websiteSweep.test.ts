@@ -51,8 +51,9 @@ describe("website evidence collection integration", () => {
       cursor: expect.objectContaining({ pendingUrls: [], verifiedUrls: [articleUrl], httpCache: { [articleUrl]: cached } }), details: expect.objectContaining({ notModifiedPages: 1 }) }));
   });
   it("stores source pages and their date provenance before successful checkpointing", async () => {
+    mocks.pick.mockResolvedValue([{ ...company, subindustry: "Freight & Logistics" }]);
     await sweepWebsites(1);
-    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "website", sourceUrl: articleUrl, text: "Acme is introducing recurring billing.", eventDate: "2026-09-17", metadata: expect.objectContaining({ meaningfulContentHash: "meaningful-hash" }) }));
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "website", companySubindustry: "Freight & Logistics", sourceUrl: articleUrl, text: "Acme is introducing recurring billing.", eventDate: "2026-09-17", metadata: expect.objectContaining({ meaningfulContentHash: "meaningful-hash" }) }));
     expect(mocks.write).toHaveBeenCalledWith(company.id, "website", expect.objectContaining({ complete: true, cursor: expect.objectContaining({ knownUrls: [articleUrl], verifiedUrls: [articleUrl], pendingUrls: [] }) }));
     expect(mocks.enqueue.mock.invocationCallOrder[0]).toBeLessThan(mocks.checked.mock.invocationCallOrder[0]);
   });

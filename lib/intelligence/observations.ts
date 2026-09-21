@@ -2,6 +2,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
+import { operatingCriteria } from "./profiles";
+import { JEV_MODEL } from "./jev";
 
 export const INTELLIGENCE_VERSION = "evidence-v2";
 export const intelligenceEnabled = () => process.env.STANLEY_INTELLIGENCE_ENABLED === "true";
@@ -9,6 +11,8 @@ export const intelligenceEnabled = () => process.env.STANLEY_INTELLIGENCE_ENABLE
 export type EvidenceSection = { id: string; start: number; end: number; text: string };
 export type ObservationInput = {
   companyId: string; companyName: string; companyDomain?: string | null; netsuiteInternalId?: string | null;
+  /** Explicit null means the current record has no subindustry; absent is unknown. */
+  companySubindustry?: string | null;
   sourceKind: "news" | "website" | "job" | "government";
   sourceUrl: string; title: string; text: string; eventDate?: string | null; observedAt?: string;
   metadata?: Record<string, unknown>;
@@ -52,6 +56,15 @@ export function prepareObservation(input: ObservationInput) {
   const event = input.eventDate ? new Date(input.eventDate) : null;
   if (event && !Number.isFinite(event.getTime())) throw new Error("Invalid event date");
   const context = { companyName: input.companyName.trim(), companyDomain: input.companyDomain ?? null, netsuiteInternalId: input.netsuiteInternalId ?? null };
+  // Ordinary capture and directed research ask the same worker questions. Give
+  // the RPC their actual criterion IDs so a completed directed pass can satisfy
+  // an unchanged ordinary revisit too. Missing company context opts out.
+  const criteria = input.companySubindustry !== undefined ? {
+    researchCriteria: operatingCriteria(input.companySubindustry, input.sourceKind, input.metadata?.researchTopics).map(criterion => criterion.id),
+    researchCriteriaSubindustry: input.companySubindustry,
+    researchCriteriaBasis: "worker-operating-criteria-v1",
+    researchCriteriaModel: process.env.TYPESAFE_MODEL?.trim() || JEV_MODEL,
+  } : {};
   return {
     url, text, sections: evidenceSections(text), observedAt: observed.toISOString(), eventDate: event?.toISOString() ?? null,
     // A publisher page found through a feed and through site discovery is one
@@ -64,7 +77,7 @@ export function prepareObservation(input: ObservationInput) {
     // new versions of identical public pages merely by supplying that locator.
     contentHash: createHash("sha256").update(JSON.stringify([text, input.title, event?.toISOString(),
       { companyName: context.companyName, companyDomain: context.companyDomain }])).digest("hex"),
-    metadata: { ...input.metadata, ...context,
+    metadata: { ...input.metadata, ...context, ...criteria,
       // Collector provenance is persisted independently from semantic document
       // identity; rediscovery must not erase the first collector's evidence.
       discovery: input.metadata?.discovery ?? { collector: input.sourceKind, url: input.sourceUrl, title: input.title, eventDate: event?.toISOString() ?? null },

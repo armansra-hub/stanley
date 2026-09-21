@@ -1,10 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { canonicalEvidenceUrl, evidenceSections, prepareObservation } from "./observations";
 import { jevCost, secondsUntilNextMonth } from "./budget";
+import { workerEvidenceInput } from "./worker";
 
 const base = { companyId: "11111111-1111-4111-8111-111111111111", companyName: "Example Services", sourceKind: "website" as const,
   sourceUrl: "https://example.com/news?utm_source=feed&article=2#main", title: "Operating update", text: "A sourced public update." };
+afterEach(() => vi.unstubAllEnvs());
 describe("durable observation identity", () => {
+  it.each(["Management Consulting", "Operational Support Services", "Media & Publishing", null])("describes the actual worker's ordinary questions for %s without changing document identity", subindustry => {
+    vi.stubEnv("TYPESAFE_MODEL", "jev-1.13.0");
+    const prepared = prepareObservation({ ...base, companySubindustry: subindustry });
+    const worker = workerEvidenceInput({ evidence_text: prepared.text, source_kind: base.sourceKind, source_url: prepared.url,
+      title: base.title, event_date: prepared.eventDate, observed_at: prepared.observedAt, metadata: prepared.metadata },
+    { name: base.companyName, subindustry }, { start: 0, end: prepared.text.length, text: prepared.text }, null, []);
+    expect(prepared.metadata.researchCriteria).toEqual(worker.criteria?.map(criterion => criterion.id));
+    expect(prepared.metadata.researchCriteria).toHaveLength(10);
+    expect(prepared.metadata.researchCriteriaSubindustry).toBe(subindustry);
+    expect(prepared.metadata.researchCriteriaModel).toBe("jev-1.13.0");
+    expect(prepared.contentHash).toBe(prepareObservation(base).contentHash);
+  });
+  it("does not guess an absent subindustry or replace directed criteria without exact company context", () => {
+    expect(prepareObservation(base).metadata).not.toHaveProperty("researchCriteriaBasis");
+    const metadata = { researchTopics: ["government_work"], researchCriteria: ["project_delivery", "multi_entity", "multi_location", "government_work"] };
+    expect(prepareObservation({ ...base, metadata }).metadata.researchCriteria).toEqual(metadata.researchCriteria);
+    const directed = prepareObservation({ ...base, metadata, companySubindustry: "Management Consulting" });
+    expect(directed.metadata.researchCriteria).toContain("government_work");
+    expect(directed.metadata.researchCriteria).toHaveLength(10);
+  });
   it("coalesces tracking variants while retaining meaningful query identifiers", () => {
     expect(canonicalEvidenceUrl(base.sourceUrl)).toBe("https://example.com/news?article=2");
     expect(prepareObservation(base).contentHash).toBe(prepareObservation({ ...base, observedAt: "2026-09-18T00:00:00Z" }).contentHash);

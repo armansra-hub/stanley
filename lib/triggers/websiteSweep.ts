@@ -102,7 +102,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
             try {
               const published = [...new Set(page.sourceDates.filter(date => date.kind === "published").map(date => date.value))];
               const stored = await enqueueObservation({
-                companyId: c.id, companyName: c.name, companyDomain: c.domain,
+                companyId: c.id, companyName: c.name, companyDomain: c.domain, companySubindustry: c.subindustry,
                 sourceKind: "website", sourceUrl: page.url, title: page.title || `${c.name} company website`,
                 text: page.text, eventDate: published.length === 1 ? published[0] : null,
                 metadata: { sourceDates: page.sourceDates, meaningfulContentHash: page.contentHash, textTruncated: page.truncated,

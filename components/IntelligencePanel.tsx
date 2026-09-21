@@ -6,6 +6,8 @@ import AccountResearchPanel from "./AccountResearchPanel";
 import OperatingMatches from "./OperatingMatches";
 import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceHealth";
 import IntelligenceCost from "./IntelligenceCost";
+import IntelligenceResearchProgress from "./IntelligenceResearchProgress";
+import type { ResearchProgress } from "@/lib/intelligence/researchProgress";
 import type { JevCostSnapshot } from "@/lib/intelligence/costMetricsTypes";
 import { EvidenceCard, type FeedbackReason, type Observation } from "./IntelligenceEvidenceCard";
 
@@ -57,6 +59,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   const [name, setName] = useState("");
   const [question, setQuestion] = useState("");
   const [fallbackCost, setFallbackCost] = useState<JevCostSnapshot>();
+  const [researchProgress, setResearchProgress] = useState<ResearchProgress>();
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const requestId = useRef(0);
   const requestBusy = useRef(false);
@@ -77,7 +80,14 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     if (dismissed) params.set("dismissed", "true");
     if (offset) params.set("offset", String(offset));
     try {
-      const response = await fetch(`${API}?${params}`, { cache: "no-store" });
+      const [response] = await Promise.all([
+        fetch(`${API}?${params}`, { cache: "no-store" }),
+        offset ? Promise.resolve() : fetch(`${API}/research-status`, { cache: "no-store" })
+          .then(async response => {
+            const progress: ResearchProgress = response.ok ? await response.json() : { available: false };
+            if (current === requestId.current) setResearchProgress(progress);
+          }).catch(() => { if (current === requestId.current) setResearchProgress({ available: false }); }),
+      ]);
       if (!response.ok) throw new Error("load_failed");
       const next: IntelligenceData = await response.json();
       if (!Array.isArray(next.views) || !Array.isArray(next.observations)) throw new Error("invalid_response");
@@ -197,6 +207,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       </section>}
 
       {data?.health && <IntelligenceHealth health={data.health} />}
+      <IntelligenceResearchProgress progress={researchProgress} />
       <IntelligenceCost cost={data?.jevCost ?? fallbackCost} />
       <OperatingMatches onOpenAccount={onOpenAccount} enabled={data?.enabled === true} refreshKey={updatedAt} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
