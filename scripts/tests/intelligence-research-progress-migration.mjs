@@ -7,7 +7,12 @@ const requireLocal = createRequire(new URL("../../work/intelligence-sql-test/pac
 const { PGlite } = requireLocal("@electric-sql/pglite");
 const db = await PGlite.create("memory://");
 const scalar = async (sql, args = []) => Object.values((await db.query(sql, args)).rows[0] ?? {})[0];
-const progress = () => scalar("select intelligence_research_progress()");
+const progress = async () => {
+  // One transaction timestamp makes the full results directly comparable.
+  const pair = (await db.query("select intelligence_research_progress() as optimized, intelligence_research_progress_baseline() as baseline")).rows[0];
+  assert.deepEqual(pair.optimized,pair.baseline,"0111 must preserve every 0110 count and policy field");
+  return pair.optimized;
+};
 let passed=0;
 async function test(name,run) { await db.exec("truncate companies,intelligence_observations,intelligence_jobs,intelligence_directed_research_jobs"); await run(); passed++; console.log(`PASS ${name}`); }
 async function account({ lists=["netsuite_tam"],status="new",internalId="1234",researchStatus=null,outcome="caught_up",dueMinutes=-60 }={}) {
@@ -35,6 +40,8 @@ try {
     create table intelligence_jobs(id uuid primary key,observation_id uuid,kind text,status text,created_at timestamptz,finished_at timestamptz);
     create table intelligence_directed_research_jobs(company_id uuid primary key,status text,due_at timestamptz,result jsonb,caught_up_at timestamptz);`);
   await db.exec(await readFile(new URL("../../supabase/migrations/0110_intelligence_research_progress.sql",import.meta.url),"utf8"));
+  await db.exec("alter function intelligence_research_progress() rename to intelligence_research_progress_baseline");
+  await db.exec(await readFile(new URL("../../supabase/migrations/0111_intelligence_research_progress_aggregate.sql",import.meta.url),"utf8"));
   await test("empty scope reports zero work rather than unavailable or null counts",async()=>{
     const value=await progress();
     assert.equal(value.available,true);assert.equal(value.scope,"eligible_tam");assert.ok(Number.isFinite(Date.parse(value.asOf)));
@@ -106,6 +113,29 @@ try {
     await db.exec("set role service_role");assert.equal((await progress()).accounts.caughtUp,1);await db.exec("reset role");
     assert.deepEqual(await scalar("select jsonb_agg(to_jsonb(j)) from intelligence_jobs j"),before);
   });
+  if(process.argv.includes("--large")) {
+    await db.exec(`truncate companies,intelligence_observations,intelligence_jobs,intelligence_directed_research_jobs;
+      insert into companies select md5('company:'||g)::uuid,array['netsuite_tam'],'new',g::text from generate_series(1,7441) g;
+      insert into intelligence_observations select md5('observation:'||g)::uuid,md5('company:'||((g-1)%7441+1))::uuid,
+        g%5<>0,g%29=0,case when g%7=0 then null else '{"native":true}'::jsonb end from generate_series(1,100000) g;
+      insert into intelligence_jobs select md5('job:'||g)::uuid,md5('observation:'||g)::uuid,'interpret',
+        case when g%13=0 then 'failed' when g%7=0 then 'running' when g%5=0 then 'queued' else 'complete' end,
+        now()-case when g%11=0 then interval '2 hours' else interval '20 minutes' end,
+        now()-case when g%17=0 then interval '2 hours' else interval '10 minutes' end from generate_series(1,100000) g;
+      insert into intelligence_directed_research_jobs select id,'complete',now()+interval '1 day','{"outcome":"caught_up"}',now() from companies;
+      analyze;`);
+    let baseline=null,baselineMs=null;
+    const baselineStarted=performance.now();
+    await db.exec("set statement_timeout='5s'");
+    try { baseline=await scalar("select intelligence_research_progress_baseline()");baselineMs=Math.round(performance.now()-baselineStarted); }
+    catch(error) { if(!/statement timeout|canceling statement/i.test(error.message)) throw error; }
+    const optimizedStarted=performance.now();
+    const optimized=await scalar("select intelligence_research_progress()");
+    const optimizedMs=Math.round(performance.now()-optimizedStarted);
+    if(baseline) { delete baseline.asOf;const comparable={...optimized};delete comparable.asOf;assert.deepEqual(comparable,baseline); }
+    assert.equal(optimized.accounts.total,7441);assert.equal(optimized.lastHour.newInterpretationJobs,90910);
+    console.log(JSON.stringify({scaleCheck:{accounts:7441,observations:100000,jobs:100000,baselineMs,baselineTimedOut:baseline===null,optimizedMs}}));
+  }
   console.log(`${passed} research-progress PostgreSQL checks passed`);
 } catch(error) { console.error(error.message,error.detail??"",error.where??"");process.exitCode=1; }
 finally { await db.close(); }
