@@ -9,7 +9,7 @@ import { EvidenceCard, type Observation, type FeedbackReason } from "./Intellige
 export default function AccountResearchPanel({ companyId, active = true, onOpenAccount }: {
   companyId: string; active?: boolean; onOpenAccount: (id: string, name: string) => void;
 }) {
-  const [data, setData] = useState<{ observations: Observation[]; hasMore: boolean } | null>(null);
+  const [data, setData] = useState<{ observations: Observation[]; hasMore: boolean; enabled: boolean } | null>(null);
   const [dismissed, setDismissed] = useState(false), [busy, setBusy] = useState(false);
   const [error, setError] = useState(""), [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
@@ -77,7 +77,7 @@ export default function AccountResearchPanel({ companyId, active = true, onOpenA
       {error && <p role="alert" className="mb-3 text-sm text-[var(--gold)]">{error}</p>}
       <p role="status" className="mb-3 text-xs text-[var(--text-muted)]">{!data ? busy ? "Loading account evidence…" : "Evidence has not loaded." : `${data.observations.length} evidence items loaded${data.hasMore ? "; more available" : ""}. Original Jev output is expandable on interpreted items.`}</p>
       {data?.observations.length === 0 && <p className="rounded border border-dashed p-4 text-sm text-[var(--text-muted)]">{dismissed ? "No dismissed evidence for this account." : "No current evidence is stored for this account yet. This does not establish an absence of activity."}</p>}
-      <div className="space-y-4">{data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy}
+      <div className="space-y-4">{data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy || !data.enabled}
         onOpenAccount={onOpenAccount} onFeedback={(reason, note) => feedback(observation.id, reason, note)} />)}</div>
       {data?.hasMore && <button type="button" disabled={busy} className="mt-3 rounded border px-3 py-2 text-sm" onClick={() => void load(data.observations.length)}>Load more evidence</button>}
     </section>

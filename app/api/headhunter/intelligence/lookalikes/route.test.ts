@@ -16,4 +16,14 @@ describe("sourced lookalike API", () => {
     m.rpc.mockResolvedValue({ data, error: null }); const response = await get("8"); expect(await response.json()).toEqual(data);
     expect(m.rpc).toHaveBeenCalledWith("intelligence_lookalikes", { p_company: id, p_offset: 8, p_limit: 8 });
   });
+  it("keeps stored source-backed matches readable when processing is paused", async () => {
+    m.enabled.mockReturnValue(false);
+    const data = { matches: [{ companyId: id, topics: ["project_billing"], sources: [{ url: "https://example.com/services" }] }], nextOffset: null };
+    m.rpc.mockResolvedValue({ data, error: null });
+    const response = await get();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(data);
+    expect(m.rpc).toHaveBeenCalledOnce();
+    expect(m.rpc).toHaveBeenCalledWith("intelligence_lookalikes", { p_company: id, p_offset: 0, p_limit: 8 });
+  });
 });

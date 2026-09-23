@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   try {
     const deadline = Date.now() + 15_000;
     const { candidates: _candidates, ...result } = await withServiceDeadline(deadline, () => loadResearchProfile(companyId, deadline));
-    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ...result, processingEnabled: intelligenceEnabled() }, { headers: { "Cache-Control": "no-store" } });
   } catch { return NextResponse.json({ error: "profile_unavailable" }, { status: 503 }); }
 }
 

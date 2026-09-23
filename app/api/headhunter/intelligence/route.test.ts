@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), priority: vi.fn(), authorized: vi.fn(), failure: { table: "", code: "" }, calls: [] as { table: string; method: string; args: unknown[] }[] }));
-vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: m.from, rpc: m.rpc }) }));
-vi.mock("@/lib/intelligence/worker", () => ({ runIntelligenceWorker: vi.fn() }));
-vi.mock("@/lib/intelligence/accountQuestions", () => ({ runAccountQuestionWorker: vi.fn() }));
-vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: () => true }));
+const m = vi.hoisted(() => ({ enabled: true, worker: vi.fn(), questionWorker: vi.fn(), deadline: vi.fn(), from: vi.fn(), rpc: vi.fn(), priority: vi.fn(), authorized: vi.fn(), failure: { table: "", code: "" }, calls: [] as { table: string; method: string; args: unknown[] }[] }));
+vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: m.from, rpc: m.rpc }), withServiceDeadline: m.deadline }));
+vi.mock("@/lib/intelligence/worker", () => ({ runIntelligenceWorker: m.worker }));
+vi.mock("@/lib/intelligence/accountQuestions", () => ({ runAccountQuestionWorker: m.questionWorker }));
+vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: () => m.enabled }));
 vi.mock("@/lib/db/triggers", () => ({ recomputePriority: m.priority }));
 vi.mock("@/lib/intelligence/http", () => ({ intelligenceUiAuthorized: m.authorized, sameOriginMutation: () => true,
   isUuid: (value: unknown) => typeof value === "string" && /^[a-f0-9-]{36}$/.test(value), smallJson: (request: Request) => request.json() }));
@@ -12,6 +12,8 @@ import { GET, POST } from "./route";
 const company = "10000000-0000-4000-8000-000000000001", observation = "10000000-0000-4000-8000-000000000002";
 beforeEach(() => {
   m.failure.table = ""; m.failure.code = "";
+  m.enabled = true; m.worker.mockClear(); m.questionWorker.mockClear();
+  m.deadline.mockReset().mockImplementation((_deadline: number, read: () => Promise<unknown>) => read());
   m.calls.length = 0; m.authorized.mockReturnValue(true); m.priority.mockReset().mockResolvedValue(10);
   m.rpc.mockReset().mockResolvedValue({ data: { enabled: true }, error: null });
   m.from.mockImplementation((table: string) => {
@@ -43,13 +45,43 @@ describe("reversible intelligence feedback API", () => {
     expect(log).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledWith("intelligence.read_failed", { stage, code });
   });
-  it("identifies status RPC failure and suppresses arbitrary error-code text", async () => {
+  it("keeps evidence available when monitoring fails without fabricating zero counts or logging private errors", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     m.rpc.mockResolvedValue({ data: null, error: { code: "private SQL or token", details: "not for logs" } });
     const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence"));
-    expect(await response.json()).toEqual({ error: "intelligence_storage_unavailable", stage: "status" });
-    expect(log).toHaveBeenCalledOnce();
-    expect(log).toHaveBeenCalledWith("intelligence.read_failed", { stage: "status", code: "unknown" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ activityAvailable: false, processingEnabled: null,
+      health: null, spend: { available: false }, observations: [{ id: observation }] });
+    expect(log).not.toHaveBeenCalled();
+  });
+  it("keeps saved reads independent of thrown metric errors and uses bounded storage requests", async () => {
+    const started = Date.now();
+    m.rpc.mockRejectedValue(new Error("private metric timeout"));
+    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ activityAvailable: false, health: null, observations: [{ id: observation }] });
+    expect(m.deadline).toHaveBeenCalledTimes(3);
+    for (const [deadline] of m.deadline.mock.calls) expect(deadline).toBeGreaterThanOrEqual(started + 2_500);
+  });
+  it("returns stored evidence and saved view matches while processing is paused, without starting workers", async () => {
+    m.enabled = false;
+    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ enabled: false, processingEnabled: false, observations: [{ id: observation }] });
+    const matches = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence?viewId=${company}`));
+    expect(matches.status).toBe(200);
+    expect(m.calls.some(call => call.table === "intelligence_views")).toBe(true);
+    expect(m.calls.some(call => call.table === "intelligence_account_question_matches")).toBe(true);
+    expect((await post({ action: "save_view", name: "Paused", question: "Which accounts are expanding?" })).status).toBe(409);
+    expect(m.calls.some(call => call.method === "upsert")).toBe(false);
+    expect(m.worker).not.toHaveBeenCalled();
+    expect(m.questionWorker).not.toHaveBeenCalled();
+  });
+  it("keeps saved question answers readable when their queue count is unavailable", async () => {
+    m.failure.table = "intelligence_account_question_jobs";
+    const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence?viewId=${company}`));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accountMatches: [], accountQuestionPending: null });
   });
   it("filters exclusions before all-evidence pagination", async () => {
     for (const suffix of [""]) {

@@ -39,10 +39,13 @@ describe("cached operating topic search route", () => {
     await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics?topic=project_delivery&topic=project_billing&mode=any"));
     expect(mocks.rpc).toHaveBeenLastCalledWith("intelligence_topic_search", { p_topics: ["project_delivery", "project_billing"], p_after: null, p_limit: 8, p_mode: "any" });
   });
-  it("reports disabled setup without attempting a database or model request", async () => {
+  it.each(["supported", "explore"])("reads stored %s answers while processing is paused", async visibility => {
     mocks.enabled.mockReturnValue(false);
-    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics?topic=inventory"));
-    expect(await response.json()).toMatchObject({ enabled: false, accounts: [] });
-    expect(mocks.rpc).not.toHaveBeenCalled();
+    const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/topics?topic=inventory&visibility=${visibility}`));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ enabled: true, accounts: [] });
+    expect(mocks.rpc).toHaveBeenCalledOnce();
+    expect(mocks.rpc).toHaveBeenCalledWith(visibility === "explore" ? "intelligence_topic_explore" : "intelligence_topic_search",
+      { p_topics: ["inventory"], p_after: null, p_limit: 8, p_mode: "all" });
   });
 });

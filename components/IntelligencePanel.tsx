@@ -16,10 +16,12 @@ type AccountMatch = { company_id: string; company_name: string; probability: num
   result: { native: unknown; coverage: unknown; citations: Array<{ observationId: string; url: string; title: string; date: string | null; text: string }> } };
 type IntelligenceData = {
   enabled: boolean;
+  processingEnabled?: boolean | null;
+  activityAvailable?: boolean;
   views: SavedView[];
   observations: Observation[];
   accountMatches?: AccountMatch[];
-  accountQuestionPending?: number;
+  accountQuestionPending?: number | null;
   hasMore: boolean;
   spend: { available?: boolean; usedUsd: number; reservedUsd: number; limitUsd: number };
   jobs: { queued: number; running: number; failed: number };
@@ -80,14 +82,13 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     if (dismissed) params.set("dismissed", "true");
     if (offset) params.set("offset", String(offset));
     try {
-      const [response] = await Promise.all([
-        fetch(`${API}?${params}`, { cache: "no-store" }),
-        offset ? Promise.resolve() : fetch(`${API}/research-status`, { cache: "no-store" })
+      // Progress is independent: a slow aggregate must not hold the feed open.
+      if (!offset) void fetch(`${API}/research-status`, { cache: "no-store" })
           .then(async response => {
             const progress: ResearchProgress = response.ok ? await response.json() : { available: false };
             if (current === requestId.current) setResearchProgress(progress);
-          }).catch(() => { if (current === requestId.current) setResearchProgress({ available: false }); }),
-      ]);
+          }).catch(() => { if (current === requestId.current) setResearchProgress({ available: false }); });
+      const response = await fetch(`${API}?${params}`, { cache: "no-store" });
       if (!response.ok) throw new Error("load_failed");
       const next: IntelligenceData = await response.json();
       if (!Array.isArray(next.views) || !Array.isArray(next.observations)) throw new Error("invalid_response");
@@ -178,12 +179,13 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
 
       {error && <div role="alert" className="mb-4 rounded-lg border border-[var(--accent)] bg-[var(--surface)] p-3 text-sm">{error}</div>}
       {notice && <div role="status" className="mb-4 rounded-lg border bg-[var(--surface)] p-3 text-sm text-[var(--gold)]">{notice}</div>}
-      {data && !data.enabled && <div className="mb-5 rounded-lg border border-[var(--gold)] bg-[var(--surface)] p-4">
-        <h2 className="font-semibold text-[var(--gold)]">Intelligence setup is pending</h2>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">The background engine has not been enabled yet. Existing evidence appears below when available.</p>
+      {data?.processingEnabled === false && <div className="mb-5 rounded-lg border border-[var(--gold)] bg-[var(--surface)] p-4">
+        <h2 className="font-semibold text-[var(--gold)]">New intelligence processing is paused</h2>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">Browse saved evidence, operating matches and existing account research below. Browsing and Refresh do not call Jev.</p>
       </div>}
 
-      {data && <section aria-label="Intelligence activity" className="mb-6 grid gap-px overflow-hidden rounded-lg border bg-[var(--border)] text-sm sm:grid-cols-3">
+      {data?.activityAvailable === false && <p role="status" className="mb-4 text-sm text-[var(--text-muted)]">Activity statistics are temporarily unavailable. Saved research remains available below.</p>}
+      {data && data.activityAvailable !== false && <section aria-label="Intelligence activity" className="mb-6 grid gap-px overflow-hidden rounded-lg border bg-[var(--border)] text-sm sm:grid-cols-3">
         <div className="bg-[var(--surface)] p-4">
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global monthly budget accounting</div>
           {data.spend.available === false ? <p className="mt-1 text-sm text-[var(--text-muted)]">Global budget details are unavailable.</p> : <>
@@ -209,7 +211,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       {data?.health && <IntelligenceHealth health={data.health} />}
       <IntelligenceResearchProgress progress={researchProgress} />
       <IntelligenceCost cost={data?.jevCost ?? fallbackCost} />
-      <OperatingMatches onOpenAccount={onOpenAccount} enabled={data?.enabled === true} refreshKey={updatedAt} />
+      <OperatingMatches onOpenAccount={onOpenAccount} enabled={active} refreshKey={updatedAt} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>
         <form onSubmit={saveView} className="mt-3 space-y-3">
@@ -241,13 +243,13 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
               {viewId && !selectedView && <option value={viewId}>Selected view</option>}
               {views.map(view => <option key={view.id} value={view.id}>{view.name}</option>)}
             </select>
-            {selectedView && <button type="button" onClick={() => void archiveView()} disabled={busy} className={buttonClass}>Archive view</button>}
+            {selectedView && <button type="button" onClick={() => void archiveView()} disabled={busy || !data?.enabled} className={buttonClass}>Archive view</button>}
             <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]"><input type="checkbox" checked={dismissed} disabled={busy} onChange={event => setDismissed(event.target.checked)} />Review dismissed evidence</label>
           </div>
         </div>
         {selectedView && <div className="mb-4 rounded-lg border bg-[var(--surface-2)] px-4 py-3 text-sm">
           <p>{selectedView.question}</p>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">{selectedView.backfill_complete ? "Account evidence queued for matching. Results appear as processing completes." : "Historical evidence is still being queued. Results are incomplete."} {data?.accountQuestionPending ?? 0} accounts awaiting an updated answer. Source dates show how old the evidence is.</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{data?.processingEnabled === false ? "Showing saved answers. New matching is paused." : selectedView.backfill_complete ? "Account evidence queued for matching. Results appear as processing completes." : "Historical evidence is still being queued. Results are incomplete."} {data?.accountQuestionPending == null ? "Pending count unavailable." : `${data.accountQuestionPending} accounts awaiting an updated answer.`} Source dates show how old the evidence is.</p>
         </div>}
         <div aria-live="polite" className="mb-3 text-xs text-[var(--text-muted)]">
           {loading ? "Loading evidence…" : data ? viewId ? `${(data.accountMatches?.length ?? 0).toLocaleString()} account answers loaded` : `${data.observations.length.toLocaleString()} evidence items loaded` : "Evidence has not loaded yet."}
@@ -265,7 +267,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
             <div className="mt-3 space-y-2">{(match.result.citations ?? []).map((citation, index) => <details key={`${citation.observationId}:${index}`} className="rounded border p-2 text-xs"><summary className="cursor-pointer">{citation.title}{citation.date ? ` · ${citation.date.slice(0, 10)}` : " · date unknown"}</summary><p className="mt-2 whitespace-pre-wrap">{citation.text}</p><a href={citation.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--gold)]">Open source</a></details>)}</div>
             <details className="mt-3 text-xs"><summary className="cursor-pointer text-[var(--gold)]">Raw Jev answer and coverage</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify({ native: match.result.native, coverage: match.result.coverage }, null, 2)}</pre></details>
           </article>)}
-          {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
+          {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy || !data.enabled} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
             const result = await mutate({ action: reason === null ? "clear_feedback" : "feedback", observationId: observation.id, reason, ...(note.trim() ? { note: note.trim() } : {}) }, reason === null ? "Feedback cleared; evidence restored." : "Feedback saved.");
             return Boolean(result);
           }} />)}

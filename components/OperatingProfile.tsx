@@ -4,7 +4,7 @@ import type { buildOperatingProfile } from "@/lib/intelligence/profiles";
 import type { readAtsHiringContext } from "@/lib/intelligence/atsLifecycle";
 import AccountHiring from "./AccountHiring";
 import type { ResearchRankingResult } from "@/lib/intelligence/researchRanking";
-type Result = { company: { name: string; subindustry: string | null }; profile: ReturnType<typeof buildOperatingProfile>; nextSources: string[]; pendingJobs: number; hiringCoverage?: "available" | "unavailable"; researchFocus?: string; discoveredSourceCount?: number; newSourceCount?: number; hiring?: Awaited<ReturnType<typeof readAtsHiringContext>> | null };
+type Result = { processingEnabled: boolean; company: { name: string; subindustry: string | null }; profile: ReturnType<typeof buildOperatingProfile>; nextSources: string[]; pendingJobs: number; hiringCoverage?: "available" | "unavailable"; researchFocus?: string; discoveredSourceCount?: number; newSourceCount?: number; hiring?: Awaited<ReturnType<typeof readAtsHiringContext>> | null };
 export default function OperatingProfile({ companyId, active = true, refreshKey }: { companyId: string; active?: boolean; refreshKey?: string | null }) {
   const [findingsOpen, setFindingsOpen] = useState(false), [findingsLimit, setFindingsLimit] = useState(20);
   const [data, setData] = useState<Result | null>(null);
@@ -24,7 +24,7 @@ export default function OperatingProfile({ companyId, active = true, refreshKey 
       if (!response.ok) throw new Error("profile_unavailable");
       const value: Result = await response.json();
       if (version === request.current && activeCompany.current === companyId && !signal?.aborted) {
-        pending.current = value.pendingJobs;
+        pending.current = value.processingEnabled ? value.pendingJobs : 0;
         setData(value); setLoadError("");
       }
     } catch { if (!signal?.aborted && version === request.current) setLoadError("The operating profile could not refresh. Previously loaded research remains available."); }
@@ -67,8 +67,10 @@ export default function OperatingProfile({ companyId, active = true, refreshKey 
     <p className="mt-2 text-xs text-[var(--text-muted)]">{data.profile.coverage.interpreted} of {data.profile.coverage.observations} current sources interpreted.</p>
     <AccountHiring hiring={data.hiring} coverage={data.hiringCoverage} />
     {data.newSourceCount !== undefined && <p className="mt-2 text-xs text-[var(--text-muted)]">{data.newSourceCount} discovered sources not yet read{data.discoveredSourceCount !== undefined ? ` of ${data.discoveredSourceCount} available next sources` : ""}.</p>}
-    {data.pendingJobs > 0 && <p role="status" className="mt-2 text-xs text-[var(--text-muted)]">{data.pendingJobs} evidence updates pending. This profile refreshes as processing finishes.</p>}
-    {data.nextSources.length > 0 && <button disabled={busy} className="mt-4 rounded border px-3 py-2 text-sm disabled:opacity-50" onClick={async () => {
+    {data.processingEnabled === false && <p className="mt-2 text-xs text-[var(--text-muted)]">New source research is paused. Saved research and original Jev findings remain available.</p>}
+    {data.pendingJobs > 0 && <p role="status" className="mt-2 text-xs text-[var(--text-muted)]">{data.pendingJobs} evidence updates pending.{data.processingEnabled ? " This profile refreshes as processing finishes." : " Processing is paused."}</p>}
+    {data.nextSources.length > 0 && <button disabled={busy || !data.processingEnabled} className="mt-4 rounded border px-3 py-2 text-sm disabled:opacity-50" onClick={async () => {
+      if (!data.processingEnabled || busy) return;
       setBusy(true); setMessage("");
       try {
         const response = await fetch("/api/headhunter/intelligence/profile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companyId }) });

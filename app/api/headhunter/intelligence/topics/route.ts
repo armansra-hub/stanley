@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { intelligenceEnabled } from "@/lib/intelligence/observations";
 import { intelligenceUiAuthorized, isUuid } from "@/lib/intelligence/http";
 import { buildTopicSearchResult, operatingTopicFilter, type TopicSearchRaw } from "@/lib/intelligence/topicSearch";
 
@@ -17,7 +16,7 @@ export async function GET(req: NextRequest) {
   if (!topics || !["all", "any"].includes(mode) || !["supported", "explore"].includes(visibility) || (after && !isUuid(after)) || !Number.isInteger(limit) || limit < 1 || limit > 12) {
     return NextResponse.json({ error: "invalid_topic_filter" }, { status: 400 });
   }
-  if (!intelligenceEnabled()) return NextResponse.json(buildTopicSearchResult({ enabled: false, topics, accounts: [], hasMore: false, nextCursor: null }));
+  // This searches stored answers only. Pausing processing must not hide them.
   try {
     const result = await withServiceDeadline(Date.now() + 20_000, async () => {
       const { data, error } = await serviceClient().rpc(visibility === "explore" ? "intelligence_topic_explore" : "intelligence_topic_search", { p_topics: topics, p_after: after || null, p_limit: limit, p_mode: mode });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { serviceClient } from "@/lib/supabase/server";
+import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
 import { intelligenceEnabled } from "@/lib/intelligence/observations";
 import { intelligenceUiAuthorized, isUuid, sameOriginMutation, smallJson } from "@/lib/intelligence/http";
 import { runIntelligenceWorker } from "@/lib/intelligence/worker";
@@ -14,6 +14,13 @@ const empty = { enabled: false, views: [], observations: [], hasMore: false,
   sourceCoverage: { complete: 0, partial: 0, failed: 0 } };
 type ReadStage = "client" | "status" | "health" | "views" | "observations" | "feedback" | "response";
 
+// Monitoring is optional for browsing. Bound its storage requests so a large
+// queue or unavailable aggregate cannot hide saved evidence behind a timeout.
+async function optionalMetric<T, F>(read: () => PromiseLike<T>, fallback: F): Promise<T | F> {
+  try { return await withServiceDeadline(Date.now() + 2_500, async () => await read()); }
+  catch { return fallback; }
+}
+
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const params = req.nextUrl.searchParams;
@@ -25,9 +32,7 @@ export async function GET(req: NextRequest) {
   if ((scope && scope !== "account") || (accountScope && !companyId) || (companyId && !isUuid(companyId)) || (viewId && !isUuid(viewId)) || !Number.isInteger(offset) || offset < 0 || offset > 100_000) {
     return NextResponse.json({ error: "invalid_filter" }, { status: 400 });
   }
-  // Cached account research remains readable while collection is paused. Global
-  // administration and its aggregate queries are not part of the lead drawer.
-  if (!intelligenceEnabled() && !accountScope) return NextResponse.json({ ...empty, jevCost: await readJevCostMetrics() });
+  // The processing switch controls writes and model work, never stored reads.
   let stage: ReadStage = "client";
   let code = "unknown";
   const fail = (failedStage: ReadStage, error: unknown): never => {
@@ -42,27 +47,33 @@ export async function GET(req: NextRequest) {
     const db = serviceClient();
     stage = "status";
     const [status, views, health, jevCost] = await Promise.all([
-      accountScope ? Promise.resolve({ data: { enabled: intelligenceEnabled() }, error: null }) : db.rpc("intelligence_status"),
+      accountScope ? Promise.resolve({ data: { enabled: intelligenceEnabled() }, error: null }) : optionalMetric(
+        () => serviceClient().rpc("intelligence_status"), { data: null, error: { message: "metrics_unavailable" } }),
       accountScope ? Promise.resolve({ data: [], error: null }) : db.from("intelligence_views").select("id,name,question,active,backfill_complete").eq("active", true).order("created_at", { ascending: false }).limit(100),
-      accountScope ? Promise.resolve({ data: null, error: null }) : db.rpc("intelligence_health"),
-      accountScope ? Promise.resolve(null) : readJevCostMetrics(),
+      accountScope ? Promise.resolve({ data: null, error: null }) : optionalMetric(
+        () => serviceClient().rpc("intelligence_health"), { data: null, error: { message: "metrics_unavailable" } }),
+      accountScope ? Promise.resolve(null) : optionalMetric(() => readJevCostMetrics(), { available: false } as const),
     ]);
-    if (status.error) fail("status", status.error);
     if (views.error) fail("views", views.error);
-    if (health.error) fail("health", health.error);
+    const activityAvailable = !accountScope && !status.error && !!status.data;
+    const processingEnabled = !intelligenceEnabled() ? false : status.error ? null : status.data?.enabled === true;
+    const summary = { ...empty, ...(status.error ? {} : status.data),
+      enabled: processingEnabled === true, processingEnabled, activityAvailable,
+      health: health.error ? null : health.data, ...(jevCost ? { jevCost } : {}) };
     if (viewId) {
       let matchesQuery = db.from("intelligence_account_question_matches")
         .select("view_id,company_id,probability,result,evaluated_at,companies!inner(name,status)")
         .eq("view_id", viewId).neq("companies.status", "removed_from_tam")
         .order("probability", { ascending: false }).order("company_id").range(offset, offset + 49);
       if (companyId) matchesQuery = matchesQuery.eq("company_id", companyId);
-      const [matches, queue] = await Promise.all([matchesQuery, db.from("intelligence_account_question_jobs")
-        .select("status", { count: "exact", head: true }).eq("view_id", viewId).in("status", ["queued", "running"])]);
-      if (matches.error || queue.error) fail("observations", matches.error ?? queue.error);
-      return NextResponse.json({ ...status.data, health: health.data, ...(jevCost ? { jevCost } : {}), enabled: intelligenceEnabled(),
+      const [matches, queue] = await Promise.all([matchesQuery, optionalMetric(() => serviceClient().from("intelligence_account_question_jobs")
+        .select("status", { count: "exact", head: true }).eq("view_id", viewId).in("status", ["queued", "running"]),
+        { count: null, error: { message: "metrics_unavailable" } })]);
+      if (matches.error) fail("observations", matches.error);
+      return NextResponse.json({ ...summary,
         views: views.data ?? [], observations: [], accountMatches: (matches.data ?? []).map(row => ({ ...row,
           company_name: (row.companies as unknown as {name:string})?.name ?? "Unknown account", companies: undefined })),
-        accountQuestionPending: queue.count ?? 0, hasMore: (matches.data?.length ?? 0) === 50 });
+        accountQuestionPending: queue.error ? null : queue.count ?? 0, hasMore: (matches.data?.length ?? 0) === 50 });
     }
     stage = "observations";
     let query = db.from("intelligence_observations")
@@ -89,7 +100,7 @@ export async function GET(req: NextRequest) {
       return { ...fields, company_name: (Array.isArray(account) ? account[0]?.name : account?.name) ?? "Unknown account",
         ...(matches?.length ? { matchProbability: matches[0].probability } : {}), feedback: feedbackById.get(String(row.id)) ?? null };
     });
-    return NextResponse.json({ ...status.data, health: health.data, ...(jevCost ? { jevCost } : {}), enabled: intelligenceEnabled() && status.data?.enabled === true, views: views.data ?? [], observations, hasMore: observations.length === 50 });
+    return NextResponse.json({ ...summary, views: views.data ?? [], observations, hasMore: observations.length === 50 });
   } catch {
     console.error("intelligence.read_failed", { stage, code });
     return NextResponse.json({ error: "intelligence_storage_unavailable", stage }, { status: 503 });

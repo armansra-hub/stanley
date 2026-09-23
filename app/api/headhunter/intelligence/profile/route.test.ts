@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-const m = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), fetch: vi.fn(), pdf: vi.fn(), enqueue: vi.fn(), rank: vi.fn(), log: vi.fn(), discover: vi.fn(), sourceState: vi.fn(), external: vi.fn(), newsEvidence: vi.fn(), researchSources: [] as Record<string, unknown>[], calls: [] as { table: string; method: string; args: unknown[] }[] }));
+const m = vi.hoisted(() => ({ enabled: vi.fn(), from: vi.fn(), rpc: vi.fn(), fetch: vi.fn(), pdf: vi.fn(), enqueue: vi.fn(), rank: vi.fn(), log: vi.fn(), discover: vi.fn(), sourceState: vi.fn(), external: vi.fn(), newsEvidence: vi.fn(), researchSources: [] as Record<string, unknown>[], calls: [] as { table: string; method: string; args: unknown[] }[] }));
 vi.mock("next/server", async importOriginal => ({ ...await importOriginal<typeof import("next/server")>(), after: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: m.from, rpc: m.rpc }), withServiceDeadline: (_deadline: number, run: () => unknown) => run() }));
 vi.mock("@/lib/intelligence/worker", () => ({ runIntelligenceWorker: vi.fn() }));
-vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: () => true, enqueueObservation: m.enqueue }));
+vi.mock("@/lib/intelligence/observations", () => ({ intelligenceEnabled: m.enabled, enqueueObservation: m.enqueue }));
 vi.mock("@/lib/intelligence/http", () => ({ intelligenceUiAuthorized: () => true, sameOriginMutation: () => true,
   isUuid: (value: unknown) => typeof value === "string" && /^[a-f0-9-]{36}$/.test(value), smallJson: (request: Request) => request.json() }));
 vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: m.sourceState }));
@@ -23,6 +23,7 @@ import { GET, POST } from "./route";
 import { refreshAccountResearch, runDirectedResearchWorker } from "@/lib/intelligence/researchRunner";
 const company = "10000000-0000-4000-8000-000000000001";
 beforeEach(() => {
+  m.enabled.mockReset().mockReturnValue(true);
   m.calls.length = 0; m.rpc.mockReset();
   m.researchSources.length = 0;
   m.external.mockReset().mockResolvedValue({ queries: 0, sources: 0, outcome: "not_due", nextAttemptAt: "2999-01-01T00:00:00Z" });
@@ -53,6 +54,20 @@ beforeEach(() => {
   m.rpc.mockImplementation(async (name: string) => ({ data: name === "intelligence_research_claim" ? [{ source_url: "https://example.test/locations", lease_token: "lease" }] : true, error: null }));
 });
 describe("focused research state and receipts", () => {
+  it("keeps cached profile reads available while paused and blocks source research", async () => {
+    m.enabled.mockReturnValue(false);
+    const response = await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence/profile?companyId=${company}`));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ processingEnabled: false, company: { name: "Synthetic" }, pendingJobs: 2 });
+    const mutation = await POST(new NextRequest("https://stanley.test/api/headhunter/intelligence/profile", { method: "POST", body: JSON.stringify({ companyId: company }) }));
+    expect(mutation.status).toBe(409);
+    expect(await mutation.json()).toEqual({ error: "intelligence_disabled" });
+    expect(m.fetch).not.toHaveBeenCalled();
+    expect(m.rank).not.toHaveBeenCalled();
+    expect(m.external).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
+    expect(m.rpc).not.toHaveBeenCalled();
+  });
   it("reloads durably discovered external candidates, reads their publisher evidence and preserves query attribution", async () => {
     const wrapper = "https://news.google.com/rss/articles/synthetic";
     const item = { source_name: "Google News", source_url: wrapper, raw_excerpt: "Synthetic awarded services contract", signal_date: "2026-09-19" };

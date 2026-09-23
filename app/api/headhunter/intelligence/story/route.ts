@@ -13,12 +13,12 @@ async function accountExists(id: string) {
 }
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (!intelligenceEnabled()) return NextResponse.json({ error: "intelligence_disabled" }, { status: 409 });
+  // Reading saved stories never starts generation and remains available while paused.
   const companyId = req.nextUrl.searchParams.get("companyId");
   if (!isUuid(companyId)) return NextResponse.json({ error: "invalid_company" }, { status: 400 });
   try {
     if (!await accountExists(companyId)) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
-    return NextResponse.json(await loadAccountIntelligence(companyId), { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ...await loadAccountIntelligence(companyId), processingEnabled: intelligenceEnabled() }, { headers: { "Cache-Control": "no-store" } });
   } catch { return NextResponse.json({ error: "account_research_unavailable" }, { status: 503 }); }
 }
 export async function POST(req: NextRequest) {

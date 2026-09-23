@@ -24,7 +24,23 @@ describe("account story routes", () => {
   });
   it("returns cache-only stories without dispatching generation", async () => {
     const response = await get(); expect(response.status).toBe(200); expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({ processingEnabled: true });
     expect(m.load).toHaveBeenCalledWith(id); expect(m.queue).not.toHaveBeenCalled(); expect(m.worker).not.toHaveBeenCalled();
+  });
+  it("preserves saved stories while paused and still rejects new generation", async () => {
+    m.enabled.mockReturnValue(false);
+    const saved = { events: [{ id: "saved-event" }], story: { id: "saved-story" }, history: [{ id: "older-story" }] };
+    m.load.mockResolvedValue(saved);
+    const response = await get();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ...saved, processingEnabled: false });
+    expect(m.load).toHaveBeenCalledWith(id);
+    const mutation = await post();
+    expect(mutation.status).toBe(409);
+    expect(await mutation.json()).toEqual({ error: "intelligence_disabled" });
+    expect(m.queue).not.toHaveBeenCalled();
+    expect(m.worker).not.toHaveBeenCalled();
+    expect(m.after).not.toHaveBeenCalled();
   });
   it("does not queue a removed or missing account", async () => {
     m.account.mockResolvedValue({ data: null, error: null }); expect((await post()).status).toBe(404); expect(m.queue).not.toHaveBeenCalled();
