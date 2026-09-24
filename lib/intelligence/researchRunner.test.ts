@@ -20,6 +20,7 @@ const profile = { company: { id: "company", name: "Synthetic Consulting", domain
   sweep: { knownSources: 4, dueSources: 4, unreadSources: 4, leasedSources: 0, retrySources: 0 }, pendingJobs: 0, unresolvedInterpretations: 0,
   nextAttemptAt: "2026-09-20T00:00:00Z" } as unknown as ResearchProfile;
 let tables: Record<string, Record<string, unknown>[]>;
+let tableErrors: Record<string, { code?: string; message?: string }>;
 let pendingJobs = 0;
 let inserted: { source_url: string }[] = [];
 const future = () => new Date(Date.now() + 7 * 86400_000).toISOString();
@@ -39,7 +40,7 @@ function mockTable(table: string) {
   builder.range = (from: number, through: number) => { rows = rows.slice(from, through + 1); return builder; };
   builder.single = () => Promise.resolve({ data: rows[0], error: null });
   builder.upsert = () => { rows = inserted; return builder; };
-  builder.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: head ? null : rows, count: head ? pendingJobs : undefined, error: null }).then(resolve);
+  builder.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: head ? null : rows, count: head ? pendingJobs : undefined, error: tableErrors[table] ?? null }).then(resolve);
   return builder;
 }
 beforeEach(() => {
@@ -49,6 +50,7 @@ beforeEach(() => {
   mocks.coverage.mockResolvedValue({ outcome: "catalog_complete", answered: 47 });
   mocks.sourceState.mockResolvedValue({ cursor: null, lastSuccessAt: null });
   tables = { companies: [{ id: "company", name: "Synthetic Consulting", domain: "example.com" }] };
+  tableErrors = {};
   pendingJobs = 0; inserted = [];
   mocks.from.mockImplementation(mockTable);
 });
@@ -82,6 +84,39 @@ describe("catalog account lease integration", () => {
       catalogGap: { facetIds: ["rr_c09", "rr_c02"] } });
     expect(mocks.rank).toHaveBeenCalledWith(expect.objectContaining({ catalogOwned: true, catalogFacetIds: ["rr_c09", "rr_c02"] }));
     expect(mocks.rank.mock.calls[0][0].researchContext).toBeUndefined();
+  });
+  it("keeps source leases and retry state while catalog research ignores the held legacy backlog", async () => {
+    const source = "https://example.com/services";
+    tables.intelligence_observations = [{ id: "evidence", company_id: "company", source_url: source,
+      source_kind: "website", title: "Services", event_date: null, observed_at: new Date().toISOString(),
+      evidence_text: "We perform client projects", attributes: null, is_current: true, feedback_excluded: false }];
+    tables.intelligence_research_attempts = [{ source_url: source, next_attempt_at: future(),
+      last_attempt_at: new Date().toISOString(), last_success_at: null, lease_until: future(), outcome: "source_failed" }];
+    pendingJobs = 1000;
+    tableErrors.intelligence_jobs = { code: "57014", message: "Sensitive legacy query detail must not be logged" };
+    // Exercise the profile reload after external discovery as well as its initial load.
+    mocks.external.mockResolvedValue({ sources: 1 });
+    const result = await refreshAccountResearch("company", { deadlineMs: Date.now() + 90_000, automatic: true,
+      catalogGap: { facetIds: ["rr_c02"] } });
+    expect(result).toMatchObject({ outcome: "sources_leased", sources: 0, unresolvedInterpretations: 0,
+      sweep: { knownSources: 1, dueSources: 0, leasedSources: 1, retrySources: 1 } });
+    expect(mocks.from.mock.calls.filter(([table]) => table === "intelligence_research_attempts")).toHaveLength(2);
+    expect(mocks.from.mock.calls.some(([table]) => table === "intelligence_jobs")).toBe(false);
+    expect(mocks.rank).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    // The same unavailable legacy query remains a real error for ordinary research.
+    await expect(loadResearchProfile("company")).rejects.toThrow("research_interpretation_jobs_unavailable:57014");
+  });
+  it("does not hide a catalog source-attempt read failure or leak its raw error", async () => {
+    mocks.sourceState.mockResolvedValue({ cursor: { knownUrls: ["https://example.com/services"] } });
+    tableErrors.intelligence_research_attempts = { code: "42P01", message: "Sensitive database query detail" };
+    await expect(refreshAccountResearch("company", { deadlineMs: Date.now() + 90_000, automatic: true,
+      catalogGap: { facetIds: ["rr_c02"] } })).rejects.toThrow("research_source_attempts_unavailable:42P01");
+    tableErrors.intelligence_research_attempts.code = "malformed:private-query-data";
+    await expect(loadResearchProfile("company", Infinity, { catalogGap: true })).rejects.toThrow(/^research_source_attempts_unavailable$/);
+    expect(mocks.external).not.toHaveBeenCalled();
+    expect(mocks.rank).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
   it("retries known pre-dispatch read deadlines but holds uncertain dispatch failures", async () => {
     catalogJob(); mocks.coverage.mockRejectedValue(new Error("catalog_loading_deadline"));

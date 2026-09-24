@@ -51,9 +51,17 @@ function idleResearchOutcome(sweep: ResearchSweepState, pendingJobs: number, unr
   return "caught_up";
 }
 
+function researchStateUnavailable(stage: "source_attempts" | "interpretation_jobs", error: { code?: string }) {
+  // Keep actionable database/PostgREST codes, never raw messages or query data.
+  const code = typeof error.code === "string" && /^(?:[A-Z0-9]{5}|PGRST[0-9]{3})$/.test(error.code) ? `:${error.code}` : "";
+  return new Error(`research_${stage}_unavailable${code}`);
+}
+
 /** Both manual and scheduled work share discovered URLs, the current profile,
- * exact URL leases, and seven-day/one-day revisit policy. GET stays cache-only. */
-export async function loadResearchProfile(companyId: string, deadlineMs = Infinity) {
+ * exact URL leases, and seven-day/one-day revisit policy. GET stays cache-only.
+ * Catalog-owned research has its own answer checkpoint and must not wait for
+ * the deliberately deferred legacy interpretation backlog. */
+export async function loadResearchProfile(companyId: string, deadlineMs = Infinity, options: { catalogGap?: boolean } = {}) {
   const db = serviceClient();
   const { data: company, error } = await db.from("companies").select("id,name,domain,subindustry,netsuite_internal_id")
     .eq("id", companyId).neq("status", "removed_from_tam").single();
@@ -102,24 +110,24 @@ export async function loadResearchProfile(companyId: string, deadlineMs = Infini
     if (Date.now() >= deadlineMs - 2000) throw new Error("research_deadline");
     const result = await db.from("intelligence_research_attempts").select("source_url,next_attempt_at,last_attempt_at,lease_until,outcome,last_success_at")
       .eq("company_id", companyId).order("source_url").range(page * 200, page * 200 + 199);
-    if (result.error) throw new Error("research_state_unavailable");
+    if (result.error) throw researchStateUnavailable("source_attempts", result.error);
     attempts.push(...(result.data ?? []) as SourceAttempt[]);
     if ((result.data?.length ?? 0) < 200) break;
   }
   const interpretationJobs: { observation_id: string; status: string }[] = [];
-  for (let page = 0;; page++) {
+  for (let page = 0; !options.catalogGap; page++) {
     if (Date.now() >= deadlineMs - 2000) throw new Error("research_deadline");
     const result = await db.from("intelligence_jobs")
       .select("id,observation_id,status,intelligence_observations:intelligence_observations!intelligence_jobs_observation_id_fkey!inner(company_id,is_current,feedback_excluded)")
       .eq("intelligence_observations.company_id", companyId).eq("intelligence_observations.is_current", true)
       .eq("intelligence_observations.feedback_excluded", false).eq("kind", "interpret").in("status", ["queued", "running", "failed"])
       .order("id").range(page * 200, page * 200 + 199);
-    if (result.error) throw new Error("research_state_unavailable");
+    if (result.error) throw researchStateUnavailable("interpretation_jobs", result.error);
     interpretationJobs.push(...(result.data ?? []));
     if ((result.data?.length ?? 0) < 200) break;
   }
   const pendingInterpretations = new Set(interpretationJobs.filter(job => job.status === "queued" || job.status === "running").map(job => job.observation_id));
-  const unresolvedInterpretations = new Set([
+  const unresolvedInterpretations = options.catalogGap ? 0 : new Set([
     ...interpretationJobs.filter(job => job.status === "failed").map(job => job.observation_id),
     ...rows.filter(row => !row.attributes && !pendingInterpretations.has(row.id)).map(row => row.id),
   ]).size;
@@ -155,7 +163,8 @@ export async function refreshAccountResearch(companyId: string, options: {
       if(config.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled||budget.phase!=="maintenance")return empty("catalog_only");
     }
     if (Date.now() > options.deadlineMs - DIRECTED_RESEARCH_MINIMUM_MS) return empty("deadline_deferred");
-    let loaded = options.profile ?? await loadResearchProfile(companyId, options.deadlineMs);
+    const profileOptions = { catalogGap: !!options.catalogGap };
+    let loaded = options.profile ?? await loadResearchProfile(companyId, options.deadlineMs, profileOptions);
     if (loaded.company.id !== companyId) throw new Error("research_account_mismatch");
     // External discovery has its own durable per-query cadence. It can follow a
     // newly observed event even when the account's stable operating topics are known.
@@ -163,7 +172,7 @@ export async function refreshAccountResearch(companyId: string, options: {
       const external = options.catalogGap ? await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs,
         catalogResearchQueries(options.catalogGap.facetIds)) :
         await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs);
-      if (external.sources) loaded = await loadResearchProfile(companyId, options.deadlineMs);
+      if (external.sources) loaded = await loadResearchProfile(companyId, options.deadlineMs, profileOptions);
       if (external.nextAttemptAt && Date.parse(external.nextAttemptAt) < Date.parse(loaded.nextAttemptAt))
         loaded = { ...loaded, nextAttemptAt: external.nextAttemptAt };
     }
@@ -286,9 +295,10 @@ export async function refreshAccountResearch(companyId: string, options: {
     let sweep: ResearchSweepState | undefined;
     let unresolvedInterpretations: number | undefined;
     if (!remainingSources) {
-      // Confirm the final batch against durable attempts and new interpretation
-      // jobs. Finishing a source fetch does not mean its Jev work has finished.
-      const current = await loadResearchProfile(companyId, options.deadlineMs);
+      // Confirm the final batch against durable attempts. Legacy research also
+      // checks interpretation jobs; catalog-owned work resumes its own exact
+      // evidence checkpoint through intelligence_catalog_research_finish.
+      const current = await loadResearchProfile(companyId, options.deadlineMs, profileOptions);
       sweep = current.sweep;
       unresolvedInterpretations = current.unresolvedInterpretations;
       remainingSources = current.sweep.dueSources;
