@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
   const companyId = params.get("companyId"), viewId = params.get("viewId");
   const scope = params.get("scope");
   const accountScope = scope === "account";
+  const showHidden = params.get("showHidden") === "true" || accountScope;
   const dismissed = params.get("dismissed") === "true";
   const offset = Number(params.get("offset") ?? 0);
   if ((scope && scope !== "account") || (accountScope && !companyId) || (companyId && !isUuid(companyId)) || (viewId && !isUuid(viewId)) || !Number.isInteger(offset) || offset < 0 || offset > 100_000) {
@@ -63,8 +64,9 @@ export async function GET(req: NextRequest) {
     if (viewId) {
       let matchesQuery = db.from("intelligence_account_question_matches")
         .select("view_id,company_id,probability,result,evaluated_at,companies!inner(name,status)")
-        .eq("view_id", viewId).neq("companies.status", "removed_from_tam")
-        .order("probability", { ascending: false }).order("company_id").range(offset, offset + 49);
+        .eq("view_id", viewId).neq("companies.status", "removed_from_tam");
+      if (!showHidden) matchesQuery = matchesQuery.not("companies.status", "in", "(reviewed,dismissed,exported_csv,exported_sql)");
+      matchesQuery = matchesQuery.order("probability", { ascending: false }).order("company_id").range(offset, offset + 49);
       if (companyId) matchesQuery = matchesQuery.eq("company_id", companyId);
       const [matches, queue] = await Promise.all([matchesQuery, optionalMetric(() => serviceClient().from("intelligence_account_question_jobs")
         .select("status", { count: "exact", head: true }).eq("view_id", viewId).in("status", ["queued", "running"]),
@@ -72,14 +74,16 @@ export async function GET(req: NextRequest) {
       if (matches.error) fail("observations", matches.error);
       return NextResponse.json({ ...summary,
         views: views.data ?? [], observations: [], accountMatches: (matches.data ?? []).map(row => ({ ...row,
-          company_name: (row.companies as unknown as {name:string})?.name ?? "Unknown account", companies: undefined })),
+          company_name: (row.companies as unknown as {name:string})?.name ?? "Unknown account",
+          company_status: (row.companies as unknown as {status:string})?.status ?? "new", companies: undefined })),
         accountQuestionPending: queue.error ? null : queue.count ?? 0, hasMore: (matches.data?.length ?? 0) === 50 });
     }
     stage = "observations";
     let query = db.from("intelligence_observations")
       .select(`id,company_id,source_kind,source_url,title,event_date,observed_at,attributes,feedback_excluded,public_priority_weight,companies:companies!intelligence_observations_company_id_fkey!inner(name,status)${viewId ? ",intelligence_view_matches:intelligence_view_matches!intelligence_view_matches_observation_id_fkey!inner(probability,view_id)" : ""}`)
-      .eq("is_current", true).eq("feedback_excluded", dismissed).neq("companies.status", "removed_from_tam")
-      .order("observed_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + 49);
+      .eq("is_current", true).eq("feedback_excluded", dismissed).neq("companies.status", "removed_from_tam");
+    if (!showHidden) query = query.not("companies.status", "in", "(reviewed,dismissed,exported_csv,exported_sql)");
+    query = query.order("observed_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + 49);
     if (companyId) query = query.eq("company_id", companyId);
     if (viewId) query = query.eq("intelligence_view_matches.view_id", viewId).gte("intelligence_view_matches.probability", 0.7);
     const { data, error } = await query;
@@ -94,10 +98,11 @@ export async function GET(req: NextRequest) {
     const feedbackById = new Map((feedback.data ?? []).map((f) => [f.observation_id, { reason: f.reason, note: f.note }]));
     // Supabase's inferred relationship shape is unavailable until generated schema types are introduced.
     const observations = rows.map((row) => {
-      const account = row.companies as { name?: string } | { name?: string }[];
+      const account = row.companies as { name?: string; status?: string } | { name?: string; status?: string }[];
       const matches = row.intelligence_view_matches as { probability: number }[] | undefined;
       const { companies: _companies, intelligence_view_matches: _matches, ...fields } = row;
       return { ...fields, company_name: (Array.isArray(account) ? account[0]?.name : account?.name) ?? "Unknown account",
+        company_status: (Array.isArray(account) ? account[0]?.status : account?.status) ?? "new",
         ...(matches?.length ? { matchProbability: matches[0].probability } : {}), feedback: feedbackById.get(String(row.id)) ?? null };
     });
     return NextResponse.json({ ...summary, views: views.data ?? [], observations, hasMore: observations.length === 50 });

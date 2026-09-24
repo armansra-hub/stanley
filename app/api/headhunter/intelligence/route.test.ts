@@ -19,7 +19,7 @@ beforeEach(() => {
   m.from.mockImplementation((table: string) => {
     let single = false;
     const chain: Record<string, unknown> = {};
-    for (const method of ["select", "eq", "neq", "order", "limit", "range", "gte", "in", "upsert", "delete", "single"]) chain[method] = (...args: unknown[]) => {
+    for (const method of ["select", "eq", "neq", "not", "order", "limit", "range", "gte", "in", "upsert", "delete", "single"]) chain[method] = (...args: unknown[]) => {
       m.calls.push({ table, method, args }); if (method === "single") single = true; return chain;
     };
     chain.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: table === "intelligence_observations"
@@ -32,6 +32,21 @@ afterEach(() => vi.restoreAllMocks());
 const post = (body: Record<string, unknown>) => POST(new NextRequest("https://stanley.test/api/headhunter/intelligence", { method: "POST", body: JSON.stringify(body) }));
 
 describe("reversible intelligence feedback API", () => {
+  it.each(["", `?viewId=${company}`])("hides dismissed accounts before pagination while Jev is paused: %s", async suffix => {
+    m.enabled = false;
+    expect((await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence${suffix}`))).status).toBe(200);
+    const filter = m.calls.findIndex(call => call.method === "not" && call.args[0] === "companies.status");
+    expect(filter).toBeGreaterThan(-1);
+    expect(m.calls[filter].args).toEqual(["companies.status", "in", "(reviewed,dismissed,exported_csv,exported_sql)"]);
+    expect(filter).toBeLessThan(m.calls.findIndex(call => call.method === "range"));
+    expect(m.worker).not.toHaveBeenCalled();
+    expect(m.questionWorker).not.toHaveBeenCalled();
+  });
+  it.each(["?showHidden=true", `?showHidden=true&viewId=${company}`, `?scope=account&companyId=${company}`])("keeps hidden research available for restoration or exact-account review: %s", async suffix => {
+    expect((await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence${suffix}`))).status).toBe(200);
+    expect(m.calls.some(call => call.method === "not" && call.args[0] === "companies.status")).toBe(false);
+    expect(m.calls.some(call => call.method === "neq" && call.args[1] === "removed_from_tam")).toBe(true);
+  });
   it.each([
     ["intelligence_views", "views", "PGRST205"],
     ["intelligence_observations", "observations", "42703"],

@@ -6,13 +6,17 @@ import { OPERATING_TOPICS, type OperatingTopic } from "@/lib/intelligence/profil
 import type { TopicSearchResult } from "@/lib/intelligence/topicSearch";
 import IntelligenceVisibility from "./IntelligenceVisibility";
 import CopyButton, { bareDomain } from "./CopyButton";
+import IntelligenceDismissButton from "./IntelligenceDismissButton";
 import type { VisibilityMode } from "@/lib/intelligence/visibility";
 
 function dated(value: string | null): string {
   return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }) : "Unknown";
 }
 
-export default function OperatingMatches({ enabled, refreshKey, onOpenAccount }: { enabled: boolean; refreshKey?: string | null; onOpenAccount?: (id: string, name: string) => void }) {
+export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, showHidden = false, statusBusy = false, onStatus }: {
+  enabled: boolean; refreshKey?: string | null; onOpenAccount?: (id: string, name: string) => void;
+  showHidden?: boolean; statusBusy?: boolean; onStatus?: (id: string, status: "new" | "dismissed") => Promise<boolean>;
+}) {
   const [mode, setMode] = useState<"all" | "any">("all");
   const [visibility, setVisibility] = useState<VisibilityMode>("supported");
   const [counts, setCounts] = useState<TopicSearchResult | null>(null);
@@ -34,6 +38,7 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount }:
     selected.forEach(topic => params.append("topic", topic));
     params.set("mode", mode);
     params.set("visibility", visibility);
+    if (showHidden) params.set("showHidden", "true");
     if (after) params.set("after", after);
     try {
       const response = await fetch(`/api/headhunter/intelligence/topics?${params}`, { cache: "no-store" });
@@ -47,16 +52,16 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount }:
     } catch {
       if (current === sequence.current) setError("Could not search cached operating evidence. Try again.");
     } finally { if (current === sequence.current) { setBusy(false); requestBusy.current = false; } }
-  }, [selected, enabled, mode, visibility]);
+  }, [selected, enabled, mode, visibility, showHidden]);
 
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    void fetch(`/api/headhunter/intelligence/topics?visibility=${visibility}`, { signal: controller.signal, cache: "no-store" })
+    void fetch(`/api/headhunter/intelligence/topics?visibility=${visibility}&showHidden=${showHidden}`, { signal: controller.signal, cache: "no-store" })
       .then(async response => { if (!response.ok) throw new Error(); const value: TopicSearchResult = await response.json(); if (!controller.signal.aborted) setCounts(value); })
       .catch(() => { /* Unavailable counts remain unknown rather than becoming zero. */ });
     return () => controller.abort();
-  }, [enabled, refreshKey, visibility]);
+  }, [enabled, refreshKey, visibility, showHidden]);
 
   useEffect(() => { if (searched.current) void search(undefined, true); }, [refreshKey, search]);
   useEffect(() => () => { sequence.current++; }, []);
@@ -110,7 +115,10 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount }:
               </div>}
               {account.subindustry && <p className="text-[10px] text-[var(--text-muted)]">{account.subindustry}</p>}
             </div>
-            <span className="text-xs text-[var(--text-muted)]">{account.coverage.interpreted} of {account.coverage.observations} current sources interpreted</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-[var(--text-muted)]">{account.coverage.interpreted} of {account.coverage.observations} current sources interpreted</span>
+              {onStatus && <IntelligenceDismissButton companyId={account.companyId} name={account.name} status={account.status} busy={busy || statusBusy} onStatus={onStatus} />}
+            </div>
           </div>
           <div className="mt-3 space-y-2">{account.topics.map(topic => <details key={topic.id} className="rounded border p-3">
             <summary className="cursor-pointer text-sm font-medium">{topic.label} <span className="font-normal text-[var(--text-muted)]">· {topic.state === "exploratory" ? "exploratory native answer" : "source context"}</span></summary>

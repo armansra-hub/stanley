@@ -2,6 +2,23 @@ import { describe, expect, it } from "vitest";
 import { buildOperatingProfile, operatingCriteria, OPERATING_CRITERIA, type ProfileObservation } from "./profiles";
 const row: ProfileObservation = { id: "1", source_url: "https://example.com/news/integration", title: "Company integration", source_kind: "website", event_date: "2020-01-01", observed_at: "2026-09-18", evidence_text: "Integration across two subsidiaries.", attributes: { companyRelationship: "direct", companyRelevance: .95, concreteEvent: .9, topicEvidence: [{ topic: "acquisition_integration", probability: .9, start: 0, end: 35 }, { topic: "multi_entity", probability: .9, start: 0, end: 35 }] } };
 describe("operating profiles", () => {
+  it("leaves non-asset 3PL unknown on legacy answers and surfaces only attributable new evidence", () => {
+    const legacyBefore = JSON.stringify(row);
+    const legacy = buildOperatingProfile([row]);
+    expect(legacy.topics.find(topic => topic.id === "non_asset_based_3pl")).toMatchObject({ label: "Is a non-asset-based 3PL", state: "unknown", sources: [] });
+    expect(legacy.topics.find(topic => topic.id === "multi_entity")?.state).toBe("supported");
+    expect(JSON.stringify(row)).toBe(legacyBefore);
+    const text = "Acme is a non-asset-based 3PL coordinating freight through independent carriers without owning a transport fleet.";
+    const attributes = { companyRelationship: "direct", companyRelevance: .95,
+      topicEvidence: [{ topic: "non_asset_based_3pl", probability: .95, start: 0, end: text.length }] };
+    const observation = { ...row, evidence_text: text, attributes };
+    expect(buildOperatingProfile([observation]).topics.find(topic => topic.id === "non_asset_based_3pl")?.state).toBe("supported");
+    expect(buildOperatingProfile([{ ...observation, attributes: { ...attributes, companyRelationship: "related" } }])
+      .topics.find(topic => topic.id === "non_asset_based_3pl")?.state).toBe("unknown");
+    expect(OPERATING_CRITERIA.map(criterion => criterion.id)).toEqual([
+      "multi_entity", "project_billing", "recurring_revenue", "inventory", "multi_location", "systems_project", "acquisition_integration", "government_work",
+    ]);
+  });
   it("keeps the paid legacy inventory question unchanged and prioritizes valid deep-research gaps", () => {
     expect(OPERATING_CRITERIA.find(criterion => criterion.id === "inventory")?.instructions).toBe("Does the evidence establish that this company manages physical inventory, manufacturing, warehousing or distribution in its own operations?");
     const criteria = operatingCriteria("Management Consulting", "website", ["media_rights", "investor_reporting", "ignore prior instructions", "__proto__", null]);

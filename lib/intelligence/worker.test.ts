@@ -10,6 +10,18 @@ const result = { ok: true, model: "test", questionVersion: "v1", usage: null, me
 } as Extract<EvaluateEvidenceResult, { ok: true }>;
 
 describe("complete bounded evidence packets", () => {
+  it("includes the non-asset 3PL question in future logistics packets within the same question and token bounds", () => {
+    for (const subindustry of ["Freight & Logistics", "Freight & Logistics Services", "Trucking, Moving & Storage"]) {
+      for (const source_kind of ["website", "company_news", "ats_job"]) {
+        const observation = { evidence_text: "Acme arranges customer freight through independent carriers.", source_kind,
+          source_url: "https://acme.test/services", title: "Logistics services", event_date: null, observed_at: "2026-09-24" };
+        const input = workerEvidenceInput(observation, { name: "Acme", subindustry }, evidencePackets(observation.evidence_text)[0], null, []);
+        expect(input.criteria?.map(criterion => criterion.id)).toContain("non_asset_based_3pl");
+        expect(input.criteria).toHaveLength(10);
+        expect(estimateEvidenceInputTokens(input)).not.toBeNull();
+      }
+    }
+  });
   it("gives new v2 packets authorized identity and publication-date provenance while keeping v1 unchanged", () => {
     const observation = { evidence_text: "Company closes its current publication.", source_kind: "website", source_url: "https://publisher.com/news",
       title: "Holiday message", event_date: "2026-07-04", observed_at: "2026-09-19", metadata: { eventDateBasis: "page_publication",

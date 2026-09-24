@@ -24,6 +24,7 @@ export const OPERATING_TOPICS = {
   media_rights: ["Media rights and royalties", "Does this company's business explicitly involve licensing content or intellectual property, rights management, royalties or creator/publisher revenue sharing? Ordinary marketing services alone are insufficient."],
   fleet_costs: ["Fleet and transportation costs", "Does this company's own transport operations explicitly involve fleet maintenance costs, driver/carrier settlements, trip/lane costs or dispatch/TMS-to-finance handoffs? Customer logistics or an excluded third-party fulfillment business is not the target."],
   investor_reporting: ["Investor and lender reporting", "Does this company explicitly describe board/investor/lender reporting, a sponsor's finance modernization agenda, standalone carve-out finance or a TSA systems-exit deadline? Funding/PE ownership alone is insufficient."],
+  non_asset_based_3pl: ["Is a non-asset-based 3PL", "Does the evidence establish that the specified company itself is a non-asset-based third-party logistics provider, arranging transportation, warehousing or fulfillment for customers using third-party carriers or facilities rather than its own transport fleet or fulfillment assets? Require affirmative evidence of the non-asset operating model. A shipper buying logistics services, software vendor, asset-owning carrier or warehouse operator, or incidental mention of another 3PL does not count. Freight brokerage, carrier partnerships, outsourced capacity, or no mention of owned assets alone is insufficient; distinguish a hybrid asset-owning group from a separately identified non-asset 3PL entity."],
 } as const;
 
 export type OperatingTopic = keyof typeof OPERATING_TOPICS;
@@ -31,7 +32,7 @@ export type OperatingTopic = keyof typeof OPERATING_TOPICS;
 export const OPERATING_CRITERIA: SemanticCriterion[] = Object.entries(OPERATING_TOPICS).slice(0, 8).map(([id, [, instructions]]) => ({ id,
   instructions: id === "inventory" ? "Does the evidence establish that this company manages physical inventory, manufacturing, warehousing or distribution in its own operations?" : instructions }));
 export function operatingCriteria(subindustry: string | null, sourceKind: string, researchTopics?: unknown): SemanticCriterion[] {
-  const requested = Array.isArray(researchTopics) ? researchTopics.filter((id): id is OperatingTopic => typeof id === "string" && Object.hasOwn(OPERATING_TOPICS, id)).slice(0, 21) : [];
+  const requested = Array.isArray(researchTopics) ? researchTopics.filter((id): id is OperatingTopic => typeof id === "string" && Object.hasOwn(OPERATING_TOPICS, id)).slice(0, Object.keys(OPERATING_TOPICS).length) : [];
   return [...new Set(["project_delivery", "multi_entity", "multi_location", ...requested, ...operatingTopicPriority(subindustry, sourceKind)])]
     .filter((id): id is OperatingTopic => Object.hasOwn(OPERATING_TOPICS, id)).slice(0, 10)
     .map(id => ({ id, instructions: OPERATING_TOPICS[id][1] }));

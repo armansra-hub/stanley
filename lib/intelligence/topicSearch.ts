@@ -8,6 +8,7 @@ export function operatingTopicFilter(values: readonly string[]): OperatingTopic[
 
 export type TopicSearchAccountRow = {
   companyId: string; name: string; domain: string | null; subindustry: string | null; internalId: string;
+  status?: string;
   observations: ProfileObservation[];
   coverage: { observations: number; interpreted: number };
 };
@@ -55,7 +56,7 @@ export function buildTopicSearchResult(raw: TopicSearchRaw) {
     const topics = matches.filter(topic => topic.state !== "unknown");
     if (!topics.length) return [];
     return [{ companyId: account.companyId, name: account.name, domain: account.domain,
-      subindustry: account.subindustry, internalId: account.internalId, topics,
+      subindustry: account.subindustry, internalId: account.internalId, status: account.status ?? "new", topics,
       coverage: { ...account.coverage, citedObservations: new Set(topics.flatMap(topic => topic.sources.map(source => source.observationId))).size } }];
   });
   return { enabled: raw.enabled, topics: selected, mode, visibility, policy, topicCounts: raw.topicCounts ?? {}, accounts, hasMore: raw.hasMore, nextCursor: raw.nextCursor,

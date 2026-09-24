@@ -39,4 +39,13 @@ describe("business-services research focus", () => {
       .toBeGreaterThan(researchSourcePriority("https://company.com/careers/controller", "Management Consulting", ["media_rights"]));
     expect(researchSourcePriority("not a url", null, [])).toBe(0);
   });
+  it("prioritizes logistics-model sources when non-asset status is unknown without relabeling an account", () => {
+    const topics = ["non_asset_based_3pl"];
+    expect(researchSourcePriority("https://company.com/about/non-asset-logistics", "Freight & Logistics", topics))
+      .toBeGreaterThan(researchSourcePriority("https://company.com/news", "Freight & Logistics", topics));
+    expect(researchSourcePriority("https://company.com/carrier-network", "Freight & Logistics", topics))
+      .toBeGreaterThan(researchSourcePriority("https://company.com/carrier-network", "Freight & Logistics", []));
+    expect(businessServicesResearchContext("Freight & Logistics")).toContain("affirmative evidence");
+    expect(businessServicesResearchContext("Freight & Logistics")).toContain("do not change TAM membership or grades");
+  });
 });

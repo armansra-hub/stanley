@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import IntelligenceDismissButton from "./IntelligenceDismissButton";
 import IntelligenceClassification from "./IntelligenceClassification";
 import { DEFAULT_VISIBILITY_POLICY, jevPublicationRoute, visibilityReasonLabel, type VisibilityFinding } from "@/lib/intelligence/visibility";
 export type FeedbackReason = "useful" | "wrong_company" | "old_event" | "irrelevant" | "not_now";
@@ -8,6 +9,7 @@ export type Observation = {
   id: string;
   company_id: string | null;
   company_name: string | null;
+  company_status?: string;
   source_kind: string;
   source_url: string | null;
   title: string | null;
@@ -67,7 +69,9 @@ function probability(value: unknown): string | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? `${Math.round(value * 100)}%` : null;
 }
 
-export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount }: {
+export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount, onStatus, statusBusy = false }: {
+  onStatus?: (id: string, status: "new" | "dismissed") => Promise<boolean>;
+  statusBusy?: boolean;
   onOpenAccount?: (id: string, name: string) => void;
   observation: Observation;
   busy: boolean;
@@ -84,6 +88,7 @@ export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount }: {
   const relationshipLabel = relationship === "direct" ? "Company itself" : relationship === "related" ? "Related company" : relationship === "unrelated" ? "Different company" : "Company relationship unknown";
   const packets = (Array.isArray(attributes?.packetFindings) ? attributes.packetFindings : attributes ? [{ attributes, questionVersion: attributes.questionVersion, criteria: {} }] : []) as (VisibilityFinding & { publication?: { status?: string; reason?: string } })[];
   return <article className="rounded-lg border bg-[var(--surface)] p-4 sm:p-5">
+    {onStatus && observation.company_id && <div className="mb-2 flex justify-end"><IntelligenceDismissButton companyId={observation.company_id} name={observation.company_name || "account"} status={observation.company_status} busy={statusBusy} onStatus={onStatus} /></div>}
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0 flex-1">
         {observation.company_id && onOpenAccount ? <button type="button" className="text-sm font-semibold text-[var(--gold)] hover:underline" onClick={() => onOpenAccount(observation.company_id!, observation.company_name || "Account")}>{observation.company_name || "Company name unavailable"}</button> : observation.company_id ? <Link className="text-sm font-semibold text-[var(--gold)] hover:underline" href={`/headhunter/intelligence?companyId=${encodeURIComponent(observation.company_id)}`}>{observation.company_name || "Company name unavailable"}</Link> : <p className="text-sm text-[var(--text-muted)]">Company not linked</p>}

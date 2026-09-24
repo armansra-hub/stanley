@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import Link from "next/link";
 import AccountResearchPanel from "./AccountResearchPanel";
 import OperatingMatches from "./OperatingMatches";
+import IntelligenceDismissButton from "./IntelligenceDismissButton";
 import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceHealth";
 import IntelligenceCost from "./IntelligenceCost";
 import IntelligenceResearchProgress from "./IntelligenceResearchProgress";
@@ -12,7 +13,7 @@ import type { JevCostSnapshot } from "@/lib/intelligence/costMetricsTypes";
 import { EvidenceCard, type FeedbackReason, type Observation } from "./IntelligenceEvidenceCard";
 
 type SavedView = { id: string; name: string; question: string; active: boolean; backfill_complete: boolean };
-type AccountMatch = { company_id: string; company_name: string; probability: number; evaluated_at: string;
+type AccountMatch = { company_id: string; company_name: string; company_status?: string; probability: number; evaluated_at: string;
   result: { native: unknown; coverage: unknown; citations: Array<{ observationId: string; url: string; title: string; date: string | null; text: string }> } };
 type IntelligenceData = {
   enabled: boolean;
@@ -43,7 +44,7 @@ export default function IntelligencePanel({ companyId, initialViewId }: { compan
   return <>
     <div hidden={frames.length > 0}><GlobalIntelligencePanel active={frames.length === 0} initialViewId={initialViewId} onOpenAccount={openAccount} /></div>
     {frames.map((frame, index) => <div key={index + ":" + frame.id} hidden={index !== frames.length - 1} className="fixed inset-0 z-20 overflow-y-auto bg-[var(--background)]">
-      <div className="mx-auto max-w-5xl p-5"><header className="sticky top-0 z-10 mb-4 border-b bg-[var(--background)] pb-3"><button type="button" className="mb-3 text-sm text-[var(--gold)]" onClick={() => setFrames(previous => previous.slice(0, -1))}>← Back to {index ? frames[index - 1].name : "Intelligence"}</button><h1 className="western text-3xl">{frame.name}</h1></header>
+      <div className="mx-auto max-w-5xl p-5"><header className="sticky top-0 z-10 mb-4 border-b bg-[var(--background)] pb-3"><button type="button" className="mb-3 text-sm text-[var(--gold)]" onClick={() => setFrames(previous => previous.slice(0, -1))}>← Back to {index ? frames[index - 1].name : "Explore Jev Intelligence"}</button><h1 className="western text-3xl">{frame.name}</h1></header>
         <AccountResearchPanel companyId={frame.id} active={index === frames.length - 1} onOpenAccount={openAccount} />
       </div>
     </div>)}
@@ -53,6 +54,10 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   const companyId: string | undefined = undefined;
   const [viewId, setViewId] = useState(initialViewId ?? "");
   const [dismissed, setDismissed] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const statusInFlight = useRef(false);
+  const [statusRevision, setStatusRevision] = useState(0);
   const [snapshot, setSnapshot] = useState<{ key: string; data: IntelligenceData } | null>(null);
   const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
@@ -65,7 +70,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const requestId = useRef(0);
   const requestBusy = useRef(false);
-  const key = `${companyId ?? ""}:${viewId}:${dismissed}`;
+  const key = `${companyId ?? ""}:${viewId}:${dismissed}:${showHidden}`;
   const data = snapshot?.key === key ? snapshot.data : null;
   const views = (data ?? snapshot?.data)?.views.filter(view => view.active) ?? [];
   const selectedView = views.find(view => view.id === viewId);
@@ -80,6 +85,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     if (companyId) params.set("companyId", companyId);
     if (viewId) params.set("viewId", viewId);
     if (dismissed) params.set("dismissed", "true");
+    if (showHidden) params.set("showHidden", "true");
     if (offset) params.set("offset", String(offset));
     try {
       // Progress is independent: a slow aggregate must not hold the feed open.
@@ -115,7 +121,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     } finally {
       if (current === requestId.current) { setLoading(false); requestBusy.current = false; }
     }
-  }, [companyId, viewId, dismissed, key]);
+  }, [companyId, viewId, dismissed, showHidden, key]);
 
   useEffect(() => {
     if (!active) return;
@@ -126,7 +132,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible" && !requestBusy.current && !mutating) void load(0, true);
+      if (document.visibilityState === "visible" && !requestBusy.current && !mutating && !statusInFlight.current) void load(0, true);
     }, 60_000);
     return () => clearInterval(timer);
   }, [load, mutating, active]);
@@ -165,16 +171,36 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     if (result) setViewId("");
   }
 
-  const busy = loading || mutating;
+  async function changeCompanyStatus(id: string, status: "new" | "dismissed"): Promise<boolean> {
+    if (statusInFlight.current) return false;
+    statusInFlight.current = true;
+    setStatusBusy(true); setError(null); setNotice(null);
+    try {
+      const response = await fetch("/api/companies/status", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [id], status }) });
+      if (!response.ok) throw new Error("status_save_failed");
+      setStatusRevision(value => value + 1);
+      setNotice(status === "dismissed" ? "Lead dismissed, as in Triggered. Use Show hidden to restore it. Its research is kept." : "Lead restored.");
+      await load(0, true);
+      return true;
+    } catch {
+      setError("Could not confirm the review decision. Refresh to check its current status before trying again.");
+      return false;
+    } finally { statusInFlight.current = false; setStatusBusy(false); }
+  }
+
+  const busy = loading || mutating || statusBusy;
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link href="/headhunter" className="mb-3 inline-block text-sm text-[var(--gold)] hover:underline">← Back to Triggered</Link>
-          <h1 className="western text-4xl sm:text-5xl">Intelligence</h1>
+          <h1 className="western text-4xl sm:text-5xl">Explore Jev Intelligence</h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--text-muted)]">Find the business changes that matter. Save a research question and build a living view of the evidence.</p>
         </div>
-        <button type="button" className={buttonClass} disabled={busy} onClick={() => void load()}>{loading ? "Refreshing…" : "Refresh"}</button>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]"><input type="checkbox" checked={showHidden} disabled={busy} onChange={event => setShowHidden(event.target.checked)} />Show hidden (reviewed / dismissed)</label>
+          <button type="button" className={buttonClass} disabled={busy} onClick={() => void load()}>{loading ? "Refreshing…" : "Refresh"}</button>
+        </div>
       </header>
 
       {error && <div role="alert" className="mb-4 rounded-lg border border-[var(--accent)] bg-[var(--surface)] p-3 text-sm">{error}</div>}
@@ -211,7 +237,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       {data?.health && <IntelligenceHealth health={data.health} />}
       <IntelligenceResearchProgress progress={researchProgress} />
       <IntelligenceCost cost={data?.jevCost ?? fallbackCost} />
-      <OperatingMatches onOpenAccount={onOpenAccount} enabled={active} refreshKey={updatedAt} />
+      <OperatingMatches onOpenAccount={onOpenAccount} enabled={active} refreshKey={`${updatedAt}:${statusRevision}`} showHidden={showHidden} statusBusy={busy} onStatus={changeCompanyStatus} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>
         <form onSubmit={saveView} className="mt-3 space-y-3">
@@ -262,12 +288,12 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
         </div>}
         <div className="space-y-4">
           {viewId && data?.accountMatches?.map(match => <article key={match.company_id} className="rounded-lg border bg-[var(--surface)] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><button className="font-semibold text-[var(--gold)]" onClick={() => onOpenAccount(match.company_id, match.company_name)}>{match.company_name} →</button><span className="text-sm">Jev: {(match.probability * 100).toFixed(1)}% match</span></div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><button className="font-semibold text-[var(--gold)]" onClick={() => onOpenAccount(match.company_id, match.company_name)}>{match.company_name} →</button><div className="flex items-center gap-3"><span className="text-sm">Jev: {(match.probability * 100).toFixed(1)}% match</span><IntelligenceDismissButton companyId={match.company_id} name={match.company_name} status={match.company_status} busy={busy} onStatus={changeCompanyStatus} /></div></div>
             <p className="mt-1 text-xs text-[var(--text-muted)]">Native answer combining the account’s selected evidence · {new Date(match.evaluated_at).toLocaleString()}</p>
             <div className="mt-3 space-y-2">{(match.result.citations ?? []).map((citation, index) => <details key={`${citation.observationId}:${index}`} className="rounded border p-2 text-xs"><summary className="cursor-pointer">{citation.title}{citation.date ? ` · ${citation.date.slice(0, 10)}` : " · date unknown"}</summary><p className="mt-2 whitespace-pre-wrap">{citation.text}</p><a href={citation.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--gold)]">Open source</a></details>)}</div>
             <details className="mt-3 text-xs"><summary className="cursor-pointer text-[var(--gold)]">Raw Jev answer and coverage</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify({ native: match.result.native, coverage: match.result.coverage }, null, 2)}</pre></details>
           </article>)}
-          {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy || !data.enabled} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
+          {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy || !data.enabled} statusBusy={busy} onStatus={changeCompanyStatus} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
             const result = await mutate({ action: reason === null ? "clear_feedback" : "feedback", observationId: observation.id, reason, ...(note.trim() ? { note: note.trim() } : {}) }, reason === null ? "Feedback cleared; evidence restored." : "Feedback saved.");
             return Boolean(result);
           }} />)}

@@ -11,8 +11,11 @@ const quote = (value: string) => `"${value.replace(/["\\\r\n]/g, " ").trim().sli
 export function externalResearchQueries(company: { name: string; domain?: string | null }, aliases: string[], missingTopics: string[], eventTitles: string[]): ExternalResearchQuery[] {
   const names = [...new Set([company.name, ...aliases].filter(value => value.trim()))].slice(0, 3);
   const identity = names.length === 1 ? quote(names[0]) : `(${names.map(quote).join(" OR ")})`;
-  const topics: Record<string,string> = { systems_project: 'ERP OR "financial systems"', close_reporting: '"financial reporting" OR controller', finance_leadership: 'CFO OR "chief financial officer"', investor_reporting: 'investment OR "private equity"', multi_entity: 'subsidiary OR acquisition', workforce_billing: 'staffing OR payroll', project_financials: '"project accounting" OR utilization', recurring_revenue: 'contract OR subscription' };
-  const requested = [...new Set(missingTopics.flatMap(topic => topics[topic] ? [topics[topic]] : []))].slice(0, 2).join(" OR ");
+  const topics: Record<string,string> = { systems_project: 'ERP OR "financial systems"', close_reporting: '"financial reporting" OR controller', finance_leadership: 'CFO OR "chief financial officer"', investor_reporting: 'investment OR "private equity"', multi_entity: 'subsidiary OR acquisition', workforce_billing: 'staffing OR payroll', project_financials: '"project accounting" OR utilization', recurring_revenue: 'contract OR subscription', non_asset_based_3pl: '"non-asset" OR "asset-based" OR "third-party logistics"' };
+  // Keep the existing discovery query count while ensuring this model question
+  // is not crowded out by general finance gaps on logistics accounts.
+  const orderedTopics = missingTopics.includes("non_asset_based_3pl") ? ["non_asset_based_3pl", ...missingTopics] : missingTopics;
+  const requested = [...new Set(orderedTopics.flatMap(topic => topics[topic] ? [topics[topic]] : []))].slice(0, 2).join(" OR ");
   const companyWords = new Set(names.join(" ").toLowerCase().split(/\W+/));
   const eventQueries = eventTitles.slice(0, 2).map(title => {
     const terms = [...new Set(title.toLowerCase().split(/[^a-z0-9]+/).filter(word => word.length > 3 && !companyWords.has(word)

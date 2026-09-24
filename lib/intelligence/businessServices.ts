@@ -51,9 +51,9 @@ const MEDIA: ResearchLane = {
   paths: /licens|royalt|rights|publish|advertis|subscription|rate.card|media.kit|production|services|terms/i,
 };
 const TRANSPORT: ResearchLane = {
-  focus: "Transportation, freight, rental and moving: route/customer/fleet profitability, carrier/owner-operator settlements, fuel and accessorial charges, maintenance and asset costs, equipment leases, branch reporting, freight billing and TMS/dispatch-to-finance handoffs. Customer freight is not automatically owned inventory. Preserve the existing exclusion for true third-party logistics providers; do not imply that NetSuite replaces dispatch/TMS.",
-  topics: ["fleet_costs", "client_profitability", "subcontractor_costs", "cash_working_capital", "systems_project", "recurring_revenue", "project_billing", "financial_controls", "government_work"],
-  paths: /fleet|carrier|freight|transport|rental|moving|settlement|fuel|maintenance|services|terminals?|routes?/i,
+  focus: "Transportation, freight, rental and moving: route/customer/fleet profitability, carrier/owner-operator settlements, fuel and accessorial charges, maintenance and asset costs, equipment leases, branch reporting, freight billing and TMS/dispatch-to-finance handoffs. Establish whether the company is an asset-owning operator, a hybrid, or a non-asset-based third-party logistics provider arranging customer transportation or fulfillment through third-party capacity. Seek affirmative evidence about asset ownership and the company's own logistics role; missing fleet information or a generic logistics label is insufficient. Customer freight is not automatically owned inventory. Operating traits do not change TAM membership or grades; preserve existing qualification rules and do not imply that NetSuite replaces dispatch/TMS.",
+  topics: ["fleet_costs", "non_asset_based_3pl", "client_profitability", "subcontractor_costs", "cash_working_capital", "systems_project", "recurring_revenue", "project_billing", "financial_controls", "government_work"],
+  paths: /fleet|carrier|freight|transport|logistic|3pl|non.asset|broker|fulfillment|warehous|rental|moving|settlement|fuel|maintenance|services|terminals?|routes?/i,
 };
 
 // Current NetSuite TAM imports use these broader labels, while public discovery
@@ -107,6 +107,7 @@ export function researchSourcePriority(url: string, subindustry: string | null, 
   if (/career|jobs?/i.test(path) && ["systems_project", "finance_leadership", "close_reporting", "project_financials"].some(topic => missing.has(topic))) score += 4;
   if (/locations?|offices?|branches/i.test(path) && missing.has("multi_location")) score += 5;
   if (/about|companies|subsidiar|leadership/i.test(path) && missing.has("multi_entity")) score += 3;
+  if (/about|non.asset|asset.based|3pl|logistic|broker|carrier.network|fulfillment|warehous/i.test(path) && missing.has("non_asset_based_3pl")) score += 5;
   if (/news|press|acquis|announcement/i.test(path)) score += 2;
   if (/privacy|cookies|accessibility|login|sign.in/i.test(path)) score -= 10;
   return score;

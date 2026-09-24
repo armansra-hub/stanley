@@ -815,7 +815,7 @@ export default function Dashboard({
             {!isBase && <Select value={subindustry} onChange={setSubindustry} placeholder="All subindustries" options={(isStarred || isTriggered || isOldGold || isTal) && baseSubs.length ? baseSubs : SUBINDUSTRIES} />}
             <Select value={stateFilter} onChange={setStateFilter} placeholder="All states" options={states} />
             {(isTriggered || isStarred) && <Select value={band} onChange={setBand} placeholder="Any score" options={["Strong", "Medium", "Weak"]} />}
-            {isTriggered && <Link href="/headhunter/intelligence" className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--gold)] hover:bg-[var(--surface-2)]">Explore intelligence →</Link>}
+            {isTriggered && <Link href="/headhunter/intelligence" className="rounded-md border bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--gold)] hover:bg-[var(--surface-2)]">Explore Jev Intelligence →</Link>}
             {(isBase || isOldGold) && (
               <ScoreRange
                 label={isBase ? "TAM score" : "Old Gold score"}

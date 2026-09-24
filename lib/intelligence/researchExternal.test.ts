@@ -6,6 +6,16 @@ vi.mock('@/lib/sources/googleNews',()=>({fetchNewsItemsResult:m.news}));
 import {externalResearchQueries,discoverExternalResearch} from './researchExternal';
 beforeEach(()=>vi.clearAllMocks());
 describe('external public discovery query branches',()=>{
+ it('includes non-asset logistics discovery in the existing bounded query branch',()=>{
+  const company={name:'Acme Freight'};
+  const baseline=externalResearchQueries(company,[],['multi_entity','systems_project','recurring_revenue'],[]);
+  const logistics=externalResearchQueries(company,[],['multi_entity','systems_project','recurring_revenue','non_asset_based_3pl'],[]);
+  expect(logistics).toHaveLength(baseline.length);
+  const query=logistics.find(plan=>plan.purpose==='operating_gaps');
+  expect(query?.query).toContain('"non-asset" OR "asset-based" OR "third-party logistics"');
+  expect(query?.query).toContain('"Acme Freight"');
+  expect(query?.queryHash).not.toBe(baseline.find(plan=>plan.purpose==='operating_gaps')?.queryHash);
+ });
  it('uses legal aliases, operating gaps and event keywords without requiring publisher headline identity',()=>{
   const queries=externalResearchQueries({name:'Acme Services'},['Acme Holdings'],['systems_project'],['Acme Services opens North regional facility']);
   expect(queries.map(q=>q.purpose)).toEqual(['event_followup','identity_company_family','operating_gaps']);
