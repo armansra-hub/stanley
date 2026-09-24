@@ -20,7 +20,8 @@ export async function attachObservationEvent(observationId: string, attributes?:
 }
 
 export class EventReconciliationDeferred extends Error {
-  constructor(public readonly reason: "busy" | "budget_deferred" | "deadline" | "provider_unavailable") { super(reason); }
+  constructor(public readonly reason: "busy" | "budget_deferred" | "deadline" | "provider_unavailable",
+    public readonly retryAt: string | null = null, public readonly budgetReason?: string) { super(reason); }
 }
 
 export function eventMatchInput(snapshot: { company: string; incoming: unknown; candidates: { id: string; [key: string]: unknown }[] }): NativeJevInput {
@@ -52,7 +53,8 @@ export async function reconcileObservationEvent(observationId: string, companyId
   let native: unknown = null;
   if (snapshot.candidates.length) {
     const result = await evaluateNativeCached(eventMatchInput(snapshot), { purpose: "event_match", companyId, observationId, sourceKind: "event_reconciliation", workload: "monitoring" });
-    if (result.status !== "complete") throw new EventReconciliationDeferred(result.status);
+    if (result.status !== "complete") throw new EventReconciliationDeferred(result.status,
+      result.status === "budget_deferred" ? result.retryAt : null, result.status === "budget_deferred" ? result.reason : undefined);
     if (!result.evaluation.ok) throw new EventReconciliationDeferred("provider_unavailable");
     native = result.evaluation.provider_result;
     chosen = result.evaluation.provider_result.answers.same_event.choice ?? null;

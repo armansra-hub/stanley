@@ -3,7 +3,7 @@ const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), reserve: vi.fn(),
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }), withServiceDeadline: (_: unknown, run: () => unknown) => run() }));
 vi.mock("./observations", () => ({ intelligenceEnabled: () => true, INTELLIGENCE_VERSION: "test" }));
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
-vi.mock("./budget", () => ({ reserveJev: mocks.reserve, settleJev: mocks.settle, secondsUntilNextMonth: () => 60 }));
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(), reserveJev: mocks.reserve, settleJev: mocks.settle, secondsUntilNextMonth: () => 60 }));
 vi.mock("./publish", () => ({ publishJevFinding: vi.fn(async () => ({ status: "not_eligible", reason: "unknown_event_date" })), jevSignalType: vi.fn() }));
 vi.mock("./events", () => ({ reconcileObservationEvent: async () => null, EventReconciliationDeferred: class extends Error {}, bindEventTrigger: vi.fn() }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => true }));

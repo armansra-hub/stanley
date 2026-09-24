@@ -1,5 +1,7 @@
 # Stanley intelligence
 
+**September 24 update:** use the [operating-catalog runbook](JEV_OPERATING_CATALOG_RUNBOOK.md) for the current 47-category rollout, funded daily/aggregate limits and activation procedure. Its budget and no-Jev-TAM policy supersede the historical monthly envelope and optional TAM annotation description below. Installation leaves paid processing off.
+
 This extends Stanley's existing outbound research application. Original workstream 6 (contacts, personas, collateral matching and outreach drafts) is excluded. It does not send outreach or change TAM/Old Gold grades.
 
 This document describes the checked-in implementation through migration 0080. It does not assert that a particular production database has those migrations, that the matching Git deployment is live, or that the operating targets have been achieved. Production receipts establish those separate facts. For a concise map of every Jev use and its code, see [Jev usage](JEV_USAGE.md).

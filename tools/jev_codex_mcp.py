@@ -88,11 +88,11 @@ def evaluate(arguments: dict):
     if set(arguments) - {"state", "questions", "privacy"}:
         raise ValueError("Only state, questions and privacy are accepted")
     body = {"state": arguments.get("state"), "questions": arguments.get("questions"),
-            "privacy": arguments.get("privacy", "private_excerpt")}
+            "privacy": arguments.get("privacy")}
     if body["state"] is None or not isinstance(body["questions"], dict) or not 1 <= len(body["questions"]) <= 32:
         raise ValueError("Provide source state and 1–32 typed questions")
-    if body["privacy"] not in {"public", "private_excerpt"}:
-        raise ValueError("privacy must be public or private_excerpt")
+    if body["privacy"] != "public":
+        raise ValueError("Explicit privacy=public is required. Private/TAM grading is excluded from this Jev policy.")
     packed = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(packed) > MAX_BYTES:
         raise ValueError("Request too large; divide into source-bounded questions without dropping useful evidence")
@@ -141,12 +141,12 @@ TOOLS = [
         "score=ordered rubric. Returns unchanged native answers/distributions and usage. Use for first-pass classification, "
         "relevance ranking, semantic matching or candidate selection; not to double-check another model's output. "
         "Include identity/domain/address, source/date and all relevant context. No browsing or invented facts. "
-        "Costs TypeSafe usage through Stanley; exact completed requests reuse local receipts. Private excerpts are the default. "
-        "Use privacy=public only for wholly public input. Never retry an unknown-acceptance intent."),
-     "inputSchema": {"type": "object", "required": ["state", "questions"], "properties": {
+        "Costs TypeSafe usage through Stanley's global budget; exact completed requests reuse local receipts. "
+        "Explicit privacy=public and wholly public input are required. TAM grading is excluded. Never retry an unknown-acceptance intent."),
+     "inputSchema": {"type": "object", "required": ["state", "questions", "privacy"], "properties": {
          "state": {"description": "Source evidence and useful context as JSON or text."},
          "questions": {"type": "object", "minProperties": 1, "maxProperties": 32, "additionalProperties": QUESTION_SCHEMA},
-         "privacy": {"type": "string", "enum": ["public", "private_excerpt"], "default": "private_excerpt"}},
+         "privacy": {"type": "string", "enum": ["public"]}},
          "additionalProperties": False},
      "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}},
     {"name": "jev_account_context", "description": "Read Stanley's existing public intelligence for one exact NetSuite Internal ID; no model call or grade change.",

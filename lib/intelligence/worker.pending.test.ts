@@ -6,7 +6,7 @@ vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc
 vi.mock("./observations", () => ({ intelligenceEnabled: () => true, INTELLIGENCE_VERSION: "evidence-v2" }));
 vi.mock("./jev", async importOriginal => ({ ...await importOriginal<typeof import("./jev")>(), evaluateEvidence: mocks.evaluate }));
 vi.mock("./jevRequests", () => ({ durableJevRequest: mocks.durable, reconcileJevReceipts: async () => undefined }));
-vi.mock("./budget", () => ({ secondsUntilNextMonth: () => 9999 }));
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(), secondsUntilNextMonth: () => 9999 }));
 vi.mock("./feedback", () => ({ loadFeedbackExamples: mocks.feedback }));
 vi.mock("@/lib/companyIdentity", () => ({ loadCompanyIdentityContext: mocks.identity }));
 vi.mock("./publicContext", () => ({ loadPublicScaleObservations: async () => [], buildPublicScaleContext: mocks.publicScale }));

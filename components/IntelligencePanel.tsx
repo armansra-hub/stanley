@@ -8,6 +8,7 @@ import IntelligenceDismissButton from "./IntelligenceDismissButton";
 import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceHealth";
 import IntelligenceCost from "./IntelligenceCost";
 import IntelligenceResearchProgress from "./IntelligenceResearchProgress";
+import IntelligenceBudget from "./IntelligenceBudget";
 import type { ResearchProgress } from "@/lib/intelligence/researchProgress";
 import type { JevCostSnapshot } from "@/lib/intelligence/costMetricsTypes";
 import { EvidenceCard, type FeedbackReason, type Observation } from "./IntelligenceEvidenceCard";
@@ -211,14 +212,15 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       </div>}
 
       {data?.activityAvailable === false && <p role="status" className="mb-4 text-sm text-[var(--text-muted)]">Activity statistics are temporarily unavailable. Saved research remains available below.</p>}
+      <IntelligenceBudget refreshKey={updatedAt} />
       {data && data.activityAvailable !== false && <section aria-label="Intelligence activity" className="mb-6 grid gap-px overflow-hidden rounded-lg border bg-[var(--border)] text-sm sm:grid-cols-3">
         <div className="bg-[var(--surface)] p-4">
-          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global monthly budget accounting</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Historical monthly ledger</div>
           {data.spend.available === false ? <p className="mt-1 text-sm text-[var(--text-muted)]">Global budget details are unavailable.</p> : <>
-            <div className="mt-1"><strong className="text-lg">{dollars(data.spend.usedUsd)}</strong><span className="text-[var(--text-muted)]"> accounted against {dollars(data.spend.limitUsd)}</span></div>
+            <div className="mt-1"><strong className="text-lg">{dollars(data.spend.usedUsd)}</strong><span className="text-[var(--text-muted)]"> accounted in the historical ledger</span></div>
             <div className="mt-1 text-xs text-[var(--text-muted)]">{dollars(data.spend.reservedUsd)} reserved for work in progress</div>
           </>}
-          <div className="mt-1 text-xs text-[var(--text-muted)]">All intelligence models; includes conservative allowances when usage is unknown.</div>
+          <div className="mt-1 text-xs text-[var(--text-muted)]">All intelligence models; includes conservative allowances when usage is unknown. The new spending limits are shown separately above.</div>
         </div>
         <div className="bg-[var(--surface)] p-4">
           <div className="text-xs uppercase tracking-wide text-[var(--text-muted)]">Global evidence / view jobs</div>

@@ -37,7 +37,8 @@ describe("durable Jev responses", () => {
   it.each(["busy", "budget_deferred"] as const)("never dispatches a %s request", async status => {
     const execute = vi.fn();
     const rpc = vi.fn(async () => ({ data: { status }, error: null }));
-    expect(await durableJevRequest({ fingerprint, context, execute }, { rpc })).toEqual({ status });
+    expect(await durableJevRequest({ fingerprint, context, execute }, { rpc })).toEqual(status === "busy" ? { status }
+      : { status, reason: "budget_unavailable", retryAt: null });
     expect(execute).not.toHaveBeenCalled();
   });
 

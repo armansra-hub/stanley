@@ -7,7 +7,7 @@ vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("@/lib/companyIdentity", () => ({ loadCompanyIdentityContext: async () => ({ context: "Authorized identity" }) }));
 vi.mock("./publicContext", () => ({ loadPublicScaleObservations: async () => [], buildPublicScaleContext: () => ({ text: "No public scale baseline is available." }) }));
 vi.mock("./jevRequests", () => ({ durableJevRequest: mocks.durable, reconcileJevReceipts: async () => {} }));
-vi.mock("./budget", () => ({ secondsUntilNextMonth: () => 86400 }));
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(), secondsUntilNextMonth: () => 86400 }));
 vi.mock("./publish", () => ({ publishJevFinding: async () => ({ status: "not_eligible", reason: "unknown_event_date" }), jevSignalType: () => null }));
 vi.mock("./events", () => ({ reconcileObservationEvent: async () => null, EventReconciliationDeferred: class extends Error {}, bindEventTrigger: vi.fn() }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => true }));
@@ -36,7 +36,7 @@ beforeEach(() => {
       available -= size;
       return { data: Array.from({ length: size }, () => job(nextId++)), error: null };
     }
-    if (name === "intelligence_finish") finishes.push(args.p_id);
+    if (name === "intelligence_finish" || name === "intelligence_job_budget_defer") finishes.push(args.p_id);
     return { data: true, error: null };
   });
   mocks.from.mockImplementation((table: string) => {
@@ -162,12 +162,19 @@ describe("runtime-bounded rolling intelligence throughput", () => {
     ["budget_deferred", "budget"], ["rate_limit", "provider_pressure"], ["authentication", "provider_pressure"], ["billing", "provider_pressure"],
   ])("stops refilling after %s and preserves every already-owned completion", async (failure, stoppedBy) => {
     available = 30; current = true;
-    mocks.durable.mockResolvedValue(failure === "budget_deferred" || failure === "busy" ? { status: failure }
+    const retryAt = "2026-09-25T07:00:00.000Z";
+    mocks.durable.mockResolvedValue(failure === "budget_deferred" ? { status: failure, reason: "daily_allowance", retryAt }
       : { status: "complete", evaluation: { ok: false, error: { kind: failure, retryable: true, retryAfterMs: 120_000 } } });
     expect(await runIntelligenceWorker({ mode: "drain" })).toMatchObject({ processed: 6, claimed: 6, stoppedBy });
     expect(mocks.durable).toHaveBeenCalledTimes(6);
     expect(finishes).toHaveLength(6);
     expect(mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_claim")).toHaveLength(1);
+    if (failure === "budget_deferred") {
+      const deferrals = mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_job_budget_defer");
+      expect(deferrals).toHaveLength(6);
+      expect(deferrals.every(([, args]) => args.p_retry_at === retryAt && args.p_reason === "daily_allowance")).toBe(true);
+      expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_finish")).toBe(false);
+    }
     expect(mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_finish").every(([, args]) => args.p_status === "queued" && args.p_retry_seconds >= 30)).toBe(true);
   });
 

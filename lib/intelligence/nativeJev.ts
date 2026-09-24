@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { JEV_MODEL, TYPESAFE_EVALUATION_URL, hasPrivateExcerptAuthorization } from "./jev";
 import { durableJevRequest, type JevSpendContext } from "./jevRequests";
 import type { EvaluationUsage } from "./evaluation";
+import { authorizeJevDispatch, JevBudgetDeferredError } from "./budget";
 
 export type NativeQuestion =
   | { type: "noul"; instructions: string; criteria?: Record<string, string> }
@@ -59,18 +60,20 @@ export function nativeJevFingerprint(input: NativeJevInput): string {
 }
 
 export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fetch?: typeof fetch } = {}): Promise<NativeJevResult> {
+  const zeroUsage = { inputTokens: 0, outputTokens: 0 };
   let body: ReturnType<typeof nativeJevBody>;
   try { body = nativeJevBody(input); }
-  catch (error) { return { ok: false, error: { code: error instanceof Error ? error.message : "invalid_request", retryable: false }, usage: null }; }
+  catch (error) { return { ok: false, error: { code: error instanceof Error ? error.message : "invalid_request", retryable: false }, usage: zeroUsage }; }
   if (input.privacy === "private_excerpt" && !hasPrivateExcerptAuthorization())
-    return { ok: false, error: { code: "privacy_not_authorized", retryable: false }, usage: null };
+    return { ok: false, error: { code: "privacy_not_authorized", retryable: false }, usage: zeroUsage };
   const key = process.env.TYPESAFE_API_KEY;
-  if (!key) return { ok: false, error: { code: "typesafe_not_configured", retryable: false }, usage: null };
+  if (!key) return { ok: false, error: { code: "typesafe_not_configured", retryable: false }, usage: zeroUsage };
   let usage: EvaluationUsage | null = null;
   try {
+    await authorizeJevDispatch(JEV_MODEL, nativeJevFingerprint(input));
     const response = await (deps.fetch ?? fetch)(TYPESAFE_EVALUATION_URL, {
       method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(25_000), cache: "no-store",
+      body: JSON.stringify(body), signal: AbortSignal.timeout(25_000), cache: "no-store", redirect: "error",
     });
     if (!response.ok) return { ok: false, error: { code: "typesafe_http_" + response.status,
       retryable: response.status === 429 || response.status >= 500 }, usage };
@@ -92,6 +95,7 @@ export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fet
     }
     return { ok: true, provider_result: result as NativeProviderResult, usage };
   } catch (error) {
+    if (error instanceof JevBudgetDeferredError) throw error;
     const timeout = error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name);
     return { ok: false, error: { code: timeout ? "typesafe_timeout" : "native_response_unavailable", retryable: timeout }, usage };
   }

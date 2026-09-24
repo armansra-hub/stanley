@@ -1,0 +1,2428 @@
+// Runtime operating definitions only. Customer names, win narratives and source links remain in the private local research corpus.
+// O06 was explicitly excluded from the shipped catalog by the user.
+export const OPERATING_FACET_DATA = [
+  {
+    "id": "rr_c01",
+    "catalogId": "C01",
+    "label": "Sells equipment plus installation and ongoing service",
+    "definition": "The company supplies equipment and delivers installation plus continuing maintenance, monitoring or managed support.",
+    "boundary": "A software company serving installers does not qualify; ordinary product support alone is insufficient.",
+    "instructions": "Assess this fact about the target company's own business: The company supplies equipment and delivers installation plus continuing maintenance, monitoring or managed support. Boundary: A software company serving installers does not qualify; ordinary product support alone is insufficient. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "6359d6b0ccd790aee2cc29ccc5e35d6453df6b595048fb9d9d574e11c6b9fb15",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "IT / AV",
+      "Security",
+      "Industrial services",
+      "Telecom"
+    ],
+    "discoveryHypothesis": "Coordinating product cost, project labor, service obligations and renewals is a plausible finance problem.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "project_delivery",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c02",
+    "catalogId": "C02",
+    "label": "Delivers projects plus ongoing managed services",
+    "definition": "The same business offers discrete implementation/advisory projects and continuing managed operations or monitoring.",
+    "boundary": "Retainer pricing or revenue percentages remain unknown unless stated.",
+    "instructions": "Assess this fact about the target company's own business: The same business offers discrete implementation/advisory projects and continuing managed operations or monitoring. Boundary: Retainer pricing or revenue percentages remain unknown unless stated. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "407141963925cc0d52e3fa41b24ac8a6b20de00669143ba9504cd99606335098",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Consulting",
+      "IT",
+      "Risk services"
+    ],
+    "discoveryHypothesis": "One customer can generate project and ongoing revenue with different delivery costs.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c03",
+    "catalogId": "C03",
+    "label": "Runs human-delivered services through its own platform",
+    "definition": "A proprietary platform is paired with work actually performed or managed by the seller's people.",
+    "boundary": "Selling software that helps customers perform services is a different model.",
+    "instructions": "Assess this fact about the target company's own business: A proprietary platform is paired with work actually performed or managed by the seller's people. Boundary: Selling software that helps customers perform services is a different model. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "399c4dbbe6ec794f0b1543aa6a5a63e0e81cd087c8702273aa3800f6127d9ba9",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Business services",
+      "Software",
+      "Outsourcing"
+    ],
+    "discoveryHypothesis": "Software, expert labor and service capacity may need a shared financial view.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "workforce_billing"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c04",
+    "catalogId": "C04",
+    "label": "Coordinates a network of outside providers",
+    "definition": "The seller recruits, screens, dispatches or manages third-party providers to deliver customer work.",
+    "boundary": "Do not assume all providers are contractors, or infer payment terms or gross/net accounting.",
+    "instructions": "Assess this fact about the target company's own business: The seller recruits, screens, dispatches or manages third-party providers to deliver customer work. Boundary: Do not assume all providers are contractors, or infer payment terms or gross/net accounting. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "e73dba160f72ac7620443391ca192cd2c31b2f1c7fe30b69cbdcdcca0cf99bb8",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Facilities",
+      "Logistics",
+      "Staffing",
+      "Language services"
+    ],
+    "discoveryHypothesis": "Customer charges, provider costs and job completion may need reconciliation.",
+    "legacyTopicOverlaps": [
+      "subcontractor_costs",
+      "workforce_billing"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c05",
+    "catalogId": "C05",
+    "label": "Delivers services across many customer sites",
+    "definition": "The company explicitly services a customer's portfolio of locations or executes regional/national rollouts.",
+    "boundary": "Having several own offices or a national sales territory is not this trait.",
+    "instructions": "Assess this fact about the target company's own business: The company explicitly services a customer's portfolio of locations or executes regional/national rollouts. Boundary: Having several own offices or a national sales territory is not this trait. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "533e1f78bf73c55b3c5363eecd5b961a071d60790b8ed2a668f00266bc513516",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Facilities",
+      "IT",
+      "Security",
+      "Field services"
+    ],
+    "discoveryHypothesis": "Site-level costs, SLAs and customer-level billing can differ from branch reporting.",
+    "legacyTopicOverlaps": [
+      "multi_location",
+      "project_delivery"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c06",
+    "catalogId": "C06",
+    "label": "Runs multiple brands with shared business services",
+    "definition": "Named operating brands/practices share management or administrative support under an operating group.",
+    "boundary": "Brands, offices and legal entities are separate facts; PE backing alone does not establish this model.",
+    "instructions": "Assess this fact about the target company's own business: Named operating brands/practices share management or administrative support under an operating group. Boundary: Brands, offices and legal entities are separate facts; PE backing alone does not establish this model. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "46e39a1352a9aa5dccdbaffa3931fb95e03627fa63c9732d49b75b341f5ee565",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Healthcare",
+      "IT",
+      "Agencies",
+      "Holding companies"
+    ],
+    "discoveryHypothesis": "Local autonomy and group reporting can create a useful finance conversation.",
+    "legacyTopicOverlaps": [
+      "multi_entity",
+      "acquisition_integration"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c07",
+    "catalogId": "C07",
+    "label": "Combines custom merchandise with ecommerce and fulfillment",
+    "definition": "The company designs/sources/produces branded physical goods and operates stores, programs, warehousing or fulfillment for clients.",
+    "boundary": "The company must offer customized physical merchandise and its own ecommerce/fulfillment service. General ecommerce fulfillment alone is a different facet.",
+    "instructions": "Assess this fact about the target company's own business: The company designs/sources/produces branded physical goods and operates stores, programs, warehousing or fulfillment for clients. Boundary: The company must offer customized physical merchandise and its own ecommerce/fulfillment service. General ecommerce fulfillment alone is a different facet. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "5137c9863d17c1028ceb2d7d889d317046021c07bc68db2a8729037c14223e71",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Promotional products",
+      "Print",
+      "Marketing services"
+    ],
+    "discoveryHypothesis": "Creative work, product costs and program logistics may need customer-level profitability.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "project_delivery"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c08",
+    "catalogId": "C08",
+    "label": "Rents or manages equipment and services it",
+    "definition": "Rental or managed assets are combined with delivery, setup, maintenance or operation.",
+    "boundary": "Customer-owned assets, managed assets and owned rental fleets must be distinguished.",
+    "instructions": "Assess this fact about the target company's own business: Rental or managed assets are combined with delivery, setup, maintenance or operation. Boundary: Customer-owned assets, managed assets and owned rental fleets must be distinguished. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "c3cb5a81414dbef0f31785dc5c561b139f607773abca3162f86b7d2bf6b91a83",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Events",
+      "Equipment services",
+      "Transportation"
+    ],
+    "discoveryHypothesis": "Asset utilization, recurring charges and field/service costs may need coordination.",
+    "legacyTopicOverlaps": [
+      "fleet_costs",
+      "inventory",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c09",
+    "catalogId": "C09",
+    "label": "Charges by usage, transactions or variable units",
+    "definition": "Pricing/terms explicitly identify consumption units, credits, transactions, active devices or similar variable charges.",
+    "boundary": "AI or SaaS branding is not proof. Capacity-based annual licensing is a related but separate subtype.",
+    "instructions": "Assess this fact about the target company's own business: Pricing/terms explicitly identify consumption units, credits, transactions, active devices or similar variable charges. Boundary: AI or SaaS branding is not proof. Capacity-based annual licensing is a related but separate subtype. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "6edfe749ecfcc8bdad85cf55348c70584c4412006cff10dbc491e5cdc6e79bc6",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "AI",
+      "Telecom",
+      "Software",
+      "Platform services"
+    ],
+    "discoveryHypothesis": "Usage data, commitments and invoices may need to connect with finance.",
+    "legacyTopicOverlaps": [
+      "recurring_revenue"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c10",
+    "catalogId": "C10",
+    "label": "Sells through resellers, white labels or another brand",
+    "definition": "An explicit reseller, wholesale, white-label or B2B2C distribution model exists.",
+    "boundary": "Technology integrations and generic partner logos do not establish resale.",
+    "instructions": "Assess this fact about the target company's own business: An explicit reseller, wholesale, white-label or B2B2C distribution model exists. Boundary: Technology integrations and generic partner logos do not establish resale. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "4e26850fe6eea679bc76cf46d05e6a75cdbf34d51223f84e98d2d89f6304e45e",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Software",
+      "IT",
+      "Telecom",
+      "Business services"
+    ],
+    "discoveryHypothesis": "Partner entitlements, discounts, commissions and downstream billing may matter.",
+    "legacyTopicOverlaps": [],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c11",
+    "catalogId": "C11",
+    "label": "Licenses data, content or intellectual property",
+    "definition": "The seller commercially licenses research, datasets, content, software/IP components or rights.",
+    "boundary": "Differentiate receiving license revenue from paying rights owners; do not infer a royalty obligation from content alone.",
+    "instructions": "Assess this fact about the target company's own business: The seller commercially licenses research, datasets, content, software/IP components or rights. Boundary: Differentiate receiving license revenue from paying rights owners; do not infer a royalty obligation from content alone. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "635cbcaaeb0daf2a10b7cc261842beff363453b99b5cd4cc6e702259248023e0",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Research",
+      "Media",
+      "Software",
+      "Data providers"
+    ],
+    "discoveryHypothesis": "Contract terms, entitlements, royalties or multiple distribution channels may need financial coordination.",
+    "legacyTopicOverlaps": [
+      "media_rights",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_c12",
+    "catalogId": "C12",
+    "label": "Provides testing, inspection or compliance services",
+    "definition": "The company actually performs testing, inspection, certification support or compliance work for clients, with the exact discipline identified.",
+    "boundary": "Certification of the seller or compliance software alone is not proof that it performs the work.",
+    "instructions": "Assess this fact about the target company's own business: The company actually performs testing, inspection, certification support or compliance work for clients, with the exact discipline identified. Boundary: Certification of the seller or compliance software alone is not proof that it performs the work. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "ed2883e5362194fb87837cae1477f2673b33a273173b8147669888dc7ff629bb",
+    "positiveAnswer": "supported",
+    "priority": "First wave",
+    "industries": [
+      "Laboratories",
+      "Field services",
+      "Cybersecurity",
+      "Risk"
+    ],
+    "discoveryHypothesis": "Qualified labor, evidence delivery and repeat service schedules can create project and service complexity.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "government_work"
+    ],
+    "sourcePaths": "services, products, pricing, partners/provider terms, locations, about/brands",
+    "publication": "no_event_from_facet_alone",
+    "group": "Cross-industry operating models"
+  },
+  {
+    "id": "rr_t01",
+    "catalogId": "T01",
+    "label": "Freight brokerage using outside carriers",
+    "definition": "The company arranges freight through a carrier network; tag explicit non-asset status separately.",
+    "boundary": "A carrier network alone cannot prove the company owns no assets.",
+    "instructions": "Assess this fact about the target company's own business: The company arranges freight through a carrier network; tag explicit non-asset status separately. Boundary: A carrier network alone cannot prove the company owns no assets. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "0c5a8b54a1084d4b262949fee433150a93def511fcf3d2fb413678892816626d",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Transportation"
+    ],
+    "discoveryHypothesis": "Shipment-level customer revenue and carrier costs are a relevant discovery area.",
+    "legacyTopicOverlaps": [
+      "non_asset_based_3pl",
+      "subcontractor_costs"
+    ],
+    "sourcePaths": "transport services, carrier/customer terms, fleet/about, capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Transportation"
+  },
+  {
+    "id": "rr_t02",
+    "catalogId": "T02",
+    "label": "Combines a fleet with brokerage or forwarding",
+    "definition": "Both operated vehicles and arranged third-party transportation/forwarding are evidenced.",
+    "boundary": "Do not label this pure non-asset-based 3PL.",
+    "instructions": "Assess this fact about the target company's own business: Both operated vehicles and arranged third-party transportation/forwarding are evidenced. Boundary: Do not label this pure non-asset-based 3PL. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "59dece7870d3d003c0ef75ae9614eb39d57c3fb40b54e712d6300b1bdaaff94c",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Transportation"
+    ],
+    "discoveryHypothesis": "Owned-fleet economics and purchased transportation costs may be managed differently.",
+    "legacyTopicOverlaps": [
+      "fleet_costs",
+      "non_asset_based_3pl"
+    ],
+    "sourcePaths": "transport services, carrier/customer terms, fleet/about, capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Transportation"
+  },
+  {
+    "id": "rr_t03",
+    "catalogId": "T03",
+    "label": "Dedicated transportation programs for customers",
+    "definition": "Dedicated routes, capacity, customer-embedded teams or outsourced private-fleet operations are offered.",
+    "boundary": "One strongly researched example; do not call this a proven high-conversion segment.",
+    "instructions": "Assess this fact about the target company's own business: Dedicated routes, capacity, customer-embedded teams or outsourced private-fleet operations are offered. Boundary: One strongly researched example; do not call this a proven high-conversion segment. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "f334382b56c6e09f7cf58fe8f6f1976e4854ea501e2e32cc3ff95612abf0661b",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Transportation"
+    ],
+    "discoveryHypothesis": "Customer/route commitments, driver costs and equipment economics suggest contract-level profitability.",
+    "legacyTopicOverlaps": [
+      "fleet_costs",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "transport services, carrier/customer terms, fleet/about, capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Transportation"
+  },
+  {
+    "id": "rr_t04",
+    "catalogId": "T04",
+    "label": "Specialized freight requirements",
+    "definition": "Explicit cold-chain, entertainment touring, expedited, cross-border or specialist vehicle transport capabilities.",
+    "boundary": "Keep subtype values separate; transporting for a sector is not evidence of every specialist capability.",
+    "instructions": "Assess this fact about the target company's own business: Explicit cold-chain, entertainment touring, expedited, cross-border or specialist vehicle transport capabilities. Boundary: Keep subtype values separate; transporting for a sector is not evidence of every specialist capability. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "4f3117b02ada40468bd9430a611b81edc47f6f4d6020cfe346ab551dac3c98f2",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Transportation"
+    ],
+    "discoveryHypothesis": "Special handling can add scheduling, equipment and cost dimensions to a shipment.",
+    "legacyTopicOverlaps": [
+      "fleet_costs"
+    ],
+    "sourcePaths": "transport services, carrier/customer terms, fleet/about, capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Transportation"
+  },
+  {
+    "id": "rr_t05",
+    "catalogId": "T05",
+    "label": "Last-mile delivery through partner fleets",
+    "definition": "A last-mile operator coordinates DSPs or delivery partners, routes and delivery confirmation.",
+    "boundary": "A merchant offering delivery or software for delivery operators does not qualify.",
+    "instructions": "Assess this fact about the target company's own business: A last-mile operator coordinates DSPs or delivery partners, routes and delivery confirmation. Boundary: A merchant offering delivery or software for delivery operators does not qualify. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "17646756852c77717742c51efd5c8e914adff109426eaba85229f41ffc25bc31",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Transportation"
+    ],
+    "discoveryHypothesis": "High-volume jobs and partner settlements may need to align.",
+    "legacyTopicOverlaps": [
+      "subcontractor_costs",
+      "workforce_billing"
+    ],
+    "sourcePaths": "transport services, carrier/customer terms, fleet/about, capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Transportation"
+  },
+  {
+    "id": "rr_f01",
+    "catalogId": "F01",
+    "label": "Scheduled maintenance plus repairs and emergency work",
+    "definition": "Preventive/routine services coexist with projects, upgrades or reactive work.",
+    "boundary": "Do not infer the recurring-contract fee structure from a maintenance service menu.",
+    "instructions": "Assess this fact about the target company's own business: Preventive/routine services coexist with projects, upgrades or reactive work. Boundary: Do not infer the recurring-contract fee structure from a maintenance service menu. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "5bc93a7e6525d7f9c30ea1809c2c7cc0ee0860ff269040981c946bd76b80dcf8",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Facilities",
+      "Landscaping",
+      "Industrial field services"
+    ],
+    "discoveryHypothesis": "Planned contracts and variable work may have different billing and margin patterns.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "service/maintenance catalog, closeout/customer portal description, project case studies",
+    "publication": "no_event_from_facet_alone",
+    "group": "Field and project services"
+  },
+  {
+    "id": "rr_f02",
+    "catalogId": "F02",
+    "label": "Compliance documentation tied to completed field work",
+    "definition": "Inspection reports, calibration records, compliance forms or customer-portal closeout are explicit deliverables.",
+    "boundary": "Whether documentation delays payment remains a discovery hypothesis.",
+    "instructions": "Assess this fact about the target company's own business: Inspection reports, calibration records, compliance forms or customer-portal closeout are explicit deliverables. Boundary: Whether documentation delays payment remains a discovery hypothesis. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "4553d1dbe29346e09cefc0c23f2dc55bd2d7bf3a90bd7f5f3a60f151ed7b2552",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Industrial services",
+      "Safety",
+      "Facilities"
+    ],
+    "discoveryHypothesis": "Work completion and accepted documentation may be separate operational milestones.",
+    "legacyTopicOverlaps": [
+      "project_delivery"
+    ],
+    "sourcePaths": "service/maintenance catalog, closeout/customer portal description, project case studies",
+    "publication": "no_event_from_facet_alone",
+    "group": "Field and project services"
+  },
+  {
+    "id": "rr_f03",
+    "catalogId": "F03",
+    "label": "Project work combines labor, equipment, materials and subcontractors",
+    "definition": "The seller's own projects require multiple cost types; use service/project evidence and internal notes where permitted.",
+    "boundary": "Selling project software does not establish these costs in the vendor's business.",
+    "instructions": "Assess this fact about the target company's own business: The seller's own projects require multiple cost types; use service/project evidence and internal notes where permitted. Boundary: Selling project software does not establish these costs in the vendor's business. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "2a5691ad5f17d0a9ff755c7392ac600b156debb3c5b41f8940eb63750f9f58fb",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Construction",
+      "Rail",
+      "Engineering",
+      "Installers"
+    ],
+    "discoveryHypothesis": "Costs scattered across systems can obscure true job profitability.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "inventory",
+      "subcontractor_costs",
+      "workforce_billing"
+    ],
+    "sourcePaths": "service/maintenance catalog, closeout/customer portal description, project case studies",
+    "publication": "no_event_from_facet_alone",
+    "group": "Field and project services"
+  },
+  {
+    "id": "rr_i01",
+    "catalogId": "I01",
+    "label": "IT VAR with managed services",
+    "definition": "The company resells hardware/software and provides ongoing managed IT or security services.",
+    "boundary": "A vendor badge is not sufficient proof of resale.",
+    "instructions": "Assess this fact about the target company's own business: The company resells hardware/software and provides ongoing managed IT or security services. Boundary: A vendor badge is not sufficient proof of resale. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "17debe8591930b365719a90f22a1d68de051735a5f779756e1e96e14d3914512",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "IT services"
+    ],
+    "discoveryHypothesis": "Resale procurement, renewals and service labor may share customers but different economics.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "solutions, vendor practices, reseller terms, managed service catalog, infrastructure pages",
+    "publication": "no_event_from_facet_alone",
+    "group": "Technology delivery"
+  },
+  {
+    "id": "rr_i02",
+    "catalogId": "I02",
+    "label": "Vendor-specific implementation practice with ongoing support",
+    "definition": "Dedicated implementation expertise for platforms such as ServiceNow, SAP or Maximo plus lifecycle support.",
+    "boundary": "Being a competitor's implementation partner is not proof it uses that platform for its own finance.",
+    "instructions": "Assess this fact about the target company's own business: Dedicated implementation expertise for platforms such as ServiceNow, SAP or Maximo plus lifecycle support. Boundary: Being a competitor's implementation partner is not proof it uses that platform for its own finance. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "703a40b3de5a08c743feb676862964f39cdccbf37c5f5d860d955da4407b3e75",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "IT consulting"
+    ],
+    "discoveryHypothesis": "Project staffing and ongoing service work can require connected finance.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "solutions, vendor practices, reseller terms, managed service catalog, infrastructure pages",
+    "publication": "no_event_from_facet_alone",
+    "group": "Technology delivery"
+  },
+  {
+    "id": "rr_i03",
+    "catalogId": "I03",
+    "label": "Owned hosting infrastructure plus managed services",
+    "definition": "The business operates data-center/hosting infrastructure alongside managed cloud or IT services.",
+    "boundary": "Cloud resale alone is not owned infrastructure.",
+    "instructions": "Assess this fact about the target company's own business: The business operates data-center/hosting infrastructure alongside managed cloud or IT services. Boundary: Cloud resale alone is not owned infrastructure. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "67f77272a274a1f70dd915e022093aad55dab3830d55329995ddfaccd554d8cf",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Hosting",
+      "MSPs",
+      "Telecom"
+    ],
+    "discoveryHypothesis": "Infrastructure assets and service/customer profitability may both matter.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "solutions, vendor practices, reseller terms, managed service catalog, infrastructure pages",
+    "publication": "no_event_from_facet_alone",
+    "group": "Technology delivery"
+  },
+  {
+    "id": "rr_i04",
+    "catalogId": "I04",
+    "label": "Government-focused equipment and technical service delivery",
+    "definition": "The seller supplies equipment, engineering or maintenance to government; record prime/subcontract/vehicle distinctions.",
+    "boundary": "Government customer logos, registrations and vehicle eligibility are not the same as attributed awards.",
+    "instructions": "Assess this fact about the target company's own business: The seller supplies equipment, engineering or maintenance to government; record prime/subcontract/vehicle distinctions. Boundary: Government customer logos, registrations and vehicle eligibility are not the same as attributed awards. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "1ce7f15c02be5da61af84d652a6f4cf84942d2c7d9cd45b57a86073450e6447a",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "GovCon",
+      "IT VAR",
+      "Telecom"
+    ],
+    "discoveryHypothesis": "Project costs, product procurement and contract requirements can coexist.",
+    "legacyTopicOverlaps": [
+      "government_work",
+      "project_delivery",
+      "inventory"
+    ],
+    "sourcePaths": "solutions, vendor practices, reseller terms, managed service catalog, infrastructure pages",
+    "publication": "no_event_from_facet_alone",
+    "group": "Technology delivery"
+  },
+  {
+    "id": "rr_p01",
+    "catalogId": "P01",
+    "label": "Specialist labor placed or scheduled for customer assignments",
+    "definition": "Screened professionals are assigned to shifts, placements, events or scheduled client work.",
+    "boundary": "Separate permanent placement, temporary staffing, EOR and subcontractor models.",
+    "instructions": "Assess this fact about the target company's own business: Screened professionals are assigned to shifts, placements, events or scheduled client work. Boundary: Separate permanent placement, temporary staffing, EOR and subcontractor models. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "ed9482e5d7be819382d62e3c40b022272cf71a73b417a51b94a6d6878bc9fe6c",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Staffing",
+      "Healthcare staffing",
+      "Language services",
+      "Events"
+    ],
+    "discoveryHypothesis": "Assignment profitability, credentials, time and payroll/provider costs may need coordination.",
+    "legacyTopicOverlaps": [
+      "workforce_billing",
+      "project_delivery"
+    ],
+    "sourcePaths": "service models, assignments/programs, memberships and pricing",
+    "publication": "no_event_from_facet_alone",
+    "group": "Workforce and expertise"
+  },
+  {
+    "id": "rr_p02",
+    "catalogId": "P02",
+    "label": "Expert investigations, litigation or case-based services",
+    "definition": "Cases or investigations involve expert work, field activity, analytics or reports.",
+    "boundary": "Contingency billing applies only when explicit, as at Pusch & Wynne; do not assign it to all firms.",
+    "instructions": "Assess this fact about the target company's own business: Cases or investigations involve expert work, field activity, analytics or reports. Boundary: Contingency billing applies only when explicit, as at Pusch & Wynne; do not assign it to all firms. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "5a94501148aa2c5a5d192a092006ec631ff2aa79cdaf82f08caf44c4fa1ea706",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Legal",
+      "Investigations",
+      "Risk"
+    ],
+    "discoveryHypothesis": "Case-level costs and timing can be more informative than generic consulting headcount.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "project_billing"
+    ],
+    "sourcePaths": "service models, assignments/programs, memberships and pricing",
+    "publication": "no_event_from_facet_alone",
+    "group": "Workforce and expertise"
+  },
+  {
+    "id": "rr_p03",
+    "catalogId": "P03",
+    "label": "Research memberships plus advisory or communities",
+    "definition": "Recurring access to proprietary research/communities coexists with advisory or other services.",
+    "boundary": "Free newsletters and an ordinary blog do not establish a paid membership.",
+    "instructions": "Assess this fact about the target company's own business: Recurring access to proprietary research/communities coexists with advisory or other services. Boundary: Free newsletters and an ordinary blog do not establish a paid membership. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "071db05f03553974a811aca50b1b63e668c13de368d357613dd5bfb0a24335b5",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Research",
+      "Advisory"
+    ],
+    "discoveryHypothesis": "Content entitlements and delivered services may have different revenue patterns.",
+    "legacyTopicOverlaps": [
+      "recurring_revenue",
+      "media_rights",
+      "project_delivery"
+    ],
+    "sourcePaths": "service models, assignments/programs, memberships and pricing",
+    "publication": "no_event_from_facet_alone",
+    "group": "Workforce and expertise"
+  },
+  {
+    "id": "rr_m01",
+    "catalogId": "M01",
+    "label": "Experiential campaigns with physical production and staffing",
+    "definition": "The agency executes activations, physical experiences, production or field staffing.",
+    "boundary": "Digital strategy alone is not physical execution.",
+    "instructions": "Assess this fact about the target company's own business: The agency executes activations, physical experiences, production or field staffing. Boundary: Digital strategy alone is not physical execution. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "37dfd1c6b954dd0bffee3a9b87709036c5e93aab3bcd52d17d8f11e123bf154f",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Agencies",
+      "Events"
+    ],
+    "discoveryHypothesis": "Third-party production, labor and client project budgets may need to reconcile.",
+    "legacyTopicOverlaps": [
+      "project_delivery",
+      "subcontractor_costs"
+    ],
+    "sourcePaths": "production/distribution services, media kits, licensing and creator terms",
+    "publication": "no_event_from_facet_alone",
+    "group": "Media and physical production"
+  },
+  {
+    "id": "rr_m02",
+    "catalogId": "M02",
+    "label": "Print or physical publishing plus distribution",
+    "definition": "Physical books/media/printed goods are produced or distributed; capture digital streams separately.",
+    "boundary": "A streaming publisher does not automatically have physical inventory.",
+    "instructions": "Assess this fact about the target company's own business: Physical books/media/printed goods are produced or distributed; capture digital streams separately. Boundary: A streaming publisher does not automatically have physical inventory. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "4d009ea1ef3d685d71afa22c7cc5895e7b25e98a43f09b97236db574073e4313",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Publishing",
+      "Print"
+    ],
+    "discoveryHypothesis": "Titles/SKUs, production and distribution can sit alongside rights economics.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "media_rights"
+    ],
+    "sourcePaths": "production/distribution services, media kits, licensing and creator terms",
+    "publication": "no_event_from_facet_alone",
+    "group": "Media and physical production"
+  },
+  {
+    "id": "rr_m03",
+    "catalogId": "M03",
+    "label": "Several media revenue channels",
+    "definition": "Evidence shows a combination of advertising, subscriptions, production, syndication or licensing.",
+    "boundary": "Nonprofit broadcasting has different funding; do not assume TBN or TCT sells ads.",
+    "instructions": "Assess this fact about the target company's own business: Evidence shows a combination of advertising, subscriptions, production, syndication or licensing. Boundary: Nonprofit broadcasting has different funding; do not assume TBN or TCT sells ads. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "3a90b40d759c7fec9d84f35378d648f1b1b523e03c659f99f079ebd8203957ca",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Broadcasting",
+      "Entertainment"
+    ],
+    "discoveryHypothesis": "Different customers and commercial terms may converge in one finance team.",
+    "legacyTopicOverlaps": [
+      "recurring_revenue",
+      "media_rights"
+    ],
+    "sourcePaths": "production/distribution services, media kits, licensing and creator terms",
+    "publication": "no_event_from_facet_alone",
+    "group": "Media and physical production"
+  },
+  {
+    "id": "rr_m04",
+    "catalogId": "M04",
+    "label": "Royalties or payouts to creators and rights owners",
+    "definition": "Author/artist/creator payouts or royalty administration are explicitly described.",
+    "boundary": "Content ownership alone is not proof of payout obligations.",
+    "instructions": "Assess this fact about the target company's own business: Author/artist/creator payouts or royalty administration are explicitly described. Boundary: Content ownership alone is not proof of payout obligations. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "969c670904dd7bc7b5d500b0ecfcb651134bb19afe9694b4fd45795791b63402",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Media",
+      "Publishing",
+      "Creator platforms"
+    ],
+    "discoveryHypothesis": "Revenue received and amounts owed downstream may require statement-level tracking.",
+    "legacyTopicOverlaps": [
+      "media_rights"
+    ],
+    "sourcePaths": "production/distribution services, media kits, licensing and creator terms",
+    "publication": "no_event_from_facet_alone",
+    "group": "Media and physical production"
+  },
+  {
+    "id": "rr_h01",
+    "catalogId": "H01",
+    "label": "Operates a group of practices, pharmacies or care providers",
+    "definition": "An operating organization explicitly owns or manages multiple care practices, pharmacies or provider businesses; retain the care subtype and stated relationship.",
+    "boundary": "A location, directory listing, franchise or referral partner is not automatically a subsidiary or separately maintained set of books.",
+    "instructions": "Assess this fact about the target company's own business: An operating organization explicitly owns or manages multiple care practices, pharmacies or provider businesses; retain the care subtype and stated relationship. Boundary: A location, directory listing, franchise or referral partner is not automatically a subsidiary or separately maintained set of books. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "9956704c56fb3538f439c09bfed3bb7a59143ccbeec5df928f425f1f81a19239",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Healthcare",
+      "Veterinary"
+    ],
+    "discoveryHypothesis": "Local operations and group financial reporting may need to align.",
+    "legacyTopicOverlaps": [
+      "multi_entity",
+      "multi_location",
+      "acquisition_integration"
+    ],
+    "sourcePaths": "organization/practice/brand pages, care services, products, clinical capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Healthcare and life sciences"
+  },
+  {
+    "id": "rr_h02",
+    "catalogId": "H02",
+    "label": "Combines healthcare products with care delivery",
+    "definition": "Medication, diagnostic products or devices coexist with infusion, testing or other services.",
+    "boundary": "Biotech development without patient services is a separate model.",
+    "instructions": "Assess this fact about the target company's own business: Medication, diagnostic products or devices coexist with infusion, testing or other services. Boundary: Biotech development without patient services is a separate model. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "397e51624811dd37440cdfd9d895ddaa791f661827ba6b873cf1368ed7940315",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Healthcare",
+      "Diagnostics"
+    ],
+    "discoveryHypothesis": "Product and clinical-service activity may have different costs and reporting needs.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "project_delivery"
+    ],
+    "sourcePaths": "organization/practice/brand pages, care services, products, clinical capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Healthcare and life sciences"
+  },
+  {
+    "id": "rr_h03",
+    "catalogId": "H03",
+    "label": "Contract research, testing or life-science support",
+    "definition": "The company provides research/testing/project expertise to external life-science customers.",
+    "boundary": "Developing one's own drug pipeline is not a CRO.",
+    "instructions": "Assess this fact about the target company's own business: The company provides research/testing/project expertise to external life-science customers. Boundary: Developing one's own drug pipeline is not a CRO. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "68627a41aac707a32c49c8f323bb2b8edcd33fbb34483dd5d99978ce972c9fe3",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Life sciences services"
+    ],
+    "discoveryHypothesis": "Specialist people, equipment and customer projects can make delivery economics complex.",
+    "legacyTopicOverlaps": [
+      "project_delivery"
+    ],
+    "sourcePaths": "organization/practice/brand pages, care services, products, clinical capabilities",
+    "publication": "no_event_from_facet_alone",
+    "group": "Healthcare and life sciences"
+  },
+  {
+    "id": "rr_s01",
+    "catalogId": "S01",
+    "label": "Devices or hardware combined with software/connectivity",
+    "definition": "The company supplies devices plus an ongoing platform or connectivity component.",
+    "boundary": "Techdinamics/ReadySet/Pedigree customer workflows must not be transferred to the seller.",
+    "instructions": "Assess this fact about the target company's own business: The company supplies devices plus an ongoing platform or connectivity component. Boundary: Techdinamics/ReadySet/Pedigree customer workflows must not be transferred to the seller. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "eb08b819dd954fade111ec83dba82de920363e7365f175b8bbd3f10b896bc2be",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Software",
+      "IoT",
+      "Telecom"
+    ],
+    "discoveryHypothesis": "Shipment, activation and service/renewal events may differ.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "recurring_revenue"
+    ],
+    "sourcePaths": "product/platform pages, pricing, human-service descriptions, payout terms",
+    "publication": "no_event_from_facet_alone",
+    "group": "Platforms and devices"
+  },
+  {
+    "id": "rr_s02",
+    "catalogId": "S02",
+    "label": "Expert or managed work behind an AI platform",
+    "definition": "Human annotation, analysis, domain specialists or managed delivery are part of the actual offer.",
+    "boundary": "AI marketing or generic support does not establish a human-service revenue stream.",
+    "instructions": "Assess this fact about the target company's own business: Human annotation, analysis, domain specialists or managed delivery are part of the actual offer. Boundary: AI marketing or generic support does not establish a human-service revenue stream. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "7d7047150b70c2501e884cd7263f15efb19fc68a0b88e1aa558d44e80f86facf",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "AI",
+      "Technology services"
+    ],
+    "discoveryHypothesis": "Labor capacity and software usage can coexist in the cost model.",
+    "legacyTopicOverlaps": [
+      "workforce_billing",
+      "project_delivery"
+    ],
+    "sourcePaths": "product/platform pages, pricing, human-service descriptions, payout terms",
+    "publication": "no_event_from_facet_alone",
+    "group": "Platforms and devices"
+  },
+  {
+    "id": "rr_s03",
+    "catalogId": "S03",
+    "label": "Customer billing paired with provider or affiliate payouts",
+    "definition": "The platform explicitly coordinates payments to providers, vendors, creators or affiliates.",
+    "boundary": "Gross-versus-net treatment and custody of funds cannot be inferred.",
+    "instructions": "Assess this fact about the target company's own business: The platform explicitly coordinates payments to providers, vendors, creators or affiliates. Boundary: Gross-versus-net treatment and custody of funds cannot be inferred. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "2bd7927ecaacd3985825f36de0c0202de50844d15b0c632d51a193d4e8fdcc7d",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Platforms",
+      "Commerce",
+      "Service networks"
+    ],
+    "discoveryHypothesis": "Transaction fees, payouts and customer billing may require reconciliation.",
+    "legacyTopicOverlaps": [
+      "subcontractor_costs",
+      "cash_working_capital",
+      "media_rights"
+    ],
+    "sourcePaths": "product/platform pages, pricing, human-service descriptions, payout terms",
+    "publication": "no_event_from_facet_alone",
+    "group": "Platforms and devices"
+  },
+  {
+    "id": "rr_r01",
+    "catalogId": "R01",
+    "label": "Funded R&D moving toward commercial operations",
+    "definition": "A research company has an evidenced development stage and dated financing, trials, partnerships or commercialization milestones.",
+    "boundary": "Funding alone is not buying intent; stage and timing must be sourced.",
+    "instructions": "Assess this fact about the target company's own business: A research company has an evidenced development stage and dated financing, trials, partnerships or commercialization milestones. Boundary: Funding alone is not buying intent; stage and timing must be sourced. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering. An event or milestone qualifies only when its date and the target's own role are explicit. Preserve historical dates; do not infer present urgency from an old event or from collection time.",
+    "kind": "dated",
+    "definitionVersion": "1",
+    "definitionHash": "37c4e15562fa07fd58d76b7386ceff82c6ee5896a92ce4de88a91a4a360384fa",
+    "positiveAnswer": "supported",
+    "priority": "Exploratory",
+    "industries": [
+      "Biotech",
+      "Deep technology"
+    ],
+    "discoveryHypothesis": "Program spending, entities and reporting can matter before conventional commercial scale.",
+    "legacyTopicOverlaps": [
+      "investor_reporting",
+      "financial_controls"
+    ],
+    "sourcePaths": "product channels, manufacturing partners, milestone press releases, pipeline",
+    "publication": "no_event_from_facet_alone",
+    "group": "Dated changes"
+  },
+  {
+    "id": "rr_r02",
+    "catalogId": "R02",
+    "label": "Physical products sold through multiple channels",
+    "definition": "The business sells tangible products through more than one of wholesale, ecommerce, dealers or direct retail.",
+    "boundary": "International sales are not proof of international subsidiaries.",
+    "instructions": "Assess this fact about the target company's own business: The business sells tangible products through more than one of wholesale, ecommerce, dealers or direct retail. Boundary: International sales are not proof of international subsidiaries. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "00d919e31e0ccf956041ff00e01f2c7e809ee8d766c08ff4a00459a1a2d3977c",
+    "positiveAnswer": "supported",
+    "priority": "Sector facet",
+    "industries": [
+      "Distribution",
+      "Retail",
+      "Promotional products"
+    ],
+    "discoveryHypothesis": "Inventory and orders can span channels with different terms.",
+    "legacyTopicOverlaps": [
+      "inventory"
+    ],
+    "sourcePaths": "product channels, manufacturing partners, milestone press releases, pipeline",
+    "publication": "no_event_from_facet_alone",
+    "group": "Products and commercialization"
+  },
+  {
+    "id": "rr_r03",
+    "catalogId": "R03",
+    "label": "Own products with outside manufacturing or fulfillment partners",
+    "definition": "Owned/branded products are supplied using explicitly described tolling, manufacturing or fulfillment partners.",
+    "boundary": "Supplier locations are not automatically company-owned sites.",
+    "instructions": "Assess this fact about the target company's own business: Owned/branded products are supplied using explicitly described tolling, manufacturing or fulfillment partners. Boundary: Supplier locations are not automatically company-owned sites. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "18b5ce9481b57eefdb5f2f94627ab1b4de60c6f6020a309e1c81cd6820940371",
+    "positiveAnswer": "supported",
+    "priority": "Exploratory",
+    "industries": [
+      "Products and services",
+      "Promotional goods"
+    ],
+    "discoveryHypothesis": "Offsite stock, production and delivered cost can become useful research topics.",
+    "legacyTopicOverlaps": [
+      "inventory",
+      "subcontractor_costs"
+    ],
+    "sourcePaths": "product channels, manufacturing partners, milestone press releases, pipeline",
+    "publication": "no_event_from_facet_alone",
+    "group": "Products and commercialization"
+  },
+  {
+    "id": "rr_n01",
+    "catalogId": "N01",
+    "label": "Operates publicly funded or grant-supported programs",
+    "definition": "Published funding or program materials identify public, philanthropic or grant support for the organization or an exact program.",
+    "boundary": "A nonprofit label or research partnership alone does not prove grant revenue, restricted funds or grant-accounting complexity.",
+    "instructions": "Assess this fact about the target company's own business: Published funding or program materials identify public, philanthropic or grant support for the organization or an exact program. Boundary: A nonprofit label or research partnership alone does not prove grant revenue, restricted funds or grant-accounting complexity. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "7a50ff962ff3278354da6a009c9efe3bd7a69fb4e02373673bed57d4e25f8a3f",
+    "positiveAnswer": "supported",
+    "priority": "Exploratory",
+    "industries": [
+      "Nonprofits",
+      "Research organizations"
+    ],
+    "discoveryHypothesis": "Fund/program reporting and restricted funding may matter, when restrictions are explicitly supported.",
+    "legacyTopicOverlaps": [
+      "government_work",
+      "investor_reporting"
+    ],
+    "sourcePaths": "program/funding reports, affiliate/member services",
+    "publication": "no_event_from_facet_alone",
+    "group": "Members and funded programs"
+  },
+  {
+    "id": "rr_n02",
+    "catalogId": "N02",
+    "label": "Shared services for member organizations or a company family",
+    "definition": "A central organization explicitly delivers support to affiliated members/entities.",
+    "boundary": "Association membership is not an ownership relationship.",
+    "instructions": "Assess this fact about the target company's own business: A central organization explicitly delivers support to affiliated members/entities. Boundary: Association membership is not an ownership relationship. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering.",
+    "kind": "stable",
+    "definitionVersion": "1",
+    "definitionHash": "1578b572fa9104610eae6d05cc53f7ddcb7ef911421848f83450e8cb510e693e",
+    "positiveAnswer": "supported",
+    "priority": "Exploratory",
+    "industries": [
+      "Associations",
+      "Financial services",
+      "Shared services"
+    ],
+    "discoveryHypothesis": "Central costs and separate organizational reporting may need allocation.",
+    "legacyTopicOverlaps": [
+      "multi_entity"
+    ],
+    "sourcePaths": "program/funding reports, affiliate/member services",
+    "publication": "no_event_from_facet_alone",
+    "group": "Members and funded programs"
+  },
+  {
+    "id": "rr_o01",
+    "catalogId": "O01",
+    "label": "Documented acquisition integration",
+    "definition": "A dated acquisition or combination creates named operating businesses.",
+    "boundary": "PE investment alone is not an acquisition-integration project.",
+    "instructions": "Assess this fact about the target company's own business: A dated acquisition or combination creates named operating businesses. Boundary: PE investment alone is not an acquisition-integration project. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering. An event or milestone qualifies only when its date and the target's own role are explicit. Preserve historical dates; do not infer present urgency from an old event or from collection time.",
+    "kind": "dated",
+    "definitionVersion": "1",
+    "definitionHash": "37ae6baf83583302336d8d44cbcd96f5b9d3ad298f2f651b71a9ad8887192bfe",
+    "positiveAnswer": "supported",
+    "priority": "Existing overlay",
+    "industries": [
+      "All industries"
+    ],
+    "discoveryHypothesis": "Useful timing context for a model-fit prospect.",
+    "legacyTopicOverlaps": [
+      "acquisition_integration",
+      "multi_entity"
+    ],
+    "sourcePaths": "dated own announcements, explicit current systems disclosures, authorized CRM notes",
+    "publication": "no_event_from_facet_alone",
+    "group": "Dated changes"
+  },
+  {
+    "id": "rr_o02",
+    "catalogId": "O02",
+    "label": "New standalone entity or carve-out",
+    "definition": "A spin-out, carve-out or newly independent finance operation is documented.",
+    "boundary": "A new product launch or office does not establish a carve-out.",
+    "instructions": "Assess this fact about the target company's own business: A spin-out, carve-out or newly independent finance operation is documented. Boundary: A new product launch or office does not establish a carve-out. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering. An event or milestone qualifies only when its date and the target's own role are explicit. Preserve historical dates; do not infer present urgency from an old event or from collection time.",
+    "kind": "dated",
+    "definitionVersion": "1",
+    "definitionHash": "e91cc41362a6101f9bd706a1b4026450a95ee6930337675bde2ec45b62f6bc9a",
+    "positiveAnswer": "supported",
+    "priority": "Existing overlay",
+    "industries": [
+      "All industries"
+    ],
+    "discoveryHypothesis": "Standalone books and systems can create a concrete transition.",
+    "legacyTopicOverlaps": [
+      "multi_entity",
+      "systems_project",
+      "investor_reporting"
+    ],
+    "sourcePaths": "dated own announcements, explicit current systems disclosures, authorized CRM notes",
+    "publication": "no_event_from_facet_alone",
+    "group": "Dated changes"
+  },
+  {
+    "id": "rr_o03",
+    "catalogId": "O03",
+    "label": "Known finance-system deadline or replacement",
+    "definition": "An exact source states the company's system and an upgrade, sunset, contract or replacement event.",
+    "boundary": "Vendor-wide sunset dates do not prove a prospect uses that vendor.",
+    "instructions": "Assess this fact about the target company's own business: An exact source states the company's system and an upgrade, sunset, contract or replacement event. Boundary: Vendor-wide sunset dates do not prove a prospect uses that vendor. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering. An event or milestone qualifies only when its date and the target's own role are explicit. Preserve historical dates; do not infer present urgency from an old event or from collection time.",
+    "kind": "dated",
+    "definitionVersion": "1",
+    "definitionHash": "f0579f2bcb927130751cec233cb6efc858ee051f248361869aa2f48572ae0cba",
+    "positiveAnswer": "supported",
+    "priority": "Existing overlay",
+    "industries": [
+      "All industries"
+    ],
+    "discoveryHypothesis": "Turns business-model fit into a possible timing opportunity.",
+    "legacyTopicOverlaps": [
+      "systems_project",
+      "finance_leadership"
+    ],
+    "sourcePaths": "dated own announcements, explicit current systems disclosures, authorized CRM notes",
+    "publication": "no_event_from_facet_alone",
+    "group": "Dated changes"
+  },
+  {
+    "id": "rr_o04",
+    "catalogId": "O04",
+    "label": "Keep specialized operations; modernize finance",
+    "definition": "Company-specific evidence supports retaining a vertical operating platform while adding/replacing finance.",
+    "boundary": "A vertical business model alone does not establish current system architecture.",
+    "instructions": "Assess this fact about the target company's own business: Company-specific evidence supports retaining a vertical operating platform while adding/replacing finance. Boundary: A vertical business model alone does not establish current system architecture. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering. Establish the named target's actual finance/operating-system architecture or change plan only from explicit public evidence. Multiple brands, acquisitions, scale, job titles and technology-detection clues alone are insufficient.",
+    "kind": "systems_context",
+    "definitionVersion": "1",
+    "definitionHash": "d8d425c7a2a9e4211f521a0806708504eda5c48a993f1d5752f663069de5342a",
+    "positiveAnswer": "supported",
+    "priority": "Research angle",
+    "industries": [
+      "All industries"
+    ],
+    "discoveryHypothesis": "A suitable account may buy without replacing its TMS, practice or operational software.",
+    "legacyTopicOverlaps": [
+      "systems_project"
+    ],
+    "sourcePaths": "dated own announcements, explicit current systems disclosures, authorized CRM notes",
+    "publication": "no_event_from_facet_alone",
+    "group": "Explicit systems context"
+  },
+  {
+    "id": "rr_o05",
+    "catalogId": "O05",
+    "label": "Several finance systems or separate books",
+    "definition": "Named current systems, entity books or disconnected instances are explicitly documented.",
+    "boundary": "Public multi-location status alone is not proof of fragmented accounting.",
+    "instructions": "Assess this fact about the target company's own business: Named current systems, entity books or disconnected instances are explicitly documented. Boundary: Public multi-location status alone is not proof of fragmented accounting. The customer's, supplier's, partner's or acquired brand's activity is not automatically the target's activity. Missing evidence is insufficient evidence, not a negative fact. Require the complete stated conjunction; unrelated components do not establish a bundled offering. Establish the named target's actual finance/operating-system architecture or change plan only from explicit public evidence. Multiple brands, acquisitions, scale, job titles and technology-detection clues alone are insufficient.",
+    "kind": "systems_context",
+    "definitionVersion": "1",
+    "definitionHash": "d239ed919df78a043ddd66c9fe142595336fdf4455af543e078dfc31f16be3b7",
+    "positiveAnswer": "supported",
+    "priority": "Existing overlay",
+    "industries": [
+      "All industries"
+    ],
+    "discoveryHypothesis": "Consolidation and reporting are sensible discovery hypotheses.",
+    "legacyTopicOverlaps": [
+      "multi_entity",
+      "close_reporting"
+    ],
+    "sourcePaths": "dated own announcements, explicit current systems disclosures, authorized CRM notes",
+    "publication": "no_event_from_facet_alone",
+    "group": "Explicit systems context"
+  }
+] as const;
+
+export const OPERATING_GUIDE_DATA = [
+  {
+    "id": "G01",
+    "label": "Freight brokerage and forwarding",
+    "guidance": "Carrier network, shipper verticals, cross-border/customs services, specialized freight, documented asset-light model",
+    "boundary": "do not infer non-asset ownership from brokerage language alone",
+    "primaryFacetIds": [
+      "rr_t01",
+      "rr_t04",
+      "rr_c04",
+      "rr_c09",
+      "rr_s03",
+      "rr_o04"
+    ],
+    "sourcePaths": [
+      "services/freight",
+      "carrier network",
+      "cross-border/customs",
+      "shipper industries",
+      "about asset model"
+    ],
+    "currentLane": "TRANSPORT",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G02",
+    "label": "Fleet and dedicated transportation",
+    "guidance": "Dedicated customer programs, fleet plus brokerage, contractor drivers, specialized operating systems",
+    "boundary": "dedicated programs are a narrow hypothesis, not a cohort-wide conclusion",
+    "primaryFacetIds": [
+      "rr_t02",
+      "rr_t03",
+      "rr_t04",
+      "rr_c04",
+      "rr_c08",
+      "rr_s03",
+      "rr_o04"
+    ],
+    "sourcePaths": [
+      "fleet/equipment",
+      "dedicated transportation",
+      "brokerage",
+      "driver/contractor programs"
+    ],
+    "currentLane": "TRANSPORT",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G03",
+    "label": "Last-mile and local delivery",
+    "guidance": "Partner fleets, sorting/depots, provider payout process, ecommerce delivery",
+    "boundary": "distinguish delivery operator from software provider",
+    "primaryFacetIds": [
+      "rr_t05",
+      "rr_c04",
+      "rr_c05",
+      "rr_c09",
+      "rr_s03",
+      "rr_o04"
+    ],
+    "sourcePaths": [
+      "delivery network",
+      "service areas/depots",
+      "delivery partner terms",
+      "ecommerce delivery services"
+    ],
+    "currentLane": "TRANSPORT",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G04",
+    "label": "Warehousing, fulfillment and ecommerce operations",
+    "guidance": "Storage, pick/pack, returns, client stores, merchant-of-record/product ownership",
+    "boundary": "physical role matters",
+    "primaryFacetIds": [
+      "rr_c07",
+      "rr_c04",
+      "rr_c05",
+      "rr_c09",
+      "rr_s03",
+      "rr_o04"
+    ],
+    "sourcePaths": [
+      "warehousing/fulfillment",
+      "returns",
+      "client webstores",
+      "terms/merchant of record",
+      "facilities"
+    ],
+    "currentLane": "TRANSPORT or OPERATIONAL_SUPPORT",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G05",
+    "label": "Cleaning, landscaping and facilities",
+    "guidance": "Recurring site service plus projects/callouts, national accounts, subcontractor network",
+    "boundary": "Verify the target's own delivery, asset and transaction role; do not infer finance pain from its industry.",
+    "primaryFacetIds": [
+      "rr_c05",
+      "rr_f01",
+      "rr_f02",
+      "rr_f03",
+      "rr_c04",
+      "rr_c02",
+      "rr_c06"
+    ],
+    "sourcePaths": [
+      "maintenance services",
+      "emergency/callout",
+      "national accounts",
+      "vendor/subcontractor network",
+      "client-site case studies"
+    ],
+    "currentLane": "Facilities Management & Commercial Cleaning",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G06",
+    "label": "Fire, safety and physical security",
+    "guidance": "Installations plus inspection, monitoring, maintenance; acquisition platforms",
+    "boundary": "Inspect Point sells software to this industry",
+    "primaryFacetIds": [
+      "rr_c01",
+      "rr_f01",
+      "rr_f02",
+      "rr_f03",
+      "rr_c05",
+      "rr_c06",
+      "rr_o01"
+    ],
+    "sourcePaths": [
+      "equipment/system brands",
+      "installation",
+      "inspection/monitoring",
+      "maintenance",
+      "acquisitions"
+    ],
+    "currentLane": "OPERATIONAL_SUPPORT or GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G07",
+    "label": "Industrial equipment and field service",
+    "guidance": "Parts/equipment sales, scheduled repairs, documentation, emergency jobs",
+    "boundary": "Verify the target's own delivery, asset and transaction role; do not infer finance pain from its industry.",
+    "primaryFacetIds": [
+      "rr_c01",
+      "rr_c08",
+      "rr_f01",
+      "rr_f02",
+      "rr_f03",
+      "rr_c05"
+    ],
+    "sourcePaths": [
+      "equipment/parts",
+      "rental",
+      "repair/field service",
+      "inspection documentation",
+      "emergency service"
+    ],
+    "currentLane": "OPERATIONAL_SUPPORT or GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G08",
+    "label": "Civil, environmental and infrastructure services",
+    "guidance": "Field crews, specialist equipment, compliance deliverables, project/subcontract costs",
+    "boundary": "finance pain remains unverified on prospects",
+    "primaryFacetIds": [
+      "rr_f02",
+      "rr_f03",
+      "rr_c05",
+      "rr_c08",
+      "rr_c12",
+      "rr_c04"
+    ],
+    "sourcePaths": [
+      "project case studies",
+      "field capabilities",
+      "equipment",
+      "compliance deliverables",
+      "subcontractor programs"
+    ],
+    "currentLane": "OPERATIONAL_SUPPORT or ADVISORY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G09",
+    "label": "Signage and fabrication",
+    "guidance": "Design, fabrication, installation, maintenance across client sites",
+    "boundary": "retain actual manufacturing versus outsourced production",
+    "primaryFacetIds": [
+      "rr_c01",
+      "rr_f03",
+      "rr_c05",
+      "rr_r02",
+      "rr_r03",
+      "rr_f01"
+    ],
+    "sourcePaths": [
+      "design/fabrication",
+      "installation",
+      "maintenance",
+      "production facilities",
+      "national account programs"
+    ],
+    "currentLane": "GENERAL or AGENCY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G10",
+    "label": "IT VARs, MSPs and AV integrators",
+    "guidance": "Procurement/resale, deployment, managed support, vendor/channel relationships",
+    "boundary": "especially strong business-services fit",
+    "primaryFacetIds": [
+      "rr_i01",
+      "rr_c01",
+      "rr_c02",
+      "rr_i02",
+      "rr_c10",
+      "rr_i04"
+    ],
+    "sourcePaths": [
+      "vendor partners",
+      "hardware/software procurement",
+      "deployment",
+      "managed services",
+      "government contracts"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G11",
+    "label": "Software implementation and technical consulting",
+    "guidance": "Named vendor practice, migration/projects, managed support, specialized workforce",
+    "boundary": "Verify the target's own delivery, asset and transaction role; do not infer finance pain from its industry.",
+    "primaryFacetIds": [
+      "rr_i02",
+      "rr_c02",
+      "rr_p01",
+      "rr_c03",
+      "rr_c10",
+      "rr_c05"
+    ],
+    "sourcePaths": [
+      "named vendor practices",
+      "implementation/migration",
+      "support/managed services",
+      "case studies"
+    ],
+    "currentLane": "Management Consulting or GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G12",
+    "label": "Cybersecurity",
+    "guidance": "Expert testing/response plus managed services or proprietary platform",
+    "boundary": "security software alone is a different model",
+    "primaryFacetIds": [
+      "rr_c12",
+      "rr_c02",
+      "rr_c03",
+      "rr_i02",
+      "rr_i04",
+      "rr_s02"
+    ],
+    "sourcePaths": [
+      "testing/response services",
+      "managed security",
+      "platform offering",
+      "government capabilities"
+    ],
+    "currentLane": "GENERAL or ADVISORY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G13",
+    "label": "Government technology contractors",
+    "guidance": "Own contract identifiers, equipment + services, public procurement channels",
+    "boundary": "serving a contractor does not establish own federal awards",
+    "primaryFacetIds": [
+      "rr_i04",
+      "rr_c01",
+      "rr_f03",
+      "rr_c12",
+      "rr_c02",
+      "rr_c10"
+    ],
+    "sourcePaths": [
+      "own contract vehicles/identifiers",
+      "equipment/products",
+      "technical services",
+      "government case studies"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G14",
+    "label": "Telecom and connectivity",
+    "guidance": "Network operations, equipment, installation, recurring connections, wholesale/reseller channels",
+    "boundary": "distinguish operator from vendor",
+    "primaryFacetIds": [
+      "rr_c01",
+      "rr_c02",
+      "rr_c09",
+      "rr_c10",
+      "rr_s01",
+      "rr_i03"
+    ],
+    "sourcePaths": [
+      "network coverage",
+      "connectivity plans/pricing",
+      "equipment/installations",
+      "wholesale/reseller"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G15",
+    "label": "Hosting and data centers",
+    "guidance": "Physical capacity, colocated equipment, managed cloud/security, deployment projects",
+    "boundary": "infrastructure ownership must be explicit",
+    "primaryFacetIds": [
+      "rr_i03",
+      "rr_c02",
+      "rr_c09",
+      "rr_c01",
+      "rr_f03",
+      "rr_c12"
+    ],
+    "sourcePaths": [
+      "data centers/facilities",
+      "colocation",
+      "managed cloud/security",
+      "deployment",
+      "ownership descriptions"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G16",
+    "label": "Staffing, interpreting and workforce services",
+    "guidance": "Assignments, payroll responsibility, contractor/employee distinction, remote/in-person delivery",
+    "boundary": "Verify the target's own delivery, asset and transaction role; do not infer finance pain from its industry.",
+    "primaryFacetIds": [
+      "rr_p01",
+      "rr_c03",
+      "rr_c04",
+      "rr_c05",
+      "rr_c09",
+      "rr_s03"
+    ],
+    "sourcePaths": [
+      "staffing/placement",
+      "specialties",
+      "assignment delivery",
+      "worker/employment terms",
+      "platform",
+      "payroll responsibility"
+    ],
+    "currentLane": "HR & Staffing or Translation & Linguistic Services",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G17",
+    "label": "Accounting, management and specialist advisory",
+    "guidance": "Projects + continuing services; specialist practice tools; member/client reporting",
+    "boundary": "do not assume hourly billing",
+    "primaryFacetIds": [
+      "rr_c02",
+      "rr_p01",
+      "rr_c03",
+      "rr_n02",
+      "rr_c06",
+      "rr_c12"
+    ],
+    "sourcePaths": [
+      "practice/service pages",
+      "ongoing service engagements",
+      "client/member programs",
+      "delivery methodology"
+    ],
+    "currentLane": "Management Consulting or ADVISORY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G18",
+    "label": "Legal, investigation and risk services",
+    "guidance": "Cases, investigations, expert reports, monitoring subscriptions, software + analysts",
+    "boundary": "similarly named law firms require identity care",
+    "primaryFacetIds": [
+      "rr_p02",
+      "rr_c12",
+      "rr_c03",
+      "rr_c11",
+      "rr_c02",
+      "rr_p01"
+    ],
+    "sourcePaths": [
+      "investigations/cases",
+      "legal/expert reports",
+      "monitoring services",
+      "platform/data",
+      "company identity"
+    ],
+    "currentLane": "Law Firms & Legal Services or ADVISORY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G19",
+    "label": "Market research and information services",
+    "guidance": "Proprietary data, panels/research projects, subscriptions, memberships and advisory",
+    "boundary": "free thought leadership is insufficient",
+    "primaryFacetIds": [
+      "rr_p03",
+      "rr_c11",
+      "rr_c02",
+      "rr_c03",
+      "rr_c09",
+      "rr_p01"
+    ],
+    "sourcePaths": [
+      "data/research products",
+      "membership/subscription",
+      "advisory/community",
+      "methodology",
+      "pricing"
+    ],
+    "currentLane": "Information & Document Management or ADVISORY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G20",
+    "label": "Marketing, creative and PR agencies",
+    "guidance": "Production + strategy + media, retainers/projects where explicit, vertical specialization",
+    "boundary": "an agency serving healthcare is not a clinic",
+    "primaryFacetIds": [
+      "rr_m01",
+      "rr_c02",
+      "rr_c05",
+      "rr_c04",
+      "rr_c06",
+      "rr_s03"
+    ],
+    "sourcePaths": [
+      "production/strategy/media services",
+      "campaign case studies",
+      "staffing",
+      "vertical practice pages"
+    ],
+    "currentLane": "AGENCY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G21",
+    "label": "Promotional products and print services",
+    "guidance": "Custom production/sourcing, client webstores, warehousing, affiliate back office",
+    "boundary": "Verify the target's own delivery, asset and transaction role; do not infer finance pain from its industry.",
+    "primaryFacetIds": [
+      "rr_c07",
+      "rr_r02",
+      "rr_r03",
+      "rr_n02",
+      "rr_c10",
+      "rr_f03"
+    ],
+    "sourcePaths": [
+      "product catalog",
+      "custom sourcing/production",
+      "client stores",
+      "warehousing",
+      "affiliate services"
+    ],
+    "currentLane": "AGENCY or GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G22",
+    "label": "Events, catering and experiences",
+    "guidance": "Equipment rental, staffing, physical production, venue/program operations",
+    "boundary": "do not generalize from one catering win",
+    "primaryFacetIds": [
+      "rr_m01",
+      "rr_c08",
+      "rr_p01",
+      "rr_f03",
+      "rr_c04",
+      "rr_c05"
+    ],
+    "sourcePaths": [
+      "equipment rentals",
+      "production",
+      "staffing",
+      "venues/programs",
+      "catering packages"
+    ],
+    "currentLane": "GENERAL or AGENCY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G23",
+    "label": "Publishing and physical media",
+    "guidance": "Catalog inventory, distribution, royalties, multiple imprints",
+    "boundary": "an imprint is not automatically a legal entity",
+    "primaryFacetIds": [
+      "rr_m02",
+      "rr_c11",
+      "rr_m04",
+      "rr_r02",
+      "rr_r03",
+      "rr_c06"
+    ],
+    "sourcePaths": [
+      "catalog/imprints",
+      "physical distribution",
+      "rights/royalties",
+      "publisher services",
+      "channels"
+    ],
+    "currentLane": "MEDIA",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G24",
+    "label": "Broadcasting, film, music and creator businesses",
+    "guidance": "Advertising, subscriptions, licensing, production, rights-owner payouts",
+    "boundary": "retain channel-specific model",
+    "primaryFacetIds": [
+      "rr_m03",
+      "rr_m04",
+      "rr_c11",
+      "rr_m01",
+      "rr_c10",
+      "rr_c09"
+    ],
+    "sourcePaths": [
+      "advertising/subscription/licensing",
+      "production",
+      "distribution",
+      "creator/rights owner terms"
+    ],
+    "currentLane": "MEDIA",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G25",
+    "label": "Franchisors and distributed brand networks",
+    "guidance": "Franchise ownership versus corporate locations, brand support/shared services",
+    "boundary": "do not assume every location is company-owned",
+    "primaryFacetIds": [
+      "rr_c06",
+      "rr_n02",
+      "rr_c10",
+      "rr_c05",
+      "rr_s03",
+      "rr_c11"
+    ],
+    "sourcePaths": [
+      "franchise model",
+      "brand portfolio",
+      "corporate locations",
+      "franchisee services",
+      "royalty disclosures"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G26",
+    "label": "Training, coaching and membership",
+    "guidance": "Courses/programs, subscriptions, instructor/partner delivery, events",
+    "boundary": "exact payment/renewal terms need evidence",
+    "primaryFacetIds": [
+      "rr_p03",
+      "rr_c02",
+      "rr_c03",
+      "rr_c11",
+      "rr_c04",
+      "rr_s03"
+    ],
+    "sourcePaths": [
+      "courses/programs",
+      "membership/pricing",
+      "instructors/partners",
+      "events",
+      "renewal terms"
+    ],
+    "currentLane": "GENERAL or ADVISORY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G27",
+    "label": "Healthcare practices, pharmacies and care groups",
+    "guidance": "Practice rollups, local brands, central services, care plus products",
+    "boundary": "Verify the target's own delivery, asset and transaction role; do not infer finance pain from its industry.",
+    "primaryFacetIds": [
+      "rr_h01",
+      "rr_h02",
+      "rr_c06",
+      "rr_n02",
+      "rr_o01",
+      "rr_o05"
+    ],
+    "sourcePaths": [
+      "practice/pharmacy portfolio",
+      "central services",
+      "care services",
+      "products",
+      "dated acquisitions"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G28",
+    "label": "Clinical research and lab support",
+    "guidance": "Contract studies, sample storage, specialist testing, documentation, instrument services",
+    "boundary": "keep biotech product developers separate",
+    "primaryFacetIds": [
+      "rr_h03",
+      "rr_c12",
+      "rr_p01",
+      "rr_f02",
+      "rr_c08",
+      "rr_c01"
+    ],
+    "sourcePaths": [
+      "contract studies",
+      "testing",
+      "sample storage",
+      "instrument services",
+      "documentation"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G29",
+    "label": "Biotech, diagnostics and commercialization",
+    "guidance": "Funded development, clinical stage, manufacturing/outsourcing and commercialization milestones",
+    "boundary": "funding alone is not ERP intent",
+    "primaryFacetIds": [
+      "rr_r01",
+      "rr_r03",
+      "rr_r02",
+      "rr_h02",
+      "rr_h03",
+      "rr_c11"
+    ],
+    "sourcePaths": [
+      "pipeline/development stage",
+      "dated clinical/commercial milestones",
+      "manufacturing partners",
+      "product launches",
+      "dated funding"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G30",
+    "label": "Financial services, trading and insurance",
+    "guidance": "Advisory practices, acquisition groups, underwriting platforms, settlement and shared/member services",
+    "boundary": "these are distinct models, and the energy-trading example alone does not establish a recurring ICP",
+    "primaryFacetIds": [
+      "rr_c06",
+      "rr_n02",
+      "rr_c09",
+      "rr_c03",
+      "rr_s03",
+      "rr_c11",
+      "rr_o01"
+    ],
+    "sourcePaths": [
+      "business/practice descriptions",
+      "member/shared services",
+      "platform/underwriting",
+      "settlement terms",
+      "dated acquisitions"
+    ],
+    "currentLane": "GENERAL or ADVISORY",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G31",
+    "label": "Software, AI and developer infrastructure",
+    "guidance": "Actual charging unit, channel model, implementation services, expert labor, embedded IP",
+    "boundary": "vertical customer language does not describe vendor operations",
+    "primaryFacetIds": [
+      "rr_c09",
+      "rr_c10",
+      "rr_s02",
+      "rr_s03",
+      "rr_c02",
+      "rr_c11",
+      "rr_c03"
+    ],
+    "sourcePaths": [
+      "pricing/charging unit",
+      "reseller/white-label",
+      "implementation",
+      "managed/expert services",
+      "provider/affiliate payout terms"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G32",
+    "label": "Devices and software-enabled products",
+    "guidance": "Own hardware/device offering with software/connectivity, installation and service",
+    "boundary": "software tracking others' assets is different",
+    "primaryFacetIds": [
+      "rr_s01",
+      "rr_c01",
+      "rr_c09",
+      "rr_r02",
+      "rr_r03",
+      "rr_c10"
+    ],
+    "sourcePaths": [
+      "device/product catalog",
+      "software/connectivity",
+      "installation",
+      "support/service",
+      "manufacturing partners"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G33",
+    "label": "Industrial, electronics and consumer products",
+    "guidance": "Owned products, contract manufacture, dealer/direct channels, service attachment",
+    "boundary": "outside core territory may be ineligible",
+    "primaryFacetIds": [
+      "rr_r02",
+      "rr_r03",
+      "rr_c01",
+      "rr_c08",
+      "rr_c10",
+      "rr_f03"
+    ],
+    "sourcePaths": [
+      "product catalog",
+      "dealer/direct channels",
+      "contract manufacture",
+      "service/repair",
+      "fulfillment"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G34",
+    "label": "Agriculture, environmental technology and energy",
+    "guidance": "Products plus field/advisory services, R&D versus commercialization, physical infrastructure",
+    "boundary": "too varied for one strong ICP",
+    "primaryFacetIds": [
+      "rr_r01",
+      "rr_r02",
+      "rr_r03",
+      "rr_c01",
+      "rr_f03",
+      "rr_c12"
+    ],
+    "sourcePaths": [
+      "products",
+      "field/advisory services",
+      "physical infrastructure",
+      "dated development/commercial milestones",
+      "manufacturing partners"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  },
+  {
+    "id": "G35",
+    "label": "Associations, nonprofits and funded programs",
+    "guidance": "Member/affiliate services, program delivery, documented funders/grants",
+    "boundary": "nonprofit status alone does not establish grant restrictions",
+    "primaryFacetIds": [
+      "rr_n01",
+      "rr_n02",
+      "rr_p03",
+      "rr_c02",
+      "rr_c04",
+      "rr_c06"
+    ],
+    "sourcePaths": [
+      "program pages",
+      "member services",
+      "funders/grants",
+      "annual reports",
+      "affiliate structure"
+    ],
+    "currentLane": "GENERAL",
+    "territoryEffect": "none",
+    "assignmentRule": "Research lens only. Use explicit business description; broad industry labels and customer verticals are not proof of the target's model."
+  }
+] as const;
+
+export const OPERATING_LESSON_DATA = [
+  {
+    "id": "L01",
+    "label": "Physical products and services coexist",
+    "guidance": "Distinguish equipment/product sales, installation/project delivery and continuing service. Ordinary technical support does not establish a managed-service business.",
+    "hypothesis": "Product, project and service costs may require a shared view; the target's pain remains unknown.",
+    "facetIds": [
+      "rr_c01",
+      "rr_c07",
+      "rr_c08"
+    ]
+  },
+  {
+    "id": "L02",
+    "label": "Delivery scale can exceed employee count",
+    "guidance": "Identify who sells the job, performs it, invoices the customer and pays outside providers. A directory/referral network alone does not prove delivery or payout obligations.",
+    "hypothesis": "Provider costs and customer work may need reconciliation; contractor status must be established separately.",
+    "facetIds": [
+      "rr_c04",
+      "rr_p01",
+      "rr_s03"
+    ]
+  },
+  {
+    "id": "L03",
+    "label": "Customer sites differ from company offices",
+    "guidance": "Treat multi-site client service as distinct from own branches. Service territory alone does not establish hundreds of client sites.",
+    "hypothesis": "Work and cost tracking by client, site and job is a hypothesis, not established pain.",
+    "facetIds": [
+      "rr_c05"
+    ]
+  },
+  {
+    "id": "L04",
+    "label": "Software can deliver human services",
+    "guidance": "Separate software sold to service providers from a platform through which the target performs or manages work; generic onboarding/support is insufficient.",
+    "hypothesis": "Software and expert labor may need a common financial view.",
+    "facetIds": [
+      "rr_c03",
+      "rr_s02"
+    ]
+  },
+  {
+    "id": "L05",
+    "label": "Specialized operations may remain in place",
+    "guidance": "Use explicit evidence for actual operational and finance tools; business model alone does not prove an installed system, replacement or broken integration.",
+    "hypothesis": "Investigate the operations-to-finance handoff without assuming the niche tool must be replaced.",
+    "facetIds": [
+      "rr_o04",
+      "rr_o05"
+    ]
+  },
+  {
+    "id": "L06",
+    "label": "Brands and units matter beyond ownership labels",
+    "guidance": "Preserve brand, subsidiary, franchise, partner, acquisition target and shared-service relationships as different facts. PE backing is not a substitute.",
+    "hypothesis": "Consolidation may matter when separate books are explicit; multi-brand presence alone does not prove it.",
+    "facetIds": [
+      "rr_c06",
+      "rr_n02",
+      "rr_o01"
+    ]
+  },
+  {
+    "id": "L07",
+    "label": "Recurring revenue has different mechanisms",
+    "guidance": "Record the actual published unit: seats, capacity, consumption, transactions, devices or assignments. Subscription, variable charges, implementations and payouts remain separate.",
+    "hypothesis": "Reconciliation difficulty is unverified until the prospect confirms it.",
+    "facetIds": [
+      "rr_c09",
+      "rr_c10",
+      "rr_s03"
+    ]
+  },
+  {
+    "id": "L08",
+    "label": "Ownership and transaction role change the model",
+    "guidance": "Distinguish merchant of record, asset owner/operator, outside-work coordinator, IP licensor and software vendor. Outside carriers do not prove a non-asset model.",
+    "hypothesis": "Only the target's verified role supports a relevant operating hypothesis.",
+    "facetIds": [
+      "rr_t01",
+      "rr_t02",
+      "rr_m04",
+      "rr_r03"
+    ]
+  }
+] as const;
+
+export const OPERATING_RECIPE_DATA = [
+  {
+    "id": "B01",
+    "label": "Service integrators with several revenue streams",
+    "branches": [
+      {
+        "all": [
+          "rr_c01"
+        ],
+        "any": [],
+        "legacyAll": []
+      }
+    ],
+    "optional": [
+      "rr_c05"
+    ],
+    "guides": [
+      "G06",
+      "G07",
+      "G10",
+      "G14"
+    ],
+    "boundary": "C01 itself requires the complete equipment + installation + continuing-service offer.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_c01"
+    ]
+  },
+  {
+    "id": "B02",
+    "label": "Service networks with provider costs",
+    "branches": [
+      {
+        "all": [
+          "rr_c04",
+          "rr_s03"
+        ],
+        "any": [],
+        "legacyAll": []
+      }
+    ],
+    "optional": [
+      "rr_c05"
+    ],
+    "guides": [
+      "G01",
+      "G03",
+      "G05",
+      "G16"
+    ],
+    "boundary": "Explicit billing/payout role is required; a provider directory does not suffice. Do not infer worker classification.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_c04",
+      "rr_s03"
+    ]
+  },
+  {
+    "id": "B03",
+    "label": "Creative businesses with physical operations",
+    "branches": [
+      {
+        "all": [
+          "rr_c07"
+        ],
+        "any": [],
+        "legacyAll": []
+      }
+    ],
+    "optional": [],
+    "guides": [
+      "G20",
+      "G21"
+    ],
+    "boundary": "Confirm an agency/design role separately; C07 alone does not establish an agency industry.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_c07"
+    ]
+  },
+  {
+    "id": "B04",
+    "label": "Specialist expertise sold through technology",
+    "branches": [
+      {
+        "all": [
+          "rr_c03"
+        ],
+        "any": [
+          "rr_c02",
+          "rr_c11"
+        ],
+        "legacyAll": []
+      }
+    ],
+    "optional": [],
+    "guides": [
+      "G12",
+      "G18",
+      "G19",
+      "G31"
+    ],
+    "boundary": "The target must deliver expert work; software used by someone else's experts is insufficient. C11 can describe one-time IP licensing, so this candidate recipe does not establish ongoing paid access without explicit terms.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_c03",
+      "rr_c02",
+      "rr_c11"
+    ]
+  },
+  {
+    "id": "B05",
+    "label": "Distributed operators adding another business",
+    "branches": [
+      {
+        "all": [
+          "rr_c06",
+          "rr_o01"
+        ],
+        "any": [],
+        "legacyAll": []
+      }
+    ],
+    "optional": [
+      "rr_o05"
+    ],
+    "guides": [
+      "G06",
+      "G25",
+      "G27",
+      "G30"
+    ],
+    "boundary": "Require a dated acquisition and own shared-service structure; separate books remain unknown unless explicit.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_c06",
+      "rr_o01"
+    ]
+  },
+  {
+    "id": "B06",
+    "label": "Project services with complex cost components",
+    "branches": [
+      {
+        "all": [
+          "rr_f03"
+        ],
+        "any": [],
+        "legacyAll": [
+          "project_delivery"
+        ]
+      }
+    ],
+    "optional": [],
+    "guides": [
+      "G07",
+      "G08",
+      "G09",
+      "G22"
+    ],
+    "boundary": "Cost components and project work are observable; a margin or accounting problem remains a hypothesis.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_f03"
+    ]
+  },
+  {
+    "id": "B07",
+    "label": "Transport with a precise operating model",
+    "branches": [
+      {
+        "all": [
+          "rr_t01"
+        ],
+        "any": [
+          "rr_t03",
+          "rr_t04"
+        ],
+        "legacyAll": [
+          "non_asset_based_3pl"
+        ]
+      },
+      {
+        "all": [
+          "rr_t02"
+        ],
+        "any": [
+          "rr_t03",
+          "rr_t04"
+        ],
+        "legacyAll": []
+      }
+    ],
+    "optional": [],
+    "guides": [
+      "G01",
+      "G02"
+    ],
+    "boundary": "Non-asset brokerage and fleet-plus-brokerage are separate branches. T01 alone must never imply non-asset ownership.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_t01",
+      "rr_t03",
+      "rr_t04",
+      "rr_t02"
+    ]
+  },
+  {
+    "id": "B08",
+    "label": "Media with money flowing to rights owners",
+    "branches": [
+      {
+        "all": [
+          "rr_c11",
+          "rr_m04"
+        ],
+        "any": [],
+        "legacyAll": []
+      }
+    ],
+    "optional": [
+      "rr_m02"
+    ],
+    "guides": [
+      "G23",
+      "G24"
+    ],
+    "boundary": "Licensing revenue and outgoing royalties are separate facts; physical inventory is optional.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_c11",
+      "rr_m04"
+    ]
+  },
+  {
+    "id": "B09",
+    "label": "Variable billing with services or reseller distribution",
+    "branches": [
+      {
+        "all": [
+          "rr_c09"
+        ],
+        "any": [
+          "rr_c02",
+          "rr_c10"
+        ],
+        "legacyAll": []
+      }
+    ],
+    "optional": [],
+    "guides": [
+      "G10",
+      "G14",
+      "G31",
+      "G32"
+    ],
+    "boundary": "Published billing units are facts; difficult reconciliation is a hypothesis.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_c09",
+      "rr_c02",
+      "rr_c10"
+    ]
+  },
+  {
+    "id": "B10",
+    "label": "Practice or pharmacy groups with central operations",
+    "branches": [
+      {
+        "all": [
+          "rr_h01",
+          "rr_n02"
+        ],
+        "any": [],
+        "legacyAll": []
+      }
+    ],
+    "optional": [
+      "rr_h02"
+    ],
+    "guides": [
+      "G27"
+    ],
+    "boundary": "Require ownership/management and shared services; a directory of clinics or customer list is insufficient.",
+    "status": "research_hypothesis",
+    "interpretation": "Cached conjunction of separately supported facts, not a new Jev probability or automatic grade. A combined commercial offer needs direct native evidence.",
+    "facetIds": [
+      "rr_h01",
+      "rr_n02"
+    ]
+  }
+] as const;

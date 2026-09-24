@@ -113,7 +113,8 @@ describe("Jev recipient identity decisions", () => {
     expect(result.decisions[0]).toMatchObject({ reused: true, supportingSourceIds: ["current-id"] });
   });
   it.each(["busy", "budget_deferred"] as const)("preserves every candidate when %s", async status => {
-    const provider = vi.fn(async () => ({ status }));
+    const provider = vi.fn(async () => status === "busy" ? { status: "busy" as const }
+      : { status: "budget_deferred" as const, reason: "daily_allowance_exhausted", retryAt: "2026-09-26T07:00:00Z" });
     const result = await resolveJevIdentityCandidates(args, { evaluate: provider });
     expect(result).toEqual({ status: "deferred", decisions: [], remainingCandidateIds: [candidate.id], reason: status });
   });

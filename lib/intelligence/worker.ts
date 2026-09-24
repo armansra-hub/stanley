@@ -1,11 +1,11 @@
 import "server-only";
+import { readJevBudgetPolicy } from "./budget";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
 import { evaluateEvidence, estimateEvidenceInputTokens, evidenceRequestFingerprint, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V4_QUESTION_VERSION } from "./jev";
 import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
 import { publishJevFinding, jevSignalType, type JevPublicationReceipt } from "./publish";
 import type { EvaluateEvidenceInput, EvaluateEvidenceResult } from "./evaluation";
 import { intelligenceEnabled, INTELLIGENCE_VERSION } from "./observations";
-import { secondsUntilNextMonth } from "./budget";
 import { durableJevRequest, reconcileJevReceipts, type JevWorkload } from "./jevRequests";
 import { OPERATING_CRITERIA, OPERATING_TOPICS, operatingCriteria, type OperatingTopic } from "./profiles";
 import { businessServicesResearchContext } from "./businessServices";
@@ -129,6 +129,12 @@ async function finish(job: Job, status: string, result: unknown, extra: Record<s
   if (error || data !== true) throw new Error("Intelligence lease completion was not confirmed");
 }
 
+async function deferBudget(job: Job, result: unknown, reason: string, retryAt: string | null) {
+  const saved = await serviceClient().rpc("intelligence_job_budget_defer", { p_id: job.id, p_lease: job.lease_token,
+    p_result: result, p_reason: reason, p_retry_at: retryAt });
+  if (saved.error || saved.data !== true) throw new Error("intelligence_budget_defer_failed");
+}
+
 async function runJob(job: Job, deadline: number, publicContexts: Map<string, Promise<PublicContextObservation[]>>, identityContexts: Map<string, Promise<string>>): Promise<string> {
   const db = serviceClient();
   const { data: raw, error } = await db.from("intelligence_observations").select("*").eq("id", job.observation_id).single();
@@ -231,7 +237,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       },
     });
     if (response.status === "budget_deferred") {
-      await finish(job, "queued", checkpoint(), { p_error: "budget_deferred", p_retry_seconds: secondsUntilNextMonth() });
+      await deferBudget(job, checkpoint(), response.reason, response.retryAt);
       return "budget_deferred";
     }
     if (response.status === "busy") {
@@ -277,8 +283,8 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
             { ...part.evaluation.attributes, eventRoutingType: jevSignalType(part.evaluation, observation.event_date), evidenceExcerpt: finding.evidenceExcerpt }, deadline) : null;
       } catch (error) {
         if (!(error instanceof EventReconciliationDeferred)) throw error;
-        await finish(job, "queued", checkpoint(), { p_error: `event_match_${error.reason}`,
-          p_retry_seconds: error.reason === "budget_deferred" ? secondsUntilNextMonth() : 90 });
+        if (error.reason === "budget_deferred") await deferBudget(job, checkpoint(), error.budgetReason ?? "event_match_budget_deferred", error.retryAt);
+        else await finish(job, "queued", checkpoint(), { p_error: `event_match_${error.reason}`, p_retry_seconds: 90 });
         return `event_match_${error.reason}`;
       }
       if (event) grouped = true;
@@ -344,9 +350,14 @@ export async function runIntelligenceWorker(limitOrOptions: number | Intelligenc
   if (!intelligenceEnabled()) return disabled();
   return withServiceDeadline(deadlineMs, async () => {
     const db = serviceClient();
-    const { data: config, error: configError } = await db.from("intelligence_config").select("enabled").eq("id", 1).single();
+    const { data: config, error: configError } = await db.from("intelligence_config").select("enabled,catalog_mode").eq("id", 1).single();
     if (configError) throw new Error("Intelligence schema/configuration unavailable");
     if (!config.enabled) return disabled();
+    // Catalog-only admission must not walk or mutate the historical backlog.
+    if (config.catalog_mode === "pilot" || config.catalog_mode === "rollout") {
+      const budget = await readJevBudgetPolicy();
+      if (config.catalog_mode === "pilot" || !budget.available || !budget.enabled || budget.phase !== "maintenance") return disabled();
+    }
     await reconcileJevReceipts().catch(() => {});
     const { data: views, error: viewsError } = await db.from("intelligence_views").select("id").eq("active", true).eq("backfill_complete", false).limit(3);
     if (viewsError) throw new Error("Saved view queue unavailable");

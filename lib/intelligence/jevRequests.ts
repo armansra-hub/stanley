@@ -2,8 +2,9 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import type { EvaluationUsage } from "./evaluation";
+import { JevBudgetDeferredError, withJevDispatchPermit, type JevBudgetDeferral } from "./budget";
 
-export type JevPurpose = "public_interpretation" | "research_ranking" | "saved_view" | "private_tam" | "federal_identity" | "event_match" | "codex_connector";
+export type JevPurpose = "operating_catalog" | "public_interpretation" | "research_ranking" | "saved_view" | "private_tam" | "federal_identity" | "event_match" | "codex_connector";
 export type JevWorkload = "initial_coverage" | "monitoring" | "manual" | "unattributed";
 export type JevSpendContext = { purpose: JevPurpose; companyId?: string | null; observationId?: string | null;
   sourceKind?: string | null; workload?: JevWorkload };
@@ -11,7 +12,7 @@ type StoredEvaluation = { ok: boolean; usage: EvaluationUsage | null };
 type Rpc = (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
 type Dependencies = { rpc?: Rpc };
 export type DurableJevResult<T> = { status: "complete"; evaluation: T; reused: boolean }
-  | { status: "busy" } | { status: "budget_deferred" };
+  | { status: "busy" } | JevBudgetDeferral;
 
 /** Cache keys bind the exact native input and its target account. No source
  * text, identity data or private record excerpts are stored in this key. */
@@ -33,8 +34,10 @@ export async function durableJevRequest<T extends StoredEvaluation>(args: {
     p_workload: args.context.workload ?? "unattributed",
   });
   if (error || !data || typeof data !== "object") throw new Error("Jev receipt claim unavailable");
-  const claim = data as { status: string; evaluation?: T; reservationId?: string; leaseToken?: string; reused?: boolean };
-  if (claim.status === "busy" || claim.status === "budget_deferred") return { status: claim.status };
+  const claim = data as { status: string; evaluation?: T; reservationId?: string; leaseToken?: string; reused?: boolean; reason?: string; retryAt?: string | null; policyId?: string };
+  if (claim.status === "busy") return { status: "busy" };
+  if (claim.status === "budget_deferred") return { status: "budget_deferred", reason: claim.reason ?? "budget_unavailable",
+    retryAt: claim.retryAt ?? null, ...(claim.policyId ? { policyId: claim.policyId } : {}) };
   if (!claim.reservationId) throw new Error("Invalid Jev receipt claim");
   const settle = async () => {
     try { await rpc("intelligence_jev_settle", { p_fingerprint: fingerprint, p_reservation: claim.reservationId }); }
@@ -47,7 +50,17 @@ export async function durableJevRequest<T extends StoredEvaluation>(args: {
   if (claim.status !== "execute" || !claim.leaseToken) throw new Error("Invalid Jev receipt claim");
   // If execution itself throws, preserve the unknown-usage reservation. The
   // expiring lease permits one separately accounted recovery, not a blind loop.
-  const evaluation = await args.execute();
+  let evaluation: T;
+  try {
+    evaluation = await withJevDispatchPermit({ fingerprint, rawFingerprint: args.fingerprint,
+      reservationId: claim.reservationId, leaseToken: claim.leaseToken, rpc }, args.execute);
+  } catch (error) {
+    if (!(error instanceof JevBudgetDeferredError)) throw error;
+    // No provider HTTP attempt occurred. Unlike an accepted timeout, this is
+    // proof of zero usage; failed bookkeeping conservatively retains the hold.
+    try { await rpc("intelligence_settle", { p_id: claim.reservationId, p_actual: 0, p_tokens: 0 }); } catch { /* Retain hold. */ }
+    return error.decision;
+  }
   const receiptArgs = { p_fingerprint: fingerprint, p_lease: claim.leaseToken,
     p_reservation: claim.reservationId, p_evaluation: evaluation };
   const save = async () => {

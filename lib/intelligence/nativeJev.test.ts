@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(),
+  authorizeJevDispatch: vi.fn(async () => {}) }));
 vi.mock("./jevRequests", () => ({ durableJevRequest: vi.fn() }));
 import { evaluateNativeQuestions, evaluateNativeCached, nativeJevBody, nativeJevFingerprint } from "./nativeJev";
 

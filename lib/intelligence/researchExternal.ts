@@ -8,7 +8,7 @@ import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
 export type ExternalResearchPurpose = "operating_gaps" | "event_followup" | "identity_company_family";
 export type ExternalResearchQuery = { query: string; purpose: ExternalResearchPurpose; queryHash: string };
 const quote = (value: string) => `"${value.replace(/["\\\r\n]/g, " ").trim().slice(0, 180)}"`;
-export function externalResearchQueries(company: { name: string; domain?: string | null }, aliases: string[], missingTopics: string[], eventTitles: string[]): ExternalResearchQuery[] {
+export function externalResearchQueries(company: { name: string; domain?: string | null }, aliases: string[], missingTopics: string[], eventTitles: string[], discoveryTerms?: string[]): ExternalResearchQuery[] {
   const names = [...new Set([company.name, ...aliases].filter(value => value.trim()))].slice(0, 3);
   const identity = names.length === 1 ? quote(names[0]) : `(${names.map(quote).join(" OR ")})`;
   const topics: Record<string,string> = { systems_project: 'ERP OR "financial systems"', close_reporting: '"financial reporting" OR controller', finance_leadership: 'CFO OR "chief financial officer"', investor_reporting: 'investment OR "private equity"', multi_entity: 'subsidiary OR acquisition', workforce_billing: 'staffing OR payroll', project_financials: '"project accounting" OR utilization', recurring_revenue: 'contract OR subscription', non_asset_based_3pl: '"non-asset" OR "asset-based" OR "third-party logistics"' };
@@ -25,19 +25,26 @@ export function externalResearchQueries(company: { name: string; domain?: string
   const rows: {query:string;purpose:ExternalResearchPurpose}[] = [
     ...eventQueries,
     {purpose:"identity_company_family",query:`${identity} (subsidiary OR "parent company" OR "formerly known" OR "joint venture" OR acquired)`},
-    ...(missingTopics.length ? [{purpose:"operating_gaps" as const,query:`${identity} (${requested || 'contract OR expansion OR "finance systems" OR operations'})`}] : []),
+    ...(discoveryTerms ? [...new Set(discoveryTerms)].map(terms => ({ purpose: "operating_gaps" as const, query: `${identity} (${terms})` })) :
+      missingTopics.length ? [{purpose:"operating_gaps" as const,query:`${identity} (${requested || 'contract OR expansion OR "finance systems" OR operations'})`}] : []),
   ];
   return rows.map(row=>({...row,queryHash:createHash("sha256").update(JSON.stringify(["external-research-v1",row])).digest("hex")}));
 }
-export async function discoverExternalResearch(company: {id:string;name:string;domain?:string|null;netsuite_internal_id?:string|null}, missingTopics:string[], eventTitles:string[], deadlineMs:number) {
+export async function discoverExternalResearch(company: {id:string;name:string;domain?:string|null;netsuite_internal_id?:string|null}, missingTopics:string[], eventTitles:string[], deadlineMs:number, discoveryTerms?: string[]) {
   if (Date.now() > deadlineMs-25_000) return {queries:0,sources:0,outcome:"deadline"};
   const identity = await loadCompanyIdentityContext(company).catch(()=>({aliases:[]}));
-  const plans=externalResearchQueries(company,identity.aliases,missingTopics,eventTitles);
+  const plans=externalResearchQueries(company,identity.aliases,missingTopics,eventTitles,discoveryTerms);
   const db=serviceClient();
-  const {data,error}=await db.rpc("intelligence_external_research_claim",{p_company:company.id,p_queries:plans});
-  if(error||!Array.isArray(data)) throw new Error("external_research_claim_failed");
+  const data: (ExternalResearchQuery & {lease_token:string})[] = [];
+  // Preserve the same two-query budget and existing query ledger even when the
+  // new catalog has more research themes than one six-plan RPC can accept.
+  for (let offset=0;offset<plans.length && data.length<2;offset+=6) {
+    const claimed=await db.rpc("intelligence_external_research_claim",{p_company:company.id,p_queries:plans.slice(offset,offset+(data.length===1?1:6))});
+    if(claimed.error||!Array.isArray(claimed.data)) throw new Error("external_research_claim_failed");
+    data.push(...claimed.data);
+  }
   let sources=0;
-  for(const claim of data as (ExternalResearchQuery & {lease_token:string})[]) {
+  for(const claim of data) {
     const result=await fetchNewsItemsResult(claim.query,6,{deadlineMs:deadlineMs-15_000});
     const items=result.items.filter(item=>{try{return !!validatePublicHttpUrl(item.source_url);}catch{return false;}});
     if(items.length){

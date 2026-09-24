@@ -1,9 +1,9 @@
 import "server-only";
+import { readJevBudgetPolicy } from "./budget";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
 import { createHash } from "node:crypto";
 import { evaluateNativeCached, type NativeJevInput, type NativeProviderResult } from "./nativeJev";
 import { intelligenceEnabled } from "./observations";
-import { secondsUntilNextMonth } from "./budget";
 
 export const ACCOUNT_QUESTION_VERSION = "account-question-v1";
 type Source = { id:string; source_url:string; title:string; evidence_text:string; event_date:string|null };
@@ -54,6 +54,7 @@ async function runQuestion(job:Job,deadline:number){
  const save=async()=>{const r=await db.from("intelligence_account_question_jobs").update({checkpoint:state}).eq("view_id",job.view_id).eq("company_id",job.company_id)
   .eq("lease_token",job.lease_token).eq("status","running").gt("lease_until",new Date().toISOString()).select("view_id").maybeSingle();if(r.error||!r.data)throw new Error("account_question_checkpoint_failed");};
  const finish=async(result:unknown,error:string|null,retry=30)=>{const r=await db.rpc("intelligence_account_question_finish",{p_view:job.view_id,p_company:job.company_id,p_lease:job.lease_token,p_result:result,p_error:error,p_retry:retry});if(r.error||r.data!==true)throw new Error("account_question_finish_failed");};
+ const deferBudget=async(reason:string,retryAt:string|null)=>{const r=await db.rpc("intelligence_account_question_budget_defer",{p_view:job.view_id,p_company:job.company_id,p_lease:job.lease_token,p_reason:reason,p_retry_at:retryAt});if(r.error||r.data!==true)throw new Error("account_question_budget_defer_failed");};
  if(!job.checkpoint)await save();
  while(state.source<state.ids.length){
   if(Date.now()>deadline-30_000){await finish(null,"continuation");return "continued";}
@@ -64,7 +65,7 @@ async function runQuestion(job:Job,deadline:number){
   if(state.offset>=source.evidence_text.length){state.source++;state.offset=0;await save();continue;}
   const sections=questionSections(source.evidence_text,state.offset);const end=sections.at(-1)!.end;
   const result=await evaluateNativeCached(accountSelectionInput(job.company,job.question,source,sections),{purpose:"saved_view",companyId:job.company_id,observationId:source.id,sourceKind:"account_question_selection",workload:"monitoring"});
-  if(result.status!=="complete"){await finish(null,result.status,result.status==="budget_deferred"?secondsUntilNextMonth():60);return result.status;}
+  if(result.status!=="complete"){if(result.status==="budget_deferred")await deferBudget(result.reason,result.retryAt);else await finish(null,result.status,60);return result.status;}
   if(!result.evaluation.ok){await finish(null,result.evaluation.error.code,3600);return "provider_unavailable";}
   const native=result.evaluation.provider_result;const ids=new Set([native.answers.first.choice,native.answers.second.choice]);
   const found=sections.filter(s=>ids.has(s.id)).map(s=>({observationId:source.id,url:source.source_url,title:source.title,date:source.event_date,
@@ -84,7 +85,7 @@ async function runQuestion(job:Job,deadline:number){
   selectedSources:new Set(state.passages.map(p=>p.observationId)).size,selectedPassages:state.passages.length,
   basis:"All retained source packets were scanned for the custom question; the answer uses bounded selected passages. Unretained source text and missing public evidence remain unknown."};
  const result=await evaluateNativeCached(accountAnswerInput(job.company,job.question,state.passages,coverage),{purpose:"saved_view",companyId:job.company_id,sourceKind:"account_question_answer",workload:"monitoring"});
- if(result.status!=="complete"){await finish(null,result.status,result.status==="budget_deferred"?secondsUntilNextMonth():60);return result.status;}
+ if(result.status!=="complete"){if(result.status==="budget_deferred")await deferBudget(result.reason,result.retryAt);else await finish(null,result.status,60);return result.status;}
  if(!result.evaluation.ok){await finish(null,result.evaluation.error.code,3600);return "provider_unavailable";}
  await finish({version:ACCOUNT_QUESTION_VERSION,question:job.question,probability:result.evaluation.provider_result.answers.account_match.noul,
   native:result.evaluation.provider_result,citations:state.passages,coverage,selectionReceipts:state.receipts,
@@ -94,6 +95,10 @@ async function runQuestion(job:Job,deadline:number){
 export async function runAccountQuestionWorker(limit=1,deadlineMs=Date.now()+90_000){
  if(!intelligenceEnabled())return {enabled:false,processed:0,outcomes:{} as Record<string,number>};
  return withServiceDeadline(deadlineMs,async()=>{let processed=0;const outcomes:Record<string,number>={};
+ const cfg=await serviceClient().from("intelligence_config").select("catalog_mode").eq("id",1).maybeSingle();
+ if(cfg.error)throw new Error("account_question_configuration_unavailable");
+ if(cfg.data?.catalog_mode==="pilot"||cfg.data?.catalog_mode==="rollout"){
+ const budget=await readJevBudgetPolicy();if(cfg.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled||budget.phase!=="maintenance")return {enabled:false,processed:0,outcomes};}
  while(processed<Math.max(0,Math.min(8,limit))&&Date.now()<deadlineMs-30_000){const r=await serviceClient().rpc("intelligence_account_question_claim");if(r.error)throw new Error("account_question_claim_failed");if(!r.data)break;
   let outcome;try{outcome=await runQuestion(r.data as Job,deadlineMs);}catch{outcome="service_error";}outcomes[outcome]=(outcomes[outcome]??0)+1;processed++;if(outcome==="budget_deferred")break;}
  return {enabled:true,processed,outcomes};});

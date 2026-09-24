@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildTopicSearchResult, operatingTopicFilter, type TopicSearchRaw } from "./topicSearch";
 import type { ProfileObservation } from "./profiles";
+import { OPERATING_CATALOG_VERSION } from "./operatingCatalog";
+import { operatingRecipe } from "./operatingSearchCatalog";
 const source = (id: string, topic: string): ProfileObservation => ({ id, source_url: `https://example.test/${id}`, title: "Public source", source_kind: "website", event_date: null, observed_at: "2026-09-18", evidence_text: "A verbatim source passage.", attributes: { companyRelationship: "direct", companyRelevance: .95, topicEvidence: [{ topic, probability: .9, start: 2, end: 25 }] } });
 const fixture = (): TopicSearchRaw => ({ enabled: true, topics: ["project_billing", "inventory"], hasMore: false, nextCursor: null,
   accounts: [{ companyId: "account", name: "Example Engineering", domain: "example.test", subindustry: "Engineering", internalId: "1", coverage: { observations: 8, interpreted: 5 }, observations: [source("project", "project_billing"), source("stock", "inventory")] }] });
@@ -53,5 +55,39 @@ describe("cross-source operating matches", () => {
     raw.accounts[0].observations[0].attributes = { companyRelevance: .2, companyRelationship: "unknown",
       topicEvidence: [{ topic: "project_billing", probability: .83, companyRelevance: .91, companyRelationship: "direct", start: 0, end: 20 }] };
     expect(buildTopicSearchResult(raw).accounts).toHaveLength(1);
+  });
+  it("uses native catalog decisions without inventing probability or applying legacy cutoffs", () => {
+    const raw = fixture(); raw.topics = ["rr_c01"];
+    raw.accounts[0].observations = [{ ...source("model", "inventory"), content_hash: "exact", evidence_text: "😀 Installed equipment and service", attributes: null }];
+    raw.accounts[0].catalogFacets = [{ id: "rr_c01", catalogVersion: OPERATING_CATALOG_VERSION, decision: "supported", status: "answered", probability: null,
+      nativeResult: { answer: { type: "choice", choice: "supported" } }, citations: [{ observationId: "model", url: "https://example.test/model", title: "Model", sourceKind: "website",
+        observedAt: "2026-09-24", eventDate: null, start: 3, end: 34, contentHash: "exact" }] }];
+    const result = buildTopicSearchResult(raw);
+    expect(result.accounts[0].topics[0]).toMatchObject({ classification: "native_choice", sources: [{ probability: null, contextPreview: "Installed equipment and service" }] });
+    raw.accounts[0].catalogFacets[0].probability = .63;
+    expect(buildTopicSearchResult(raw).accounts).toHaveLength(1);
+    expect(raw.accounts[0].catalogFacets[0].nativeResult).toEqual({ answer: { type: "choice", choice: "supported" } });
+    raw.accounts[0].catalogFacets[0].catalogVersion = "old-definition";
+    expect(buildTopicSearchResult(raw).accounts).toHaveLength(0);
+    raw.accounts[0].catalogFacets[0].catalogVersion = OPERATING_CATALOG_VERSION;
+    raw.accounts[0].observations[0].content_hash = "changed-evidence";
+    expect(buildTopicSearchResult(raw).accounts).toHaveLength(0);
+  });
+  it.each(["insufficient_evidence", "not_supported", "conflicting", "private_context_required"])("does not turn %s into a match", decision => {
+    const raw = fixture(); raw.topics = ["rr_o03"];
+    raw.accounts[0].catalogFacets = [{ id: "rr_o03", catalogVersion: OPERATING_CATALOG_VERSION, decision, status: "context_only", probability: null, nativeResult: null, citations: [] }];
+    expect(buildTopicSearchResult(raw).accounts).toEqual([]);
+  });
+  it("preserves the exact AND/OR structure of research combinations", () => {
+    const recipe = operatingRecipe("B07")!;
+    expect(recipe.combinations).toEqual([["rr_t01", "non_asset_based_3pl", "rr_t03"], ["rr_t01", "non_asset_based_3pl", "rr_t04"], ["rr_t02", "rr_t03"], ["rr_t02", "rr_t04"]]);
+    expect(operatingRecipe("invalid")).toBeNull();
+    const raw = fixture(); raw.combinations = [["project_billing"], ["inventory"]]; raw.accounts[0].observations.pop();
+    expect(buildTopicSearchResult(raw).accounts).toHaveLength(1);
+    raw.combinations = [["project_billing", "inventory"]];
+    expect(buildTopicSearchResult(raw).accounts).toHaveLength(0);
+  });
+  it("does not expose the user-removed renewal category", () => {
+    expect(operatingTopicFilter(["rr_o06"])).toBeNull();
   });
 });

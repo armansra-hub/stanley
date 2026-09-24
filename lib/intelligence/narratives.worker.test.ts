@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), reserve: vi.fn(), settle: vi.fn(), generate: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }) }));
 vi.mock("./observations", () => ({ intelligenceEnabled: () => true }));
-vi.mock("./budget", () => ({ reserveGeneration: mocks.reserve, settleGeneration: mocks.settle, secondsUntilNextMonth: () => 9999 }));
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(), reserveGeneration: mocks.reserve, settleGeneration: mocks.settle, secondsUntilNextMonth: () => 9999 }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: class { messages = { create: mocks.generate }; } }));
 import { ACCOUNT_WRITER_MODEL, runAccountStoryWorker, storyEvidenceHash, type StoryEvidence } from "./narratives";
 const company = { id: "company", name: "Synthetic Services", domain: "example.test", subindustry: null, ns_industry: null };

@@ -1,5 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
+import { authorizeJevDispatch, JevBudgetDeferredError, PRICED_JEV_MODEL } from "./budget";
 import {
   EVIDENCE_SIGNAL_TYPES,
   EVIDENCE_CONTENT_CLASSES, EVIDENCE_COMPANY_ROLES, EVIDENCE_CONTRACT_ACTIVITIES, EVIDENCE_OPERATING_CHANGE_TYPES,
@@ -13,7 +14,7 @@ import {
   type RawEvaluationAnswer,
 } from "./evaluation";
 
-export const JEV_MODEL = "jev-1.13.0";
+export const JEV_MODEL = PRICED_JEV_MODEL;
 export const TYPESAFE_EVALUATION_URL = "https://api.typesafe.ai/v1/systemone";
 export const JEV_QUESTION_VERSION = "stanley-evidence-v2";
 export const JEV_PUBLIC_SCALE_QUESTION_VERSION = "stanley-public-scale-v1";
@@ -33,7 +34,7 @@ const NO_SUPPORTING_SECTION = "__none__";
 const MAX_REQUEST_BYTES = 48_000;
 const PROVIDER_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 262_144;
-const PINNED_JEV_MODEL = /^jev-\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+const PINNED_JEV_MODEL = { test: (model: string) => model === PRICED_JEV_MODEL };
 
 type Question =
   | { type: "noul"; instructions: string }
@@ -510,10 +511,12 @@ export async function evaluateEvidence(input: EvaluateEvidenceInput, dependencie
   const abortSignal = input.abortSignal ? AbortSignal.any([input.abortSignal, timeout]) : timeout;
   let result: unknown;
   try {
+    await authorizeJevDispatch(configuredModel, evidenceRequestFingerprint(input));
     result = await (dependencies.evaluate ?? ((request) => directEvaluate(request, dependencies.fetch ?? fetch)))({
       ...prepared, model: configuredModel, maxRetries: 0, abortSignal,
     });
   } catch (error) {
+    if (error instanceof JevBudgetDeferredError) throw error;
     return { ...base, ok: false, usage: record(error)?.preDispatch === true ? zeroUsage : null,
       error: classifyFailure(error, Boolean(input.abortSignal?.aborted), timeout.aborted) };
   }
@@ -580,10 +583,12 @@ export async function evaluateResearchRanking(input: EvaluateEvidenceInput, depe
   const abortSignal = input.abortSignal ? AbortSignal.any([input.abortSignal, timeout]) : timeout;
   let result: unknown;
   try {
+    await authorizeJevDispatch(configuredModel, researchRankingRequestFingerprint(input));
     result = await (dependencies.evaluate ?? ((request) => directEvaluate(request, dependencies.fetch ?? fetch)))({
       model: prepared.model, state: prepared.state, questions: prepared.questions, maxRetries: 0, abortSignal,
     });
   } catch (error) {
+    if (error instanceof JevBudgetDeferredError) throw error;
     return { ...base, ok: false, usage: record(error)?.preDispatch === true ? zeroUsage : null,
       error: classifyFailure(error, Boolean(input.abortSignal?.aborted), timeout.aborted) };
   }

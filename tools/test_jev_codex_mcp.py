@@ -30,14 +30,14 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(send.call_count, 2)
 
     def test_unknown_acceptance_does_not_repeat(self):
-        args = {"state": "private excerpt", "questions": {"match": {"type": "noul", "instructions": "Relevant?"}}}
+        args = {"state": "public source", "privacy": "public", "questions": {"match": {"type": "noul", "instructions": "Relevant?"}}}
         with tempfile.TemporaryDirectory() as folder, patch.object(mcp, "CACHE", Path(folder)), patch.object(mcp, "request", side_effect=TimeoutError) as send:
             self.assertEqual(mcp.evaluate(args)["error"], "provider_acceptance_unknown")
             self.assertEqual(mcp.evaluate(args)["error"], "request_in_progress_or_acceptance_unknown")
             self.assertEqual(send.call_count, 1)
 
     def test_known_budget_deferral_can_resume(self):
-        args = {"state": "source", "questions": {"match": {"type": "noul", "instructions": "Relevant?"}}}
+        args = {"state": "source", "privacy": "public", "questions": {"match": {"type": "noul", "instructions": "Relevant?"}}}
         with tempfile.TemporaryDirectory() as folder, patch.object(mcp, "CACHE", Path(folder)), patch.object(mcp, "request", return_value={"status": "budget_deferred"}):
             self.assertEqual(mcp.evaluate(args)["status"], "budget_deferred")
             self.assertFalse(list(Path(folder).glob("*.intent")))
@@ -45,6 +45,13 @@ class ConnectorTests(unittest.TestCase):
     def test_no_arbitrary_url_or_path_tool(self):
         with self.assertRaises(ValueError):
             mcp.dispatch({"method": "tools/call", "params": {"name": "jev_account_context", "arguments": {"internalId": "../../secrets"}}})
+
+    def test_private_or_implicit_privacy_is_rejected_without_send(self):
+        args = {"state": "private excerpt", "questions": {"match": {"type": "noul", "instructions": "Relevant?"}}}
+        with patch.object(mcp, "request", side_effect=AssertionError("network")):
+            for privacy in (None, "private_excerpt"):
+                with self.assertRaises(ValueError):
+                    mcp.evaluate({**args, **({"privacy": privacy} if privacy else {})})
 
 if __name__ == "__main__":
     unittest.main()

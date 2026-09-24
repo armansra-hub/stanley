@@ -17,6 +17,11 @@ describe('native event identity without rejudging evidence',()=>{
   m.native.mockResolvedValue({status});await expect(reconcileObservationEvent('obs','company',{},Date.now()+60000)).rejects.toBeInstanceOf(EventReconciliationDeferred);
   expect(m.rpc).toHaveBeenCalledOnce();
  });
+ it.each(['2026-09-25T07:00:00.000Z',null])('preserves the exact budget reset or authorization hold (%s)',async(retryAt)=>{
+  m.native.mockResolvedValue({status:'budget_deferred',reason:retryAt?'daily_allowance':'term_exhausted',retryAt});
+  await expect(reconcileObservationEvent('obs','company',{},Date.now()+60000)).rejects.toMatchObject({retryAt,budgetReason:retryAt?'daily_allowance':'term_exhausted'});
+  expect(m.rpc).toHaveBeenCalledOnce();
+ });
  it('does not call a model when there are no competing events',async()=>{
   m.rpc.mockResolvedValueOnce({data:{status:'claimed',lease_token:'lease',snapshot:{...snapshot,candidates:[]}},error:null});
   await reconcileObservationEvent('obs','company',{},Date.now()+60000);expect(m.native).not.toHaveBeenCalled();

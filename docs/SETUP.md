@@ -18,7 +18,7 @@ Source, migrations, tests, configuration templates, and workflow reference code 
 | `ANTHROPIC_API_KEY` | Anthropic SDK access |
 | `TYPESAFE_API_KEY`, `TYPESAFE_MODEL` | Direct server-only Jev access; pinned default `jev-1.13.0` |
 | `STANLEY_INTELLIGENCE_ENABLED` | Enable intelligence processing after migrations; also requires the database enable switch |
-| `TYPESAFE_PRIVATE_EXCERPTS_ENABLED` | Optional authenticated local excerpt evaluation after reviewing direct-account data handling; default false |
+| `TYPESAFE_PRIVATE_EXCERPTS_ENABLED` | Legacy flag; the September 24 policy disables paid private evaluation and excludes Jev from TAM grading |
 | `APP_PASSWORD`, `APP_SESSION_TOKEN` | Single-user gate; blank only for controlled local development |
 | `AGENT_TOKEN`, optional `CODEX_AGENT_TOKEN` | Dedicated bridge access, separate from cron auth |
 | `CRON_SECRET`, optional `TAM_GROWTH_SWEEP_SECRET` | Scheduled worker auth |

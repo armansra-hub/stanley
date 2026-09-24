@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), sourceState: vi.fn(), external: vi.fn(), rank: vi.fn(), fetch: vi.fn(), enqueue: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), sourceState: vi.fn(), external: vi.fn(), rank: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), coverage: vi.fn() }));
+vi.mock("./operatingCoverage", () => ({ runOperatingCoverage: mocks.coverage }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }),
   withServiceDeadline: vi.fn((_deadline: number, run: () => unknown) => run()) }));
 vi.mock("./researchRanking", () => ({ rankResearchCandidates: mocks.rank }));
@@ -45,12 +46,54 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.rpc.mockResolvedValue({ data: [], error: null });
   mocks.external.mockResolvedValue({ sources: 0 });
+  mocks.coverage.mockResolvedValue({ outcome: "catalog_complete", answered: 47 });
   mocks.sourceState.mockResolvedValue({ cursor: null, lastSuccessAt: null });
   tables = { companies: [{ id: "company", name: "Synthetic Consulting", domain: "example.com" }] };
   pendingJobs = 0; inserted = [];
   mocks.from.mockImplementation(mockTable);
 });
 afterEach(() => vi.restoreAllMocks());
+
+describe("catalog account lease integration", () => {
+  function catalogJob() {
+    let claimed = false;
+    const job = { company_id: "company", desired_hash: "hash", lease_token: "lease", attempts: 1,
+      lease_until: new Date(Date.now() + 180000).toISOString(), catalog_requested_version: "catalog" };
+    mocks.rpc.mockImplementation(async name => ({ data: name === "intelligence_directed_claim" ? (claimed ? [] : (claimed = true, [job])) : true, error: null }));
+    return job;
+  }
+  it("uses the same lease and does not also run the historical research path", async () => {
+    const job = catalogJob();
+    expect(await runDirectedResearchWorker(1)).toMatchObject({ processed: 1, outcomes: { catalog_complete: 1 } });
+    expect(mocks.coverage).toHaveBeenCalledWith(job, expect.any(Number));
+    expect(mocks.external).not.toHaveBeenCalled(); expect(mocks.rank).not.toHaveBeenCalled();
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_directed_finish")).toBe(false);
+  });
+  it("performs one bounded gap pass only when coverage requests it", async () => {
+    catalogJob(); mocks.coverage.mockResolvedValue({ outcome: "catalog_needs_research", answered: 47, researchFacets: ["rr_c09"] });
+    expect(await runDirectedResearchWorker(1)).toMatchObject({ processed: 1, outcomes: { catalog_researched: 1 } });
+    expect(mocks.external).toHaveBeenCalledTimes(1);
+    expect(mocks.external.mock.calls[0][4].join(" ")).toMatch(/usage|transaction/i);
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_catalog_research_finish", expect.objectContaining({ p_company: "company", p_lease: "lease" }));
+  });
+  it("passes the exact unresolved facets into full-context catalog ranking", async () => {
+    mocks.rank.mockResolvedValueOnce({ candidates, providerUsed: false, scores: [], outcome: "busy", rankingVersion: "current" });
+    await refreshAccountResearch("company", { deadlineMs: Date.now() + 90000, automatic: true, profile,
+      catalogGap: { facetIds: ["rr_c09", "rr_c02"] } });
+    expect(mocks.rank).toHaveBeenCalledWith(expect.objectContaining({ catalogOwned: true, catalogFacetIds: ["rr_c09", "rr_c02"] }));
+    expect(mocks.rank.mock.calls[0][0].researchContext).toBeUndefined();
+  });
+  it("retries known pre-dispatch read deadlines but holds uncertain dispatch failures", async () => {
+    catalogJob(); mocks.coverage.mockRejectedValue(new Error("catalog_loading_deadline"));
+    await runDirectedResearchWorker(1);
+    let deferred = mocks.rpc.mock.calls.find(([name]) => name === "intelligence_catalog_defer")![1];
+    expect(Date.parse(deferred.p_retry_at)).toBeGreaterThan(Date.now());
+    mocks.rpc.mockClear(); catalogJob(); mocks.coverage.mockRejectedValue(new Error("Jev paid answer could not be checkpointed"));
+    await runDirectedResearchWorker(1);
+    deferred = mocks.rpc.mock.calls.find(([name]) => name === "intelligence_catalog_defer")![1];
+    expect(deferred.p_retry_at).toBeNull();
+  });
+});
 
 describe("concurrent next-source research", () => {
   it("defers a duplicate refresh until its active native ranking is ready, then claims in the cached order", async () => {

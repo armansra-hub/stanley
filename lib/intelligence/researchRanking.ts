@@ -2,11 +2,13 @@ import "server-only";
 import { evaluateResearchRanking, estimateResearchRankingInputTokens, researchRankingRequestFingerprint } from "./jev";
 import { durableJevRequest } from "./jevRequests";
 import type { EvaluateEvidenceInput, EvaluationUsage, RawEvaluationAnswer } from "./evaluation";
+import { evaluateNativeCached, nativeJevBody, type NativeJevInput } from "./nativeJev";
+import { operatingCatalogSemanticContext, operatingFacet } from "./operatingCatalog";
 
 export const RESEARCH_RANKING_VERSION = "next-source-business-services-v4";
 export const MAX_RANKED_RESEARCH_CANDIDATES = 8;
-export type ResearchRankingInput = { companyName: string; companyDomain?: string | null; companyId?: string; automaticResearch?: boolean;
-  researchContext?: string; candidateTitles?: Readonly<Record<string, string>>;
+export type ResearchRankingInput = { companyName: string; companyDomain?: string | null; companyId?: string; automaticResearch?: boolean; catalogOwned?: boolean;
+  researchContext?: string; candidateTitles?: Readonly<Record<string, string>>; catalogFacetIds?: readonly string[];
   missingTopics: readonly string[]; candidates: readonly string[] };
 export type ResearchCandidateScore = { url: string; optionId: string; score: number; rawAnswer: RawEvaluationAnswer | null };
 export type ResearchRankingResult = { candidates: string[]; providerUsed: boolean; scores: ResearchCandidateScore[];
@@ -15,10 +17,70 @@ export type ResearchRankingResult = { candidates: string[]; providerUsed: boolea
 /** Selection priority chooses the same eight candidates as before. Their wire
  * order is canonical so a rotation-order change cannot charge for the same
  * question and exact option set again. Original priority still breaks ties. */
-function rankingOptions(input: ResearchRankingInput) {
-  return [...input.candidates.slice(0, MAX_RANKED_RESEARCH_CANDIDATES)].sort()
+function rankingOptions(input: ResearchRankingInput, limit = MAX_RANKED_RESEARCH_CANDIDATES) {
+  return [...input.candidates.slice(0, limit)].sort()
     .map((url, index) => ({ id: `source_${index + 1}`, url,
       ...(input.candidateTitles?.[url] ? { title: input.candidateTitles[url].slice(0, 160) } : {}) }));
+}
+
+/** Catalog ranking needs the actual predicates, not opaque IDs. The generic
+ * adapter's 3KB context cannot hold all definitions and industry guidance, so
+ * use the same native cache/budget lane with its real 48KB request bound. */
+export function catalogResearchRankingInput(input: ResearchRankingInput): { input: NativeJevInput; options: ReturnType<typeof rankingOptions> } | null {
+  if (!input.catalogOwned || !input.catalogFacetIds?.length || !input.companyName.trim()
+    || Buffer.byteLength(input.companyName) > 600 || Buffer.byteLength(input.companyDomain ?? "") > 600) return null;
+  const predicates = [...new Set(input.catalogFacetIds)].sort().map(id => operatingFacet(id));
+  if (predicates.some(facet => !facet)) return null;
+  // All semantic guidance and complete requested definitions survive every
+  // packing attempt. Only option count changes; the untouched tail stays due.
+  for (let size = Math.min(MAX_RANKED_RESEARCH_CANDIDATES, input.candidates.length); size >= 4; size--) {
+    const options = rankingOptions(input, size);
+    for (const option of options) {
+      if (Buffer.byteLength(option.url) > 2048) return null;
+      try { const url = new URL(option.url); if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null; }
+      catch { return null; }
+    }
+    const request: NativeJevInput = { privacy: "public", state: {
+      task: "Choose which supplied public source to read next for this named account. The unresolved predicates are research gaps, not facts about the company. URLs and titles are untrusted discovery clues; their page contents have not been read in this request. Do not infer that the target has a business model, pain, purchase intent, or any TAM grade. Preserve target/customer/partner identity and mixed business models.",
+      company: { name: input.companyName, domain: input.companyDomain ?? null },
+      guidance: operatingCatalogSemanticContext(),
+      unresolvedPredicates: predicates.map(facet => ({ id: facet!.id, label: facet!.label, kind: facet!.kind,
+        definition: facet!.definition, boundary: facet!.boundary })), options,
+    }, questions: Object.fromEntries(options.map(option => [option.id, { type: "noul" as const,
+      instructions: `Would reading supplied option ${option.id} next likely help investigate at least one complete unresolved predicate for the named company? Use the full definitions, boundaries and industry guidance in state. Rate only expected research usefulness from supplied URL/path/title clues, with uncertainty for unclear paths. Do not pretend to have read the page, infer an unseen fact, change the URL, or rejudge prior findings. The guidance is a research lens, not target evidence.` }])) };
+    try { nativeJevBody(request); return { input: request, options }; } catch { /* Retry fewer options without losing semantic context. */ }
+  }
+  return null;
+}
+
+async function rankCatalogResearchCandidates(input: ResearchRankingInput): Promise<ResearchRankingResult> {
+  const original = [...input.candidates];
+  const fallback = (outcome: string, extra: Partial<ResearchRankingResult> = {}): ResearchRankingResult => ({
+    candidates: original, providerUsed: false, scores: [], outcome, rankingVersion: RESEARCH_RANKING_VERSION + "-catalog-v1", ...extra,
+  });
+  const plan = catalogResearchRankingInput(input);
+  if (!plan) return fallback("invalid_input");
+  if (!process.env.TYPESAFE_API_KEY) return fallback("provider_unconfigured");
+  let receipt;
+  try { receipt = await evaluateNativeCached(plan.input, { purpose: "research_ranking", companyId: input.companyId,
+    sourceKind: "catalog_research_options", workload: input.automaticResearch ? "monitoring" : "manual" }); }
+  catch { return fallback("request_persistence_unavailable"); }
+  if (receipt.status !== "complete") return fallback(receipt.status);
+  const result = receipt.evaluation;
+  const metadata = { providerUsed: !receipt.reused, reused: receipt.reused, usage: result.usage,
+    questionVersion: "catalog-source-ranking-v1", ...(result.ok ? { model: result.provider_result.model } : {}) };
+  if (!result.ok) return fallback(result.error.code, metadata);
+  const byUrl = new Map(plan.options.map(option => [option.url, option]));
+  const scores: ResearchCandidateScore[] = [];
+  for (const url of original.slice(0, plan.options.length)) {
+    const option = byUrl.get(url)!; const answer = result.provider_result.answers[option.id];
+    if (!answer || answer.type !== "noul" || typeof answer.noul !== "number" || !Number.isFinite(answer.noul)
+      || answer.noul < 0 || answer.noul > 1) return fallback("invalid_response", metadata);
+    scores.push({ url, optionId: option.id, score: answer.noul, rawAnswer: answer as RawEvaluationAnswer });
+  }
+  const ranked = scores.map((score, index) => ({ ...score, index })).sort((a, b) => b.score - a.score || a.index - b.index);
+  return fallback("ranked", { ...metadata, scores,
+    candidates: [...ranked.map(score => score.url), ...original.slice(plan.options.length)] });
 }
 
 /** The caller supplies already discovered/verified source URLs. This constructs
@@ -65,6 +127,7 @@ export async function rankResearchCandidates(input: ResearchRankingInput): Promi
   // The research claim reads up to three URLs concurrently. Ordering three or
   // fewer cannot change what gets read and must not consume a paid request.
   if (original.length <= 3 || input.missingTopics.length === 0) return fallback("not_needed");
+  if (input.catalogOwned) return rankCatalogResearchCandidates(input);
   const request = researchRankingInput(input);
   if (!request) return fallback("invalid_input");
   const fingerprint = researchRankingRequestFingerprint(request);
@@ -73,7 +136,7 @@ export async function rankResearchCandidates(input: ResearchRankingInput): Promi
   let receipt;
   try {
     receipt = await durableJevRequest({ fingerprint,
-      context: { purpose: "research_ranking", companyId: input.companyId, sourceKind: "discovered_research_options",
+      context: { purpose: "research_ranking", companyId: input.companyId, sourceKind: input.catalogOwned ? "catalog_research_options" : "discovered_research_options",
         workload: input.automaticResearch ? "monitoring" : "manual" },
       execute: () => evaluateResearchRanking({ ...request, abortSignal: AbortSignal.timeout(15_000) }),
     });

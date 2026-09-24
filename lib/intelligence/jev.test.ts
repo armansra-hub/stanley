@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(),
+  authorizeJevDispatch: vi.fn(async () => {}) }));
 import {
   evaluateEvidence, estimateEvidenceInputTokens, JEV_MODEL, JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION,
   MAX_EVIDENCE_STATE_BYTES, MAX_COMPANY_CONTEXT_BYTES, MAX_SURROUNDING_CONTEXT_BYTES, MAX_RAW_ANSWERS_BYTES, type JevEvaluationRequest,
@@ -527,11 +529,11 @@ describe("Jev evidence adapter", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("allows a pinned model override but rejects aliases or another provider", async () => {
-    vi.stubEnv("TYPESAFE_MODEL", "jev-1.14.0");
+  it("allows only the exact model whose complete cost ceiling is reserved", async () => {
+    vi.stubEnv("TYPESAFE_MODEL", "jev-1.13.0");
     const evaluate = vi.fn(async (request: JevEvaluationRequest) => ({ ...response(), model: request.model }));
-    expect(await evaluateEvidence(input, { evaluate })).toMatchObject({ ok: true, model: "jev-1.14.0", metadata: { responseModel: "jev-1.14.0" } });
-    for (const value of ["jev-latest", "typesafe-ai/jev", "https://another-provider.test", "jev-1.13.0\nother"]) {
+    expect(await evaluateEvidence(input, { evaluate })).toMatchObject({ ok: true, model: "jev-1.13.0", metadata: { responseModel: "jev-1.13.0" } });
+    for (const value of ["jev-1.14.0", "jev-latest", "typesafe-ai/jev", "https://another-provider.test", "jev-1.13.0\nother"]) {
       vi.stubEnv("TYPESAFE_MODEL", value);
       evaluate.mockClear();
       expect(await evaluateEvidence(input, { evaluate })).toMatchObject({ ok: false, error: { kind: "invalid_request" } });

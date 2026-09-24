@@ -15,10 +15,13 @@ import { discoverExternalResearch } from "./researchExternal";
 import { logEvent } from "@/lib/db/events";
 import { readAtsHiringContext } from "./atsLifecycle";
 import { businessServicesResearchContext, operatingTopicPriority, researchSourcePriority, BUSINESS_SERVICES_RESEARCH_VERSION } from "./businessServices";
+import { runOperatingCoverage } from "./operatingCoverage";
+import { catalogResearchQueries } from "./operatingCatalog";
+import { readJevBudgetPolicy } from "./budget";
 
 export const DIRECTED_RESEARCH_MINIMUM_MS = 40_000;
 type ResearchOutcome = "queued" | "unchanged" | "source_failed" | "source_empty";
-type ResearchJob = { company_id: string; desired_hash: string; lease_token: string; attempts: number; lease_until?: string | null };
+type ResearchJob = { company_id: string; desired_hash: string; lease_token: string; attempts: number; lease_until?: string | null; catalog_requested_version?: string | null };
 type SourceAttempt = ResearchAttempt & { outcome: ResearchOutcome | null; last_success_at: string | null };
 export type ResearchSweepState = { knownSources: number; dueSources: number; unreadSources: number;
   leasedSources: number; retrySources: number };
@@ -136,22 +139,30 @@ export async function loadResearchProfile(companyId: string, deadlineMs = Infini
 
 export type ResearchProfile = Awaited<ReturnType<typeof loadResearchProfile>>;
 export type ResearchRefreshResult = { sources: number; outcomes: ResearchOutcome[]; ranking: ResearchRankingResult | null;
-  outcome: "refreshed" | "caught_up" | "waiting_interpretation" | "interpretation_failed" | "waiting_retry" | "deadline_deferred" | "sources_leased" | "ranking_pending";
+  outcome: "refreshed" | "caught_up" | "waiting_interpretation" | "interpretation_failed" | "waiting_retry" | "deadline_deferred" | "sources_leased" | "ranking_pending" | "catalog_only";
   remainingSources: number; nextAttemptAt: string; sweep?: ResearchSweepState; unresolvedInterpretations?: number };
 
 export async function refreshAccountResearch(companyId: string, options: {
-  deadlineMs: number; automatic?: boolean; profile?: ResearchProfile;
+  deadlineMs: number; automatic?: boolean; profile?: ResearchProfile; catalogGap?: { facetIds: string[] };
 }): Promise<ResearchRefreshResult> {
   return withServiceDeadline(options.deadlineMs, async () => {
     const empty = (outcome: ResearchRefreshResult["outcome"], nextAttemptAt = new Date(Date.now() + 600_000).toISOString()): ResearchRefreshResult =>
       ({ sources: 0, outcomes: [], ranking: null, outcome, remainingSources: 0, nextAttemptAt });
+    const config = await serviceClient().from("intelligence_config").select("catalog_mode").eq("id",1).single();
+    if(config.error)throw new Error("research_configuration_unavailable");
+    if(!options.catalogGap && ["pilot","rollout"].includes(config.data?.catalog_mode)) {
+      const budget=await readJevBudgetPolicy();
+      if(config.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled||budget.phase!=="maintenance")return empty("catalog_only");
+    }
     if (Date.now() > options.deadlineMs - DIRECTED_RESEARCH_MINIMUM_MS) return empty("deadline_deferred");
     let loaded = options.profile ?? await loadResearchProfile(companyId, options.deadlineMs);
     if (loaded.company.id !== companyId) throw new Error("research_account_mismatch");
     // External discovery has its own durable per-query cadence. It can follow a
     // newly observed event even when the account's stable operating topics are known.
     if (Date.now() < options.deadlineMs - 55_000) {
-      const external = await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs);
+      const external = options.catalogGap ? await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs,
+        catalogResearchQueries(options.catalogGap.facetIds)) :
+        await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs);
       if (external.sources) loaded = await loadResearchProfile(companyId, options.deadlineMs);
       if (external.nextAttemptAt && Date.parse(external.nextAttemptAt) < Date.parse(loaded.nextAttemptAt))
         loaded = { ...loaded, nextAttemptAt: external.nextAttemptAt };
@@ -165,10 +176,11 @@ export async function refreshAccountResearch(companyId: string, options: {
       return { ...empty(outcome, nextAttemptAt), sweep: loaded.sweep, unresolvedInterpretations: loaded.unresolvedInterpretations };
     }
     if (Date.now() > options.deadlineMs - 32_000) return empty("deadline_deferred");
-    const ranking = await rankResearchCandidates({ companyId, automaticResearch: options.automatic === true,
+    const ranking = await rankResearchCandidates({ companyId, automaticResearch: options.automatic === true, catalogOwned: !!options.catalogGap,
       companyName: loaded.company.name, companyDomain: loaded.company.domain,
-      missingTopics: loaded.researchQuestions ?? loaded.missingTopics, candidates: loaded.candidates, candidateTitles: loaded.candidateTitles,
-      researchContext: loaded.researchFocus });
+      missingTopics: options.catalogGap ? ["Resolve the named company's unresolved public operating predicates and company identity using the supplied known source options"] : loaded.researchQuestions ?? loaded.missingTopics,
+      candidates: loaded.candidates, candidateTitles: loaded.candidateTitles,
+      ...(options.catalogGap ? { catalogFacetIds: options.catalogGap.facetIds } : { researchContext: loaded.researchFocus }) });
     // An identical native ranking is already in flight. Let that invocation
     // choose its sources; do not race it using the unranked fallback order.
     if (ranking.outcome === "busy") return { ...empty("ranking_pending", new Date(Date.now() + 60_000).toISOString()),
@@ -329,12 +341,39 @@ export async function runDirectedResearchWorker(limit: number | DirectedResearch
         // The request may live longer than one account's three-minute lease.
         // Reserve its final ten seconds for a durable completion/backoff; the
         // next independent account can still use the request's remaining time.
-        const result = await refreshAccountResearch(job.company_id, { deadlineMs: accountDeadlineMs, automatic: true });
-        const seconds = Math.max(60, Math.ceil((Date.parse(result.nextAttemptAt) - Date.now()) / 1000));
-        const saved = await finish(result.outcome === "caught_up" ? "complete" : "queued", result, null, seconds);
-        outcome = saved ? result.outcome : "superseded";
-      } catch {
-        try { await finish(job.attempts >= 6 ? "failed" : "queued", null, "research_service_error", Math.min(86400, 300 * 2 ** Math.min(job.attempts, 8))); }
+        if (job.catalog_requested_version) {
+          // Same account lease, explicit catalog admission. The catalog owns its
+          // atomic answer/checkpoint finish; never also run legacy discovery or
+          // complete the old interpretation backlog from this branch.
+          const coverage = await runOperatingCoverage(job, accountDeadlineMs);
+          outcome = coverage.outcome;
+          if (coverage.outcome === "catalog_needs_research") {
+            const research = await refreshAccountResearch(job.company_id, { deadlineMs: accountDeadlineMs, automatic: true,
+              catalogGap: { facetIds: coverage.researchFacets ?? [] } });
+            const saved = await serviceClient().rpc("intelligence_catalog_research_finish", { p_company: job.company_id,
+              p_lease: job.lease_token, p_outcome: research.outcome, p_next_at: research.nextAttemptAt });
+            if (saved.error) throw new Error("catalog_research_finish_failed");
+            outcome = saved.data === true ? "catalog_researched" : "catalog_stale";
+          }
+        } else {
+          const result = await refreshAccountResearch(job.company_id, { deadlineMs: accountDeadlineMs, automatic: true });
+          const seconds = Math.max(60, Math.ceil((Date.parse(result.nextAttemptAt) - Date.now()) / 1000));
+          const saved = await finish(result.outcome === "caught_up" ? "complete" : "queued", result, null, seconds);
+          outcome = saved ? result.outcome : "superseded";
+        }
+      } catch (error) {
+        try {
+          if (job.catalog_requested_version) await withServiceDeadline(leaseDeadlineMs, async () => {
+            const reason = error instanceof Error ? error.message : "catalog_service_error";
+            const readOnlyRetry = ["catalog_loading_deadline", "catalog_sources_unavailable", "catalog_answers_unavailable",
+              "catalog_snapshot_unavailable", "catalog_snapshot_sources_changed"].includes(reason);
+            const deferred = await serviceClient().rpc("intelligence_catalog_defer", { p_company: job.company_id,
+              p_lease: job.lease_token, p_reason: reason,
+              p_retry_at: readOnlyRetry && job.attempts < 4 ? new Date(Date.now() + 60_000).toISOString() : null });
+            if (deferred.error) throw new Error("catalog_defer_failed");
+          });
+          else await finish(job.attempts >= 6 ? "failed" : "queued", null, "research_service_error", Math.min(86400, 300 * 2 ** Math.min(job.attempts, 8)));
+        }
         catch { /* The live lease remains the durable recovery path. */ }
       }
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;

@@ -1,5 +1,7 @@
 # Where Stanley uses Jev
 
+**September 24 policy update:** the [operating-catalog runbook](JEV_OPERATING_CATALOG_RUNBOOK.md) supersedes the historical monthly-budget and optional private-TAM descriptions below. The new classifier adds 47 public categories across 35 research guides, reuses exact requests and source evidence, and shares one funded budget across all Jev callers. O06 renewal/expansion was removed at the user's request. Private TAM annotations and private connector calls are disabled; Jev does not grade TAM accounts.
+
 Reviewed September 19, 2026 (Pacific), against the checked-in implementation. This page maps actual call sites and consumers; configuration, deployed activation, and successful live outcomes remain separate facts.
 
 Stanley uses **Jev through the direct TypeSafe API** for structured evidence interpretation and research decisions. Claude supplies chat, cited account-story writing, and the separate legacy generative classification/review path. A Jev finding does not receive a second model's review before publication, and neither public intelligence model changes TAM or Old Gold grades.

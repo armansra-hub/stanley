@@ -4,7 +4,7 @@ vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc
 vi.mock("./observations", () => ({ intelligenceEnabled: () => true, INTELLIGENCE_VERSION: "evidence-v2" }));
 vi.mock("./jev", async importOriginal => ({ ...await importOriginal<typeof import("./jev")>(),
   evaluateEvidence: mocks.evaluate, estimateEvidenceInputTokens: () => 100, evidenceRequestFingerprint: () => "a".repeat(64) }));
-vi.mock("./budget", () => ({ reserveJev: mocks.reserve, settleJev: vi.fn(), secondsUntilNextMonth: () => 9999 }));
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(), reserveJev: mocks.reserve, settleJev: vi.fn(), secondsUntilNextMonth: () => 9999 }));
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => undefined }));
 vi.mock("./events", () => ({ reconcileObservationEvent: mocks.attach, EventReconciliationDeferred: class extends Error {}, bindEventTrigger: mocks.bind }));
