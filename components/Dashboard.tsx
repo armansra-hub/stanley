@@ -1,5 +1,6 @@
 "use client";
 import AccountResearchPanel from "./AccountResearchPanel";
+import CopyButton, { bareDomain } from "./CopyButton";
 import IntelligenceClassification from "./IntelligenceClassification";
 import FederalAwardLifecycle from "./FederalAwardLifecycle";
 import GovernmentIntelligence from "./GovernmentIntelligence";
@@ -1200,50 +1201,6 @@ function Th({ children, className = "", sortKey, sort, onSort }: { children?: Re
 }
 function Td({ children, className = "", colSpan, onClick }: { children?: React.ReactNode; className?: string; colSpan?: number; onClick?: (e: React.MouseEvent) => void }) {
   return <td className={`px-3 py-2 align-top ${className}`} colSpan={colSpan} onClick={onClick}>{children}</td>;
-}
-/** Reduce any website/URL to its bare registrable domain: strip protocol, "www.",
- * any path/query/hash, and trailing slash (e.g. "https://www.website.com/about" → "website.com"). */
-function bareDomain(value: string): string {
-  return value.trim()
-    .replace(/^[a-z]+:\/\//i, "")  // protocol
-    .replace(/^www\./i, "")          // leading www.
-    .replace(/[/?#].*$/, "")         // path / query / hash
-    .replace(/\.+$/, "")              // trailing dots
-    .toLowerCase();
-}
-
-/** Copy-to-clipboard chip that appears on row hover (e.g. company name, internal ID). */
-function legacyCopy(value: string) {
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = value; ta.style.position = "fixed"; ta.style.opacity = "0";
-    document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
-  } catch { /* clipboard unavailable */ }
-}
-function copyText(value: string) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      // writeText returns a promise that REJECTS when blocked (e.g. document not
-      // focused) — catch it so it never bubbles as an unhandled rejection, and fall
-      // back to the legacy path.
-      navigator.clipboard.writeText(value).catch(() => legacyCopy(value));
-      return;
-    }
-  } catch { /* fall through to legacy path */ }
-  legacyCopy(value);
-}
-function CopyButton({ value, label, children }: { value: string; label: string; children: React.ReactNode }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); copyText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
-      title={`Copy ${label}`}
-      className="rounded px-1 text-[10px] leading-none text-[var(--text-muted)] opacity-0 transition-opacity hover:text-[var(--text)] group-hover:opacity-100"
-      style={copied ? { color: "var(--tier-a)", opacity: 1 } : undefined}
-    >
-      {copied ? "✓" : children}
-    </button>
-  );
 }
 function ActionButton({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
   return (

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { OPERATING_TOPICS, type OperatingTopic } from "@/lib/intelligence/profiles";
 import type { TopicSearchResult } from "@/lib/intelligence/topicSearch";
 import IntelligenceVisibility from "./IntelligenceVisibility";
+import CopyButton, { bareDomain } from "./CopyButton";
 import type { VisibilityMode } from "@/lib/intelligence/visibility";
 
 function dated(value: string | null): string {
@@ -99,8 +100,15 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount }:
         <div className="space-y-3">{result.accounts.map(account => <article key={account.companyId} className="rounded-lg border bg-[var(--background)] p-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h3 className="font-semibold">{onOpenAccount ? <button type="button" className="text-[var(--gold)] hover:underline" onClick={() => onOpenAccount(account.companyId, account.name)}>{account.name}</button> : <Link className="text-[var(--gold)] hover:underline" href={`/headhunter/intelligence?companyId=${encodeURIComponent(account.companyId)}`}>{account.name}</Link>}</h3>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">{[account.subindustry, account.domain].filter(Boolean).join(" · ")}</p>
+              <h3 className="group flex items-center gap-1.5 font-semibold">
+                {onOpenAccount ? <button type="button" className="text-[var(--gold)] hover:underline" onClick={() => onOpenAccount(account.companyId, account.name)}>{account.name}</button> : <Link className="text-[var(--gold)] hover:underline" href={`/headhunter/intelligence?companyId=${encodeURIComponent(account.companyId)}`}>{account.name}</Link>}
+                <CopyButton value={account.name} label="company name">⧉</CopyButton>
+              </h3>
+              {account.domain && <div className="group mt-1 flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                {bareDomain(account.domain)}
+                <CopyButton value={bareDomain(account.domain)} label="website">⧉</CopyButton>
+              </div>}
+              {account.subindustry && <p className="text-[10px] text-[var(--text-muted)]">{account.subindustry}</p>}
             </div>
             <span className="text-xs text-[var(--text-muted)]">{account.coverage.interpreted} of {account.coverage.observations} current sources interpreted</span>
           </div>
