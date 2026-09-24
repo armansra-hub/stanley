@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OPERATING_CATALOG_VERSION, OPERATING_FACETS, operatingFacetQuestion } from "./operatingCatalog";
-import { catalogAnswerPlans, catalogFacetVersion, catalogNativeResult, catalogPackets, catalogRetryAt, runOperatingCoverage,
+import { OPERATING_COVERAGE_VERSION, catalogAnswerPlans, catalogFacetVersion, catalogNativeResult, catalogPackets, catalogRetryAt, runOperatingCoverage,
   type CatalogCheckpoint, type CatalogSnapshot, type CatalogSource } from "./operatingCoverage";
 import { nativeJevBody, nativeJevFingerprint, type NativeJevInput } from "./nativeJev";
 
@@ -55,6 +55,41 @@ describe("operating catalog account coverage", () => {
     for (let i = 1; i < packets.length; i++) expect(packets[i].citation.start).toBe(packets[i - 1].citation.end);
     expect(packets.at(-1)?.citation.end).toBe(source.evidence_text.length);
   });
+  it("prefers a complete paragraph or line without creating another evidence packet", () => {
+    const paragraphText = "12345\n\n123456789012\nrest";
+    const paragraphs = catalogPackets([{ ...sources[0], evidence_text: paragraphText }], 20);
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0].text).toBe("12345\n\n");
+    expect(paragraphs.map(p => p.text).join("")).toBe(paragraphText);
+    const lineText = "123456789012\n1234567890";
+    const lines = catalogPackets([{ ...sources[0], evidence_text: lineText }], 20);
+    expect(lines).toHaveLength(2);
+    expect(lines[0].text).toBe("123456789012\n");
+    expect(lines.map(p => p.text).join("")).toBe(lineText);
+  });
+  it("keeps the exact byte fallback when a paragraph break would add a paid mapping packet", () => {
+    const text = "short\n\n" + "x".repeat(30);
+    const packets = catalogPackets([{ ...sources[0], evidence_text: text }], 20);
+    expect(packets).toHaveLength(2);
+    expect(packets[0].text).toBe(text.slice(0, 20));
+    expect(packets.map(p => p.text).join("")).toBe(text);
+    const unbroken = catalogPackets([{ ...sources[0], evidence_text: "🙂".repeat(21) }], 20);
+    expect(unbroken).toHaveLength(5);
+    expect(unbroken.map(p => p.text).join("")).toBe("🙂".repeat(21));
+  });
+  it("preserves exact CRLF and Unicode citation offsets at preferred boundaries", () => {
+    const text = "α".repeat(6) + "\r\n\r\n" + "🙂".repeat(5) + "tail";
+    const packets = catalogPackets([{ ...sources[0], evidence_text: text }], 24);
+    expect(packets).toHaveLength(2);
+    expect(packets[0].text).toBe("α".repeat(6) + "\r\n\r\n");
+    for (const [index, packet] of packets.entries()) {
+      expect(packet.text).toBe(text.slice(packet.citation.start, packet.citation.end));
+      expect(Buffer.byteLength(packet.text)).toBeLessThanOrEqual(24);
+      expect(packet.citation.end).toBeGreaterThan(packet.citation.start);
+      if (index) expect(packet.citation.start).toBe(packets[index - 1].citation.end);
+    }
+    expect(packets.map(p => p.text).join("")).toBe(text);
+  });
   it("byte-packs every public question over shared cross-source evidence without truncation", () => {
     const packets = catalogPackets(sources);
     const { plans, blocked } = catalogAnswerPlans(company, OPERATING_FACETS, packets);
@@ -100,6 +135,55 @@ describe("operating catalog account coverage", () => {
     expect(h.writes.filter(w => w.p_checkpoint.pending).every(w => w.p_terminal === false)).toBe(true);
     await runOperatingCoverage(job, Date.now() + 120_000, h);
     expect(h.evaluate).toHaveBeenCalledTimes(paid);
+  });
+  it("maps partial evidence without applying the final company-qualification rubric", async () => {
+    const h = harness([...sources, { ...sources[0], id: "c", content_hash: "hash-c",
+      evidence_text: "Unrelated public footer. ".repeat(2_000) }]);
+    h.evaluate.mockImplementation(async (input: NativeJevInput) => {
+      const state = input.state as any;
+      const isMapping = Object.values(input.questions).some(q => q.type === "choice" && "candidate" in q.criteria);
+      if (isMapping) {
+        expect(state.guidance.industries).toHaveLength(35);
+        expect(state.guidance.lessons).toHaveLength(8);
+        expect(state.guidance).not.toHaveProperty("decisions");
+        expect(state.guidance).not.toHaveProperty("finalDecisionPolicy");
+        for (const [id, q] of Object.entries(input.questions)) {
+          const facet = OPERATING_FACETS.find(f => f.id === id)!;
+          expect(q.instructions).toContain(facet.definition);
+          expect(q.instructions).toContain(facet.boundary);
+          expect(q.instructions).toContain("Retain partial components");
+          expect(q.instructions).not.toContain("Require the complete stated conjunction");
+          expect(q.instructions).not.toContain("Apply guidance.finalDecisionPolicy");
+        }
+      }
+      return { status: "complete", reused: false, evaluation: { ok: true, usage: { inputTokens: 10, outputTokens: 0 },
+        provider_result: { model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(input.questions).map(id => [id, {
+          type: "choice" as const, choice: isMapping ? (state.sources[0].observationId === "c" ? "no_evidence" : "candidate") :
+            id === "rr_c02" ? "supported" : "insufficient_evidence",
+        }])) } } };
+    });
+    expect((await runOperatingCoverage(job, Date.now() + 120_000, h)).outcome).toBe("catalog_complete");
+    const final = h.evaluate.mock.calls.map(([input]) => input).find(input => input.questions.rr_c02
+      && input.questions.rr_c02.type === "choice" && "supported" in input.questions.rr_c02.criteria)!;
+    expect((final.state as any).sources.map((s: any) => s.observationId)).toEqual(["a", "b"]);
+    expect(h.saved.size).toBe(47);
+  });
+  it("does not resume a mapping checkpoint built under the superseded rubric", async () => {
+    const h = harness();
+    const original = h.rpc.getMockImplementation()!;
+    h.rpc.mockImplementation(async (name, args) => {
+      const result = await original(name, args);
+      if (name === "intelligence_catalog_snapshot") (result.data as CatalogSnapshot).checkpoint = {
+        version: "account-operating-coverage-v1", catalogVersion: OPERATING_CATALOG_VERSION,
+        evidenceKey: "stable-evidence-key", phase: "mapping", mapped: {}, receipts: [],
+        research: { doneAt: new Date().toISOString(), nextAt: new Date(Date.now() + 86400000).toISOString(), outcome: "caught_up" },
+      };
+      return result;
+    });
+    await runOperatingCoverage(job, Date.now() + 120_000, h);
+    expect(OPERATING_COVERAGE_VERSION).not.toBe("account-operating-coverage-v1");
+    expect(h.writes[0].p_checkpoint).toMatchObject({ version: OPERATING_COVERAGE_VERSION, phase: "direct" });
+    expect(h.evaluate.mock.calls[0][0].questions.rr_c01).toHaveProperty("criteria.supported");
   });
   it("keeps source-unavailable accounts distinct from native unknown and performs no paid request", async () => {
     const h = harness([]);

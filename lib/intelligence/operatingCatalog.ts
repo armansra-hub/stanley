@@ -4,8 +4,8 @@ import { catalogSha256 } from "./operatingCatalogHash";
 /** Client-safe catalog; no provider, database, grading or filesystem dependency. */
 export const OPERATING_CATALOG_RELEASE = "ring-ring-2026-09-24";
 export const OPERATING_EXCLUDED_SOURCE_CATEGORIES = ["O06"] as const;
-export const OPERATING_GUIDANCE_VERSION = "ring-ring-industry-guidance-v1";
-export const OPERATING_QUESTION_PACK_VERSION = "operating-facets-v1";
+export const OPERATING_GUIDANCE_VERSION = "ring-ring-industry-guidance-v2";
+export const OPERATING_QUESTION_PACK_VERSION = "operating-facets-v2";
 export const OPERATING_CATALOG_SOURCE = {
   report: "research/ring-ring-icp-20260924/RESEARCH-REPORT.md",
   catalog: "research/ring-ring-icp-20260924/proposed-categories.json",
@@ -50,6 +50,9 @@ export const OPERATING_FACET_CHOICE_LABELS = {
   conflicting: "Unresolved relevant evidence supports and contradicts the predicate.",
 } as const;
 
+/** Identical decision policy travels once per request, beside the evidence. */
+export const OPERATING_FINAL_DECISION_POLICY = "Apply exactly each predicate's stated AND/OR logic. Every required fact and relationship must be supported for the target; compatible facts may come from different sources. Do not require one bundled product, customer or contract unless the predicate explicitly requires it. Customer, supplier, partner or acquired-brand activities are not automatically the target's activities; respect explicit legal/operating relationships. Missing evidence is insufficient evidence, never a negative fact. Industry guides and historical examples are research context, never evidence about this target. Do not infer financial pain, purchase intent or a TAM grade.";
+
 export type OperatingFacetNativeQuestion = {
   type: "choice";
   instructions: string;
@@ -61,7 +64,7 @@ export function operatingFacetQuestion(id: string): OperatingFacetNativeQuestion
   if (!facet) throw new Error("unknown_operating_facet:" + id);
   return {
     type: "choice",
-    instructions: facet.instructions + " Apply shared decision definitions. Return the native decision for this predicate only. Industry guides and historical examples are research context, never evidence about this target. Do not infer financial pain, purchase intent or a TAM grade.",
+    instructions: facet.instructions + " Apply guidance.finalDecisionPolicy and guidance.decisions. Return the native decision for this predicate only.",
     criteria: { ...OPERATING_FACET_CHOICE_LABELS },
   };
 }
@@ -82,6 +85,7 @@ export function operatingCatalogSemanticContext() {
   return {
     guidanceVersion: OPERATING_GUIDANCE_VERSION,
     decisions: OPERATING_FACET_DECISIONS,
+    finalDecisionPolicy: OPERATING_FINAL_DECISION_POLICY,
     policy: "Use these as research lenses, not facts about the target. Preserve seller/customer/partner roles, explicit ownership and transaction role, dates, and unknowns. Finance pain and purchase intent remain hypotheses. No TAM grading. Example companies are not supplied as target evidence.",
     industries: OPERATING_INDUSTRY_GUIDES.map(guide => ({
       id: guide.id, label: guide.label, lookFor: guide.guidance, boundary: guide.boundary,

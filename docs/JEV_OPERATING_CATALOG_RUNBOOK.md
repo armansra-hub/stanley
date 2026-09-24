@@ -84,6 +84,17 @@ Stored source references are shared across facets where identical. UI citations
 remain tied to exact company, source hash and UTF-16 offsets. Database readback
 requires current semantic versions; stale answers cannot acquire new labels.
 
+The September 24 gallery audit aligns labels with the exact AND/OR predicates,
+supplies the common final-decision policy once per request, and separates partial
+evidence collection from the complete company-level decision. Coverage version 2
+invalidates older mapping checkpoints; the catalog hash binds corrected question
+and industry semantics. All 47 categories and all 35 industry guides remain.
+No new semantic judge or confidence cutoff is added.
+
+Public PDF extraction can stop at its page/text bounds. The catalog evaluates
+the retained text and exposes that source gap; it does not certify that unread
+pages were covered. This release does not add full PDF continuation or paid OCR.
+
 `complete` means the current 47 questions were evaluated over retained evidence.
 It does not mean every answer is positive, every source is accessible, or all
 possible research is exhausted. Pending, partial and source/budget gaps remain
