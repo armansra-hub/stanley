@@ -9,6 +9,7 @@ import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceH
 import IntelligenceCost from "./IntelligenceCost";
 import IntelligenceResearchProgress from "./IntelligenceResearchProgress";
 import IntelligenceBudget from "./IntelligenceBudget";
+import { displayedIntelligenceCost, resolveIntelligenceCost } from "./intelligenceCostFallback";
 import type { ResearchProgress } from "@/lib/intelligence/researchProgress";
 import type { JevCostSnapshot } from "@/lib/intelligence/costMetricsTypes";
 import { EvidenceCard, type FeedbackReason, type Observation } from "./IntelligenceEvidenceCard";
@@ -88,6 +89,12 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     if (dismissed) params.set("dismissed", "true");
     if (showHidden) params.set("showHidden", "true");
     if (offset) params.set("offset", String(offset));
+    const refreshCost = (summary?: JevCostSnapshot) => {
+      if (offset) return;
+      setFallbackCost(undefined);
+      void resolveIntelligenceCost(summary, () => fetch(`${API}/cost`, { cache: "no-store", signal: AbortSignal.timeout(15_000) }))
+        .then(cost => { if (current === requestId.current) setFallbackCost(cost); });
+    };
     try {
       // Progress is independent: a slow aggregate must not hold the feed open.
       if (!offset) void fetch(`${API}/research-status`, { cache: "no-store" })
@@ -100,6 +107,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       const next: IntelligenceData = await response.json();
       if (!Array.isArray(next.views) || !Array.isArray(next.observations)) throw new Error("invalid_response");
       if (current !== requestId.current) return null;
+      refreshCost(next.jevCost);
       setSnapshot(previous => {
         if (!offset || previous?.key !== key) return { key, data: next };
         const seen = new Set(previous.data.observations.map(item => item.id));
@@ -112,11 +120,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     } catch {
       if (current === requestId.current) {
         setError("Could not load intelligence. Try Refresh to get the latest findings.");
-        try {
-          const costResponse = await fetch(`${API}/cost`, { cache: "no-store" });
-          const cost: JevCostSnapshot = costResponse.ok ? await costResponse.json() : { available: false };
-          if (current === requestId.current) setFallbackCost(cost);
-        } catch { if (current === requestId.current) setFallbackCost({ available: false }); }
+        refreshCost();
       }
       return null;
     } finally {
@@ -238,7 +242,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
 
       {data?.health && <IntelligenceHealth health={data.health} />}
       <IntelligenceResearchProgress progress={researchProgress} />
-      <IntelligenceCost cost={data?.jevCost ?? fallbackCost} />
+      <IntelligenceCost cost={displayedIntelligenceCost(data?.jevCost, fallbackCost)} />
       <OperatingMatches onOpenAccount={onOpenAccount} enabled={active} refreshKey={`${updatedAt}:${statusRevision}`} showHidden={showHidden} statusBusy={busy} onStatus={changeCompanyStatus} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>
