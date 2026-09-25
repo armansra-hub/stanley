@@ -1,5 +1,6 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
+import { logMetricFailure } from "./metricDiagnostics";
 export type ResearchProgress = { available: false } | {
   available: true; asOf: string; scope: "eligible_tam";
   accounts: { total: number; withEvidence: number; withInterpretation: number; caughtUp: number;
@@ -21,6 +22,9 @@ export function parseResearchProgress(value: unknown): ResearchProgress {
 export async function readResearchProgress(): Promise<ResearchProgress> {
   try {
     const { data, error } = await serviceClient().rpc("intelligence_research_progress");
-    return error ? { available: false } : parseResearchProgress(data);
-  } catch { return { available: false }; }
+    if (error) { logMetricFailure("research_progress", error); return { available: false }; }
+    const result = parseResearchProgress(data);
+    if (!result.available) logMetricFailure("research_progress", null);
+    return result;
+  } catch (error) { logMetricFailure("research_progress", error); return { available: false }; }
 }

@@ -38,7 +38,7 @@ function CostTable({ rows, label }: { rows: JevCostGroup[]; label: string }) {
   </div>;
 }
 
-export default function IntelligenceCost({ cost }: { cost: JevCostSnapshot | undefined }) {
+export default function IntelligenceCost({ cost, stale = false }: { cost: JevCostSnapshot | undefined; stale?: boolean }) {
   const [period, setPeriod] = useState<"month" | "last24h" | "last1h">("last1h");
   if (!cost?.available) return <section aria-label="Jev usage and cost" className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5">
     <h2 className="western text-2xl">Jev usage and cost</h2>
@@ -56,6 +56,7 @@ export default function IntelligenceCost({ cost }: { cost: JevCostSnapshot | und
       </div>
     </div>
     <p className="mt-2 text-xs text-[var(--text-muted)]">Direct TypeSafe usage reported to Stanley. Claude and other providers are excluded. The last hour shows the current spending rate; monthly totals include earlier work.</p>
+    {stale && <p role="status" className="mt-2 text-xs text-[var(--gold)]">Latest refresh unavailable. Showing saved figures from {new Date(cost.asOf).toLocaleString()}.</p>}
     <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
       <div><p className="text-xs uppercase text-[var(--text-muted)]">Known usage estimate</p><p className="mt-1 text-xl font-semibold tabular-nums">{usd(totals.estimatedUsd)}</p><p className="mt-1 text-xs text-[var(--text-muted)]">{count(totals.knownUsageRequests)} requests with reported usage</p></div>
       <div><p className="text-xs uppercase text-[var(--text-muted)]">Reported input tokens</p><p className="mt-1 text-xl font-semibold tabular-nums">{count(totals.reportedInputTokens)}</p><p className="mt-1 text-xs text-[var(--text-muted)]">Provider-reported token counts</p></div>

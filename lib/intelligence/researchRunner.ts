@@ -21,7 +21,7 @@ import { readJevBudgetPolicy } from "./budget";
 
 export const DIRECTED_RESEARCH_MINIMUM_MS = 40_000;
 type ResearchOutcome = "queued" | "unchanged" | "source_failed" | "source_empty";
-type ResearchJob = { company_id: string; desired_hash: string; lease_token: string; attempts: number; lease_until?: string | null; catalog_requested_version?: string | null };
+type ResearchJob = { company_id: string; desired_hash: string; lease_token: string; attempts: number; lease_until?: string | null; catalog_requested_version?: string | null; last_error?: string | null };
 type SourceAttempt = ResearchAttempt & { outcome: ResearchOutcome | null; last_success_at: string | null };
 export type ResearchSweepState = { knownSources: number; dueSources: number; unreadSources: number;
   leasedSources: number; retrySources: number };
@@ -55,6 +55,31 @@ function researchStateUnavailable(stage: "source_attempts" | "interpretation_job
   // Keep actionable database/PostgREST codes, never raw messages or query data.
   const code = typeof error.code === "string" && /^(?:[A-Z0-9]{5}|PGRST[0-9]{3})$/.test(error.code) ? `:${error.code}` : "";
   return new Error(`research_${stage}_unavailable${code}`);
+}
+
+const CATALOG_READ_RETRY_DELAYS_MS = [60_000, 120_000, 240_000, 480_000];
+const CATALOG_RETRYABLE_READS = new Set([
+  "catalog_loading_deadline", "catalog_sources_unavailable", "catalog_answers_unavailable",
+  "catalog_snapshot_unavailable", "catalog_snapshot_sources_changed", "research_deadline",
+  "evidence_unavailable", "research_discovery_unavailable", "research_configuration_unavailable",
+  "research_source_attempts_unavailable", "external_research_schedule_unavailable",
+]);
+
+/** Only known reads can retry automatically. The persisted suffix counts an
+ * uninterrupted failure streak; successful catalog checkpoints clear last_error.
+ * Lifetime claim counts include healthy continuations and are not a retry budget.
+ * Uncertain dispatch/checkpoint/source writes still require read-only recovery. */
+function catalogReadRetry(reason: string, previousError: string | null | undefined, now = Date.now()) {
+  const match = /^([a-z_]+)(?::([A-Z0-9]{5}|PGRST[0-9]{3}))?$/.exec(reason);
+  if (!match || !CATALOG_RETRYABLE_READS.has(match[1])) return { reason, retryAt: null };
+  const code = match[2];
+  // A missing table, permissions failure or malformed schema is not transient.
+  if (code && !/^(?:08[A-Z0-9]{3}|40[A-Z0-9]{3}|53[A-Z0-9]{3}|55P03|57014|57P0[123]|PGRST00[0-3])$/.test(code))
+    return { reason, retryAt: null };
+  const previous = /\|read_retry=([1-5])$/.exec(previousError ?? "");
+  const attempt = Math.min(CATALOG_READ_RETRY_DELAYS_MS.length + 1, Number(previous?.[1] ?? 0) + 1);
+  const delay = CATALOG_READ_RETRY_DELAYS_MS[attempt - 1];
+  return { reason: `${reason}|read_retry=${attempt}`, retryAt: delay === undefined ? null : new Date(now + delay).toISOString() };
 }
 
 /** Both manual and scheduled work share discovered URLs, the current profile,
@@ -375,11 +400,9 @@ export async function runDirectedResearchWorker(limit: number | DirectedResearch
         try {
           if (job.catalog_requested_version) await withServiceDeadline(leaseDeadlineMs, async () => {
             const reason = error instanceof Error ? error.message : "catalog_service_error";
-            const readOnlyRetry = ["catalog_loading_deadline", "catalog_sources_unavailable", "catalog_answers_unavailable",
-              "catalog_snapshot_unavailable", "catalog_snapshot_sources_changed"].includes(reason);
+            const retry = catalogReadRetry(reason, job.last_error);
             const deferred = await serviceClient().rpc("intelligence_catalog_defer", { p_company: job.company_id,
-              p_lease: job.lease_token, p_reason: reason,
-              p_retry_at: readOnlyRetry && job.attempts < 4 ? new Date(Date.now() + 60_000).toISOString() : null });
+              p_lease: job.lease_token, p_reason: retry.reason, p_retry_at: retry.retryAt });
             if (deferred.error) throw new Error("catalog_defer_failed");
           });
           else await finish(job.attempts >= 6 ? "failed" : "queued", null, "research_service_error", Math.min(86400, 300 * 2 ** Math.min(job.attempts, 8)));

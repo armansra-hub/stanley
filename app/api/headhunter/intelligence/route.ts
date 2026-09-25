@@ -4,7 +4,6 @@ import { intelligenceEnabled } from "@/lib/intelligence/observations";
 import { intelligenceUiAuthorized, isUuid, sameOriginMutation, smallJson } from "@/lib/intelligence/http";
 import { runIntelligenceWorker } from "@/lib/intelligence/worker";
 import { recomputePriority } from "@/lib/db/triggers";
-import { readJevCostMetrics } from "@/lib/intelligence/costMetrics";
 import { runAccountQuestionWorker } from "@/lib/intelligence/accountQuestions";
 
 export const dynamic = "force-dynamic";
@@ -47,20 +46,22 @@ export async function GET(req: NextRequest) {
   try {
     const db = serviceClient();
     stage = "status";
-    const [status, views, health, jevCost] = await Promise.all([
+    const [status, views, health] = await Promise.all([
       accountScope ? Promise.resolve({ data: { enabled: intelligenceEnabled() }, error: null }) : optionalMetric(
         () => serviceClient().rpc("intelligence_status"), { data: null, error: { message: "metrics_unavailable" } }),
       accountScope ? Promise.resolve({ data: [], error: null }) : db.from("intelligence_views").select("id,name,question,active,backfill_complete").eq("active", true).order("created_at", { ascending: false }).limit(100),
       accountScope ? Promise.resolve({ data: null, error: null }) : optionalMetric(
         () => serviceClient().rpc("intelligence_health"), { data: null, error: { message: "metrics_unavailable" } }),
-      accountScope ? Promise.resolve(null) : optionalMetric(() => readJevCostMetrics(), { available: false } as const),
     ]);
     if (views.error) fail("views", views.error);
     const activityAvailable = !accountScope && !status.error && !!status.data;
     const processingEnabled = !intelligenceEnabled() ? false : status.error ? null : status.data?.enabled === true;
     const summary = { ...empty, ...(status.error ? {} : status.data),
       enabled: processingEnabled === true, processingEnabled, activityAvailable,
-      health: health.error ? null : health.data, ...(jevCost ? { jevCost } : {}) };
+      health: health.error ? null : health.data,
+      // Preserve the optional summary contract for older clients. /cost owns
+      // the single independent cost read; no doomed 2.5s scan before its retry.
+      ...(accountScope ? {} : { jevCost: { available: false } }) };
     if (viewId) {
       let matchesQuery = db.from("intelligence_account_question_matches")
         .select("view_id,company_id,probability,result,evaluated_at,companies!inner(name,status)")

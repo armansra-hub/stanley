@@ -57,10 +57,10 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("catalog account lease integration", () => {
-  function catalogJob() {
+  function catalogJob(overrides: { attempts?: number; last_error?: string | null } = {}) {
     let claimed = false;
     const job = { company_id: "company", desired_hash: "hash", lease_token: "lease", attempts: 1,
-      lease_until: new Date(Date.now() + 180000).toISOString(), catalog_requested_version: "catalog" };
+      lease_until: new Date(Date.now() + 180000).toISOString(), catalog_requested_version: "catalog", ...overrides };
     mocks.rpc.mockImplementation(async name => ({ data: name === "intelligence_directed_claim" ? (claimed ? [] : (claimed = true, [job])) : true, error: null }));
     return job;
   }
@@ -127,6 +127,61 @@ describe("catalog account lease integration", () => {
     await runDirectedResearchWorker(1);
     deferred = mocks.rpc.mock.calls.find(([name]) => name === "intelligence_catalog_defer")![1];
     expect(deferred.p_retry_at).toBeNull();
+  });
+  it("retries a transient source-attempt read after many healthy catalog claims without repeating research writes", async () => {
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    catalogJob({ attempts: 120 });
+    mocks.coverage.mockResolvedValue({ outcome: "catalog_needs_research", answered: 47, researchFacets: ["rr_c02"] });
+    mocks.sourceState.mockResolvedValue({ cursor: { knownUrls: ["https://example.com/services"] } });
+    tableErrors.intelligence_research_attempts = { code: "57014", message: "Private query details" };
+    await runDirectedResearchWorker(1);
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_catalog_defer", {
+      p_company: "company", p_lease: "lease", p_reason: "research_source_attempts_unavailable:57014|read_retry=1",
+      p_retry_at: new Date(now + 60_000).toISOString(),
+    });
+    expect(mocks.external).not.toHaveBeenCalled();
+    expect(mocks.rank).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_catalog_research_finish")).toBe(false);
+  });
+  it("bounds consecutive read failures with durable backoff independent of lifetime attempts", async () => {
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    let previous: string | null = null;
+    for (const [index, delay] of [60_000, 120_000, 240_000, 480_000, null].entries()) {
+      mocks.rpc.mockClear();
+      catalogJob({ attempts: 200 + index, last_error: previous });
+      // A failing read at another stage is still the same uninterrupted failure streak.
+      const reason = index % 2 ? "catalog_sources_unavailable" : "research_discovery_unavailable";
+      mocks.coverage.mockRejectedValue(new Error(reason));
+      await runDirectedResearchWorker(1);
+      const deferred = mocks.rpc.mock.calls.find(([name]) => name === "intelligence_catalog_defer")![1];
+      expect(deferred.p_reason).toBe(`${reason}|read_retry=${index + 1}`);
+      expect(deferred.p_retry_at).toBe(delay === null ? null : new Date(now + delay).toISOString());
+      previous = deferred.p_reason;
+    }
+    mocks.rpc.mockClear();
+    // A durable successful checkpoint clears last_error; a later new incident gets a fresh budget.
+    catalogJob({ attempts: 300, last_error: null });
+    mocks.coverage.mockRejectedValue(new Error("catalog_answers_unavailable"));
+    await runDirectedResearchWorker(1);
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_catalog_defer", expect.objectContaining({
+      p_reason: "catalog_answers_unavailable|read_retry=1", p_retry_at: new Date(now + 60_000).toISOString(),
+    }));
+  });
+  it.each([
+    "research_source_attempts_unavailable:42P01", "research_source_attempts_unavailable:42501",
+    "catalog_checkpoint_unavailable", "catalog_research_finish_failed", "external_research_sources_failed",
+    "external_research_finish_failed", "external_research_claim_failed", "dispatch_ticket_expired",
+  ])("keeps nontransient reads or uncertain actions held: %s", async reason => {
+    catalogJob({ attempts: 1 });
+    mocks.coverage.mockRejectedValue(new Error(reason));
+    await runDirectedResearchWorker(1);
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_catalog_defer", expect.objectContaining({
+      p_reason: reason, p_retry_at: null,
+    }));
   });
 });
 

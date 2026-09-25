@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { intelligenceUiAuthorized } from "@/lib/intelligence/http";
 import { readResearchProgress } from "@/lib/intelligence/researchProgress";
 export const dynamic = "force-dynamic";
+export const maxDuration = 20;
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const result = await readResearchProgress();

@@ -33,6 +33,26 @@ describe("company source discovery and evidence", () => {
     expect(sitemapLocations('<loc><![CDATA[https://acme.com/news]]></loc><loc>https://foreign.com/news</loc>', "https://acme.com")).toEqual(["https://acme.com/news"]);
   });
 
+  it("does not turn an unevaluated JavaScript href into a company source URL", () => {
+    // Matches the expression recorded by the live PostalDispatch source worker.
+    const expression = "' + AboutUsUrl + '&url=' + returnUrl + '&dnnprintmode=true";
+    expect(companyPageUrl(expression, "https://postaldispatch.com/Copy-Print/")).toBeNull();
+    expect(companyPageUrl("&quot; + navigation.aboutUrl + &quot;", "https://acme.com")).toBeNull();
+    const html = `<script>var printLink = '<a href="${expression}">About us</a>';</script>
+      <a href="/about">About us</a><a href="/services">Services</a>`;
+    expect(discoverSiteLinks(html, "https://postaldispatch.com/Copy-Print/")).toEqual([
+      { url: "https://postaldispatch.com/about", label: "About us", kind: "about" },
+      { url: "https://postaldispatch.com/services", label: "Services", kind: "services" },
+    ]);
+  });
+
+  it("preserves legitimate URL punctuation and encoded path data", () => {
+    for (const path of ["/services/O'Brien+Partners", "/services/C%2B%2B", "/about/O%27Brien",
+      "/services/%27%20%2B%20AboutUsUrl%20%2B%20%27", "/news/a+b?q=a%20%2B%20b", "/about/caf%C3%A9"]) {
+      expect(companyPageUrl(path, "https://acme.com")).toBe(`https://acme.com${path}`);
+    }
+  });
+
   it("ignores navigation-only changes and retains explicit date provenance", () => {
     const first = sitePageEvidence('<title>Acme</title><nav>Old navigation</nav><main>New branch in Denver.</main><footer>Copyright 2025</footer><meta name="date" content="2026-09-17"><time datetime="2026-09-18">Updated</time>', "https://acme.com/news");
     const second = sitePageEvidence('<title>Acme</title><nav>Entirely different menu</nav><main>New branch in Denver.</main><footer>Copyright 2026</footer>', "https://acme.com/news");

@@ -68,7 +68,9 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   const [name, setName] = useState("");
   const [question, setQuestion] = useState("");
   const [fallbackCost, setFallbackCost] = useState<JevCostSnapshot>();
+  const [costStale, setCostStale] = useState(false);
   const [researchProgress, setResearchProgress] = useState<ResearchProgress>();
+  const [researchStale, setResearchStale] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const requestId = useRef(0);
   const requestBusy = useRef(false);
@@ -91,17 +93,23 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     if (offset) params.set("offset", String(offset));
     const refreshCost = (summary?: JevCostSnapshot) => {
       if (offset) return;
-      setFallbackCost(undefined);
-      void resolveIntelligenceCost(summary, () => fetch(`${API}/cost`, { cache: "no-store", signal: AbortSignal.timeout(15_000) }))
-        .then(cost => { if (current === requestId.current) setFallbackCost(cost); });
+      void resolveIntelligenceCost(summary, () => fetch(`${API}/cost`, { cache: "no-store", signal: AbortSignal.timeout(20_000) }))
+        .then(cost => { if (current === requestId.current) {
+          setCostStale(!cost.available);
+          setFallbackCost(previous => cost.available || !previous?.available ? cost : previous);
+        } });
     };
     try {
       // Progress is independent: a slow aggregate must not hold the feed open.
-      if (!offset) void fetch(`${API}/research-status`, { cache: "no-store" })
+      const saveProgress = (progress: ResearchProgress) => { if (current === requestId.current) {
+        setResearchStale(!progress.available);
+        setResearchProgress(previous => progress.available || !previous?.available ? progress : previous);
+      } };
+      if (!offset) void fetch(`${API}/research-status`, { cache: "no-store", signal: AbortSignal.timeout(20_000) })
           .then(async response => {
             const progress: ResearchProgress = response.ok ? await response.json() : { available: false };
-            if (current === requestId.current) setResearchProgress(progress);
-          }).catch(() => { if (current === requestId.current) setResearchProgress({ available: false }); });
+            saveProgress(progress);
+          }).catch(() => saveProgress({ available: false }));
       const response = await fetch(`${API}?${params}`, { cache: "no-store" });
       if (!response.ok) throw new Error("load_failed");
       const next: IntelligenceData = await response.json();
@@ -241,8 +249,8 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       </section>}
 
       {data?.health && <IntelligenceHealth health={data.health} />}
-      <IntelligenceResearchProgress progress={researchProgress} />
-      <IntelligenceCost cost={displayedIntelligenceCost(data?.jevCost, fallbackCost)} />
+      <IntelligenceResearchProgress progress={researchProgress} stale={researchStale} />
+      <IntelligenceCost cost={displayedIntelligenceCost(data?.jevCost, fallbackCost)} stale={costStale} />
       <OperatingMatches onOpenAccount={onOpenAccount} enabled={active} refreshKey={`${updatedAt}:${statusRevision}`} showHidden={showHidden} statusBusy={busy} onStatus={changeCompanyStatus} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>

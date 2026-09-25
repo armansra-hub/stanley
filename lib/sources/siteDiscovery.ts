@@ -36,7 +36,12 @@ export function sameCompanySite(candidate: string, base: string): boolean {
 
 export function companyPageUrl(raw: string, base: string, allowPdf = false): string | null {
   try {
-    const url = new URL(decodeEntities(raw), base);
+    const href = decodeEntities(raw).trim();
+    // An anchor-shaped string inside JavaScript can expose an unevaluated
+    // href such as ' + AboutUsUrl + '. URL() would encode it as a real path.
+    // Match that raw expression only; percent-encoded URL data stays literal.
+    if (/^['"]\s*\+\s*[$A-Z_a-z][$\w]*(?:\s*\.\s*[$A-Z_a-z][$\w]*)*\s*\+\s*['"]/.test(href)) return null;
+    const url = new URL(href, base);
     if (!sameCompanySite(url.toString(), base)) return null;
     if ((!allowPdf && /\.pdf(?:$|\/)/i.test(url.pathname)) || /\.(?:png|jpe?g|gif|webp|svg|zip|gz|css|js|mp4|woff2?)(?:$|\/)/i.test(url.pathname)) return null;
     url.hash = "";

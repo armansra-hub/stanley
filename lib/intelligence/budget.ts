@@ -54,8 +54,14 @@ export async function authorizeJevDispatch(model: string, rawFingerprint: string
   if (value.status !== "authorized") throw new JevBudgetDeferredError({
     status: "budget_deferred", reason: value.reason ?? "dispatch_not_authorized", retryAt: value.retryAt ?? null,
   });
-  if (value.model !== model || !value.expiresAt || !Number.isFinite(Date.parse(value.expiresAt))
-    || Date.parse(value.expiresAt) <= Date.now()) defer("dispatch_ticket_expired");
+  if (value.model !== model || !value.expiresAt || !Number.isFinite(Date.parse(value.expiresAt))) defer("dispatch_ticket_expired");
+  if (Date.parse(value.expiresAt!) <= Date.now()) {
+    // A valid ticket can cross the budget boundary while its response travels
+    // back from the database. No provider request has happened yet. Requeue
+    // through a fresh budget claim; never reuse this consumed authorization.
+    throw new JevBudgetDeferredError({ status: "budget_deferred", reason: "dispatch_ticket_expired",
+      retryAt: new Date(Date.now() + 60_000).toISOString() });
+  }
 }
 
 export type JevBudgetSnapshot = { available: false } | {

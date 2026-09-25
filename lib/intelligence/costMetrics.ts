@@ -1,6 +1,7 @@
 import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import type { JevCostMetrics, JevCostSnapshot } from "./costMetricsTypes";
+import { logMetricFailure } from "./metricDiagnostics";
 
 const counters = ["requests", "knownUsageRequests", "reportedInputTokens", "unknownUsageRequests", "inFlightRequests"] as const;
 const amounts = ["estimatedUsd", "unknownUsageReserveUsd", "inFlightReserveUsd"] as const;
@@ -31,8 +32,12 @@ export function parseJevCostMetrics(value: unknown): JevCostSnapshot {
 export async function readJevCostMetrics(): Promise<JevCostSnapshot> {
   try {
     const { data, error } = await serviceClient().rpc("intelligence_jev_cost_metrics");
-    return error ? { available: false } : parseJevCostMetrics(data);
-  } catch {
+    if (error) { logMetricFailure("cost", error); return { available: false }; }
+    const result = parseJevCostMetrics(data);
+    if (!result.available) logMetricFailure("cost", null);
+    return result;
+  } catch (error) {
+    logMetricFailure("cost", error);
     // Cost diagnostics are additive: evidence stays available during a metrics outage.
     return { available: false };
   }

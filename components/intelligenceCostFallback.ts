@@ -1,7 +1,7 @@
 import type { JevCostSnapshot } from "@/lib/intelligence/costMetricsTypes";
 
-// The feed deliberately gives optional metrics a short deadline. Retry only
-// the read-only metric when that deadline expires, without delaying the feed.
+// Cost is loaded independently once, without delaying saved evidence. Accept an
+// available embedded summary during a rolling deployment without fetching twice.
 export async function resolveIntelligenceCost(
   summary: JevCostSnapshot | undefined,
   fetchCost: () => Promise<Response>,

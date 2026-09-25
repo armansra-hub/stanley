@@ -69,7 +69,30 @@ describe("global Jev dispatch gate", () => {
     expect(paid).toHaveBeenCalledTimes(1);
     expect(rpc.mock.calls.map(call => call[0])).toEqual(["intelligence_jev_claim", "intelligence_jev_dispatch"]);
   });
-  it("rejects expired authorizations and reports unavailable diagnostics honestly", async () => {
+  it("requeues a valid ticket received after expiry without sending paid work", async () => {
+    const before = Date.now();
+    rpc.mockImplementation(async name => ({ error: null, data: name === "intelligence_jev_claim"
+      ? { status: "execute", reservationId: "reservation", leaseToken: "lease" }
+      : name === "intelligence_jev_dispatch" ? { ...authorized().data, expiresAt: "2020-01-01T00:00:00Z" } : true }));
+    const paid = vi.fn();
+    const result = await durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "catalog" },
+      execute: async () => { await authorizeJevDispatch("jev-1.13.0", fp); paid(); return { ok: true, usage: null }; } }, { rpc });
+    expect(result).toMatchObject({ status: "budget_deferred", reason: "dispatch_ticket_expired" });
+    if (result.status !== "budget_deferred") throw new Error("Expected deferral");
+    expect(Date.parse(result.retryAt!)).toBeGreaterThanOrEqual(before + 60_000);
+    expect(Date.parse(result.retryAt!)).toBeLessThanOrEqual(Date.now() + 60_000);
+    expect(paid).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenLastCalledWith("intelligence_settle", { p_id: "reservation", p_actual: 0, p_tokens: 0 });
+  });
+  it("keeps malformed tickets on hold rather than retrying them", async () => {
+    for (const data of [{ ...authorized().data, expiresAt: "invalid" }, { status: "authorized", model: "jev-1.13.0" },
+      { ...authorized().data, model: "unexpected" }]) {
+      rpc.mockResolvedValue({ data, error: null });
+      await expect(withJevDispatchPermit(permit(), () => authorizeJevDispatch("jev-1.13.0", fp)))
+        .rejects.toMatchObject({ decision: { reason: "dispatch_ticket_expired", retryAt: null } });
+    }
+  });
+  it("reports unavailable diagnostics honestly", async () => {
     rpc.mockResolvedValue({ data: { ...authorized().data, expiresAt: "2020-01-01T00:00:00Z" }, error: null });
     await expect(withJevDispatchPermit(permit(), () => authorizeJevDispatch("jev-1.13.0", fp))).rejects.toBeInstanceOf(JevBudgetDeferredError);
     expect(await readJevBudgetPolicy()).toEqual({ available: false });

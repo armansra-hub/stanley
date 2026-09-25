@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JevCostMetrics, JevCostTotals } from "./costMetricsTypes";
 const rpc = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc }) }));
@@ -13,6 +13,7 @@ function fixture(): JevCostMetrics {
     attributionStartedAt: null, month: structuredClone(period), last24h: structuredClone(period) };
 }
 beforeEach(() => rpc.mockReset());
+afterEach(() => vi.restoreAllMocks());
 describe("Jev cost diagnostics", () => {
   it("preserves known token usage separately from unknown and unsettled reservations", () => {
     const result = parseJevCostMetrics(fixture());
@@ -40,9 +41,12 @@ describe("Jev cost diagnostics", () => {
     expect(parseJevCostMetrics(value)).toEqual({ available: false });
   });
   it("marks a missing migration or network error unavailable without throwing into the evidence read", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
     rpc.mockResolvedValueOnce({ data: null, error: { code: "PGRST202" } }).mockRejectedValueOnce(new Error("private connection detail"));
     expect(await readJevCostMetrics()).toEqual({ available: false });
+    expect(log).toHaveBeenCalledWith("intelligence.metrics_unavailable", { metric: "cost", code: "PGRST202" });
     expect(await readJevCostMetrics()).toEqual({ available: false });
+    expect(log).toHaveBeenCalledWith("intelligence.metrics_unavailable", { metric: "cost", code: "unknown" });
   });
   it("reads only the service aggregate", async () => {
     rpc.mockResolvedValue({ data: fixture(), error: null });
