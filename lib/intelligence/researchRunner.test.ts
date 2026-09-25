@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), sourceState: vi.fn(), external: vi.fn(), rank: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), coverage: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), sourceState: vi.fn(), external: vi.fn(), rank: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), coverage: vi.fn(), budget: vi.fn() }));
 vi.mock("./operatingCoverage", () => ({ runOperatingCoverage: mocks.coverage }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }),
   withServiceDeadline: vi.fn((_deadline: number, run: () => unknown) => run()) }));
@@ -11,6 +11,7 @@ vi.mock("@/lib/triggers/urlSafety", async original => ({ ...await original<typeo
 vi.mock("@/lib/sources/publicPdf", () => ({ fetchPublicPdfEvidence: vi.fn() }));
 vi.mock("@/lib/db/events", () => ({ logEvent: vi.fn() }));
 vi.mock("./researchExternal", () => ({ discoverExternalResearch: mocks.external }));
+vi.mock("./budget", async original => ({ ...await original<typeof import("./budget")>(), readJevBudgetPolicy: mocks.budget }));
 import { loadResearchProfile, refreshAccountResearch, researchSweepState, runDirectedResearchWorker, type ResearchProfile } from "./researchRunner";
 import { withServiceDeadline } from "@/lib/supabase/server";
 
@@ -46,6 +47,7 @@ function mockTable(table: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rpc.mockResolvedValue({ data: [], error: null });
+  mocks.budget.mockResolvedValue({ available: true, enabled: true, phase: "maintenance" });
   mocks.external.mockResolvedValue({ sources: 0 });
   mocks.coverage.mockResolvedValue({ outcome: "catalog_complete", answered: 47 });
   mocks.sourceState.mockResolvedValue({ cursor: null, lastSuccessAt: null });
@@ -57,6 +59,23 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("catalog account lease integration", () => {
+  it.each([
+    ["rollout", { available: true, enabled: true, phase: "ongoing" }, true],
+    ["rollout", { available: true, enabled: true, phase: "maintenance" }, true],
+    ["rollout", { available: true, enabled: true, phase: "initial" }, false],
+    ["rollout", { available: true, enabled: true, phase: "expired" }, false],
+    ["rollout", { available: false }, false],
+    ["rollout", { available: true, enabled: false, phase: "ongoing", blockedReason: "policy_disabled" }, false],
+    ["rollout", { available: true, enabled: false, phase: "ongoing", blockedReason: "provider_balance_exhausted" }, false],
+    ["pilot", { available: true, enabled: true, phase: "ongoing" }, false],
+  ])("admits ordinary prospecting research only in an authorized phase (%s,%j)", async (mode, budget, allowed) => {
+    tables.intelligence_config = [{ id: 1, catalog_mode: mode }]; mocks.budget.mockResolvedValue(budget);
+    const result = await refreshAccountResearch("company", { deadlineMs: Date.now() + 90_000,
+      profile: { ...profile, candidates: [], sweep: { knownSources: 0, dueSources: 0, unreadSources: 0, leasedSources: 0, retrySources: 0 } } });
+    expect(result.outcome === "catalog_only").toBe(!allowed);
+    expect(mocks.external).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    expect(mocks.rank).not.toHaveBeenCalled(); expect(mocks.fetch).not.toHaveBeenCalled();
+  });
   function catalogJob(overrides: { attempts?: number; last_error?: string | null } = {}) {
     let claimed = false;
     const job = { company_id: "company", desired_hash: "hash", lease_token: "lease", attempts: 1,

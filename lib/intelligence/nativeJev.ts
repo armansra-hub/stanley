@@ -75,8 +75,14 @@ export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fet
       method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: AbortSignal.timeout(25_000), cache: "no-store", redirect: "error",
     });
-    if (!response.ok) return { ok: false, error: { code: "typesafe_http_" + response.status,
-      retryable: response.status === 429 || response.status >= 500 }, usage };
+    if (!response.ok) {
+      // Preserve the exact HTTP code: the durable receipt's global provider
+      // circuit recognizes 402, while 429 remains ordinary rate-limit pressure.
+      // Do not read an error body that may echo evidence or assume zero usage.
+      await response.body?.cancel().catch(() => {});
+      return { ok: false, error: { code: "typesafe_http_" + response.status,
+        retryable: response.status === 429 || response.status >= 500 }, usage };
+    }
     const raw = await response.text();
     if (Buffer.byteLength(raw) > 524_288) throw new Error("response_too_large");
     const result: unknown = JSON.parse(raw);

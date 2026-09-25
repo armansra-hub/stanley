@@ -1,12 +1,28 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
-const m=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn(),native:vi.fn()}));
+const m=vi.hoisted(()=>({rpc:vi.fn(),from:vi.fn(),native:vi.fn(),budget:vi.fn()}));
 vi.mock('@/lib/supabase/server',()=>({serviceClient:()=>({rpc:m.rpc,from:m.from}),withServiceDeadline:(_:number,run:()=>unknown)=>run()}));
 vi.mock('./observations',()=>({intelligenceEnabled:()=>true}));
+vi.mock('./budget',async original=>({...await original<typeof import('./budget')>(),readJevBudgetPolicy:m.budget}));
 vi.mock('./nativeJev',async original=>({...await original<typeof import('./nativeJev')>(),evaluateNativeCached:m.native}));
 import {accountSelectionInput,accountAnswerInput,questionSections,runAccountQuestionWorker} from './accountQuestions';
 import {nativeJevBody,nativeJevFingerprint} from './nativeJev';
-beforeEach(()=>{vi.clearAllMocks();});
+beforeEach(()=>{vi.clearAllMocks();m.budget.mockResolvedValue({available:true,enabled:true,phase:'maintenance'});});
 describe('account-wide custom questions',()=>{
+ it.each([
+  ['rollout',{available:true,enabled:true,phase:'ongoing'},true],
+  ['rollout',{available:true,enabled:true,phase:'maintenance'},true],
+  ['rollout',{available:true,enabled:true,phase:'initial'},false],
+  ['rollout',{available:true,enabled:true,phase:'expired'},false],
+  ['rollout',{available:false},false],
+  ['rollout',{available:true,enabled:false,phase:'ongoing',blockedReason:'policy_disabled'},false],
+  ['rollout',{available:true,enabled:false,phase:'ongoing',blockedReason:'provider_balance_exhausted'},false],
+  ['pilot',{available:true,enabled:true,phase:'ongoing'},false],
+ ])('uses central ongoing authorization while preserving fixed phases and pilot scope (%s,%j)',async(mode,budget,enabled)=>{
+  m.budget.mockResolvedValue(budget);m.rpc.mockResolvedValue({data:null,error:null});
+  m.from.mockImplementation(()=>{const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{catalog_mode:mode},error:null})};return q;});
+  expect(await runAccountQuestionWorker()).toMatchObject({enabled,processed:0});
+  expect(m.rpc).toHaveBeenCalledTimes(enabled?1:0);expect(m.native).not.toHaveBeenCalled();
+ });
  it('combines complementary facts from different sources and preserves native answers and precise citations',async()=>{
   const question='Does Synthetic serve public agencies AND bill projects?';
   const sources=[{id:'one',source_url:'https://agency.test/award',title:'Award',event_date:'2026-09-01',evidence_text:'Synthetic serves public agencies.'},

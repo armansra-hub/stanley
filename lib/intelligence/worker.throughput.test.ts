@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), durable: vi.fn(), enabled: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), durable: vi.fn(), enabled: vi.fn(), budget: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc, from: mocks.from }), withServiceDeadline: (_: unknown, run: () => unknown) => run() }));
 vi.mock("./observations", () => ({ intelligenceEnabled: mocks.enabled, INTELLIGENCE_VERSION: "test" }));
 vi.mock("./feedback", () => ({ loadFeedbackExamples: async () => [] }));
 vi.mock("@/lib/companyIdentity", () => ({ loadCompanyIdentityContext: async () => ({ context: "Authorized identity" }) }));
 vi.mock("./publicContext", () => ({ loadPublicScaleObservations: async () => [], buildPublicScaleContext: () => ({ text: "No public scale baseline is available." }) }));
 vi.mock("./jevRequests", () => ({ durableJevRequest: mocks.durable, reconcileJevReceipts: async () => {} }));
-vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(), secondsUntilNextMonth: () => 86400 }));
+vi.mock("./budget", async importOriginal => ({ ...await importOriginal<typeof import("./budget")>(), secondsUntilNextMonth: () => 86400, readJevBudgetPolicy: mocks.budget }));
 vi.mock("./publish", () => ({ publishJevFinding: async () => ({ status: "not_eligible", reason: "unknown_event_date" }), jevSignalType: () => null }));
 vi.mock("./events", () => ({ reconcileObservationEvent: async () => null, EventReconciliationDeferred: class extends Error {}, bindEventTrigger: vi.fn() }));
 vi.mock("./narratives", () => ({ queueAccountStory: async () => true }));
@@ -24,11 +24,14 @@ let nextId: number;
 let current: boolean | ((id: string) => boolean);
 let read: (id: string) => Promise<void>;
 let finishes: string[];
+let catalogMode: string | null;
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("TYPESAFE_MODEL", "jev-1.13.0");
   available = 0; nextId = 0; current = false; read = async () => {}; finishes = [];
+  catalogMode = null;
+  mocks.budget.mockResolvedValue({ available: true, enabled: true, phase: "maintenance" });
   mocks.enabled.mockReturnValue(true);
   mocks.rpc.mockImplementation(async (name: string, args: Record<string, any>) => {
     if (name === "intelligence_claim") {
@@ -46,7 +49,7 @@ beforeEach(() => {
     query.eq = (key: string, value: string) => { if (key === "id") id = value; return query; };
     const result = async () => {
       if (table === "intelligence_observations") await read(id);
-      return { data: table === "intelligence_config" ? { enabled: true } : table === "intelligence_views" ? []
+      return { data: table === "intelligence_config" ? { enabled: true, catalog_mode: catalogMode } : table === "intelligence_views" ? []
         : table === "intelligence_observations" ? { id, company_id: `company-${id}`, is_current: typeof current === "function" ? current(id) : current, metadata: {},
           evidence_text: "Acme opened a facility.", source_kind: "company_news", source_url: "https://acme.test/news",
           title: "New facility", event_date: null, observed_at: "2026-09-18T23:00:00Z" }
@@ -60,6 +63,27 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 describe("runtime-bounded rolling intelligence throughput", () => {
+  it.each(["maintenance", "ongoing"])("admits existing prospecting work during %s without changing superseded/cache behavior", async phase => {
+    catalogMode = "rollout"; available = 1;
+    mocks.budget.mockResolvedValue({ available: true, enabled: true, phase });
+    expect(await runIntelligenceWorker(1)).toMatchObject({ enabled: true, claimed: 1, processed: 1, outcomes: { superseded: 1 } });
+    expect(mocks.durable).not.toHaveBeenCalled();
+  });
+  it.each([
+    { available: false },
+    ...["initial", "before_start", "expired"].map(phase => ({ available: true, enabled: true, phase })),
+    ...["policy_disabled", "provider_balance_exhausted", "provider_authentication"].map(blockedReason => ({ available: true, enabled: false, phase: "ongoing", blockedReason })),
+  ])("does not claim paid work when rollout budget admission is unavailable: %j", async budget => {
+    catalogMode = "rollout"; available = 1; mocks.budget.mockResolvedValue(budget);
+    expect(await runIntelligenceWorker(1)).toMatchObject({ enabled: false, claimed: 0, processed: 0 });
+    expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.durable).not.toHaveBeenCalled();
+  });
+  it("preserves catalog-only pilot scope even when provider balance is available", async () => {
+    catalogMode = "pilot"; available = 1;
+    mocks.budget.mockResolvedValue({ available: true, enabled: true, phase: "ongoing" });
+    expect(await runIntelligenceWorker(1)).toMatchObject({ enabled: false, claimed: 0 });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
   it("drains more than 192 jobs without issuing any paid call for already superseded work", async () => {
     available = 401;
     const result = await runIntelligenceWorker({ mode: "drain" });

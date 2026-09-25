@@ -98,7 +98,8 @@ export async function runAccountQuestionWorker(limit=1,deadlineMs=Date.now()+90_
  const cfg=await serviceClient().from("intelligence_config").select("catalog_mode").eq("id",1).maybeSingle();
  if(cfg.error)throw new Error("account_question_configuration_unavailable");
  if(cfg.data?.catalog_mode==="pilot"||cfg.data?.catalog_mode==="rollout"){
- const budget=await readJevBudgetPolicy();if(cfg.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled||budget.phase!=="maintenance")return {enabled:false,processed:0,outcomes};}
+ const budget=await readJevBudgetPolicy();if(cfg.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled
+  ||(budget.phase!=="maintenance"&&budget.phase!=="ongoing"))return {enabled:false,processed:0,outcomes};}
  while(processed<Math.max(0,Math.min(8,limit))&&Date.now()<deadlineMs-30_000){const r=await serviceClient().rpc("intelligence_account_question_claim");if(r.error)throw new Error("account_question_claim_failed");if(!r.data)break;
   let outcome;try{outcome=await runQuestion(r.data as Job,deadlineMs);}catch{outcome="service_error";}outcomes[outcome]=(outcomes[outcome]??0)+1;processed++;if(outcome==="budget_deferred")break;}
  return {enabled:true,processed,outcomes};});

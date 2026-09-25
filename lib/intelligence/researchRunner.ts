@@ -185,7 +185,8 @@ export async function refreshAccountResearch(companyId: string, options: {
     if(config.error)throw new Error("research_configuration_unavailable");
     if(!options.catalogGap && ["pilot","rollout"].includes(config.data?.catalog_mode)) {
       const budget=await readJevBudgetPolicy();
-      if(config.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled||budget.phase!=="maintenance")return empty("catalog_only");
+      if(config.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled
+        ||(budget.phase!=="maintenance"&&budget.phase!=="ongoing"))return empty("catalog_only");
     }
     if (Date.now() > options.deadlineMs - DIRECTED_RESEARCH_MINIMUM_MS) return empty("deadline_deferred");
     const profileOptions = { catalogGap: !!options.catalogGap };

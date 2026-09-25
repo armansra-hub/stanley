@@ -41,6 +41,18 @@ describe("native Jev shared transport", () => {
     expect(await evaluateNativeQuestions(input, { fetch })).toEqual({ ok: false, error: { code: "typesafe_http_429", retryable: true }, usage: null });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it("records payment-required distinctly from rate limiting without assuming zero usage or reading its body", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-private-key");
+    const response = new Response("Private provider echo must not be read", { status: 402 });
+    const read = vi.spyOn(response, "text");
+    const cancel = vi.spyOn(response.body!, "cancel");
+    const fetch = vi.fn().mockResolvedValue(response);
+    expect(await evaluateNativeQuestions(input, { fetch })).toEqual({ ok: false,
+      error: { code: "typesafe_http_402", retryable: false }, usage: null });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(read).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
   it("retains usage when malformed native output cannot be interpreted", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-private-key");
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ model: "jev-1.13.0", answers: { expansion: { type: "noul", noul: 50 } }, usage: { input_tokens: 100 } })));

@@ -434,10 +434,7 @@ function metadataFrom(value: unknown, rawAnswers: Record<string, RawEvaluationAn
 }
 
 function classifyFailure(error: unknown, cancelled: boolean, timedOut: boolean): EvaluationFailure {
-  if (cancelled) return { kind: "cancelled", retryable: false };
-  if (timedOut) return { kind: "timeout", retryable: true };
   const object = record(error);
-  if (object?.kind === "invalid_response") return { kind: "invalid_response", retryable: false };
   const status = object?.statusCode ?? object?.status;
   const statusCode = typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599 ? status : undefined;
   const headers = record(object?.responseHeaders);
@@ -449,8 +446,13 @@ function classifyFailure(error: unknown, cancelled: boolean, timedOut: boolean):
     if (Number.isFinite(delay)) retryAfterMs = Math.max(0, Math.min(delay, 86_400_000));
   }
   const base = { ...(statusCode !== undefined ? { statusCode } : {}), ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) };
-  if (statusCode === 401 || statusCode === 403) return { ...base, kind: "authentication", retryable: false };
+  // A received payment-required response must trip the durable provider
+  // circuit even if cancellation/timeout races with reading that response.
   if (statusCode === 402) return { ...base, kind: "billing", retryable: false };
+  if (cancelled) return { kind: "cancelled", retryable: false };
+  if (timedOut) return { kind: "timeout", retryable: true };
+  if (object?.kind === "invalid_response") return { kind: "invalid_response", retryable: false };
+  if (statusCode === 401 || statusCode === 403) return { ...base, kind: "authentication", retryable: false };
   if (statusCode === 429) return { ...base, kind: "rate_limit", retryable: true };
   if (statusCode === 408 || statusCode === 504 || object?.name === "TimeoutError") return { ...base, kind: "timeout", retryable: true };
   if (statusCode !== undefined && statusCode < 500) return { ...base, kind: "invalid_request", retryable: false };

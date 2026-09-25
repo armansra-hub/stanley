@@ -18,26 +18,41 @@ not shipped in client JavaScript or sent in routine model requests.
 - Installing this release does not fund or enable paid work, admit the TAM,
   delete old jobs, create a grading queue, or add a scheduler.
 
-## Budget
+## Spending mode — user update September 25
 
 All Stanley-managed Jev calls, including the public Codex connector, pass the same
 atomic reservation and one-use dispatch gate. The priced model is jev-1.13.0.
-Full-request reservations cover concurrent requests; reported usage settles them.
-Uncertain accepted requests retain their holds. A billing/authentication failure
-halts the shared policy. Historic holds are not provider invoices.
+Reservations and reported usage remain accounting records. In
+`enforcement=provider_balance` they do not impose a local spending limit.
+There is no daily cap, initial allowance, protected reserve, expiry date or
+estimated-balance stop. The earlier $70/$30/$0.50 amounts were explicitly
+superseded: the user wants those figures treated as efficiency design goals,
+not pauses. TypeSafe's actual billing rejection stops paid requests through
+the existing shared circuit. Authentication failures and explicit manual stops
+remain operational stops; no automatic top-up or purchase is authorized.
 
-The authorized initial allowance is up to $70 on September 24, 2026 Pacific time.
-The observed -$0.19 balance makes the initial effective maximum $69.81 after a
-$100 top-up, before any other outstanding liability. Protect $30. The initial
-allowance expires September 25 at 00:00 PDT; unused initial permission does not
-carry into another day. Maintenance is at most $0.50 per Pacific day and $30
-total over the next 60 days, ending November 24 at 00:00 PST. No auto-renewal.
+Uncertain accepted usage stays recorded, without being presented as confirmed
+charges or used to fabricate a depleted provider balance. The UI does not invent
+a live TypeSafe balance from Stanley's ledger. Exact saved requests, deduplication,
+changed-evidence checks and bounded scheduling stay in place. A source gap or
+provider rejection never becomes a negative finding. Jev still does not grade TAM.
 
-Budget exhaustion delays work without discarding evidence or declaring a
-negative finding. Exact saved requests can be reused without another provider
-call. Other paid models do not inherit this Jev allowance.
+The fixed-allowance mode remains available as historical compatibility only;
+do not reactivate its limits without a new user instruction. Other paid models
+do not inherit permission to spend from this Jev change.
 
-## Installation and activation
+For an existing installation, apply migration 0123, deploy the matching code,
+then explicitly set the existing policy's enforcement to `provider_balance`.
+Wake only jobs held for old budget/time-window reasons, retaining every exact
+checkpoint and avoiding active leases. Read the live mode, native request receipts
+and provider usage afterward. A later real-credit failure requires new funding
+and a deliberate resume, not repeated failing paid attempts.
+
+## Original installation and activation (September 24 record)
+
+This section documents the completed initial rollout. Its temporary caps are
+superseded by the September 25 spending mode above; do not reapply them during
+routine releases or health checks.
 
 1. Keep `intelligence_config.enabled=false`. Install tracked migrations 0117,
    0119 and 0120 in order. There is intentionally no 0118 migration in this release.

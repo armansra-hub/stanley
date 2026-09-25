@@ -356,7 +356,8 @@ export async function runIntelligenceWorker(limitOrOptions: number | Intelligenc
     // Catalog-only admission must not walk or mutate the historical backlog.
     if (config.catalog_mode === "pilot" || config.catalog_mode === "rollout") {
       const budget = await readJevBudgetPolicy();
-      if (config.catalog_mode === "pilot" || !budget.available || !budget.enabled || budget.phase !== "maintenance") return disabled();
+      if (config.catalog_mode === "pilot" || !budget.available || !budget.enabled
+        || (budget.phase !== "maintenance" && budget.phase !== "ongoing")) return disabled();
     }
     await reconcileJevReceipts().catch(() => {});
     const { data: views, error: viewsError } = await db.from("intelligence_views").select("id").eq("active", true).eq("backfill_complete", false).limit(3);

@@ -484,6 +484,35 @@ describe("Jev evidence adapter", () => {
     expect(JSON.stringify(result)).not.toContain(input.text);
   });
 
+  it("preserves an observed payment-required response when cancellation races with it", async () => {
+    const controller = new AbortController();
+    const evaluate = vi.fn(async () => {
+      controller.abort();
+      throw { statusCode: 402, responseBody: input.text };
+    });
+    expect(await evaluateEvidence({ ...input, abortSignal: controller.signal }, { evaluate }))
+      .toMatchObject({ ok: false, usage: null, error: { kind: "billing", statusCode: 402, retryable: false } });
+    expect(evaluate).toHaveBeenCalledOnce();
+  });
+
+  it("records direct payment-required responses for evidence and ranking without rerequesting or assuming zero usage", async () => {
+    for (const operation of ["evidence", "ranking"] as const) {
+      const provider = new Response(`Private echo ${input.text}`, { status: 402 });
+      const read = vi.spyOn(provider, "text"), cancel = vi.spyOn(provider.body!, "cancel");
+      const fetcher = vi.fn(async () => provider);
+      const result = operation === "evidence" ? await evaluateEvidence(input, { fetch: fetcher })
+        : await evaluateResearchRanking({ ...input, criteria: [
+          { id: "source_1", instructions: "Would the supplied about-page option help resolve the research gap?" },
+          { id: "source_2", instructions: "Would the supplied services-page option help resolve the research gap?" },
+        ] }, { fetch: fetcher });
+      expect(result).toMatchObject({ ok: false, usage: null, error: { kind: "billing", statusCode: 402, retryable: false } });
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(read).not.toHaveBeenCalled();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(JSON.stringify(result)).not.toContain(input.text);
+    }
+  });
+
   it("does not turn missing usage into zero cost", async () => {
     const result = await evaluateEvidence(input, { evaluate: async () => ({ answers: response().answers }) });
     expect(result).toMatchObject({ ok: true, usage: null });

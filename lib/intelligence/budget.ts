@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { serviceClient } from "@/lib/supabase/server";
 import type { JevSpendContext } from "./jevRequests";
+import { parseJevBudgetStatus, type JevBudgetSnapshot } from "./budgetStatus";
 
 export const JEV_USD_PER_MILLION = 0.042;
 export const PRICED_JEV_MODEL = "jev-1.13.0";
@@ -64,34 +65,13 @@ export async function authorizeJevDispatch(model: string, rawFingerprint: string
   }
 }
 
-export type JevBudgetSnapshot = { available: false } | {
-  available: true; asOf: string; policyId: string; enabled: boolean; policyEnabled: boolean; processingEnabled: boolean;
-  phase: "initial" | "maintenance" | "before_start" | "expired"; blockedReason: string | null;
-  initialMaxUsd: number; dailyCapUsd: number; maintenanceLimitUsd: number;
-  initialUsedUsd: number; maintenanceUsedUsd: number; todayUsedUsd: number;
-  inFlightReserveUsd: number; unknownReserveUsd: number; carriedUnknownUsd: number;
-  totalRemainingUsd: number; dailyRemainingUsd: number; initialRemainingUsd: number; maintenanceRemainingUsd: number;
-  nextResetAt: string | null; initialExpiresAt: string; maintenanceExpiresAt: string;
-  fundingConfirmed: boolean; legacyReconciled: boolean; openingLiabilityUsd: number | null;
-};
+export type { JevBudgetSnapshot } from "./budgetStatus";
 export async function readJevBudgetPolicy(): Promise<JevBudgetSnapshot> {
   try {
     const { data, error } = await serviceClient().rpc("intelligence_jev_budget_status");
-    if (error || !data || typeof data !== "object") return { available: false };
-    const value = data as Record<string, unknown>;
-    const amounts = ["initialMaxUsd","dailyCapUsd","maintenanceLimitUsd","initialUsedUsd","maintenanceUsedUsd","todayUsedUsd",
-      "inFlightReserveUsd","unknownReserveUsd","carriedUnknownUsd","totalRemainingUsd","dailyRemainingUsd","initialRemainingUsd","maintenanceRemainingUsd"];
-    if (!amounts.every(key => typeof value[key] === "number" && Number.isFinite(value[key]) && (value[key] as number) >= 0)
-      || !["enabled","policyEnabled","processingEnabled","fundingConfirmed","legacyReconciled"].every(key => typeof value[key] === "boolean")
-      || !["initial","maintenance","before_start","expired"].includes(String(value.phase))
-      || !["asOf","initialExpiresAt","maintenanceExpiresAt"].every(key => typeof value[key] === "string" && Number.isFinite(Date.parse(value[key] as string)))
-      || typeof value.policyId !== "string" || !(value.blockedReason === null || typeof value.blockedReason === "string")
-      || !(value.nextResetAt === null || typeof value.nextResetAt === "string" && Number.isFinite(Date.parse(value.nextResetAt)))
-      || !(value.openingLiabilityUsd === null || typeof value.openingLiabilityUsd === "number" && Number.isFinite(value.openingLiabilityUsd) && value.openingLiabilityUsd >= 0)) return { available: false };
-    return { ...value, available: true } as JevBudgetSnapshot;
+    return error ? { available: false } : parseJevBudgetStatus(data);
   } catch { return { available: false }; }
 }
-
 export async function settleJev(id: string, tokens: number | null): Promise<void> {
   const { error } = await serviceClient().rpc("intelligence_settle", {
     p_id: id, p_actual: tokens === null ? null : jevCost(tokens), p_tokens: tokens,

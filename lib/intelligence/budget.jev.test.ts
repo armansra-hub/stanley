@@ -4,6 +4,7 @@ vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc }) }));
 import { authorizeJevDispatch, withJevDispatchPermit, JevBudgetDeferredError, jevCost,
   JEV_RESERVATION_USD, reserveJev, readJevBudgetPolicy } from "./budget";
 import { durableJevRequest } from "./jevRequests";
+import { providerBudget } from "@/test/jev-budget-status-fixture";
 const fp = "a".repeat(64);
 const permit = () => ({ fingerprint: fp, rawFingerprint: fp, reservationId: "reservation", leaseToken: "lease", rpc });
 const authorized = () => ({ data: { status: "authorized", model: "jev-1.13.0", expiresAt: new Date(Date.now() + 30_000).toISOString() }, error: null });
@@ -91,6 +92,12 @@ describe("global Jev dispatch gate", () => {
       await expect(withJevDispatchPermit(permit(), () => authorizeJevDispatch("jev-1.13.0", fp)))
         .rejects.toMatchObject({ decision: { reason: "dispatch_ticket_expired", retryAt: null } });
     }
+  });
+  it("reads provider credit mode without requiring an artificial remaining allowance or invoking paid work", async () => {
+    rpc.mockResolvedValue({ data: providerBudget, error: null });
+    expect(await readJevBudgetPolicy()).toEqual(providerBudget);
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("intelligence_jev_budget_status");
   });
   it("reports unavailable diagnostics honestly", async () => {
     rpc.mockResolvedValue({ data: { ...authorized().data, expiresAt: "2020-01-01T00:00:00Z" }, error: null });
