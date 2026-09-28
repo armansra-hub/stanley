@@ -12,6 +12,7 @@ import IntelligenceDismissButton from "./IntelligenceDismissButton";
 import IntelligenceSelectionBar from "./IntelligenceSelectionBar";
 import { hiddenIntelligenceLead } from "./intelligenceLeadStatus";
 import type { VisibilityMode } from "@/lib/intelligence/visibility";
+import RecentCustomerMatches from "./RecentCustomerMatches";
 
 function dated(value: string | null): string {
   return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }) : "Unknown";
@@ -22,11 +23,32 @@ export function operatingAccountsWithStatus(accounts: TopicSearchResult["account
     .filter(account => showHidden || !hiddenIntelligenceLead(account.status));
 }
 
-export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, showHidden = false, statusBusy = false, statusOverrides = {}, onStatus }: {
+export type OperatingMatchesProps = {
   enabled: boolean; refreshKey?: string | null; onOpenAccount?: (id: string, name: string) => void;
   showHidden?: boolean; statusBusy?: boolean; statusOverrides?: Record<string, "new" | "dismissed">;
   onStatus?: (ids: string[], status: "new" | "dismissed") => Promise<boolean>;
-}) {
+};
+
+export default function OperatingMatches(props: OperatingMatchesProps) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedVisited, setAdvancedVisited] = useState(false);
+  return <>
+    <RecentCustomerMatches {...props} />
+    <details className="mb-6 rounded-lg border bg-[var(--surface)]" open={advancedOpen} onToggle={event => {
+      const open = event.currentTarget.open;
+      setAdvancedOpen(open);
+      if (open) setAdvancedVisited(true);
+    }}>
+      <summary className="cursor-pointer px-4 py-4 sm:px-5">
+        <span className="font-semibold">All characteristics</span>
+        <span className="ml-2 text-xs text-[var(--text-muted)]">47 categories · 22 existing traits · 10 research combinations</span>
+      </summary>
+      {advancedVisited && <AdvancedOperatingMatches {...props} enabled={props.enabled && advancedOpen} />}
+    </details>
+  </>;
+}
+
+function AdvancedOperatingMatches({ enabled, refreshKey, onOpenAccount, showHidden = false, statusBusy = false, statusOverrides = {}, onStatus }: OperatingMatchesProps) {
   const [mode, setMode] = useState<"all" | "any">("all");
   const [visibility, setVisibility] = useState<VisibilityMode>("supported");
   const [counts, setCounts] = useState<TopicSearchResult | null>(null);
@@ -148,7 +170,7 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
         <span className="mt-1 block text-xs opacity-80">{definition}</span></span>
     </label>;
 
-  return <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="operating-matches-heading">
+  return <section className="border-t p-4 sm:p-5" aria-labelledby="operating-matches-heading">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 id="operating-matches-heading" className="western text-2xl">Find operating matches</h2>

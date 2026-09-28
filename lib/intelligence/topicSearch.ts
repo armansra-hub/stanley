@@ -45,7 +45,7 @@ export type TopicSearchRaw = {
     accountsWithNoInterpretedEvidence?: number; accountsWithoutSelectedEvidence?: number };
 };
 
-function catalogTopic(row: CatalogFacetRow, observations: TopicSearchAccountRow["observations"]): OperatingMatchTopic | null {
+export function catalogTopic(row: CatalogFacetRow, observations: TopicSearchAccountRow["observations"]): OperatingMatchTopic | null {
   const facet = operatingFacet(row.id);
   if (!facet || row.catalogVersion !== OPERATING_CATALOG_VERSION || row.status !== "answered" || row.decision !== "supported") return null;
   const sources = row.citations.flatMap(citation => {

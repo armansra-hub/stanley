@@ -156,7 +156,7 @@ export function catalogAnswerPlans(company: Record<string, unknown>, facets: rea
   }
   emit(); return { plans, blocked };
 }
-function mappingPlans(company: Record<string, unknown>, facets: readonly Facet[], packet: CatalogPacket, sourceGaps: unknown[]): RequestPlan[] {
+export function catalogMappingPlans(company: Record<string, unknown>, facets: readonly Facet[], packet: CatalogPacket, sourceGaps: unknown[]): RequestPlan[] {
   const plans: RequestPlan[] = []; let selected: Facet[] = [];
   const emit = () => { if (selected.length) plans.push({ phase: "mapping", packetId: packet.id, packetIds: [packet.id], facetIds: selected.map(f => f.id), input: inputFor(company, selected, [packet], true, sourceGaps) }); selected = []; };
   for (const facet of facets.filter(f => question(f, true))) {
@@ -256,7 +256,7 @@ export async function runOperatingCoverage(job: CatalogJob, deadlineMs: number, 
     if (!plan && checkpoint.phase === "mapping") {
       for (const packet of packets) {
         const missing = unfinished().filter(f => !checkpoint.mapped[packet.id]?.scanned.includes(f.id));
-        if (missing.length) { plan = mappingPlans(snapshot.company, missing, packet, sourceGaps)[0]; break; }
+        if (missing.length) { plan = catalogMappingPlans(snapshot.company, missing, packet, sourceGaps)[0]; break; }
       }
       if (!plan) checkpoint.phase = "answer";
     }
