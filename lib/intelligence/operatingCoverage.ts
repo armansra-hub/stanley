@@ -21,6 +21,7 @@ export type CatalogSnapshot = { evidenceKey: string; company: Record<string, unk
 type FacetResult = { facetId: string; facetVersion: string; status: "pending" | "answered" | "blocked";
   decision?: string; probability?: number | null; nativeResult?: unknown; citations?: CatalogCitation[];
   requestFingerprints?: string[]; lastError?: string };
+export type CatalogCapacityFeedback = { status: "healthy" | "pressure" | "hold"; reason?: string };
 type RequestPlan = { phase: "mapping" | "answer"; packetId?: string; facetIds: string[]; packetIds: string[]; input: NativeJevInput };
 export type CatalogCheckpoint = { version: string; catalogVersion: string; evidenceKey: string;
   phase: "direct" | "mapping" | "answer"; mapped: Record<string, { scanned: string[]; candidates: string[] }>;
@@ -183,6 +184,7 @@ export function catalogRetryAt(retryAt: string | null | undefined): string | nul
  * invoke this path; every native call still passes the central durable budget. */
 export async function runOperatingCoverage(job: CatalogJob, deadlineMs: number, deps: {
   db?: ReturnType<typeof serviceClient>; evaluate?: typeof evaluateNativeCached;
+  onCapacityFeedback?: (feedback: CatalogCapacityFeedback) => void;
 } = {}): Promise<{ outcome: string; answered: number; researchFacets?: string[] }> {
   const db = deps.db ?? serviceClient(), evaluate = deps.evaluate ?? evaluateNativeCached;
   if (job.catalog_requested_version !== OPERATING_CATALOG_VERSION) {
@@ -220,6 +222,7 @@ export async function runOperatingCoverage(job: CatalogJob, deadlineMs: number, 
     version: OPERATING_COVERAGE_VERSION, catalogVersion: OPERATING_CATALOG_VERSION, evidenceKey: snapshot.evidenceKey,
     phase: "direct", mapped: {}, receipts: [], ...(snapshot.previousResearch ? { research: snapshot.previousResearch } : {}),
   };
+  const completedAtClaim = checkpoint.completed === true && unfinished().length === 0;
   const answeredCount = () => [...compatible.values()].filter(row => row.status === "answered").length;
   const researchDue = () => !checkpoint.research || (!!checkpoint.research.nextAt && Date.parse(checkpoint.research.nextAt) <= Date.now());
   const summary = (status: string, lastError?: string) => ({ status, lastError, retainedCharacters: retained,
@@ -241,7 +244,7 @@ export async function runOperatingCoverage(job: CatalogJob, deadlineMs: number, 
     if (!operatingFacetQuestion(facet.id)) throw new Error("catalog_public_question_missing");
     return { facetId: facet.id, facetVersion: catalogFacetVersion(facet), status: "pending" };
   });
-  if (!await save(initial)) return { outcome: "catalog_stale", answered: 0 };
+  if (!await save(initial, false, completedAtClaim ? "complete" : "running")) return { outcome: "catalog_stale", answered: 0 };
   if (!packets.length) {
     const due = researchDue();
     await save(unfinished().map(f => ({ facetId: f.id, facetVersion: catalogFacetVersion(f), status: "blocked", lastError: "no_retained_evidence" })), !due, "blocked", "no_retained_evidence", checkpoint.research?.nextAt ?? null);
@@ -266,14 +269,19 @@ export async function runOperatingCoverage(job: CatalogJob, deadlineMs: number, 
         const blocked = next.blocked.map(id => OPERATING_FACETS.find(f => f.id === id)!);
         checkpoint.completed = !blocked.length;
         const unknown = [...compatible.values()].filter(row => row.status === "answered" && ["insufficient_evidence", "conflicting"].includes(row.decision ?? "")).map(row => row.facet_id);
-        if (!blocked.length && researchDue()) {
-          // One bounded due discovery/source pass, including general discovery
-          // when no unknown remains. Never re-ask unchanged completed answers.
-          if (!await save()) return { outcome: "catalog_stale", answered: answeredCount() };
+        if (!blocked.length && researchDue() && (unknown.length > 0 || completedAtClaim)) {
+          // Publish the full native answer set before targeted unknown/conflict
+          // research. General discovery waits for a later claim on the same
+          // queue; either path preserves current answers until sources change.
+          if (!await save([], false, "complete")) return { outcome: "catalog_stale", answered: answeredCount() };
           return { outcome: "catalog_needs_research", answered: answeredCount(), researchFacets: unknown };
         }
+        // An unchanged oversized corpus cannot succeed by immediately retrying
+        // an expired discovery date. Source invalidation still wakes it when
+        // evidence changes; retain the explicit blocker without a hot loop.
         if (!await save(blocked.map(f => ({ facetId: f.id, facetVersion: catalogFacetVersion(f), status: "blocked", lastError: "evidence_exceeds_native_request_limit" })),
-          true, blocked.length ? "blocked" : "complete", blocked.length ? "evidence_exceeds_native_request_limit" : undefined, checkpoint.research?.nextAt ?? null)) return { outcome: "catalog_stale", answered: answeredCount() };
+          true, blocked.length ? "blocked" : "complete", blocked.length ? "evidence_exceeds_native_request_limit" : undefined,
+          blocked.length ? null : researchDue() ? new Date().toISOString() : checkpoint.research?.nextAt ?? null)) return { outcome: "catalog_stale", answered: answeredCount() };
         return { outcome: blocked.length ? "catalog_evidence_blocked" : "catalog_complete", answered: answeredCount() };
       }
     }
@@ -287,11 +295,15 @@ export async function runOperatingCoverage(job: CatalogJob, deadlineMs: number, 
       const reason = result.status === "budget_deferred" ? result.reason : "native_request_busy";
       const retryAt = result.status === "budget_deferred" ? catalogRetryAt(result.retryAt) : new Date(Date.now() + 60_000).toISOString();
       await save([], true, "blocked", reason, retryAt);
+      if (result.status === "budget_deferred") deps.onCapacityFeedback?.({
+        status: /^(?:provider_balance_exhausted|provider_authentication_unavailable|policy_disabled|engine_disabled)$/.test(reason) ? "hold" : "pressure", reason,
+      });
       return { outcome: "catalog_" + result.status, answered: compatible.size };
     }
     if (!result.evaluation.ok) {
       const error = result.evaluation.error;
       await save([], true, "blocked", error.code, error.retryable ? new Date(Date.now() + 300_000).toISOString() : null);
+      deps.onCapacityFeedback?.({ status: /^typesafe_http_40[123]$/.test(error.code) ? "hold" : "pressure", reason: error.code });
       return { outcome: "catalog_provider_blocked", answered: compatible.size };
     }
     const provider = result.evaluation.provider_result;
@@ -315,6 +327,9 @@ export async function runOperatingCoverage(job: CatalogJob, deadlineMs: number, 
     checkpoint.receipts.push({ phase: plan.phase, fingerprint, receiptFingerprint, facetIds: plan.facetIds, packetIds: plan.packetIds, reused: result.reused });
     delete checkpoint.pending;
     if (!await save(done)) return { outcome: "catalog_stale", answered: compatible.size };
+    // Admission observes existing native receipts only after their durable
+    // checkpoint. It never adds a model call or changes the paid request.
+    deps.onCapacityFeedback?.({ status: "healthy" });
   }
   await save([], true, "pending", "catalog_continuation", new Date(Date.now() + 30_000).toISOString());
   return { outcome: "catalog_continued", answered: compatible.size };

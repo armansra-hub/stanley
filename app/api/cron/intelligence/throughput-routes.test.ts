@@ -71,10 +71,10 @@ describe("scheduled intelligence throughput", () => {
     expect(await (await processing(request())).json()).toMatchObject({ enabled: false, processed: 0 });
     expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.stories).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
   });
-  it("runs two-account research until its runtime boundary rather than stopping after eight", async () => {
+  it("adapts catalog capacity to confirmed checkpoints until its runtime boundary", async () => {
     const start = Date.now();
     expect(await (await research(request())).json()).toMatchObject({ processed: 20 });
-    expect(mocks.research).toHaveBeenCalledWith({ mode: "drain", concurrency: 2 }, expect.any(Number));
+    expect(mocks.research).toHaveBeenCalledWith({ mode: "drain", concurrency: "adaptive" }, expect.any(Number));
     expect(mocks.research.mock.calls[0][1]).toBeGreaterThanOrEqual(start + 280000);
   });
   it("rejects unauthorized requests before any source or model worker", async () => {

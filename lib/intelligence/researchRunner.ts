@@ -15,7 +15,7 @@ import { discoverExternalResearch } from "./researchExternal";
 import { logEvent } from "@/lib/db/events";
 import { readAtsHiringContext } from "./atsLifecycle";
 import { businessServicesResearchContext, operatingTopicPriority, researchSourcePriority, BUSINESS_SERVICES_RESEARCH_VERSION } from "./businessServices";
-import { runOperatingCoverage } from "./operatingCoverage";
+import { runOperatingCoverage, type CatalogCapacityFeedback } from "./operatingCoverage";
 import { catalogResearchQueries } from "./operatingCatalog";
 import { readJevBudgetPolicy } from "./budget";
 
@@ -346,25 +346,51 @@ async function finishResearchJob(job: ResearchJob, status: "queued" | "complete"
   return data === true;
 }
 
-export type DirectedResearchWorkerOptions = { mode: "drain"; concurrency?: number };
-export type DirectedResearchStopReason = "disabled" | "batch_limit" | "deadline" | "queue_empty" | "queue_empty_or_capacity" | "claim_error" | "duplicate_claim";
+export type DirectedResearchWorkerOptions = { mode: "drain"; concurrency?: number | "adaptive" };
+export type DirectedResearchStopReason = "disabled" | "batch_limit" | "deadline" | "queue_empty" | "queue_empty_or_capacity" | "claim_error" | "duplicate_claim" | "provider_hold" | "persistence_error";
 
 /** Drain the existing leased queue for the request's available runtime. Finite
  * callers keep their original sequential, at-most-eight-account contract. */
 export async function runDirectedResearchWorker(limit: number | DirectedResearchWorkerOptions = 1, deadlineMs = Date.now() + 90_000) {
   const startedAt = Date.now();
   const mode = typeof limit === "number" ? "bounded" : "drain";
-  const requestedConcurrency = typeof limit === "number" ? 1 : limit.concurrency ?? 2;
-  const concurrency = Number.isFinite(requestedConcurrency) ? Math.max(1, Math.min(2, Math.floor(requestedConcurrency))) : 2;
+  const adaptive = typeof limit !== "number" && (limit.concurrency === undefined || limit.concurrency === "adaptive");
+  const requestedConcurrency = typeof limit === "number" ? 1 : typeof limit.concurrency === "number" ? limit.concurrency : 2;
+  let concurrency = Number.isFinite(requestedConcurrency) ? Math.max(1, Math.floor(requestedConcurrency)) : 2;
+  const initialConcurrency = concurrency;
+  let capacityIncreases = 0, capacityDecreases = 0, healthyCheckpoints = 0;
   const bound = typeof limit === "number" ? Math.max(0, Math.min(8, Math.ceil(limit) || 0)) : Infinity;
   const outcomes: Record<string, number> = {};
   let processed = 0, claimed = 0, peakInFlight = 0;
   let stoppedBy: DirectedResearchStopReason = "queue_empty";
-  const receipt = (enabled: boolean) => ({ enabled, processed, outcomes, claimed, mode, concurrency, peakInFlight,
-    durationMs: Math.max(0, Date.now() - startedAt), stoppedBy });
+  const receipt = (enabled: boolean) => ({ enabled, processed, outcomes, claimed, mode, concurrency, initialConcurrency, adaptive,
+    capacityIncreases, capacityDecreases, peakInFlight, durationMs: Math.max(0, Date.now() - startedAt), stoppedBy });
   if (!intelligenceEnabled()) { stoppedBy = "disabled"; return receipt(false); }
   return withServiceDeadline(deadlineMs, async () => {
     const inFlight = new Map<string, Promise<string>>();
+    const activeLease = new Map<string, string>();
+    let stopped = false;
+    let wakeCapacity!: () => void;
+    const capacitySignal = () => new Promise<null>(resolve => { wakeCapacity = () => resolve(null); });
+    let changedCapacity = capacitySignal();
+    const capacityFeedback = (feedback: CatalogCapacityFeedback) => {
+      if (feedback.status === "hold") {
+        stopped = true; stoppedBy = "provider_hold"; wakeCapacity(); return;
+      }
+      if (!adaptive || stopped) return;
+      if (feedback.status === "pressure") {
+        healthyCheckpoints = 0;
+        const reduced = Math.max(1, Math.floor(concurrency / 2));
+        if (reduced !== concurrency) { concurrency = reduced; capacityDecreases++; }
+        wakeCapacity(); return;
+      }
+      // Add one slot only after a window of confirmed native/DB checkpoints.
+      // There is no account ceiling; real provider/database pressure reduces
+      // admission while existing healthy leases finish without interruption.
+      if (++healthyCheckpoints >= concurrency) {
+        healthyCheckpoints = 0; concurrency++; capacityIncreases++; wakeCapacity();
+      }
+    };
     const process = async (job: ResearchJob, claimedAt: number) => {
       const leaseTimestamp = job.lease_until ? Date.parse(job.lease_until) : NaN;
       const leaseExpiresAt = Number.isFinite(leaseTimestamp) ? leaseTimestamp : claimedAt + 180_000;
@@ -381,7 +407,8 @@ export async function runDirectedResearchWorker(limit: number | DirectedResearch
           // Same account lease, explicit catalog admission. The catalog owns its
           // atomic answer/checkpoint finish; never also run legacy discovery or
           // complete the old interpretation backlog from this branch.
-          const coverage = await runOperatingCoverage(job, accountDeadlineMs);
+          const coverage = adaptive ? await runOperatingCoverage(job, accountDeadlineMs, { onCapacityFeedback: capacityFeedback })
+            : await runOperatingCoverage(job, accountDeadlineMs);
           outcome = coverage.outcome;
           if (coverage.outcome === "catalog_needs_research") {
             const research = await refreshAccountResearch(job.company_id, { deadlineMs: accountDeadlineMs, automatic: true,
@@ -402,6 +429,10 @@ export async function runDirectedResearchWorker(limit: number | DirectedResearch
           if (job.catalog_requested_version) await withServiceDeadline(leaseDeadlineMs, async () => {
             const reason = error instanceof Error ? error.message : "catalog_service_error";
             const retry = catalogReadRetry(reason, job.last_error);
+            if (retry.retryAt) capacityFeedback({ status: "pressure", reason });
+            if (/^(?:catalog_checkpoint_unavailable|catalog_research_finish_failed|research_completion_failed|dispatch_)/.test(reason)) {
+              stopped = true; stoppedBy = "persistence_error"; wakeCapacity();
+            }
             const deferred = await serviceClient().rpc("intelligence_catalog_defer", { p_company: job.company_id,
               p_lease: job.lease_token, p_reason: retry.reason, p_retry_at: retry.retryAt });
             if (deferred.error) throw new Error("catalog_defer_failed");
@@ -414,7 +445,6 @@ export async function runDirectedResearchWorker(limit: number | DirectedResearch
       processed++;
       return job.company_id;
     };
-    let stopped = false;
     while (!stopped) {
       while (inFlight.size < concurrency && !stopped) {
         if (claimed >= bound) { stoppedBy = "batch_limit"; stopped = true; break; }
@@ -431,19 +461,36 @@ export async function runDirectedResearchWorker(limit: number | DirectedResearch
         }
         if (!job) { stoppedBy = mode === "drain" ? "queue_empty_or_capacity" : "queue_empty"; stopped = true; break; }
         claimed++;
-        // The database owns cross-request exclusivity. This defensive guard
-        // also refuses an unexpected duplicate without touching the live lease.
-        if (inFlight.has(job.company_id)) {
+        // The prior lease may already be durably finished while its local
+        // promise tail is settling. A different fresh lease is valid: await
+        // that tail and handle the new claim, never abandon it as a duplicate.
+        const previous = inFlight.get(job.company_id);
+        if (previous && activeLease.get(job.company_id) === job.lease_token) {
           outcomes.duplicate_claim = (outcomes.duplicate_claim ?? 0) + 1;
           stoppedBy = "duplicate_claim"; stopped = true; break;
         }
-        inFlight.set(job.company_id, process(job, claimedAt));
+        if (previous) await previous;
+        const running = process(job, claimedAt);
+        activeLease.set(job.company_id, job.lease_token);
+        inFlight.set(job.company_id, running);
         peakInFlight = Math.max(peakInFlight, inFlight.size);
+        void running.then(() => {
+          // Remove settled work before the next claim, rather than retaining
+          // it until a later race/refill notices it. Identity protects a newer
+          // valid lease for the same account from an older promise callback.
+          if (inFlight.get(job!.company_id) === running) {
+            inFlight.delete(job!.company_id); activeLease.delete(job!.company_id);
+          }
+          wakeCapacity();
+        });
       }
       if (!stopped && inFlight.size) {
-        // Refill the first completed slot; a slow account does not block the
-        // next independent account behind a fixed two-account batch.
-        inFlight.delete(await Promise.race(inFlight.values()));
+        // Native checkpoints can grow admission before a long account finishes.
+        // A completed account refills one slot; neither path creates a second
+        // scheduler or bypasses the database's sole exact-account lease.
+        const completed = await Promise.race([...inFlight.values(), changedCapacity]);
+        if (completed === null) changedCapacity = capacitySignal();
+        else inFlight.delete(completed);
       }
     }
     // Never let a queue-empty/error/deadline stop abandon healthy owned work.

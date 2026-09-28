@@ -13,7 +13,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   try {
-    const result = await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 280000);
+    const result = await runDirectedResearchWorker({ mode: "drain", concurrency: "adaptive" }, Date.now() + 280000);
     await logEvent("headhunter", "intelligence.research", {
       summary: `Researched ${result.processed} business-services accounts`, meta: result,
     });

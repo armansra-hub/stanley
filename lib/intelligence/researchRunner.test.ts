@@ -265,6 +265,82 @@ describe("deadline-driven account research", () => {
     return queue;
   }
 
+  it("grows beyond two slots from saved native checkpoints before long accounts finish", async () => {
+    const queue = jobs(4);
+    queue.forEach(job => Object.assign(job, { catalog_requested_version: "catalog" }));
+    const callbacks: Array<(feedback: { status: "healthy" | "pressure" | "hold"; reason?: string }) => void> = [];
+    const holds = Array.from({ length: 4 }, () => deferred<{ outcome: string; answered: number }>());
+    mocks.coverage.mockImplementation((job, _deadline, options) => {
+      callbacks.push(options.onCapacityFeedback);
+      return holds[Number(job.company_id.split("-").at(-1))].promise;
+    });
+    const running = runDirectedResearchWorker({ mode: "drain", concurrency: "adaptive" }, Date.now() + 275_000);
+    await vi.waitFor(() => expect(callbacks).toHaveLength(2));
+    callbacks[0]({ status: "healthy" });
+    callbacks[1]({ status: "healthy" });
+    await vi.waitFor(() => expect(callbacks).toHaveLength(3));
+    // No account completed and no burst claiming of all waiting accounts.
+    expect(queue).toHaveLength(1);
+    callbacks[0]({ status: "healthy" }); callbacks[1]({ status: "healthy" }); callbacks[2]({ status: "healthy" });
+    await vi.waitFor(() => expect(callbacks).toHaveLength(4));
+    holds.forEach(hold => hold.resolve({ outcome: "catalog_complete", answered: 47 }));
+    expect(await running).toMatchObject({ adaptive: true, initialConcurrency: 2, concurrency: 4,
+      capacityIncreases: 2, processed: 4, peakInFlight: 4 });
+  });
+
+  it("reduces new admission on real provider pressure without stopping healthy leased accounts", async () => {
+    const queue = jobs(5);
+    queue.forEach(job => Object.assign(job, { catalog_requested_version: "catalog" }));
+    const callbacks: Array<(feedback: { status: "healthy" | "pressure" | "hold"; reason?: string }) => void> = [];
+    const holds = Array.from({ length: 5 }, () => deferred<{ outcome: string; answered: number }>());
+    mocks.coverage.mockImplementation((job, _deadline, options) => {
+      callbacks.push(options.onCapacityFeedback);
+      return holds[Number(job.company_id.split("-").at(-1))].promise;
+    });
+    const running = runDirectedResearchWorker({ mode: "drain", concurrency: "adaptive" }, Date.now() + 275_000);
+    await vi.waitFor(() => expect(callbacks).toHaveLength(2));
+    callbacks[0]({ status: "healthy" }); callbacks[1]({ status: "healthy" });
+    await vi.waitFor(() => expect(callbacks).toHaveLength(3));
+    callbacks[0]({ status: "pressure", reason: "typesafe_http_429" });
+    holds[0].resolve({ outcome: "catalog_provider_blocked", answered: 2 });
+    holds[1].resolve({ outcome: "catalog_complete", answered: 47 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(callbacks).toHaveLength(3); // The third lease remains healthy; no fourth starts yet.
+    holds[2].resolve({ outcome: "catalog_complete", answered: 47 });
+    await vi.waitFor(() => expect(callbacks).toHaveLength(4));
+    holds[3].resolve({ outcome: "catalog_complete", answered: 47 });
+    await vi.waitFor(() => expect(callbacks).toHaveLength(5));
+    holds[4].resolve({ outcome: "catalog_complete", answered: 47 });
+    expect(await running).toMatchObject({ concurrency: 1, capacityIncreases: 1, capacityDecreases: 1, processed: 5, peakInFlight: 3 });
+  });
+
+  it("stops new admission on actual provider holds and waits for healthy owned work", async () => {
+    const queue = jobs(4);
+    queue.forEach(job => Object.assign(job, { catalog_requested_version: "catalog" }));
+    const holds = [deferred<{ outcome: string; answered: number }>(), deferred<{ outcome: string; answered: number }>()];
+    const callbacks: Array<(feedback: { status: "hold"; reason: string }) => void> = [];
+    mocks.coverage.mockImplementation((job, _deadline, options) => {
+      callbacks.push(options.onCapacityFeedback);
+      return holds[Number(job.company_id.split("-").at(-1))].promise;
+    });
+    let settled = false;
+    const running = runDirectedResearchWorker({ mode: "drain", concurrency: "adaptive" }, Date.now() + 275_000)
+      .then(result => { settled = true; return result; });
+    await vi.waitFor(() => expect(callbacks).toHaveLength(2));
+    callbacks[0]({ status: "hold", reason: "provider_balance_exhausted" });
+    holds[0].resolve({ outcome: "catalog_budget_deferred", answered: 0 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(settled).toBe(false); expect(queue).toHaveLength(2);
+    holds[1].resolve({ outcome: "catalog_complete", answered: 47 });
+    expect(await running).toMatchObject({ processed: 2, claimed: 2, stoppedBy: "provider_hold" });
+  });
+
+  it("does not silently clamp explicitly requested drain capacity to two", async () => {
+    jobs(7);
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 7 }, Date.now() + 275_000))
+      .toMatchObject({ concurrency: 7, processed: 7, peakInFlight: 7 });
+  });
+
   it("drains more than eight distinct accounts while retaining the same caught-up decisions and paid-call reuse", async () => {
     jobs(13);
     const result = await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000);
@@ -386,12 +462,28 @@ describe("deadline-driven account research", () => {
 
   it("refuses an unexpected duplicate account claim without racing or finishing its active lease", async () => {
     const queue = jobs(2);
-    queue[1] = { ...queue[0], lease_token: "unexpected-second-lease" };
+    queue[1] = { ...queue[0] };
     expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000))
       .toMatchObject({ processed: 1, claimed: 2, peakInFlight: 1, stoppedBy: "duplicate_claim", outcomes: { duplicate_claim: 1, caught_up: 1 } });
     expect(mocks.external).toHaveBeenCalledOnce();
     expect(mocks.rpc.mock.calls.filter(([name]) => name === "intelligence_directed_finish")).toHaveLength(1);
     expect(mocks.rpc).toHaveBeenCalledWith("intelligence_directed_finish", expect.objectContaining({ p_lease: "lease-0" }));
+  });
+
+  it("handles a fresh lease after its prior local promise settles instead of abandoning it as a duplicate", async () => {
+    const queue = jobs(2);
+    queue[1] = { ...queue[0], lease_token: "fresh-second-lease" };
+    queue.forEach(job => Object.assign(job, { catalog_requested_version: "catalog" }));
+    let active = 0, maximum = 0;
+    mocks.coverage.mockImplementation(async () => {
+      active++; maximum = Math.max(maximum, active);
+      await Promise.resolve(); active--;
+      return { outcome: "catalog_complete", answered: 47 };
+    });
+    expect(await runDirectedResearchWorker({ mode: "drain", concurrency: 2 }, Date.now() + 275_000))
+      .toMatchObject({ processed: 2, claimed: 2, stoppedBy: "queue_empty_or_capacity" });
+    expect(maximum).toBe(1);
+    expect(mocks.coverage.mock.calls.map(([job]) => job.lease_token)).toEqual(["lease-0", "fresh-second-lease"]);
   });
 
   it("waits for every healthy source read before reporting one source's failed durable finish", async () => {

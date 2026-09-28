@@ -198,6 +198,73 @@ describe("operating catalog account coverage", () => {
       researchFacets: publicFacets.map(facet => facet.id) });
     expect(h.evaluate).not.toHaveBeenCalled();
   });
+  it("publishes all native answers before queueing a separate due discovery pass", async () => {
+    const h = harness(sources, true);
+    const original = h.evaluate.getMockImplementation()!;
+    h.evaluate.mockImplementation(async (...args) => {
+      const result = await original(...args);
+      Object.values(result.evaluation.provider_result.answers).forEach(answer => { answer.choice = "supported"; });
+      return result;
+    });
+    const feedback = vi.fn();
+    expect(await runOperatingCoverage(job, Date.now() + 90_000, { ...h, onCapacityFeedback: feedback }))
+      .toMatchObject({ outcome: "catalog_complete", answered: 47 });
+    expect(h.writes.at(-1)).toMatchObject({ p_terminal: true, p_summary: { status: "complete" }, p_checkpoint: { completed: true } });
+    expect(Date.parse(h.writes.at(-1).p_retry_at)).toBeLessThanOrEqual(Date.now());
+    expect(feedback).toHaveBeenCalledTimes(h.evaluate.mock.calls.length);
+    expect(feedback.mock.calls.every(([value]) => value.status === "healthy")).toBe(true);
+    const paidCalls = h.evaluate.mock.calls.length;
+    expect(await runOperatingCoverage(job, Date.now() + 90_000, h))
+      .toMatchObject({ outcome: "catalog_needs_research", answered: 47 });
+    expect(h.evaluate).toHaveBeenCalledTimes(paidCalls);
+    expect(h.writes.at(-1)).toMatchObject({ p_terminal: false, p_summary: { status: "complete" } });
+  });
+  it("publishes all 47 answers before immediately researching unresolved predicates", async () => {
+    const h = harness(sources, true);
+    expect(await runOperatingCoverage(job, Date.now() + 90_000, h))
+      .toMatchObject({ outcome: "catalog_needs_research", answered: 47,
+        researchFacets: expect.arrayContaining(["rr_c01"]) });
+    expect(h.writes.at(-1)).toMatchObject({ p_terminal: false, p_summary: { status: "complete" }, p_checkpoint: { completed: true } });
+    expect(h.saved.size).toBe(47);
+  });
+  it.each([["typesafe_http_429", "pressure"], ["typesafe_http_402", "hold"], ["typesafe_http_403", "hold"]])(
+    "reports persisted provider feedback without changing its native failure: %s", async (code, status) => {
+      const h = harness(), feedback = vi.fn();
+      h.evaluate.mockResolvedValueOnce({ status: "complete", reused: false,
+        evaluation: { ok: false, error: { code, retryable: code.endsWith("429") }, usage: null } } as any);
+      expect((await runOperatingCoverage(job, Date.now() + 90_000, { ...h, onCapacityFeedback: feedback })).outcome)
+        .toBe("catalog_provider_blocked");
+      expect(h.writes.at(-1).p_summary.lastError).toBe(code);
+      expect(feedback).toHaveBeenCalledOnce(); expect(feedback).toHaveBeenCalledWith({ status, reason: code });
+    });
+  it("never signals healthy capacity before the native answer checkpoint is confirmed", async () => {
+    const h = harness(), feedback = vi.fn(), original = h.rpc.getMockImplementation()!;
+    h.rpc.mockImplementation(async (name, args) => name === "intelligence_catalog_checkpoint"
+      && args.p_facets.some((facet: any) => facet.status === "answered") ? { data: false, error: null } : original(name, args));
+    expect((await runOperatingCoverage(job, Date.now() + 90_000, { ...h, onCapacityFeedback: feedback })).outcome).toBe("catalog_stale");
+    expect(h.evaluate).toHaveBeenCalledOnce();
+    expect(feedback).not.toHaveBeenCalled();
+  });
+  it("parks an unchanged oversized native corpus instead of retrying its expired research date", async () => {
+    const h = harness([{ ...sources[0], evidence_text: "Relevant service evidence. ".repeat(1600) }]);
+    const originalEvaluate = h.evaluate.getMockImplementation()!;
+    h.evaluate.mockImplementation(async (...args) => {
+      const result = await originalEvaluate(...args);
+      Object.values(result.evaluation.provider_result.answers).forEach(answer => { answer.choice = "candidate"; });
+      return result;
+    });
+    const originalRpc = h.rpc.getMockImplementation()!;
+    h.rpc.mockImplementation(async (name, args) => {
+      const result = await originalRpc(name, args);
+      if (name === "intelligence_catalog_snapshot") (result.data as CatalogSnapshot).previousResearch = {
+        doneAt: "2026-01-01T00:00:00Z", nextAt: "2026-01-02T00:00:00Z", outcome: "refreshed",
+      };
+      return result;
+    });
+    expect((await runOperatingCoverage(job, Date.now() + 120_000, h)).outcome).toBe("catalog_evidence_blocked");
+    expect(h.writes.at(-1)).toMatchObject({ p_terminal: true, p_retry_at: null,
+      p_summary: { status: "blocked", lastError: "evidence_exceeds_native_request_limit" } });
+  });
   it("preserves pending request on budget hold and obeys the absolute reset, including null authorization holds", async () => {
     const h = harness();
     h.evaluate.mockResolvedValueOnce({ status: "budget_deferred", reason: "daily_limit", retryAt: "2026-09-25T07:00:00Z" } as any);
