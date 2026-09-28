@@ -49,6 +49,31 @@ try {
   assert.equal(await scalar("select md5(jsonb_agg(to_jsonb(c) order by id)::text) from companies c"), before);
   passed++; console.log("PASS migration preserves every canonical company and grade");
   const id = await scalar("select id from companies order by id limit 1");
+  await db.query(`insert into triggers(id,company_id,type,summary,source_name,source_url,signal_date,metadata)
+    values(gen_random_uuid(),$1,'ma','Acquisition','Company','https://example.test/acquisition',now()-interval '1 day',
+      jsonb_build_object('intelligenceEvidence',repeat('complete retained long source ',4000),
+        'stanley_quarantine',jsonb_build_object('active',false),'contractEventMergedInto','retained-merge-id',
+        'contractTimingInactive',true,'intelligenceFeedbackExcluded',true,
+        'jevFinding',jsonb_build_object('eventId','retained-event','attributes',jsonb_build_object('companyRelationship','direct','contentClass','actual_company_development'),
+          'rawAnswers',repeat('native answer ',4000))))`, [id]);
+  const beforeOptimization = await candidates();
+  const optimization = await readFile(new URL("../../supabase/migrations/0129_customer_match_read_performance.sql", import.meta.url), "utf8");
+  const transactionStart = optimization.indexOf("\nbegin;");
+  // CONCURRENTLY must be a separate database command, as in production.
+  await db.exec(optimization.slice(0, transactionStart));
+  await db.exec(optimization.slice(transactionStart));
+  const afterOptimization = await candidates();
+  assert.deepEqual(afterOptimization.accounts.map(a => [a.companyId,a.decisions]),beforeOptimization.accounts.map(a => [a.companyId,a.decisions]));
+  const beforeTiming = beforeOptimization.accounts.find(a => a.companyId === id).triggers[0];
+  const afterTiming = afterOptimization.accounts.find(a => a.companyId === id).triggers[0];
+  for (const key of ['stanley_quarantine','contractEventMergedInto','contractTimingInactive','intelligenceFeedbackExcluded'])
+    assert.deepEqual(afterTiming.metadata[key],beforeTiming.metadata[key]);
+  assert.deepEqual(afterTiming.metadata.jevFinding.attributes,beforeTiming.metadata.jevFinding.attributes);
+  assert.equal(afterTiming.metadata.jevFinding.eventId,beforeTiming.metadata.jevFinding.eventId);
+  assert.ok(JSON.stringify(afterTiming).length<JSON.stringify(beforeTiming).length/100);
+  assert.equal(await scalar("select length(metadata->>'intelligenceEvidence') from triggers where company_id=$1",[id]),120000);
+  await db.query("delete from triggers where company_id=$1",[id]);
+  passed++; console.log("PASS read optimization retains every decision and policy field without copying full source/provider bodies");
   await check("all1003 accounts survive JSON aggregation and native uncited unknown is evaluated", async () => {
     const result = await candidates(); assert.equal(result.accounts.length, 1003);
     assert.deepEqual(result.accounts[0].decisions, { rr_c01: "supported", rr_c05: "insufficient_evidence", rr_i01: "supported" });
