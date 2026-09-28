@@ -36,6 +36,7 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
   const [result, setResult] = useState<TopicSearchResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [selectedAccounts, setSelectedAccounts] = useState(new Set<string>());
   const [countsStatusSignature, setCountsStatusSignature] = useState("");
   const [resultStatusSignature, setResultStatusSignature] = useState("");
@@ -44,6 +45,10 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
   const requestBusy = useRef(false);
   const statusWriting = useRef(false);
   const searched = useRef(false);
+  const resultRef = useRef(result);
+  resultRef.current = result;
+  const countsRefreshKey = JSON.stringify([enabled, refreshKey ?? null, visibility, showHidden]);
+  const previousCountsRefreshKey = useRef<string | null>(null);
   const statusSignature = JSON.stringify(statusOverrides);
   const statusSignatureRef = useRef(statusSignature);
   const statusBusyRef = useRef(statusBusy);
@@ -57,7 +62,7 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
     const startedDuringWrite = statusBusyRef.current;
     requestBusy.current = true;
     searched.current = true;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setRefreshNotice(null);
     const params = new URLSearchParams();
     selected.forEach(topic => params.append("topic", topic));
     if (recipeId) params.set("recipe", recipeId);
@@ -78,12 +83,22 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
         accounts: [...previous.accounts, ...next.accounts.filter(account => !previous.accounts.some(prior => prior.companyId === account.companyId))],
       } : next);
     } catch {
-      if (current === sequence.current) setError("Could not search cached operating evidence. Try again.");
+      if (current === sequence.current) {
+        if (resultRef.current) setRefreshNotice(after
+          ? "Could not load more matches. Your previously loaded matches are still shown; try Load more again."
+          : "Could not refresh operating matches. Previously loaded matches are still shown and may not include every account for the current filters. Try Find matching accounts again.");
+        else setError("Could not search cached operating evidence. Try again.");
+      }
     } finally { if (current === sequence.current) { setBusy(false); requestBusy.current = false; } }
   }, [selected, recipeId, enabled, mode, visibility, showHidden]);
 
   useEffect(() => {
+    const regularRefresh = previousCountsRefreshKey.current !== countsRefreshKey;
+    previousCountsRefreshKey.current = countsRefreshKey;
     if (!enabled || statusBusy) return;
+    // An active search already returns all category counts on ordinary refreshes.
+    // Status-only updates instead refresh counts without repeating the result search.
+    if (regularRefresh && searched.current) { setCountsRefreshing(false); return; }
     const controller = new AbortController();
     const timeout = setTimeout(() => { controller.abort(); setCountsRefreshing(false); }, 15_000);
     setCountsRefreshing(true);
@@ -92,7 +107,7 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
       .catch(() => { /* Unavailable counts remain unknown rather than becoming zero. */ })
       .finally(() => { clearTimeout(timeout); if (!controller.signal.aborted) setCountsRefreshing(false); });
     return () => { clearTimeout(timeout); controller.abort(); };
-  }, [enabled, refreshKey, visibility, showHidden, statusSignature, statusBusy]);
+  }, [enabled, countsRefreshKey, visibility, showHidden, statusSignature, statusBusy]);
 
   useEffect(() => { if (searched.current) void search(undefined, true); }, [refreshKey, search]);
   useEffect(() => { setSelectedAccounts(new Set()); }, [selected, recipeId, mode, visibility, showHidden]);
@@ -118,7 +133,7 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
   };
   const clearSearch = () => {
     searched.current = false; sequence.current++; requestBusy.current = false;
-    setBusy(false); setResult(null); setError(null); setSelectedAccounts(new Set());
+    setBusy(false); setResult(null); setError(null); setRefreshNotice(null); setSelectedAccounts(new Set());
   };
   const recipe = recipeId ? operatingRecipe(recipeId) : null;
   const groups = [...new Set(OPERATING_FACETS.map(facet => facet.group))];
@@ -168,6 +183,7 @@ export default function OperatingMatches({ enabled, refreshKey, onOpenAccount, s
     <details className="mt-3 rounded border p-3 text-xs text-[var(--text-muted)]"><summary className="cursor-pointer font-medium">Industry guidance behind the categories · 35 research lenses</summary><p className="mt-2">These guides help Jev interpret the company's own operating model. They are research hypotheses, not evidence that the company has a finance problem.</p><div className="mt-3 grid gap-3 sm:grid-cols-2">{OPERATING_INDUSTRY_GUIDES.map(guide => <div key={guide.id}><strong>{guide.label}</strong><p>{guide.guidance}</p><p className="mt-1">{guide.boundary}</p></div>)}</div></details>
     {counts?.coverage && <p className="mt-3 text-xs text-[var(--text-muted)]">{counts.coverage.accountsWithTopicEvidence.toLocaleString()} of {counts.coverage.tamAccounts.toLocaleString()} TAM accounts have traits at this visibility level{counts.coverage.accountsWithNoInterpretedEvidence !== undefined ? `; ${counts.coverage.accountsWithNoInterpretedEvidence.toLocaleString()} have no interpreted evidence yet` : ""}. Missing support means unknown, not that a company lacks the trait.</p>}
     {error && <p role="alert" className="mt-3 text-sm text-[var(--gold)]">{error}</p>}
+    {refreshNotice && <p role="status" className="mt-3 text-sm text-[var(--text-muted)]">{refreshNotice}</p>}
     {result && <div className="mt-5 border-t pt-4">
       {!result.enabled ? <p className="text-sm text-[var(--text-muted)]">Operating search will be available when intelligence setup is complete.</p> : <>
         <div role="status" className="mb-3 text-sm">
