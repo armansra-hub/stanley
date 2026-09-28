@@ -1,4 +1,4 @@
-import { OPERATING_FACETS, operatingFacet, type OperatingFacetDecision } from "./operatingCatalog";
+import { operatingFacet, type OperatingFacetDecision } from "./operatingCatalog";
 import type { OperatingMatchTopic } from "./topicSearch";
 
 /** Public response types and deterministic cached-fact ranking. No provider calls. */
@@ -80,14 +80,29 @@ export type CustomerMatchesResult = {
   patterns: { id: string; label: string; description: string; count: number; referenceCount: number }[];
   accounts: CustomerMatchAccount[]; total: number; page: number; pageSize: 25; hasMore: boolean;
   referenceCoverage: { verified: number; pending: number; asOf: string };
-  coverage: { eligible: number; assessed: number; asOf: string };
+  /** Completion is reported by the canonical catalog endpoint, not recomputed by the shortlist. */
+  coverage: { eligible: number; assessed: number | null; asOf: string };
   note: string;
 };
 const DAY = 86_400_000;
 const supported = (d: Record<string, OperatingFacetDecision>, ids: string[]) => ids.every(id => d[id] === "supported");
 const decisive = (d: Record<string, OperatingFacetDecision>, ids: string[]) => ids.every(id => d[id] === "supported" || d[id] === "not_supported");
 const trait = (id: string): Trait => ({ id, label: operatingFacet(id)?.label ?? id });
-const branchIndustry = (subindustry: string | null | undefined, branch: Branch) => !branch.subindustries || (!!subindustry && branch.subindustries.includes(subindustry));
+// NetSuite imports and public discovery use two established label vocabularies
+// (see businessServices.ts laneFor). These explicit equivalent lane names are
+// metadata aliases only; no name/domain keywords establish an industry. Broad
+// Operational Support Services is deliberately not inferred to be cleaning or
+// translation, and Advisory Services is not inferred to be implementation.
+const COMPARISON_INDUSTRY_ALIASES: readonly (readonly string[])[] = [
+  ["Facilities Management", "Facilities Management & Commercial Cleaning"],
+  ["Agencies", "Advertising & Marketing", "Multimedia & Graphic Design"],
+];
+export function industryMatches(subindustry: string | null | undefined, allowed: readonly string[]): boolean {
+  if (!subindustry) return false;
+  if (allowed.includes(subindustry)) return true;
+  return COMPARISON_INDUSTRY_ALIASES.some(group => group.includes(subindustry) && allowed.some(value => group.includes(value)));
+}
+const branchIndustry = (subindustry: string | null | undefined, branch: Branch) => !branch.subindustries || industryMatches(subindustry, branch.subindustries);
 
 // Independent optional reasons each contribute once, regardless of overlapping
 // category count. These groups affect ordering, never native facet decisions.
@@ -178,7 +193,7 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
       referenceCount: new Set(branches.filter(b => b.pattern.id === p.id).flatMap(b => b.refs.map(r => r.id))).size })),
     accounts: ranked.slice(start, start + 25).map(r => r.account), total: ranked.length, page, pageSize: 25, hasMore: start + 25 < ranked.length,
     referenceCoverage: { verified: references.length, pending: Math.max(0, input.referenceTotal - input.references.length), asOf: input.asOf },
-    coverage: { eligible: candidates.length, assessed: candidates.filter(c => Object.keys(c.decisions).length === OPERATING_FACETS.length).length, asOf: new Date(now).toISOString() },
+    coverage: { eligible: candidates.length, assessed: null, asOf: new Date(now).toISOString() },
     note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives. Counts use unique companies. References are a curated researched sample, not customer prevalence; rarity describes assessed prospects only. Historical customer announcements remain dated context. Ranking reads saved answers and makes no Jev requests.",
   };
 }

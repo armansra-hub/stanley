@@ -132,5 +132,20 @@ try {
     assert.equal(await scalar("select has_table_privilege('service_role','intelligence_customer_references','SELECT,INSERT,UPDATE')"), true);
     assert.equal(await scalar("select relrowsecurity from pg_class where oid='intelligence_customer_references'::regclass"), true);
   });
+  const beforeCompaction = await candidates();
+  await db.exec(await readFile(new URL("../../supabase/migrations/0130_customer_match_compact_unknowns.sql", import.meta.url), "utf8"));
+  const afterCompaction = await candidates();
+  assert.equal(afterCompaction.accounts.length,beforeCompaction.accounts.length);
+  for (let i=0;i<beforeCompaction.accounts.length;i++) {
+    const before=beforeCompaction.accounts[i],after=afterCompaction.accounts[i];
+    assert.equal(after.companyId,before.companyId);
+    assert.deepEqual(after.decisions,Object.fromEntries(Object.entries(before.decisions).filter(([,decision])=>decision!=='insufficient_evidence')));
+  }
+  await db.query("update intelligence_observations set content_hash='changed-after-compaction' where id=$1",[id]);
+  const changedAfterCompaction=(await candidates()).accounts.find(a=>a.companyId===id);
+  assert.deepEqual(changedAfterCompaction.decisions,{});
+  assert.equal(await scalar("select count(*)::int from intelligence_catalog_facets where decision='insufficient_evidence'"),1003);
+  assert.equal(await scalar("select md5(jsonb_agg(to_jsonb(c) order by id)::text) from companies c"),before);
+  passed++; console.log("PASS omitting unknowns from the shortlist read preserves all candidates, facts, native answers and source semantics");
   console.log(`${passed} actual PostgreSQL customer-match checks passed; no model calls or live writes.`);
 } finally { await db.close(); }

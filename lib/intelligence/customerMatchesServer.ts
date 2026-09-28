@@ -82,7 +82,8 @@ export async function loadCustomerMatches(input: { pattern: string; page: number
   const references = seeds.flatMap(seed => { const ref = readyCustomerReference(seed, rows.get(seed.id)); return ref ? [ref] : []; });
   const now = Date.now();
   const candidates = (snapshot.data.accounts as CandidateRow[]).map(row => ({ companyId: row.companyId, name: row.name, domain: row.domain,
-    subindustry: row.subindustry, internalId: row.internalId, status: row.status, decisions: row.decisions, whyNow: customerWhyNow(row, now) }));
+    subindustry: row.subindustry, internalId: row.internalId, status: row.status, decisions: row.decisions,
+    whyNow: customerWhyNow(row, now) }));
   const result = rankCustomerMatches({ candidates, references, referenceTotal: seeds.length, asOf: referenceData.asOf,
     pattern: input.pattern, page: input.page, now });
   if (!result.accounts.length) return result;

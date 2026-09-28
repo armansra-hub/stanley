@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankCustomerMatches, CUSTOMER_PATTERNS, type CustomerMatchCandidate, type CustomerReference } from "./customerMatches";
+import { rankCustomerMatches, CUSTOMER_PATTERNS, industryMatches, type CustomerMatchCandidate, type CustomerReference } from "./customerMatches";
 import { OPERATING_FACETS } from "./operatingCatalog";
 
 const now = Date.parse("2026-09-28T12:00:00Z");
@@ -44,6 +44,23 @@ describe("recent-customer cached ranking", () => {
     c.subindustry = "Facilities Management & Commercial Cleaning";
     expect(rank([c], [r], { pattern: "facilities" }).accounts[0].fit.industryBasis).toContain("Recorded CRM");
   });
+  it("recognizes the established NetSuite/public-discovery metadata aliases without inventing a narrower industry", () => {
+    expect(industryMatches("Facilities Management", ["Facilities Management & Commercial Cleaning"])).toBe(true);
+    expect(industryMatches("Agencies", ["Advertising & Marketing", "Multimedia & Graphic Design"])).toBe(true);
+    expect(industryMatches("Operational Support Services", ["Facilities Management & Commercial Cleaning"])).toBe(false);
+    expect(industryMatches("Operational Support Services", ["Translation & Linguistic Services"])).toBe(false);
+    expect(industryMatches("Advisory Services", ["Advertising & Marketing"])).toBe(false);
+    expect(industryMatches("Best Facilities Management Company", ["Facilities Management & Commercial Cleaning"])).toBe(false);
+    expect(industryMatches(null, ["Facilities Management & Commercial Cleaning"])).toBe(false);
+    const r = reference("cleaners", ["rr_c05", "rr_f01"]); r.subindustry = "Facilities Management & Commercial Cleaning";
+    const c = candidate("cleaner", ["rr_c05", "rr_f01"]); c.subindustry = "Facilities Management";
+    expect(rank([c], [r], { pattern: "facilities" }).accounts).toHaveLength(1);
+    const creativeRef = reference("merch", ["rr_c07"]); creativeRef.subindustry = "Advertising & Marketing";
+    const creativeProspect = candidate("agency", ["rr_c07"]); creativeProspect.subindustry = "Agencies";
+    expect(rank([creativeProspect], [creativeRef], { pattern: "creative" }).accounts).toHaveLength(1);
+    delete creativeProspect.decisions.rr_c07;
+    expect(rank([creativeProspect], [creativeRef], { pattern: "creative" }).accounts).toHaveLength(0);
+  });
   it("keeps unique companies, deduplicates buying programs and excludes renewal-only references", () => {
     const recent = reference("recent"); recent.buyingProgramId = "program"; recent.announcementDate = "2026-09-01";
     const older = reference("older"); older.buyingProgramId = "program";
@@ -63,6 +80,20 @@ describe("recent-customer cached ranking", () => {
     no.decisions.rr_c01 = "not_supported";
     const result = rank([yes, no, unknown]);
     expect(result.accounts[0].fit.rarity).toEqual({ matched: 1, assessed: 2 });
+  });
+  it("omits the redundant unknown scan without changing IDs, order, facts, rarity or unknown explanations", () => {
+    const yes = candidate("a"), other = candidate("b", ["rr_c01", "rr_i01", "rr_c05"]);
+    const negative = candidate("no", ["rr_i01"]); negative.decisions.rr_c01 = "not_supported";
+    const unknown = candidate("unknown", ["rr_i01"]);
+    const full = [yes, other, negative, unknown];
+    for (const c of full) for (const f of OPERATING_FACETS) c.decisions[f.id] ??= "insufficient_evidence";
+    const compact = full.map(c => ({ ...c, decisions: Object.fromEntries(Object.entries(c.decisions).filter(([, decision]) => decision !== "insufficient_evidence")) }));
+    const before = rank(full), after = rank(compact);
+    expect(after).toEqual(before);
+    expect(after.accounts.map(a => a.companyId)).toEqual(["b", "a"]);
+    expect(after.accounts[0].fit.rarity).toEqual({ matched: 2, assessed: 3 });
+    expect(after.accounts[1].reference.unknownTraits.map(t => t.id)).toEqual(["rr_c05"]);
+    expect(after.coverage.assessed).toBeNull();
   });
   it("places dated why-now ahead within comparable fit without changing the fit facts", () => {
     const c = candidate("z"); c.whyNow = [{ id: "event", label: "Acquisition", eventDate: "2026-09-20", sourceUrl: "https://z.test/news" }];
