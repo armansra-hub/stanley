@@ -5,6 +5,8 @@ import Link from "next/link";
 import AccountResearchPanel from "./AccountResearchPanel";
 import OperatingMatches from "./OperatingMatches";
 import IntelligenceDismissButton from "./IntelligenceDismissButton";
+import IntelligenceSelectionBar from "./IntelligenceSelectionBar";
+import { saveIntelligenceLeadStatus, visibleIntelligenceRows, type IntelligenceLeadStatus, type IntelligenceStatusOverrides } from "./intelligenceLeadStatus";
 import IntelligenceHealth, { type IntelligenceHealthData } from "./IntelligenceHealth";
 import IntelligenceCost from "./IntelligenceCost";
 import IntelligenceResearchProgress from "./IntelligenceResearchProgress";
@@ -59,7 +61,9 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   const [showHidden, setShowHidden] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const statusInFlight = useRef(false);
-  const [statusRevision, setStatusRevision] = useState(0);
+  const [statusOverrides, setStatusOverrides] = useState<IntelligenceStatusOverrides>({});
+  const statusOverridesRef = useRef<IntelligenceStatusOverrides>({});
+  const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [snapshot, setSnapshot] = useState<{ key: string; data: IntelligenceData } | null>(null);
   const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
@@ -76,6 +80,9 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
   const requestBusy = useRef(false);
   const key = `${companyId ?? ""}:${viewId}:${dismissed}:${showHidden}`;
   const data = snapshot?.key === key ? snapshot.data : null;
+  const visibleObservations = visibleIntelligenceRows(data?.observations ?? [], statusOverrides, showHidden);
+  const visibleAccountMatches = visibleIntelligenceRows(data?.accountMatches ?? [], statusOverrides, showHidden);
+  const selectableIds = [...new Set((viewId ? visibleAccountMatches : visibleObservations).flatMap(row => row.company_id ? [row.company_id] : []))];
   const views = (data ?? snapshot?.data)?.views.filter(view => view.active) ?? [];
   const selectedView = views.find(view => view.id === viewId);
   const questionBytes = new TextEncoder().encode(question.trim()).length;
@@ -142,6 +149,8 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     return () => { requestId.current += 1; requestBusy.current = false; };
   }, [load, active]);
 
+  useEffect(() => { setSelectedLeads(new Set()); }, [key]);
+
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => {
@@ -184,18 +193,23 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
     if (result) setViewId("");
   }
 
-  async function changeCompanyStatus(id: string, status: "new" | "dismissed"): Promise<boolean> {
-    if (statusInFlight.current) return false;
+  async function changeCompanyStatus(ids: string[], status: IntelligenceLeadStatus): Promise<boolean> {
+    if (statusInFlight.current || !ids.length) return false;
+    const exactIds = [...new Set(ids)];
+    const previous = statusOverridesRef.current;
+    const next = { ...previous, ...Object.fromEntries(exactIds.map(id => [id, status])) };
     statusInFlight.current = true;
+    statusOverridesRef.current = next;
+    setStatusOverrides(next);
     setStatusBusy(true); setError(null); setNotice(null);
     try {
-      const response = await fetch("/api/companies/status", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [id], status }) });
-      if (!response.ok) throw new Error("status_save_failed");
-      setStatusRevision(value => value + 1);
-      setNotice(status === "dismissed" ? "Lead dismissed, as in Triggered. Use Show hidden to restore it. Its research is kept." : "Lead restored.");
-      await load(0, true);
+      await saveIntelligenceLeadStatus(exactIds, status);
+      setSelectedLeads(prior => new Set([...prior].filter(id => !exactIds.includes(id))));
+      setNotice(status === "dismissed" ? `${exactIds.length} lead${exactIds.length === 1 ? "" : "s"} dismissed. Use Show hidden to restore. Research is kept.` : `${exactIds.length} lead${exactIds.length === 1 ? "" : "s"} restored.`);
       return true;
     } catch {
+      statusOverridesRef.current = previous;
+      setStatusOverrides(previous);
       setError("Could not confirm the review decision. Refresh to check its current status before trying again.");
       return false;
     } finally { statusInFlight.current = false; setStatusBusy(false); }
@@ -251,7 +265,7 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
       {data?.health && <IntelligenceHealth health={data.health} />}
       <IntelligenceResearchProgress progress={researchProgress} stale={researchStale} />
       <IntelligenceCost cost={displayedIntelligenceCost(data?.jevCost, fallbackCost)} stale={costStale} />
-      <OperatingMatches onOpenAccount={onOpenAccount} enabled={active} refreshKey={`${updatedAt}:${statusRevision}`} showHidden={showHidden} statusBusy={busy} onStatus={changeCompanyStatus} />
+      <OperatingMatches onOpenAccount={onOpenAccount} enabled={active} refreshKey={updatedAt} showHidden={showHidden} statusBusy={statusBusy} statusOverrides={statusOverrides} onStatus={changeCompanyStatus} />
       <section className="mb-6 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="new-view-heading">
         <h2 id="new-view-heading" className="western text-2xl">Follow a question</h2>
         <form onSubmit={saveView} className="mt-3 space-y-3">
@@ -292,22 +306,23 @@ function GlobalIntelligencePanel({ active, initialViewId, onOpenAccount }: { act
           <p className="mt-1 text-xs text-[var(--text-muted)]">{data?.processingEnabled === false ? "Showing saved answers. New matching is paused." : selectedView.backfill_complete ? "Account evidence queued for matching. Results appear as processing completes." : "Historical evidence is still being queued. Results are incomplete."} {data?.accountQuestionPending == null ? "Pending count unavailable." : `${data.accountQuestionPending} accounts awaiting an updated answer.`} Source dates show how old the evidence is.</p>
         </div>}
         <div aria-live="polite" className="mb-3 text-xs text-[var(--text-muted)]">
-          {loading ? "Loading evidence…" : data ? viewId ? `${(data.accountMatches?.length ?? 0).toLocaleString()} account answers loaded` : `${data.observations.length.toLocaleString()} evidence items loaded` : "Evidence has not loaded yet."}
+          {loading ? "Loading evidence…" : data ? viewId ? `${visibleAccountMatches.length.toLocaleString()} account answers loaded` : `${visibleObservations.length.toLocaleString()} evidence items loaded` : "Evidence has not loaded yet."}
           {updatedAt && ` · Updated ${new Date(updatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
           <span className="ml-1">· Refreshes every minute while open</span>
         </div>
-        {data?.observations.length === 0 && !data?.accountMatches?.length && <div className="rounded-lg border border-dashed bg-[var(--surface)] px-6 py-12 text-center">
+        {data && visibleObservations.length === 0 && visibleAccountMatches.length === 0 && <div className="rounded-lg border border-dashed bg-[var(--surface)] px-6 py-12 text-center">
           <h3 className="text-lg font-medium">{dismissed ? "No dismissed evidence in this view" : viewId ? "No matching evidence yet" : "No evidence captured yet"}</h3>
           <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-muted)]">{viewId ? "Matches will appear as source research and this view’s background processing complete." : "The feed will fill as sources are collected and processed."}</p>
         </div>}
+        <IntelligenceSelectionBar ids={selectableIds} selectedIds={selectedLeads} onSelectionChange={setSelectedLeads} onStatus={changeCompanyStatus} showHidden={showHidden} busy={statusBusy} label="evidence leads" />
         <div className="space-y-4">
-          {viewId && data?.accountMatches?.map(match => <article key={match.company_id} className="rounded-lg border bg-[var(--surface)] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><button className="font-semibold text-[var(--gold)]" onClick={() => onOpenAccount(match.company_id, match.company_name)}>{match.company_name} →</button><div className="flex items-center gap-3"><span className="text-sm">Jev: {(match.probability * 100).toFixed(1)}% match</span><IntelligenceDismissButton companyId={match.company_id} name={match.company_name} status={match.company_status} busy={busy} onStatus={changeCompanyStatus} /></div></div>
+          {viewId && visibleAccountMatches.map(match => <article key={match.company_id} className="rounded-lg border bg-[var(--surface)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-3"><input type="checkbox" aria-label={`Select ${match.company_name}`} checked={selectedLeads.has(match.company_id)} disabled={statusBusy} onChange={event => setSelectedLeads(prior => { const next = new Set(prior); event.target.checked ? next.add(match.company_id) : next.delete(match.company_id); return next; })} /><button className="font-semibold text-[var(--gold)]" onClick={() => onOpenAccount(match.company_id, match.company_name)}>{match.company_name} →</button></div><div className="flex items-center gap-3"><span className="text-sm">Jev: {(match.probability * 100).toFixed(1)}% match</span><IntelligenceDismissButton companyId={match.company_id} name={match.company_name} status={match.company_status} busy={statusBusy} onStatus={(id, status) => changeCompanyStatus([id], status)} /></div></div>
             <p className="mt-1 text-xs text-[var(--text-muted)]">Native answer combining the account’s selected evidence · {new Date(match.evaluated_at).toLocaleString()}</p>
             <div className="mt-3 space-y-2">{(match.result.citations ?? []).map((citation, index) => <details key={`${citation.observationId}:${index}`} className="rounded border p-2 text-xs"><summary className="cursor-pointer">{citation.title}{citation.date ? ` · ${citation.date.slice(0, 10)}` : " · date unknown"}</summary><p className="mt-2 whitespace-pre-wrap">{citation.text}</p><a href={citation.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--gold)]">Open source</a></details>)}</div>
             <details className="mt-3 text-xs"><summary className="cursor-pointer text-[var(--gold)]">Raw Jev answer and coverage</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify({ native: match.result.native, coverage: match.result.coverage }, null, 2)}</pre></details>
           </article>)}
-          {data?.observations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy || !data.enabled} statusBusy={busy} onStatus={changeCompanyStatus} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
+          {visibleObservations.map(observation => <EvidenceCard key={observation.id} observation={observation} busy={busy || !data?.enabled} statusBusy={statusBusy} selected={Boolean(observation.company_id && selectedLeads.has(observation.company_id))} onSelect={id => setSelectedLeads(prior => { const next = new Set(prior); next.has(id) ? next.delete(id) : next.add(id); return next; })} onStatus={(id, status) => changeCompanyStatus([id], status)} onOpenAccount={onOpenAccount} onFeedback={async (reason, note) => {
             const result = await mutate({ action: reason === null ? "clear_feedback" : "feedback", observationId: observation.id, reason, ...(note.trim() ? { note: note.trim() } : {}) }, reason === null ? "Feedback cleared; evidence restored." : "Feedback saved.");
             return Boolean(result);
           }} />)}

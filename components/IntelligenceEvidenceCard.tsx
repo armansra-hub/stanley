@@ -69,7 +69,9 @@ function probability(value: unknown): string | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? `${Math.round(value * 100)}%` : null;
 }
 
-export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount, onStatus, statusBusy = false }: {
+export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount, onStatus, statusBusy = false, selected = false, onSelect }: {
+  selected?: boolean;
+  onSelect?: (id: string) => void;
   onStatus?: (id: string, status: "new" | "dismissed") => Promise<boolean>;
   statusBusy?: boolean;
   onOpenAccount?: (id: string, name: string) => void;
@@ -88,7 +90,7 @@ export function EvidenceCard({ observation, busy, onFeedback, onOpenAccount, onS
   const relationshipLabel = relationship === "direct" ? "Company itself" : relationship === "related" ? "Related company" : relationship === "unrelated" ? "Different company" : "Company relationship unknown";
   const packets = (Array.isArray(attributes?.packetFindings) ? attributes.packetFindings : attributes ? [{ attributes, questionVersion: attributes.questionVersion, criteria: {} }] : []) as (VisibilityFinding & { publication?: { status?: string; reason?: string } })[];
   return <article className="rounded-lg border bg-[var(--surface)] p-4 sm:p-5">
-    {onStatus && observation.company_id && <div className="mb-2 flex justify-end"><IntelligenceDismissButton companyId={observation.company_id} name={observation.company_name || "account"} status={observation.company_status} busy={statusBusy} onStatus={onStatus} /></div>}
+    {onStatus && observation.company_id && <div className="mb-2 flex items-center justify-between gap-3">{onSelect ? <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]"><input type="checkbox" aria-label={`Select ${observation.company_name || "account"}`} checked={selected} disabled={statusBusy} onChange={() => onSelect(observation.company_id!)} />Select lead</label> : <span />}<IntelligenceDismissButton companyId={observation.company_id} name={observation.company_name || "account"} status={observation.company_status} busy={statusBusy} onStatus={onStatus} /></div>}
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0 flex-1">
         {observation.company_id && onOpenAccount ? <button type="button" className="text-sm font-semibold text-[var(--gold)] hover:underline" onClick={() => onOpenAccount(observation.company_id!, observation.company_name || "Account")}>{observation.company_name || "Company name unavailable"}</button> : observation.company_id ? <Link className="text-sm font-semibold text-[var(--gold)] hover:underline" href={`/headhunter/intelligence?companyId=${encodeURIComponent(observation.company_id)}`}>{observation.company_name || "Company name unavailable"}</Link> : <p className="text-sm text-[var(--text-muted)]">Company not linked</p>}
