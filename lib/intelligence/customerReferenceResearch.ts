@@ -8,6 +8,7 @@ import { scopedJevFingerprint } from "./jevRequests";
 import { customerReferenceCatalogSources, customerReferenceCompany, customerReferenceEvidenceKey, type CustomerReferenceSeed } from "./customerReferenceSources";
 import type { CustomerReference } from "./customerMatches";
 import seedData from "./customerReferenceData.json";
+import { customerReferencePackedAnswerPlans } from "./customerReferencePacking";
 
 type Plan = ReturnType<typeof catalogAnswerPlans>["plans"][number];
 export type ReferenceCheckpoint = {
@@ -15,6 +16,7 @@ export type ReferenceCheckpoint = {
   mapped: Record<string, { scanned: string[]; candidates: string[] }>;
   answers: CustomerReference["answers"]; pending?: Plan;
   requests: number; reused: number; inputTokens: number; outputTokens: number;
+  lastError?: string | null;
 };
 type ReferenceRow = { id: string; catalog_version: string; evidence_key: string; status: string;
   result: CustomerReference | null; checkpoint: ReferenceCheckpoint | null; updated_at: string;
@@ -22,6 +24,21 @@ type ReferenceRow = { id: string; catalog_version: string; evidence_key: string;
 const seeds = () => seedData.references as CustomerReferenceSeed[];
 const context = { purpose: "operating_catalog" as const, sourceKind: "customer_reference", workload: "manual" as const };
 const decision = (value: unknown) => value && typeof value === "object" && "choice" in value ? String(value.choice) : "";
+
+/** Resume only the known transport-size hold when every remaining answer now
+ * fits without losing source text. Completed answers and evidence stay intact. */
+export function customerReferenceCanResumePacked(seed: CustomerReferenceSeed, checkpoint: ReferenceCheckpoint | null): boolean {
+  if (!checkpoint || checkpoint.version !== 1 || checkpoint.lastError !== "evidence_exceeds_native_request_limit" || checkpoint.phase !== "answer"
+    || checkpoint.pending || checkpoint.evidenceKey !== customerReferenceEvidenceKey(seed)) return false;
+  const missing = OPERATING_FACETS.filter(facet => !checkpoint.answers[facet.id]);
+  if (!missing.length) return false;
+  const packets = catalogPackets(customerReferenceCatalogSources(seed));
+  if (packets.some(packet => missing.some(facet => !checkpoint.mapped[packet.id]?.scanned.includes(facet.id)))) return false;
+  const candidates = Object.fromEntries(missing.map(facet => [facet.id,
+    packets.filter(packet => checkpoint.mapped[packet.id]?.candidates.includes(facet.id)).map(packet => packet.id)]));
+  const plans = customerReferencePackedAnswerPlans(customerReferenceCompany(seed), missing, packets, candidates);
+  return !plans.blocked.length && new Set(plans.plans.flatMap(plan => plan.facetIds)).size === missing.length;
+}
 
 /** Same source packets, definitions, industry guidance, mapping and native
  * decisions as TAM operating coverage. No sales narrative or second judge. */
@@ -50,7 +67,8 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
     if (!plan) {
       const candidates = checkpoint.phase === "answer" ? Object.fromEntries(missing().map(f => [f.id,
         packets.filter(p => checkpoint.mapped[p.id]?.candidates.includes(f.id)).map(p => p.id)])) : undefined;
-      const next = catalogAnswerPlans(company, missing(), packets, candidates);
+      let next = catalogAnswerPlans(company, missing(), packets, candidates);
+      if (!next.plans.length && next.blocked.length) next = customerReferencePackedAnswerPlans(company, missing(), packets, candidates);
       plan = next.plans[0];
       if (!plan) {
         if (next.blocked.length) { await save("blocked", null, "evidence_exceeds_native_request_limit"); return "source_blocked"; }
@@ -119,7 +137,8 @@ export async function customerReferenceProgress() {
   const rows = new Map((await readRows()).map(row => [row.id, row]));
   const references = seeds().map(seed => {
     const row = rows.get(seed.id), compatible = row?.catalog_version === OPERATING_CATALOG_VERSION && row.evidence_key === customerReferenceEvidenceKey(seed);
-    const status = compatible && row?.status === "complete" ? "complete" : compatible && row?.status === "blocked" ? "blocked"
+    const status = compatible && row?.status === "complete" ? "complete"
+      : compatible && row?.status === "blocked" && !customerReferenceCanResumePacked(seed, row.checkpoint) ? "blocked"
       : compatible && row?.status === "running" && Date.parse(row.lease_until ?? "") > Date.now() ? "running" : "pending";
     return { id: seed.id, name: seed.name, website: seed.website, status, answered: compatible ? Object.keys(row?.checkpoint?.answers ?? {}).length : 0,
       totalQuestions: 47, lastError: compatible && row?.checkpoint && "lastError" in row.checkpoint ? String(row.checkpoint.lastError) : undefined };
@@ -141,7 +160,7 @@ export async function runCustomerReferenceReading(deadline: number) {
       if (compatible && old.status === "complete") continue;
       // A source/provider rejection is explicit. Do not blind-replay the same
       // rejected input; changed source/version earns a new first pass.
-      if (compatible && old.status === "blocked") continue;
+      if (compatible && old.status === "blocked" && !customerReferenceCanResumePacked(seed, old.checkpoint)) continue;
       const initial = await db.from("intelligence_customer_references").upsert({ id: seed.id, catalog_version: OPERATING_CATALOG_VERSION,
         evidence_key: evidenceKey, status: "pending", checkpoint: null, result: null }, { onConflict: "id", ignoreDuplicates: true });
       if (initial.error) throw new Error("customer_reference_admission_failed");
