@@ -28,9 +28,18 @@ export async function GET(req: NextRequest) {
       const { data, error } = await serviceClient().rpc("intelligence_catalog_topic_search", { p_topics: topics, p_catalog_version: OPERATING_CATALOG_VERSION,
         p_facet_versions: Object.fromEntries(OPERATING_FACETS.map(facet => [facet.id, catalogFacetVersion(facet)])),
         p_after: after || null, p_limit: limit, p_mode: mode, p_show_hidden: showHidden, p_visibility: visibility, p_combinations: recipe?.combinations ?? null });
-      if (error || !data) throw new Error("topic_search_unavailable");
+      if (error) throw error;
+      if (!data) throw new Error("topic_search_unavailable");
       return buildTopicSearchResult({ ...(data as TopicSearchRaw), recipeId });
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
-  } catch { return NextResponse.json({ error: "topic_search_unavailable" }, { status: 503 }); }
+  } catch (error) {
+    // Keep only standard database codes; query values, provider messages and
+    // connection details must never appear in diagnostics or browser errors.
+    const code = error && typeof error === "object" && "code" in error ? error.code : null;
+    console.error("intelligence.topic_search_unavailable", {
+      code: typeof code === "string" && /^(?:[0-9A-Z]{5}|PGRST[0-9]{3})$/.test(code) ? code : "unknown",
+    });
+    return NextResponse.json({ error: "topic_search_unavailable" }, { status: 503 });
+  }
 }

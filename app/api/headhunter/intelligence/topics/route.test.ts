@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({ authorized: vi.fn(), enabled: vi.fn(), rpc: vi.fn() }));
 vi.mock("@/lib/intelligence/operatingCoverage", () => ({ catalogFacetVersion: (facet: { id: string }) => "current:" + facet.id }));
@@ -11,7 +11,17 @@ beforeEach(() => {
   mocks.authorized.mockReset().mockReturnValue(true); mocks.enabled.mockReset().mockReturnValue(true);
   mocks.rpc.mockReset().mockResolvedValue({ data: { enabled: true, topics: ["inventory"], accounts: [], hasMore: false, nextCursor: null }, error: null });
 });
+afterEach(() => vi.restoreAllMocks());
 describe("cached operating topic search route", () => {
+  it.each(["57014", "PGRST202", "private connection"])("reports only a safe database code on count failure: %s", async code => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.rpc.mockResolvedValue({ data: null, error: { code, message: "private query data", details: "private connection data" } });
+    const response = await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics"));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "topic_search_unavailable" });
+    expect(log).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith("intelligence.topic_search_unavailable", { code: code === "private connection" ? "unknown" : code });
+  });
   it("requires authentication before reading cached account data", async () => {
     mocks.authorized.mockReturnValue(false);
     expect((await GET(new NextRequest("https://stanley.test/api/headhunter/intelligence/topics?topic=inventory"))).status).toBe(401);

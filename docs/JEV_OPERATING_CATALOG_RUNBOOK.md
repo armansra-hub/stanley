@@ -48,6 +48,15 @@ checkpoint and avoiding active leases. Read the live mode, native request receip
 and provider usage afterward. A later real-credit failure requires new funding
 and a deliberate resume, not repeated failing paid attempts.
 
+Migration 0124 also admits the `ongoing` phase through the existing database
+interpretation and saved-question queues. The TypeScript phase check alone is
+insufficient. Migration 0125 keeps cached category counts and searches on compact
+metadata; run its concurrent index statement separately from its transaction.
+Neither migration clears provider failures or enables paid work. A provider 403
+receipt establishes a rejected request, not proof that credit is exhausted or
+that the API key was revoked. Retain the exact failure and check provider access
+before deliberately resuming the existing policy.
+
 ## Original installation and activation (September 24 record)
 
 This section documents the completed initial rollout. Its temporary caps are

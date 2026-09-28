@@ -1,4 +1,6 @@
-/** Disposable PGlite cached-search checks against real0117/0119/0120 and their actual source/visibility prerequisites. No production/provider IO. */
+/** Disposable PGlite cached-search checks and exact 0120/0125 equivalence.
+ * Pass --benchmark for a synthetic 7,441-account / 349,727-facet run.
+ * No production/provider IO. */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
@@ -32,12 +34,24 @@ try {
  create table intelligence_account_question_jobs(view_id uuid references intelligence_views(id),company_id uuid references companies(id),revision bigint default1,running_revision bigint,status text default 'queued',due_at timestamptz default now(),lease_token uuid,lease_until timestamptz,checkpoint jsonb,last_error text,updated_at timestamptz default now(),primary key(view_id,company_id));
  create function intelligence_account_question_claim() returns jsonb language sql as $$select null::jsonb$$;`.replace("default1","default 1"));
  for(const name of ["0082_jev_request_receipts.sql","0089_intelligence_visibility.sql","0090_native_jev_purposes.sql","0096_intelligence_exploration_cache.sql","0107_intelligence_research_caught_up.sql","0108_intelligence_coverage_priority.sql","0109_intelligence_symmetric_answer_reuse.sql","0112_intelligence_worker_capacity.sql","0116_intelligence_topic_dismiss_and_3pl.sql","0117_jev_global_budget_policy.sql","0119_intelligence_catalog_coverage.sql","0120_intelligence_catalog_topic_search.sql"])await migrate(name);
+ const beforeSql=await readFile(new URL("../../supabase/migrations/0120_intelligence_catalog_topic_search.sql",import.meta.url),"utf8");
+ await db.exec(beforeSql.replaceAll("intelligence_catalog_topic_search","intelligence_catalog_topic_search_before0125"));
+ const afterSql=await readFile(new URL("../../supabase/migrations/0125_intelligence_catalog_topic_read_performance.sql",import.meta.url),"utf8");
+ assert.ok(afterSql.indexOf("create index concurrently")<afterSql.indexOf("begin;"));
+ await db.exec(afterSql.replace("create index concurrently","create index"));
 
  const version="synthetic-catalog-v1";
  const versions=Object.fromEntries(ids.map(id=>[id,"exact-"+id]));
  const text="Synthetic 🙂 public retained evidence for equipment installation, continuing service and transportation.";
- const query=async(topics, options={})=>scalar("select intelligence_catalog_topic_search($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-  [topics,options.version??version,options.versions??versions,options.after??null,options.limit??8,options.mode??"all",options.showHidden??false,options.visibility??"supported",options.combinations??null]);
+ let equivalentQueries=0;
+ const comparable=result=>({...result,coverage:{...result.coverage,asOf:"same-transaction-clock"}});
+ const query=async(topics, options={})=>{
+  const args=[topics,options.version??version,options.versions??versions,options.after??null,options.limit??8,options.mode??"all",options.showHidden??false,options.visibility??"supported",options.combinations??null];
+  const current=await scalar("select intelligence_catalog_topic_search($1,$2,$3,$4,$5,$6,$7,$8,$9)",args);
+  const previous=await scalar("select intelligence_catalog_topic_search_before0125($1,$2,$3,$4,$5,$6,$7,$8,$9)",args);
+  assert.deepEqual(comparable(current),comparable(previous));equivalentQueries++;
+  return current;
+ };
  const attributes=topics=>({companyRelationship:"direct",companyRelevance:.99,topicEvidence:topics.map(([topic,probability])=>({topic,probability,start:0,end:text.length}))});
  await db.exec("update intelligence_config set enabled=true,catalog_mode='rollout'");
  const companies={};
@@ -170,13 +184,51 @@ try {
   assert.equal((await query(["rr_c01"])).accounts.length,1);
   assert.equal(await scalar("select count(*)::int from intelligence_catalog_facets where company_id=$1 and status='stale'",[companies.Native]),47);
  });
+ await check("legacy inline citations and mismatched shared-set identity retain exact fallback",async()=>{
+  const original=await rows("select citation_set_key,citations from intelligence_catalog_facets where company_id=$1 and facet_id='rr_t02'",[companies.Fleet]);
+  await db.query("update intelligence_catalog_facets set citation_set_key=null,citations=$2 where company_id=$1 and facet_id='rr_t02'",[companies.Fleet,[citations.Fleet]]);
+  assert.equal((await query(["rr_t02"])).accounts.length,1);
+  const foreignKey=await scalar("select citation_set_key from intelligence_catalog_facets where company_id=$1 and facet_id='rr_c01'",[companies.Hidden]);
+  await db.query("update intelligence_catalog_facets set citation_set_key=$2 where company_id=$1 and facet_id='rr_t02'",[companies.Fleet,foreignKey]);
+  assert.equal((await query(["rr_t02"])).accounts.length,1);
+  await db.query("update intelligence_catalog_facets set citation_set_key=$2,citations=$3 where company_id=$1 and facet_id='rr_t02'",[companies.Fleet,original[0].citation_set_key,original[0].citations]);
+ });
+ await check("exploration still reads legacy null-cache sources without changing counts",async()=>{
+  await db.query("update intelligence_observations set cached_exploratory_topics=null where id=$1",[observations.Fleet]);
+  assert.equal((await query(["project_delivery"],{visibility:"explore"})).accounts.length,2);
+  assert.equal((await query([])).accounts.length,0);
+ });
  await check("unknown category and malformed query/recipe contracts fail closed",async()=>{
   for(const topics of [["rr_o06"],["unknown"],Array(9).fill("rr_c01"),[null]]) await assert.rejects(()=>query(topics),/Invalid operating catalog query/);
   await assert.rejects(()=>query(["rr_c01"],{combinations:[[]]}),/Invalid recipe/);
   await assert.rejects(()=>query(["rr_c01"],{combinations:[["rr_t02"]]}),/Invalid recipe/);
   await assert.rejects(()=>query(["rr_c01"],{combinations:["rr_c01"]}),/Invalid recipe/);
  });
- console.log(`PASS ${passed} catalog cached-search SQL integration checks`);
+ if(process.argv.includes("--benchmark")) {
+  await db.exec(`create temporary table benchmark_accounts as select gen_random_uuid() id,n from generate_series(1,7441) n;
+   insert into companies(id,name,status,lists,netsuite_internal_id) select id,'Benchmark '||n,'new',array['netsuite_tam'],(1000000+n)::text from benchmark_accounts;
+   insert into intelligence_catalog_accounts(company_id,catalog_version,evidence_key,status,answered_count)
+    select id,'${version}','benchmark-evidence-'||n,'complete',47 from benchmark_accounts;`);
+  await db.query(`insert into intelligence_catalog_facets(company_id,facet_id,catalog_version,facet_version,evidence_key,status,decision,native_result)
+   select a.id,f.id,$1,'exact-'||f.id,'benchmark-evidence-'||a.n,'answered','insufficient_evidence',
+    jsonb_build_object('answer','insufficient_evidence','context',repeat(md5(a.id::text||f.id),40))
+   from benchmark_accounts a cross join unnest($2::text[]) f(id)`,[version,ids]);
+  await db.exec("vacuum analyze intelligence_catalog_facets;vacuum analyze intelligence_catalog_accounts;analyze companies;");
+  const args=[[],version,versions,null,8,"all",false,"supported",null];
+  const times={};
+  // Warm both implementations once, then measure both in alternating order.
+  for(const suffix of ["_before0125","","","_before0125"]) {
+   const start=performance.now();
+   const result=await scalar(`select intelligence_catalog_topic_search${suffix}($1,$2,$3,$4,$5,$6,$7,$8,$9)`,args);
+   const ms=Math.round(performance.now()-start);
+   const key=suffix?"before0125":"after0125";
+   (times[key]??=[]).push(ms);
+   assert.ok(result.catalogCoverage.complete>=7441);
+  }
+  await query([]);
+  console.log(JSON.stringify({benchmarkAccounts:7441,benchmarkFacets:7441*47,milliseconds:times}));
+ }
+ console.log(`PASS ${passed} catalog cached-search SQL integration checks; ${equivalentQueries} exact old/new response comparisons`);
 } catch(error) {
  console.error(JSON.stringify({name:error.name,code:error.code,message:error.message,detail:error.detail,where:error.where,stack:error.code?undefined:error.stack}));process.exitCode=1;
 } finally {await db.close();}
