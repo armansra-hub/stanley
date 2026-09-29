@@ -396,12 +396,13 @@ export async function markSignalsChecked(ids: string[]): Promise<void> {
   } catch { /* column missing pre-0021 → no-op */ }
 }
 
-/** All TAL (claimed) companies, for the daily highest-priority news sweep. */
+/** Collectible TAL accounts; historical rows remain claimed/visible in the TAL UI. */
 export async function listTalCompanies(): Promise<Array<{ id: string; name: string; domain: string | null; last_checked_at: string | null } & RotationSignalContext>> {
   const db = serviceClient();
-  const out: Array<{ id: string; name: string; domain: string | null; last_checked_at: string | null } & RotationSignalContext> = [];
+  const out: Array<{ id: string; name: string; domain: string | null; last_checked_at: string | null;
+    status: string | null; lists: string[] | null } & RotationSignalContext> = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await db.from("companies").select("id, name, domain, last_checked_at, record_dead, description, subindustry, ns_industry")
+    const { data, error } = await db.from("companies").select("id, name, domain, last_checked_at, status, lists, record_dead, description, subindustry, ns_industry")
       .eq("tal_claimed", true).order("id", { ascending: true }).range(from, from + 999);
     if (error) throw rotationCheckpointError("TAL companies", error, "read");
     const batch = (data ?? []) as typeof out;
@@ -410,7 +411,12 @@ export async function listTalCompanies(): Promise<Array<{ id: string; name: stri
   }
   // News workers can update timestamps between pages. Page by immutable ID,
   // then prioritize the complete loaded set without shifting offset boundaries.
-  return out.sort((a, b) => (a.last_checked_at ?? "").localeCompare(b.last_checked_at ?? "") || a.id.localeCompare(b.id));
+  // TAM refresh preserves tal_claimed for history, but removed/retired records
+  // cannot accept intelligence. Do not require netsuite_tam: standalone current
+  // TAL accounts and reviewed/exported accounts remain eligible for collection.
+  return out.filter(company => company.status !== "removed_from_tam"
+    && !(company.lists ?? []).some(list => list === "tam_removed" || list === "tam_duplicate"))
+    .sort((a, b) => (a.last_checked_at ?? "").localeCompare(b.last_checked_at ?? "") || a.id.localeCompare(b.id));
 }
 
 /** Raise the in-app alert flag on TAL leads that just got a new signal. */
