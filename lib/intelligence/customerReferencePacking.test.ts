@@ -4,10 +4,11 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: vi.fn(), withServiceDeadline: (_deadline: number, fn: () => unknown) => fn() }));
 import { catalogAnswerPlans, catalogPackets, type CatalogSource } from "./operatingCoverage";
 import { OPERATING_FACETS, operatingFacetQuestion } from "./operatingCatalog";
-import { nativeJevBody } from "./nativeJev";
+import { nativeJevBody, nativeJevFingerprint, type NativeJevInput } from "./nativeJev";
 import { customerReferenceAnswerPlans, customerReferenceLargeAnswerPlans, customerReferencePackedAnswerPlans, packCustomerReferenceText, unpackCustomerReferenceText } from "./customerReferencePacking";
 import { customerReferenceCatalogSources, customerReferenceCompany, customerReferenceEvidenceKey, type CustomerReferenceSeed } from "./customerReferenceSources";
-import { classifyCustomerReference, customerReferenceCanResumePacked, type ReferenceCheckpoint } from "./customerReferenceResearch";
+import { classifyCustomerReference, customerReferenceCanResumePacked, customerReferenceCanResumeRetainedPacked, type ReferenceCheckpoint } from "./customerReferenceResearch";
+import { CUSTOMER_REFERENCE_RECOVERY_VERSION, customerReferencePassages, type CustomerReferenceRecovery } from "./customerReferenceRecovery";
 import configured from "./customerReferenceData.json";
 
 const windward = configured.references.find(ref => ref.id === "windward") as CustomerReferenceSeed;
@@ -95,7 +96,122 @@ const largeSeed: CustomerReferenceSeed = { id: "full-source-customer", name: "Fu
     return { id, url: `https://example.test/${id}`, title: id, text, contentHash: createHash("sha256").update(text).digest("hex"), observedAt: "2026-09-28T00:00:00Z" };
   }) };
 
+const sharedOverflowText = Array.from({ length: 360 }, (_, i) =>
+  `Shared policy ${i}: Our licensed work remains subject to its original definitions, roles, restrictions, attribution and exceptions.\r\n`).join("");
+const packedOverflowSeed: CustomerReferenceSeed = { ...largeSeed, id: "packed-overflow-customer", sources: ["alpha", "beta"].map(id => {
+  const text = sharedOverflowText + Array.from({ length: 50 }, (_, i) =>
+    `Specific ${id} operation ${i}: We provide separately documented service agreements with customer equipment and project schedules.\n`).join("");
+  return { id, url: `https://example.test/${id}`, title: id, text, contentHash: createHash("sha256").update(text).digest("hex"), observedAt: "2026-09-28T00:00:00Z" };
+}) };
+
 describe("customer-only full-source transport overflow", () => {
+  it("advances an unfinished ordinary mapping pass directly only when all missing finals fit full sources", async () => {
+    const packets = catalogPackets(customerReferenceCatalogSources(packedOverflowSeed));
+    const checkpoint: ReferenceCheckpoint = { version: 1, evidenceKey: customerReferenceEvidenceKey(packedOverflowSeed), phase: "mapping",
+      mapped: { [packets[0].id]: { scanned: ["rr_o01"], candidates: ["rr_o01"] } },
+      answers: Object.fromEntries(OPERATING_FACETS.slice(0, 40).map(f => [f.id,
+        { decision: "insufficient_evidence", facetVersion: "saved", sourceUrls: [], nativeResult: { paidOriginal: f.id } }])),
+      requests: 10, reused: 0, inputTokens: 1000, outputTokens: 20 };
+    const original = structuredClone(checkpoint);
+    const evaluate = vi.fn(async (input: NativeJevInput) => {
+      const state = input.state as any;
+      expect(state.targetPredicate).toBeUndefined();
+      expect(state.task).toContain("Interpret the named company");
+      for (const source of packedOverflowSeed.sources) expect(state.sources.filter((p: any) => p.observationId === source.id)
+        .map((p: any) => unpackCustomerReferenceText(state.sharedText, p.textParts)).join("")).toBe(source.text);
+      return { status: "complete" as const, reused: false, evaluation: { ok: true as const, usage: { inputTokens: 10, outputTokens: 1 },
+        provider_result: { model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(input.questions).map(id => [id,
+          { type: "choice" as const, choice: "insufficient_evidence" }])) } } };
+    });
+    expect(await classifyCustomerReference(packedOverflowSeed, checkpoint, Date.now() + 120_000, { evaluate, save: async () => true })).toBe("complete");
+    expect(evaluate.mock.calls.flatMap(([input]) => Object.keys(input.questions))).toEqual(OPERATING_FACETS.slice(40).map(f => f.id));
+    expect(checkpoint.mapped).toEqual(original.mapped);
+    for (const [id, answer] of Object.entries(original.answers)) expect(checkpoint.answers[id]).toEqual(answer);
+  });
+
+  it("uses the missing48–96KB exact-packed range before mapping, with all47 original definitions and source bytes", async () => {
+    const packets = catalogPackets(customerReferenceCatalogSources(packedOverflowSeed)), company = customerReferenceCompany(packedOverflowSeed);
+    expect(customerReferencePackedAnswerPlans(company, OPERATING_FACETS, packets).blocked).toHaveLength(47);
+    expect(customerReferenceLargeAnswerPlans(company, OPERATING_FACETS, packets).blocked).toHaveLength(47);
+    const planned = customerReferenceAnswerPlans(company, OPERATING_FACETS, packets);
+    expect(planned.blocked).toEqual([]);
+    const guidance = (catalogAnswerPlans(company, [OPERATING_FACETS[0]], []).plans[0].input.state as any).guidance;
+    const evaluate = vi.fn(async (input: NativeJevInput) => {
+      const state = input.state as any;
+      expect(input.requestProfile).toBe("customer-reference-full-source-v1");
+      expect(Buffer.byteLength(JSON.stringify(nativeJevBody(input)))).toBeGreaterThan(48_000);
+      expect(Buffer.byteLength(JSON.stringify(nativeJevBody(input)))).toBeLessThanOrEqual(96_000);
+      expect(state.guidance).toEqual(guidance);
+      expect(state.targetPredicate).toBeUndefined();
+      for (const source of packedOverflowSeed.sources) expect(state.sources.filter((p: any) => p.observationId === source.id)
+        .map((p: any) => unpackCustomerReferenceText(state.sharedText, p.textParts)).join("")).toBe(source.text);
+      for (const id of Object.keys(input.questions)) expect(input.questions[id]).toEqual(operatingFacetQuestion(id));
+      return { status: "complete" as const, reused: false, evaluation: { ok: true as const, usage: { inputTokens: 10, outputTokens: 1 },
+        provider_result: { model: "jev-1.13.0", answers: Object.fromEntries(Object.keys(input.questions).map(id => [id, { type: "choice" as const, choice: "insufficient_evidence" }])) } } };
+    });
+    expect(await classifyCustomerReference(packedOverflowSeed, null, Date.now() + 120_000, { evaluate, save: async () => true })).toBe("complete");
+    expect(evaluate.mock.calls.flatMap(([input]) => Object.keys(input.questions))).toEqual(OPERATING_FACETS.map(f => f.id));
+    // Earlier successful ordinary, packed48 and literal96 requests are unchanged.
+    for (const example of [windward, largeSeed]) {
+      const examplePackets = catalogPackets(customerReferenceCatalogSources(example)), exampleCompany = customerReferenceCompany(example);
+      const priorPacked = customerReferencePackedAnswerPlans(exampleCompany, OPERATING_FACETS, examplePackets);
+      const prior = priorPacked.plans.length ? priorPacked : customerReferenceLargeAnswerPlans(exampleCompany, OPERATING_FACETS, examplePackets);
+      expect(customerReferenceAnswerPlans(exampleCompany, OPERATING_FACETS, examplePackets).plans.map(p => nativeJevFingerprint(p.input)))
+        .toEqual(prior.plans.map(p => nativeJevFingerprint(p.input)));
+    }
+  });
+
+  it("can finish an explicitly resumed exact passage state without routing or reasking46 paid answers", async () => {
+    const packets = catalogPackets(customerReferenceCatalogSources(packedOverflowSeed)), facet = OPERATING_FACETS.find(f => f.id === "rr_c11")!;
+    const answers = Object.fromEntries(OPERATING_FACETS.filter(f => f.id !== facet.id).map(f => [f.id,
+      { decision: "insufficient_evidence" as const, facetVersion: "original", sourceUrls: [], nativeResult: { originalPaid: f.id } }]));
+    const recovery: CustomerReferenceRecovery = { version: CUSTOMER_REFERENCE_RECOVERY_VERSION, facetId: facet.id, packetIds: packets.map(p => p.id), origin: "local_planning_limit",
+      decisions: Object.fromEntries(customerReferencePassages(packets).map(p => [p.id, { answer: { type: "choice" as const, choice: "candidate" },
+        requestFingerprint: `paid-${p.id}`, receiptFingerprint: `receipt-${p.id}` }])) };
+    const checkpoint: ReferenceCheckpoint = { version: 1, evidenceKey: customerReferenceEvidenceKey(packedOverflowSeed), phase: "answer", mapped: {}, answers,
+      requests: 50, reused: 0, inputTokens: 1234, outputTokens: 56, contextRecovery: recovery, lastError: "customer_context_relevant_evidence_still_large" };
+    const original = structuredClone(checkpoint);
+    expect(customerReferenceCanResumePacked(packedOverflowSeed, checkpoint)).toBe(false);
+    expect(customerReferenceCanResumeRetainedPacked(packedOverflowSeed, checkpoint)).toBe(true);
+    expect(checkpoint).toEqual(original); // Planning eligibility cannot mutate a held checkpoint.
+    expect(customerReferenceCanResumeRetainedPacked({ ...packedOverflowSeed, name: "Changed" }, checkpoint)).toBe(false);
+    expect(customerReferenceCanResumeRetainedPacked(packedOverflowSeed, { ...checkpoint, providerFailure: {
+      requestFingerprint: "failed", code: "typesafe_http_400", retryable: false, billingUncertain: true } })).toBe(false);
+    expect(customerReferenceCanResumeRetainedPacked(packedOverflowSeed, { ...checkpoint,
+      pending: customerReferenceAnswerPlans(customerReferenceCompany(packedOverflowSeed), [facet], packets).plans[0] })).toBe(false);
+    const unscanned = structuredClone(checkpoint); delete unscanned.contextRecovery!.decisions[Object.keys(recovery.decisions)[0]];
+    expect(customerReferenceCanResumeRetainedPacked(packedOverflowSeed, unscanned)).toBe(false);
+    const anotherUnanswered = structuredClone(checkpoint); delete anotherUnanswered.answers.rr_c01;
+    expect(customerReferenceCanResumeRetainedPacked(packedOverflowSeed, anotherUnanswered)).toBe(false); // Must not start another routing pass.
+    anotherUnanswered.mapped = Object.fromEntries(packets.map(p => [p.id, { scanned: ["rr_c01"], candidates: ["rr_c01"] }]));
+    expect(customerReferenceCanResumeRetainedPacked(packedOverflowSeed, anotherUnanswered)).toBe(true);
+    const evaluate = vi.fn(async (input: NativeJevInput) => {
+      expect(Object.keys(input.questions)).toEqual([facet.id]);
+      const state = input.state as any;
+      for (const source of packedOverflowSeed.sources) expect(state.sources.filter((p: any) => p.observationId === source.id)
+        .map((p: any) => unpackCustomerReferenceText(state.sharedText, p.textParts)).join("")).toBe(source.text);
+      return { status: "complete" as const, reused: false, evaluation: { ok: true as const, usage: { inputTokens: 10, outputTokens: 1 },
+        provider_result: { model: "jev-1.13.0", answers: { [facet.id]: { type: "choice" as const, choice: "supported", probabilities: { supported: .9 } } } } } };
+    });
+    expect(await classifyCustomerReference(packedOverflowSeed, checkpoint, Date.now() + 120_000, { evaluate, save: async () => true })).toBe("complete");
+    expect(evaluate).toHaveBeenCalledOnce();
+    for (const [id, answer] of Object.entries(original.answers)) expect(checkpoint.answers[id]).toEqual(answer);
+    expect(checkpoint.contextRecoveryHistory).toEqual([original.contextRecovery]);
+    expect(checkpoint.evidenceKey).toBe(original.evidenceKey);
+    expect(Object.keys(checkpoint.answers)).toHaveLength(47);
+    const rejected = structuredClone(original);
+    const reject = vi.fn(async () => ({ status: "complete" as const, reused: false,
+      evaluation: { ok: false as const, usage: null, error: { code: "typesafe_http_400", retryable: false } } }));
+    expect(await classifyCustomerReference(packedOverflowSeed, rejected, Date.now() + 120_000,
+      { evaluate: reject, save: async () => true })).toBe("provider_error");
+    expect(reject).toHaveBeenCalledOnce();
+    expect(rejected.answers).toEqual(original.answers);
+    expect(rejected.contextRecovery).toEqual(original.contextRecovery);
+    expect(rejected.providerFailure).toMatchObject({ code: "typesafe_http_400", billingUncertain: true,
+      requestFingerprint: nativeJevFingerprint(rejected.pending!.input) });
+    expect(customerReferenceCanResumeRetainedPacked(packedOverflowSeed, rejected)).toBe(false);
+  });
+
   it("asks all47 in direct batches before paying for per-packet mapping, preserving every literal source and definition", async () => {
     const packets = catalogPackets(customerReferenceCatalogSources(largeSeed)), company = customerReferenceCompany(largeSeed);
     expect(customerReferencePackedAnswerPlans(company, OPERATING_FACETS, packets).blocked.length).toBe(47);

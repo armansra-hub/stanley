@@ -50,16 +50,33 @@ export function unpackCustomerReferenceText(sharedText: readonly string[], parts
  * from the ordinary planner; only duplicate source-text representation changes. */
 export function customerReferencePackedAnswerPlans(company: Record<string, unknown>, facets: readonly OperatingFacet[], packets: readonly CatalogPacket[],
   candidates?: Record<string, string[]>): { plans: Plan[]; blocked: string[] } {
+  return packedAnswerPlans(company, facets, packets, candidates, false);
+}
+
+/** The same reversible encoding also fits some corpora between the ordinary
+ * 48KB guard and the existing customer-only 96KB planning guard. No new limit,
+ * text selection or provider retry is introduced by this final fallback. */
+export function customerReferenceLargePackedAnswerPlans(company: Record<string, unknown>, facets: readonly OperatingFacet[], packets: readonly CatalogPacket[],
+  candidates?: Record<string, string[]>): { plans: Plan[]; blocked: string[] } {
+  return packedAnswerPlans(company, facets, packets, candidates, true);
+}
+
+function packedAnswerPlans(company: Record<string, unknown>, facets: readonly OperatingFacet[], packets: readonly CatalogPacket[],
+  candidates: Record<string, string[]> | undefined, customerOverflow: boolean): { plans: Plan[]; blocked: string[] } {
   if (!facets.length) return { plans: [], blocked: [] };
   const template = catalogAnswerPlans(company, [facets[0]], []).plans[0]?.input;
   if (!template || !template.state || typeof template.state !== "object") return { plans: [], blocked: facets.map(f => f.id) };
   const inputFor = (selected: readonly OperatingFacet[], sources: readonly CatalogPacket[]): NativeJevInput => ({
     ...template,
+    ...(customerOverflow ? { privacy: "public" as const, requestProfile: "customer-reference-full-source-v1" as const } : {}),
     state: { ...template.state as Record<string, unknown>, ...packCustomerReferenceText(sources) },
     questions: Object.fromEntries(selected.map(facet => [facet.id, operatingFacetQuestion(facet.id)!])),
   });
   const fits = (input: NativeJevInput) => {
-    try { nativeJevBody(input); return true; }
+    try {
+      const body = nativeJevBody(input);
+      return !customerOverflow || Buffer.byteLength(JSON.stringify(body)) <= CUSTOMER_REFERENCE_PLANNING_BYTES;
+    }
     catch (error) {
       if (error instanceof Error && ["native_request_too_large", "invalid_question_count"].includes(error.message)) return false;
       throw error;
@@ -142,5 +159,7 @@ export function customerReferenceAnswerPlans(company: Record<string, unknown>, f
   if (ordinary.plans.length || !ordinary.blocked.length) return ordinary;
   const packed = customerReferencePackedAnswerPlans(company, facets, packets, candidates);
   if (packed.plans.length || !packed.blocked.length) return packed;
-  return customerReferenceLargeAnswerPlans(company, facets, packets, candidates);
+  const large = customerReferenceLargeAnswerPlans(company, facets, packets, candidates);
+  if (large.plans.length || !large.blocked.length) return large;
+  return customerReferenceLargePackedAnswerPlans(company, facets, packets, candidates);
 }

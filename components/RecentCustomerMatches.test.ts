@@ -152,7 +152,7 @@ describe("recent-customer shortlist", () => {
     account.reference.reading = { status: "blocked", answered: 46, total: 47, lastError, updatedAt: "2026-09-29" };
     const markup = renderToStaticMarkup(React.createElement(CustomerMatchCard, { account, selected: false, statusBusy: false }));
     expect(markup).toContain("Partial website analysis · 46/47 characteristics answered");
-    expect(markup).toContain("remaining source text exceeds the provider’s request size limit");
+    expect(markup).toContain("remaining source text does not fit the current request size limit");
     expect(markup).toContain("Every required trait below is already supported");
     expect(markup).toContain("Raw Jev answers · customer");
     expect(markup).not.toContain("Complete website analysis");

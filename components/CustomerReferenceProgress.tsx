@@ -16,7 +16,7 @@ const API = "/api/headhunter/intelligence/customer-references";
 export function customerReferenceHoldDescription(error: string | null | undefined): string {
   if (!error) return "The remaining characteristics are awaiting reading.";
   if (["reference_continuation", "source_continuation"].includes(error)) return "Waiting for the next reading pass; progress is saved.";
-  if (/evidence_exceeds_native_request_limit|customer_context_relevant_evidence_still_large|typesafe_context_limit|typesafe_http_413/.test(error)) return "The remaining source text exceeds the provider’s request size limit.";
+  if (/evidence_exceeds_native_request_limit|customer_context_relevant_evidence_still_large|typesafe_context_limit|typesafe_http_413/.test(error)) return "The remaining source text does not fit the current request size limit.";
   if (/typesafe_http_(400|422)/.test(error)) return "The provider could not process the remaining reading request.";
   if (/typesafe_http_(402|429)|provider_hold|credit|rate_limit/.test(error)) return "Waiting for provider availability or account access.";
   if (/website.*(missing|unresolved)|missing.*website/.test(error)) return "An official website is still needed.";

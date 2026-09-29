@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: vi.fn(), withServiceDeadline: (_deadline: number, fn: () => unknown) => fn() }));
-import { runCustomerReferenceReading, type ReferenceCheckpoint } from "./customerReferenceResearch";
-import { OPERATING_CATALOG_VERSION } from "./operatingCatalog";
-import { customerReferenceEvidenceKey, type CustomerReferenceSeed } from "./customerReferenceSources";
+import { classifyCustomerReference, runCustomerReferenceReading, type ReferenceCheckpoint } from "./customerReferenceResearch";
+import { OPERATING_CATALOG_VERSION, OPERATING_FACETS } from "./operatingCatalog";
+import { customerReferenceCatalogSources, customerReferenceEvidenceKey, type CustomerReferenceSeed } from "./customerReferenceSources";
+import { catalogPackets } from "./operatingCoverage";
+import { CUSTOMER_REFERENCE_RECOVERY_VERSION, customerReferencePassages } from "./customerReferenceRecovery";
+import type { NativeJevInput } from "./nativeJev";
 import type { CustomerReferenceRegistryRow } from "./customerReferenceRegistry";
 const capturedText = "The company's own installation, hardware and managed service operations.";
 const seed = (id: string): CustomerReferenceSeed => ({ id, name: `Company ${id}`, domain: "acme.com", website: "https://acme.com/",
@@ -19,7 +22,7 @@ const row = (id: string, completed = false): CustomerReferenceRegistryRow => {
     native_status: completed ? "complete" : null, native_catalog_version: completed ? OPERATING_CATALOG_VERSION : null,
     native_evidence_key: completed ? customerReferenceEvidenceKey(full) : null, native_answered: completed ? 47 : 0 };
 };
-function store(registryRows: CustomerReferenceRegistryRow[]) {
+function store(registryRows: CustomerReferenceRegistryRow[], nativeById = new Map<string, any>()) {
   const operations: { table: string; action: string; value?: any; filters: [string, unknown][] }[] = [];
   const db = { from: vi.fn((table: string) => {
     const operation = { table, action: "read", value: undefined as any, filters: [] as [string, unknown][] };
@@ -35,11 +38,19 @@ function store(registryRows: CustomerReferenceRegistryRow[]) {
         return { data: { ...registryRows.find(row => row.id === id)!, sources: [], native_status: undefined }, error: null };
       }
       if (operation.action === "read") {
+        if (nativeById.has(String(id))) return { data: structuredClone(nativeById.get(String(id))), error: null };
         const saved = registryRows.find(row => row.id === id);
         return { data: saved?.native_status === "blocked" ? { id, status: "blocked", catalog_version: saved.native_catalog_version,
           evidence_key: saved.native_evidence_key, checkpoint: null } : null, error: null };
       }
-      if (operation.value?.lease_token) return { data: { checkpoint: null }, error: null };
+      if (operation.value?.lease_token) return { data: { checkpoint: structuredClone(nativeById.get(String(id))?.checkpoint ?? null) }, error: null };
+      if (operation.value?.checkpoint && nativeById.has(String(id))) {
+        const saved = { ...nativeById.get(String(id)), ...structuredClone(operation.value) };
+        nativeById.set(String(id), saved);
+        const registry = registryRows.find(row => row.id === id)!;
+        registry.native_status = saved.status; registry.native_last_error = saved.checkpoint.lastError;
+        registry.native_answered = Object.keys(saved.checkpoint.answers).length;
+      }
       return { data: { id }, error: null };
     };
     return chain;
@@ -48,6 +59,61 @@ function store(registryRows: CustomerReferenceRegistryRow[]) {
 }
 
 describe("full registry foreground reference runner", () => {
+  it("admits a proven packed final, memoizes an oversized negative under lease, and skips both on a cold pass", async () => {
+    const makeHeld = (id: string, uniqueLines: number) => {
+      const shared = Array.from({ length: 360 }, (_, i) =>
+        `Shared policy ${i}: Our licensed work remains subject to its original definitions, roles, restrictions, attribution and exceptions.\r\n`).join("");
+      const full: CustomerReferenceSeed = { ...seed(id), sources: ["alpha", "beta"].map(key => {
+        const text = shared + Array.from({ length: uniqueLines }, (_, i) =>
+          `Specific ${key} operation ${i}: We provide separately documented service agreements with customer equipment and project schedules.\n`).join("");
+        return { id: key, url: `https://acme.com/${key}`, title: key, text,
+          contentHash: createHash("sha256").update(text).digest("hex"), observedAt: "2026-09-28T00:00:00Z" };
+      }) };
+      const packets = catalogPackets(customerReferenceCatalogSources(full));
+      const checkpoint: ReferenceCheckpoint = { version: 1, evidenceKey: customerReferenceEvidenceKey(full), phase: "answer", mapped: {},
+        answers: Object.fromEntries(OPERATING_FACETS.filter(f => f.id !== "rr_c11").map(f => [f.id,
+          { decision: "insufficient_evidence", facetVersion: "paid", sourceUrls: [], nativeResult: { paid: f.id } }])),
+        requests: 50, reused: 0, inputTokens: 1234, outputTokens: 56, lastError: "customer_context_relevant_evidence_still_large",
+        contextRecovery: { version: CUSTOMER_REFERENCE_RECOVERY_VERSION, facetId: "rr_c11", packetIds: packets.map(p => p.id), origin: "local_planning_limit",
+          decisions: Object.fromEntries(customerReferencePassages(packets).map(p => [p.id, { answer: { type: "choice", choice: "candidate" },
+            requestFingerprint: `paid-${p.id}`, receiptFingerprint: `receipt-${p.id}` }])) } };
+      const compact: CustomerReferenceRegistryRow = { ...row(id), sources: full.sources.map(({ text: _text, ...proof }) => proof),
+        native_status: "blocked", native_catalog_version: OPERATING_CATALOG_VERSION, native_evidence_key: checkpoint.evidenceKey,
+        native_last_error: checkpoint.lastError, native_answered: 46 };
+      return { full, compact, checkpoint };
+    };
+    const ready = makeHeld("fits", 50), large = makeHeld("oversized", 500), rows = [ready.compact, large.compact];
+    const originals = new Map([ready, large].map(item => [item.full.id, structuredClone(item.checkpoint)]));
+    const native = new Map([ready, large].map(item => [item.full.id, { id: item.full.id, status: "blocked", catalog_version: OPERATING_CATALOG_VERSION,
+      evidence_key: item.checkpoint.evidenceKey, checkpoint: item.checkpoint, result: null }]));
+    const h = store(rows, native), getRow = vi.fn(async (id: string) => {
+      const item = id === ready.full.id ? ready : large; return { ...item.compact, sources: item.full.sources };
+    });
+    const evaluate = vi.fn(async (input: NativeJevInput) => {
+      expect(Object.keys(input.questions)).toEqual(["rr_c11"]);
+      return { status: "complete" as const, reused: false, evaluation: { ok: true as const, usage: { inputTokens: 10, outputTokens: 1 },
+        provider_result: { model: "jev-1.13.0", answers: { rr_c11: { type: "choice" as const, choice: "supported" } } } } };
+    });
+    const classify: typeof classifyCustomerReference = (full, checkpoint, deadline, deps) => classifyCustomerReference(full, checkpoint, deadline, { ...deps, evaluate });
+    const result = await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows, getRow, classify });
+    expect(result).toMatchObject({ processed: 2, completed: 1, requests: 1, inputTokens: 10 });
+    expect(evaluate).toHaveBeenCalledOnce();
+    expect(native.get("fits")!.status).toBe("complete");
+    const negative = native.get("oversized")!.checkpoint;
+    expect(negative.packedPlanningReview).toMatchObject({ version: "packed-final-96-v1", evidenceKey: large.checkpoint.evidenceKey, eligible: false,
+      previousError: "customer_context_relevant_evidence_still_large" });
+    expect(negative.lastError).toBe("customer_context_relevant_evidence_still_large_packed96_v1");
+    expect(negative.answers).toEqual(originals.get("oversized")!.answers);
+    expect(negative.contextRecovery).toEqual(originals.get("oversized")!.contextRecovery);
+    const proofWrite = h.operations.find(op => op.value?.checkpoint?.packedPlanningReview);
+    expect(proofWrite?.filters.some(([key]) => key === "lease_token")).toBe(true);
+    expect(proofWrite?.filters).toContainEqual(["evidence_key", large.checkpoint.evidenceKey]);
+    const cold = store(rows, native); getRow.mockClear(); evaluate.mockClear();
+    expect(await runCustomerReferenceReading(Date.now() + 120_000, { ...cold, registry: async () => rows, getRow, classify }))
+      .toMatchObject({ processed: 0, completed: 0, requests: 0 });
+    expect(getRow).not.toHaveBeenCalled(); expect(evaluate).not.toHaveBeenCalled(); expect(cold.operations).toEqual([]);
+  });
+
   it("processes an eligible customer beyond the first thousand and never regrades unchanged completed references", async () => {
     const rows = [...Array.from({ length: 1_001 }, (_, index) => row(String(index).padStart(4, "0"), true)), row("last-new")];
     const h = store(rows), registry = vi.fn(async () => rows), getRow = vi.fn(async (id: string) => ({ ...row(id), sources: seed(id).sources }));
