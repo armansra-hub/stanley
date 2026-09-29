@@ -83,14 +83,16 @@ describe("source rotation checkpoint writes", () => {
     expect(mocks.range.mock.calls).toEqual([[0, 999], [1000, 1999]]);
   });
 
-  it("excludes retired TAL history while preserving current and standalone claimed accounts", async () => {
+  it("keeps claimed TAL accounts after TAM removal while excluding duplicate identity history", async () => {
     const company = (id: string, status: string, lists: string[] | null) => ({ id, name: id, domain: null,
       last_checked_at: null, status, lists });
     const eligible = [company("a-current", "new", ["netsuite_tam"]), company("b-standalone", "new", []),
       company("c-null-lists", "new", null), company("d-reviewed", "reviewed", []),
-      company("e-dismissed", "dismissed", []), company("f-exported", "exported_csv", []), company("g-sql", "exported_sql", [])];
-    const historical = [company("removed-status", "removed_from_tam", ["netsuite_tam"]),
-      company("removed-tag", "dismissed", ["tam_removed"]), company("duplicate", "new", ["netsuite_tam", "tam_duplicate"])];
+      company("e-dismissed", "dismissed", []), company("f-exported", "exported_csv", []), company("g-sql", "exported_sql", []),
+      company("h-removed-status", "removed_from_tam", ["netsuite_tam"]),
+      company("i-removed-tag", "dismissed", ["tam_removed"]), company("j-removed-both", "removed_from_tam", ["tam_removed"])];
+    const historical = [company("duplicate", "new", ["netsuite_tam", "tam_duplicate"]),
+      company("removed-duplicate", "removed_from_tam", ["tam_removed", "tam_duplicate"])];
     mocks.range.mockResolvedValueOnce({ data: [...eligible, ...historical], error: null });
     expect(await listTalCompanies()).toEqual(eligible);
     expect(mocks.filter).toHaveBeenCalledWith("tal_claimed", true);
@@ -99,7 +101,7 @@ describe("source rotation checkpoint writes", () => {
   });
 
   it("does not stop paging when an entire TAL page contains excluded history", async () => {
-    const historical = Array.from({ length: 1000 }, (_, index) => ({ id: `retired-${index}`, status: "removed_from_tam", lists: ["tam_removed"] }));
+    const historical = Array.from({ length: 1000 }, (_, index) => ({ id: `retired-${index}`, status: "removed_from_tam", lists: ["tam_duplicate"] }));
     const current = { id: "z-current", name: "Current TAL", domain: null, last_checked_at: null, status: "new", lists: null };
     mocks.range.mockResolvedValueOnce({ data: historical, error: null }).mockResolvedValueOnce({ data: [current], error: null });
     expect(await listTalCompanies()).toEqual([current]);

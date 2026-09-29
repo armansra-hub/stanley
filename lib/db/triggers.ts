@@ -396,7 +396,7 @@ export async function markSignalsChecked(ids: string[]): Promise<void> {
   } catch { /* column missing pre-0021 → no-op */ }
 }
 
-/** Collectible TAL accounts; historical rows remain claimed/visible in the TAL UI. */
+/** TAL membership is independent of the current TAM; only retired duplicate rows are excluded. */
 export async function listTalCompanies(): Promise<Array<{ id: string; name: string; domain: string | null; last_checked_at: string | null } & RotationSignalContext>> {
   const db = serviceClient();
   const out: Array<{ id: string; name: string; domain: string | null; last_checked_at: string | null;
@@ -411,11 +411,10 @@ export async function listTalCompanies(): Promise<Array<{ id: string; name: stri
   }
   // News workers can update timestamps between pages. Page by immutable ID,
   // then prioritize the complete loaded set without shifting offset boundaries.
-  // TAM refresh preserves tal_claimed for history, but removed/retired records
-  // cannot accept intelligence. Do not require netsuite_tam: standalone current
-  // TAL accounts and reviewed/exported accounts remain eligible for collection.
-  return out.filter(company => company.status !== "removed_from_tam"
-    && !(company.lists ?? []).some(list => list === "tam_removed" || list === "tam_duplicate"))
+  // The exact TAL membership resolver excludes tam_duplicate identity history.
+  // A TAM removal is not a TAL removal: claimed accounts keep their news sweep
+  // regardless of status, tam_removed tags, or absence from netsuite_tam.
+  return out.filter(company => !(company.lists ?? []).includes("tam_duplicate"))
     .sort((a, b) => (a.last_checked_at ?? "").localeCompare(b.last_checked_at ?? "") || a.id.localeCompare(b.id));
 }
 
