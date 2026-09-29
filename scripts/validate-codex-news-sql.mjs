@@ -8,6 +8,7 @@ const { PGlite } = require("@electric-sql/pglite");
 const { pgcrypto } = require("@electric-sql/pglite/contrib/pgcrypto");
 const db = await PGlite.create("memory://", { extensions: { pgcrypto } });
 const source = await readFile(new URL("../supabase/migrations/0137_codex_news_analysis.sql", import.meta.url), "utf8");
+const repair = await readFile(new URL("../supabase/migrations/0138_codex_news_scalar_claim.sql", import.meta.url), "utf8");
 const scalar = async (sql, values = []) => (await db.query(sql, values)).rows[0]?.value;
 const rpc = (action, payload) => scalar("select intelligence_codex_news($1,$2) value", [action, payload]);
 const checks = [];
@@ -17,7 +18,7 @@ const company = randomUUID();
 async function seed(options = {}) {
   const id = randomUUID(), observation = randomUUID();
   await db.query("insert into intelligence_observations(id,company_id,source_kind,source_url,title,evidence_text,content_hash,event_date,metadata) values($1,$2,$3,$4,'Office opening',$5,'sourcehash',now()-interval '1 day',$6)",
-    [observation, company, options.kind ?? "news", `https://acme.com/news/${observation}`, text, { articleBodyAvailable: true, evidenceKind: "article_body", textTruncated: false, ...options.metadata }]);
+    [observation, options.company ?? company, options.kind ?? "news", `https://acme.com/news/${observation}`, text, { articleBodyAvailable: true, evidenceKind: "article_body", textTruncated: false, ...options.metadata }]);
   await db.query("insert into intelligence_jobs(id,operation_key,observation_id,kind,result,priority) values($1,$2,$3,'interpret',$4,$5)", [id, id, observation, { parts: [{ native: "unchanged" }], ...options.result }, options.priority ?? 0]);
   return { id, observation };
 }
@@ -49,7 +50,37 @@ try {
     create function company_identity_source_context(uuid) returns jsonb language sql stable as $$select '{}'::jsonb$$;
     create function intelligence_event_bind_trigger(uuid,uuid) returns boolean language sql as $$update intelligence_events set trigger_id=$2 where id=$1 returning true$$;`);
   await db.query("insert into companies(id,name,domain,status,lists,tal_claimed) values($1,'Acme','acme.com','removed_from_tam',array['tam_removed'],true)", [company]);
-  await test("migration compiles and is safely repeatable", async () => { await db.exec(source); await db.exec(source); });
+  await test("migrations compile/reapply and repair both original and minified production function bodies", async () => {
+    await db.exec(source); await db.exec(source); await db.exec(repair); await db.exec(repair);
+    await db.exec(source.replace(/--[^\n]*/g, "").replace(/\s+/g, " "));
+    await db.exec(repair); await db.exec(repair);
+    const definition = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
+    assert.ok(definition.includes("codex-news-scalar-candidates-v1"));
+    const candidates = [...definition.matchAll(/for candidate_id in([\s\S]*?)\bloop\b/g)].map(m => m[1]);
+    assert.equal(candidates.length, 2);
+    for (const query of candidates) {
+      assert.ok(!query.includes("result")); assert.ok(!/\blimit\b/i.test(query));
+      const plan = await db.query(`explain (format json, verbose true) ${query}`);
+      assert.ok(!JSON.stringify(plan.rows).includes("q.result"));
+    }
+  });
+  await test("scalar TAL-first selection skips many pending paid candidates and large irrelevant bodies, then reaches all-TAM fallback", async () => {
+    const tam = randomUUID();
+    await db.query("insert into companies(id,name,domain,status,lists,tal_claimed) values($1,'TAM only','tam-only.com','new',array['netsuite_tam'],false)", [tam]);
+    const unpaidTal = await seed({ priority: 0 });
+    const tamJob = await seed({ company: tam, priority: 999 });
+    const pendingIds = [];
+    for (let n = 0; n < 40; n++) {
+      pendingIds.push((await seed({ priority: 100, result: { pendingRequest: { fingerprint: `paid-${n}`, retained: "x".repeat(90_000) } } })).id);
+      await seed({ kind: "website", priority: 1000, result: { parts: [{ retained: "z".repeat(90_000) }] } });
+    }
+    const p = await claim(); assert.equal(p.jobId, unpaidTal.id);
+    await rpc("hold", { ...bound(p), taskId: "/root/reader", reason: "Offline completed selection check; keep original source explicitly uncompleted." });
+    const q = await claim(); assert.equal(q.jobId, tamJob.id);
+    assert.equal(await scalar("select count(*)::int value from intelligence_jobs where id=any($1::uuid[]) and status='queued' and codex_news_request_id is null and result->'pendingRequest'->>'fingerprint' like 'paid-%'", [pendingIds]), 40);
+    // Synthetic fixture cleanup only; no production connection exists.
+    await db.exec("truncate intelligence_jobs,intelligence_observations");
+  });
   await test("request recovery is idempotent and includes retired canonical TAL", async () => {
     await seed(); const request = { requestId: randomUUID(), taskId: "/root/reader" };
     const p = await rpc("claim", request); assert.ok(p); assert.equal(p.snapshot.company.status, "removed_from_tam");
