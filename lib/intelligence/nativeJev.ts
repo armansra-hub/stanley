@@ -21,13 +21,47 @@ export type NativeAnswer = { type: "noul" | "choice" | "score"; noul?: number; c
 export type NativeProviderResult = { model: string; answers: Record<string, NativeAnswer>;
   usage?: { input_tokens?: number; output_tokens?: number }; [key: string]: unknown };
 export type NativeContextLimitEvidence = { kind: "provider_error_code"; code: string };
+export type NativeJevFailureDiagnostics = {
+  version: 1;
+  stage: "awaiting_headers" | "http_response" | "reading_response" | "validating_response";
+  elapsedMs: number;
+  timeoutMs: number;
+  requestBytes: number;
+  questionCount: number;
+  httpStatus?: number;
+  requestId?: string;
+  cfRay?: string;
+  retryAfterSeconds?: number;
+  timeoutSignalAborted?: boolean;
+};
 export type NativeJevResult =
   | { ok: true; provider_result: NativeProviderResult; usage: EvaluationUsage }
-  | { ok: false; error: { code: string; retryable: boolean; contextLimit?: NativeContextLimitEvidence }; usage: EvaluationUsage | null };
+  | { ok: false; error: { code: string; retryable: boolean; contextLimit?: NativeContextLimitEvidence;
+      diagnostics?: NativeJevFailureDiagnostics }; usage: EvaluationUsage | null };
 const VERSION = "stanley-native-jev-v1";
+const REQUEST_TIMEOUT_MS = 25_000;
 const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
 const probability = (x: unknown) => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1;
 const CONTEXT_LIMIT_CODES = new Set(["context_length_exceeded", "max_context_length_exceeded", "context_window_exceeded", "too_many_tokens", "input_token_limit_exceeded"]);
+
+/** Correlation metadata only: never preserve arbitrary error bodies or headers.
+ * Retry-After is diagnostic advice, not authorization to replay a paid call. */
+function failureHeaders(headers: Headers): Pick<NativeJevFailureDiagnostics, "requestId" | "cfRay" | "retryAfterSeconds"> {
+  const result: ReturnType<typeof failureHeaders> = {};
+  for (const name of ["x-request-id", "request-id"]) {
+    const value = headers.get(name);
+    if (value && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)) { result.requestId = value; break; }
+  }
+  const ray = headers.get("cf-ray");
+  if (ray && /^[a-fA-F0-9]{16,32}(?:-[A-Z]{3})?$/.test(ray)) result.cfRay = ray;
+  const retry = headers.get("retry-after");
+  let seconds: number | undefined;
+  if (retry && /^\d{1,9}$/.test(retry)) seconds = Number(retry);
+  else if (retry && /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(retry))
+    seconds = Math.max(0, Math.ceil((Date.parse(retry) - Date.now()) / 1000));
+  if (seconds !== undefined && Number.isFinite(seconds)) result.retryAfterSeconds = seconds;
+  return result;
+}
 
 /** Retain only an unambiguous structured rejection code, never provider text
  * that could echo a source. An arbitrary 400 is not evidence of a token limit.
@@ -107,12 +141,26 @@ export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fet
   const key = process.env.TYPESAFE_API_KEY;
   if (!key) return { ok: false, error: { code: "typesafe_not_configured", retryable: false }, usage: zeroUsage };
   let usage: EvaluationUsage | null = null;
+  let startedAt: number | undefined;
+  let signal: AbortSignal | undefined;
+  let stage: NativeJevFailureDiagnostics["stage"] = "awaiting_headers";
+  let responseMetadata: Partial<NativeJevFailureDiagnostics> = {};
+  const serialized = JSON.stringify(body);
+  const diagnostics = (): NativeJevFailureDiagnostics | undefined => startedAt === undefined ? undefined : ({
+    version: 1, stage, elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    timeoutMs: REQUEST_TIMEOUT_MS, requestBytes: Buffer.byteLength(serialized), questionCount: Object.keys(body.questions).length,
+    ...responseMetadata,
+  });
   try {
     await authorizeJevDispatch(JEV_MODEL, nativeJevFingerprint(input));
+    startedAt = performance.now();
+    signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const response = await (deps.fetch ?? fetch)(TYPESAFE_EVALUATION_URL, {
       method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(25_000), cache: "no-store", redirect: "error",
+      body: serialized, signal, cache: "no-store", redirect: "error",
     });
+    stage = "http_response";
+    responseMetadata = { httpStatus: response.status, ...failureHeaders(response.headers) };
     if (!response.ok) {
       // Preserve the exact HTTP code: the durable receipt's global provider
       // circuit recognizes 402, while 429 remains ordinary rate-limit pressure.
@@ -122,9 +170,11 @@ export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fet
         ? await customerContextLimitEvidence(response) : undefined;
       if (!response.bodyUsed) await response.body?.cancel().catch(() => {});
       return { ok: false, error: { code: "typesafe_http_" + response.status,
-        retryable: response.status === 429 || response.status >= 500, ...(contextLimit ? { contextLimit } : {}) }, usage };
+        retryable: response.status === 429 || response.status >= 500, ...(contextLimit ? { contextLimit } : {}), diagnostics: diagnostics() }, usage };
     }
+    stage = "reading_response";
     const raw = await response.text();
+    stage = "validating_response";
     if (Buffer.byteLength(raw) > 524_288) throw new Error("response_too_large");
     const result: unknown = JSON.parse(raw);
     if (!object(result) || !object(result.answers) || typeof result.model !== "string") throw new Error("invalid_native_response");
@@ -144,7 +194,9 @@ export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fet
   } catch (error) {
     if (error instanceof JevBudgetDeferredError) throw error;
     const timeout = error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name);
-    return { ok: false, error: { code: timeout ? "typesafe_timeout" : "native_response_unavailable", retryable: timeout }, usage };
+    if (timeout) responseMetadata.timeoutSignalAborted = signal?.aborted ?? false;
+    return { ok: false, error: { code: timeout ? "typesafe_timeout" : "native_response_unavailable", retryable: timeout,
+      ...(startedAt === undefined ? {} : { diagnostics: diagnostics() }) }, usage };
   }
 }
 

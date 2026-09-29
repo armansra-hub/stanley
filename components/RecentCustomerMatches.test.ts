@@ -32,6 +32,14 @@ beforeEach(() => vi.stubGlobal("React", React));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("recent-customer shortlist", () => {
+  it.each(["typesafe_timeout", "typesafe_http_520"])("explains a held provider failure without claiming zero billing (%s)", lastError => {
+    const markup = renderToStaticMarkup(React.createElement(CustomerReferenceProgressRow, { reference: {
+      id: "failed", name: "Customer", website: "https://customer.example", status: "blocked", answered: 2, totalQuestions: 47, lastError,
+    } }));
+    expect(markup).toContain("Stanley will not automatically resend it");
+    expect(markup).toContain("2/47 characteristics answered");
+    expect(markup).not.toContain("charged again");
+  });
   it("labels incomplete website analysis while accepting Slack-established customer status", () => {
     const markup = renderToStaticMarkup(React.createElement(CustomerReferenceCoverage, {
       coverage: { verified: 18, pending: 805, total: 823, asOf: "2026-09-28" },

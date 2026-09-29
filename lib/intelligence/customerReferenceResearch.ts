@@ -23,6 +23,7 @@ export type ReferenceCheckpoint = {
   contextRecovery?: CustomerReferenceRecovery; contextRecoveryHistory?: CustomerReferenceRecovery[];
   packedPlanningReview?: { version: "packed-final-96-v1"; evidenceKey: string; reviewedAt: string; eligible: false; previousError: string };
   requests: number; reused: number; inputTokens: number; outputTokens: number;
+  failedRequests?: number;
   unknownUsageRequests?: number;
   lastError?: string | null;
 };
@@ -34,6 +35,19 @@ const decision = (value: unknown) => value && typeof value === "object" && "choi
 const recoverableErrors = ["evidence_exceeds_native_request_limit", "typesafe_context_limit", "typesafe_http_400", "typesafe_http_413", "typesafe_http_422"];
 const plannableErrors = [...recoverableErrors, "customer_context_relevant_evidence_still_large"];
 const packedNegativeHold = "customer_context_relevant_evidence_still_large_packed96_v1";
+
+/** A settled failed receipt is not an idempotency guarantee: the shared cache
+ * may execute it again. Keep that exact customer request held for reconciliation. */
+function providerFailureKind(error: string | null | undefined): "global" | "transient" | "local" | null {
+  if (/^typesafe_(?:not_configured|http_(?:401|402|403|429))$/.test(error ?? "")) return "global";
+  if (/^(?:typesafe_timeout|typesafe_http_5\d\d|native_response_unavailable)$/.test(error ?? "")) return "transient";
+  if (/^(?:typesafe_http_4\d\d|typesafe_context_limit)$/.test(error ?? "")) return "local";
+  return null;
+}
+function hasFailedPending(checkpoint: ReferenceCheckpoint): boolean {
+  return !!checkpoint.pending && (!!providerFailureKind(checkpoint.lastError)
+    || checkpoint.providerFailure?.requestFingerprint === nativeJevFingerprint(checkpoint.pending.input));
+}
 
 /** Replan once on explicit context proof, or a historical failed request now
  * above the local planning ceiling. The latter retains an UNKNOWN 400 cause;
@@ -142,6 +156,11 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
   } else if (!checkpoint.contextRecovery && (checkpoint.lastError === "typesafe_context_limit" || /^typesafe_http_(400|413|422)$/.test(checkpoint.lastError ?? ""))) {
     await save("blocked", null, checkpoint.lastError); return "provider_error";
   }
+  if (hasFailedPending(checkpoint)) {
+    // Historical retryable failures were stored as pending. Preserve their
+    // input, answer and billing evidence without asking the provider again.
+    return await save("blocked", null, checkpoint.lastError ?? checkpoint.providerFailure!.code) ? "provider_request_held" : "lease_changed";
+  }
   if (checkpoint.phase === "mapping" && !checkpoint.pending && !checkpoint.providerFailure
     && !checkpoint.contextRecovery && !checkpoint.contextReplan) {
     const fullPacked = customerReferenceLargePackedAnswerPlans(company, missing(), packets);
@@ -209,13 +228,20 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
       return receipt.status === "budget_deferred" ? "provider_hold" : "native_busy";
     }
     if (!receipt.evaluation.ok) {
-      // Leave transient provider failures resumable, with the exact pending
-      // request intact for receipt reconciliation. This pass never retries it.
+      // Retain the exact input and failure. Retryable describes the provider,
+      // not permission to replay an accepted, potentially charged operation.
       checkpoint.providerFailure = { ...receipt.evaluation.error, requestFingerprint: nativeJevFingerprint(plan.input),
         usage: receipt.evaluation.usage, reused: receipt.reused,
-        billingUncertain: !receipt.reused && (receipt.evaluation.usage?.inputTokens == null || receipt.evaluation.usage?.outputTokens == null) };
+        billingUncertain: receipt.evaluation.usage?.inputTokens == null || receipt.evaluation.usage?.outputTokens == null };
       const error = receipt.evaluation.error.contextLimit && !plan.recoveryKind ? "typesafe_context_limit" : receipt.evaluation.error.code;
-      await save(receipt.evaluation.error.retryable ? "pending" : "blocked", null, error);
+      if (!receipt.reused) {
+        checkpoint.failedRequests = (checkpoint.failedRequests ?? 0) + 1;
+        checkpoint.inputTokens += receipt.evaluation.usage?.inputTokens ?? 0;
+        checkpoint.outputTokens += receipt.evaluation.usage?.outputTokens ?? 0;
+        if (receipt.evaluation.usage?.inputTokens == null || receipt.evaluation.usage?.outputTokens == null)
+          checkpoint.unknownUsageRequests = (checkpoint.unknownUsageRequests ?? 0) + 1;
+      }
+      if (!await save("blocked", null, error)) return "lease_changed";
       return "provider_error";
     }
     const native = receipt.evaluation.provider_result;
@@ -278,7 +304,8 @@ export async function customerReferenceProgress() {
     // Still-large passage holds keep their saved status until the foreground
     // runner admits an exact proven plan. Do not reload every held source corpus
     // merely to speculate about resumability on each progress poll.
-    if (compatible && row.native_status === "blocked" && recoverableErrors.includes(row.native_last_error ?? "")) {
+    const failedRequest = compatible && !!providerFailureKind(row.native_last_error);
+    if (compatible && (row.native_status === "blocked" || failedRequest) && recoverableErrors.includes(row.native_last_error ?? "")) {
       const [full, native] = await Promise.all([getCustomerReferenceRegistryRow(row.id), readRow(row.id)]);
       const seed = full && customerReferenceRegistrySeed(full);
       resumable = !!seed && (customerReferenceCanResumePacked(seed, native?.checkpoint ?? null) || customerReferenceCanResumeContext(seed, native?.checkpoint ?? null));
@@ -286,7 +313,7 @@ export async function customerReferenceProgress() {
     const status = row.source_status === "blocked" ? "blocked"
       : row.source_status !== "ready" ? row.source_status === "running" && Date.parse(row.source_lease_until ?? "") > Date.now() ? "running" : "pending"
       : compatible && row.native_status === "complete" ? "complete"
-      : compatible && row.native_status === "blocked" && !resumable ? "blocked"
+      : compatible && (row.native_status === "blocked" || failedRequest) && !resumable ? "blocked"
       : compatible && row.native_status === "running" && Date.parse(row.native_lease_until ?? "") > Date.now() ? "running" : "pending";
     const gaps = Array.isArray(row.source_checkpoint?.sourceGaps) ? row.source_checkpoint.sourceGaps : [];
     const sourceGaps = gaps.length;
@@ -322,21 +349,36 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
       && (row.source_checkpoint.pendingUrl || Object.keys((row.source_checkpoint.attempts ?? {}) as object).length > 0))
       || (row.native_answered && row.native_answered < 47) ? 0 : 1;
     registry.sort((a, b) => priority(a) - priority(b) || b.announcement_date.localeCompare(a.announcement_date) || a.id.localeCompare(b.id));
-    let processed = 0, completed = 0, captured = 0, sourceBlocked = 0, stoppedBy = "references_exhausted";
-    const usage = { requests: 0, reused: 0, inputTokens: 0, outputTokens: 0, unknownUsageRequests: 0 };
+    let processed = 0, completed = 0, captured = 0, sourceBlocked = 0, providerErrors = 0, heldRequests = 0, stoppedBy = "references_exhausted";
+    const usage = { requests: 0, reused: 0, failedRequests: 0, inputTokens: 0, outputTokens: 0, unknownUsageRequests: 0 };
     // Two distinct customers share this one finite invocation. The cursor is
     // only an in-memory traversal of the canonical registry, not another work
     // queue. Every source/native write still needs its existing exact row lease.
     let cursor = 0, stopNewAdmissions = false;
+    let recoveryRequired = false, transientFailures = 0, activeNative = 0;
+    const stateWaiters = new Set<() => void>();
+    const stateChanged = () => { for (const resolve of stateWaiters) resolve(); stateWaiters.clear(); };
     const stopRank: Record<string, number> = { references_exhausted: 0, deadline: 1, continued: 1, source_continuation: 1,
       native_busy: 2, source_lease_changed: 3, lease_changed: 3, provider_error: 4, provider_hold: 5, storage_failure: 6 };
     const stop = (reason: string) => {
       stopNewAdmissions = true;
       if ((stopRank[reason] ?? 6) > (stopRank[stoppedBy] ?? 0)) stoppedBy = reason;
+      stateChanged();
+    };
+    const awaitHealthyAdmission = async () => {
+      while (recoveryRequired && !stopNewAdmissions) {
+        if (!activeNative) { stop("provider_error"); break; }
+        await new Promise<void>(resolve => stateWaiters.add(resolve));
+      }
     };
     const lane = async () => {
       try {
         while (!stopNewAdmissions && cursor < registry.length) {
+          // An isolated timeout/5xx holds that customer, not every customer.
+          // Only a real successful native answer in the other admitted lane
+          // reopens admission. Never make an extra paid health-check request.
+          await awaitHealthyAdmission();
+          if (stopNewAdmissions || cursor >= registry.length) break;
           if (Date.now() >= deadline - 40_000) { stop("deadline"); break; }
           // Advance synchronously before awaiting anything; a customer is assigned
           // to at most one lane even while the other lane awaits network I/O.
@@ -345,6 +387,8 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
           const savedCompatible = !!proof && registryRow.native_catalog_version === OPERATING_CATALOG_VERSION
             && registryRow.native_evidence_key === customerReferenceEvidenceKey(proof);
           if (registryRow.source_status === "ready" && savedCompatible && registryRow.native_status === "complete") continue;
+          if (savedCompatible && providerFailureKind(registryRow.native_last_error)
+            && !recoverableErrors.includes(registryRow.native_last_error ?? "")) { heldRequests++; continue; }
           if (registryRow.source_status === "blocked") continue;
           if (registryRow.source_status !== "ready") {
             const lease = randomUUID(), now = new Date().toISOString();
@@ -377,6 +421,7 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
           }
           // A source capture already in flight can finish and save. Once another
           // lane reports a global failure, do not admit a new native phase.
+          await awaitHealthyAdmission();
           if (stopNewAdmissions) break;
           if (savedCompatible && registryRow.native_status === "blocked" && !plannableErrors.includes(registryRow.native_last_error ?? "")) continue;
           const full = registryRow.sources.every(source => typeof source.text === "string") ? registryRow
@@ -387,6 +432,8 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
           const evidenceKey = customerReferenceEvidenceKey(seed);
           const compatible = old?.catalog_version === OPERATING_CATALOG_VERSION && old.evidence_key === evidenceKey;
           if (compatible && old.status === "complete") continue;
+          if (compatible && old.checkpoint && hasFailedPending(old.checkpoint)
+            && !customerReferenceCanResumeContext(seed, old.checkpoint)) { heldRequests++; continue; }
           // A source/provider rejection is explicit. Do not blind-replay the same
           // rejected input; changed source/version earns a new first pass.
           const needsPackedReview = compatible && old.status === "blocked"
@@ -406,22 +453,54 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
           if (!claimed.data) continue;
           const initialCheckpoint = claimed.data.checkpoint as ReferenceCheckpoint | null;
           const initialUsage = { requests: initialCheckpoint?.requests ?? 0, reused: initialCheckpoint?.reused ?? 0,
-            inputTokens: initialCheckpoint?.inputTokens ?? 0, outputTokens: initialCheckpoint?.outputTokens ?? 0, unknownUsageRequests: initialCheckpoint?.unknownUsageRequests ?? 0 };
+            failedRequests: initialCheckpoint?.failedRequests ?? 0, inputTokens: initialCheckpoint?.inputTokens ?? 0,
+            outputTokens: initialCheckpoint?.outputTokens ?? 0, unknownUsageRequests: initialCheckpoint?.unknownUsageRequests ?? 0 };
           let latestUsage = { ...initialUsage };
+          let savedFailure: ReturnType<typeof providerFailureKind> = null;
           const save = async (checkpoint: ReferenceCheckpoint, status: "running" | "pending" | "blocked" | "complete", result: CustomerReference | null, error: string | null) => {
             const saved = await db.from("intelligence_customer_references").update({ status, result,
               checkpoint: { ...checkpoint, lastError: error }, updated_at: new Date().toISOString(),
               ...(status !== "running" ? { lease_token: null, lease_until: null } : {}) })
               .eq("id", seed.id).eq("lease_token", lease).eq("evidence_key", evidenceKey).gt("lease_until", new Date().toISOString()).select("id").maybeSingle();
             if (saved.error) throw new Error("customer_reference_checkpoint_failed");
-            if (saved.data) latestUsage = { requests: checkpoint.requests, reused: checkpoint.reused, inputTokens: checkpoint.inputTokens,
-              outputTokens: checkpoint.outputTokens, unknownUsageRequests: checkpoint.unknownUsageRequests ?? 0 };
+            if (saved.data) {
+              if (checkpoint.requests - checkpoint.reused > latestUsage.requests - latestUsage.reused) {
+                recoveryRequired = false; transientFailures = 0; stateChanged();
+              }
+              latestUsage = { requests: checkpoint.requests, reused: checkpoint.reused, failedRequests: checkpoint.failedRequests ?? 0,
+                inputTokens: checkpoint.inputTokens, outputTokens: checkpoint.outputTokens, unknownUsageRequests: checkpoint.unknownUsageRequests ?? 0 };
+              if (status === "blocked" && error && checkpoint.pending && checkpoint.providerFailure) {
+                savedFailure = providerFailureKind(error);
+                if (savedFailure === "transient") {
+                  recoveryRequired = true; transientFailures++;
+                  if (transientFailures >= 2) stop("provider_error");
+                } else if (savedFailure === "global") stop("provider_error");
+              }
+            }
             return !!saved.data;
           };
-          const outcome = await (deps.classify ?? classifyCustomerReference)(seed, initialCheckpoint, deadline, { save });
+          // A different lane can fail while this row claim is in flight. Do
+          // not let that database latency turn a new customer into a paid probe.
+          await awaitHealthyAdmission();
+          if (stopNewAdmissions) {
+            const released = await db.from("intelligence_customer_references").update({ status: "pending", lease_token: null, lease_until: null })
+              .eq("id", seed.id).eq("lease_token", lease).eq("evidence_key", evidenceKey)
+              .gt("lease_until", new Date().toISOString()).select("id").maybeSingle();
+            if (released.error) throw new Error("customer_reference_unstarted_release_failed");
+            break;
+          }
+          activeNative++;
+          let outcome: Awaited<ReturnType<typeof classifyCustomerReference>>;
+          try { outcome = await (deps.classify ?? classifyCustomerReference)(seed, initialCheckpoint, deadline, { save }); }
+          finally { activeNative--; stateChanged(); }
           for (const key of Object.keys(usage) as (keyof typeof usage)[]) usage[key] += Math.max(0, latestUsage[key] - initialUsage[key]);
           processed++; if (outcome === "complete") completed++;
-          if (["provider_hold", "native_busy", "provider_error", "lease_changed", "continued"].includes(outcome)) { stop(outcome); break; }
+          if (outcome === "provider_error") {
+            providerErrors++;
+            if (savedFailure !== "local" && savedFailure !== "transient") { stop(outcome); break; }
+          }
+          if (outcome === "provider_request_held") heldRequests++;
+          if (["provider_hold", "native_busy", "lease_changed", "continued"].includes(outcome)) { stop(outcome); break; }
         }
       } catch (error) { stop("storage_failure"); throw error; }
     };
@@ -430,6 +509,7 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
     const settled = await Promise.allSettled([lane(), lane()]);
     const failure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failure) throw failure.reason;
-    return { processed, completed, captured, sourceBlocked, stoppedBy, ...usage, concurrency: 2 };
+    if (recoveryRequired && !stopNewAdmissions) stop("provider_error");
+    return { processed, completed, captured, sourceBlocked, providerErrors, heldRequests, stoppedBy, ...usage, concurrency: 2 };
   });
 }

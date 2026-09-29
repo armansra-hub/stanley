@@ -74,8 +74,9 @@ describe("customer website interpretation", () => {
     expect(h.evaluate).toHaveBeenCalledTimes(1);
   });
   it.each([
-    { code: "typesafe_http_429", retryable: true, status: "pending" },
-    { code: "typesafe_timeout", retryable: true, status: "pending" },
+    { code: "typesafe_http_429", retryable: true, status: "blocked" },
+    { code: "typesafe_timeout", retryable: true, status: "blocked" },
+    { code: "typesafe_http_520", retryable: true, status: "blocked" },
     { code: "typesafe_http_400", retryable: false, status: "blocked" },
   ])("preserves the exact request as $status after $code without retrying", async ({ code, retryable, status }) => {
     const h = harness();
@@ -88,10 +89,32 @@ describe("customer website interpretation", () => {
     expect(final).toMatchObject({ status, error: code, result: null, checkpoint: { answers: {}, requests: 0, reused: 0 } });
     expect(final.checkpoint.pending?.input).toEqual(h.evaluate.mock.calls[0][0]);
     expect(final.checkpoint.pending).toEqual(h.writes[0].checkpoint.pending);
+    expect(final.checkpoint).toMatchObject({ failedRequests: 1, unknownUsageRequests: 1,
+      providerFailure: { code, billingUncertain: true } });
+    const resumed = harness();
+    expect(await classifyCustomerReference(seed, { ...final.checkpoint, lastError: final.error }, Date.now() + 120_000, resumed as any))
+      .toBe(code === "typesafe_http_400" ? "provider_error" : "provider_request_held");
+    expect(resumed.evaluate).not.toHaveBeenCalled();
+    expect(resumed.writes.at(-1)?.checkpoint.pending).toEqual(final.checkpoint.pending);
+    expect(resumed.writes.at(-1)?.checkpoint.failedRequests).toBe(1);
   });
   it("never sends a request after losing checkpoint ownership", async () => {
     const h = harness(); h.save.mockResolvedValue(false);
     expect(await classifyCustomerReference(seed, null, Date.now() + 120_000, h as any)).toBe("lease_changed");
     expect(h.evaluate).not.toHaveBeenCalled();
+  });
+  it("keeps original billing uncertainty on a reused failed receipt without counting a new dispatch", async () => {
+    const h = harness();
+    h.evaluate.mockResolvedValue({ status: "complete", reused: true, evaluation: {
+      ok: false, error: { code: "typesafe_timeout", retryable: true }, usage: null,
+    } } as any);
+    expect(await classifyCustomerReference(seed, null, Date.now() + 120_000, h as any)).toBe("provider_error");
+    const final = h.writes.at(-1)!;
+    expect(final.checkpoint.providerFailure).toMatchObject({ reused: true, usage: null, billingUncertain: true });
+    expect(final.checkpoint.requests).toBe(0);
+    expect(final.checkpoint.failedRequests ?? 0).toBe(0);
+    expect(final.checkpoint.unknownUsageRequests ?? 0).toBe(0);
+    expect(final.checkpoint.inputTokens).toBe(0);
+    expect(final.checkpoint.outputTokens).toBe(0);
   });
 });

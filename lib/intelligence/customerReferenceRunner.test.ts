@@ -59,6 +59,100 @@ function store(registryRows: CustomerReferenceRegistryRow[], nativeById = new Ma
 }
 
 describe("full registry foreground reference runner", () => {
+  const progress = (source: CustomerReferenceSeed, requests = 0, reused = 0): ReferenceCheckpoint => ({ version: 1,
+    evidenceKey: customerReferenceEvidenceKey(source), phase: "answer", mapped: {}, answers: {}, requests, reused,
+    inputTokens: requests * 100, outputTokens: requests, unknownUsageRequests: 0 });
+  const saveFailure = async (source: CustomerReferenceSeed, deps: any, code: string) => {
+    const checkpoint: ReferenceCheckpoint = { ...progress(source), failedRequests: 1, unknownUsageRequests: 1,
+      pending: { phase: "answer", facetIds: ["rr_c01"], packetIds: [], input: { state: {}, questions: {
+        rr_c01: { type: "choice", instructions: "Exact pending question", criteria: { supported: "yes", insufficient_evidence: "unknown" } },
+      } } }, providerFailure: { code, requestFingerprint: "exact-failed-input", retryable: true, usage: null, billingUncertain: true } };
+    await deps.save(checkpoint, "blocked", null, code);
+    return "provider_error" as const;
+  };
+
+  it("skips historical pending failures without a new claim or paid replay and still reads unrelated customers", async () => {
+    const failed = { ...row("failed", true), native_status: "pending", native_answered: 2, native_last_error: "typesafe_timeout" };
+    const rows = [failed, row("healthy")], h = store(rows), getRow = vi.fn(async (id: string) => ({ ...row(id), sources: seed(id).sources }));
+    const classify = vi.fn(async () => "complete" as const);
+    expect(await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows, getRow, classify }))
+      .toMatchObject({ processed: 1, completed: 1, heldRequests: 1, stoppedBy: "references_exhausted" });
+    expect(getRow).toHaveBeenCalledOnce(); expect(getRow).toHaveBeenCalledWith("healthy");
+    expect(h.operations.some(op => op.filters.some(([column, value]) => column === "id" && value === "failed"))).toBe(false);
+  });
+
+  it("holds one transient failure and admits another customer only after a real healthy answer in the other lane", async () => {
+    const rows = [row("a"), row("b"), row("c")], h = store(rows);
+    let fail!: () => void, recover!: () => void;
+    const failed = new Promise<void>(resolve => { fail = resolve; }), healthy = new Promise<void>(resolve => { recover = resolve; });
+    const classify = vi.fn(async (source: CustomerReferenceSeed, _previous: ReferenceCheckpoint | null, _deadline: number, deps: any) => {
+      if (source.id === "a") { await failed; return saveFailure(source, deps, "typesafe_timeout"); }
+      if (source.id === "b") await healthy;
+      await deps.save(progress(source, 1), "complete", null, null);
+      return "complete" as const;
+    });
+    const run = runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
+      getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify });
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2));
+    fail();
+    await vi.waitFor(() => expect(h.operations.some(op => op.value?.checkpoint?.providerFailure?.code === "typesafe_timeout")).toBe(true));
+    expect(classify).toHaveBeenCalledTimes(2);
+    recover();
+    expect(await run).toMatchObject({ processed: 3, completed: 2, providerErrors: 1, failedRequests: 1,
+      unknownUsageRequests: 1, requests: 2, stoppedBy: "references_exhausted" });
+    expect(classify.mock.calls.map(call => call[0].id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("does not mistake an old reused answer for current provider recovery", async () => {
+    const rows = [row("a"), row("b"), row("c")], h = store(rows);
+    let release!: () => void;
+    const afterFailure = new Promise<void>(resolve => { release = resolve; });
+    const classify = vi.fn(async (source: CustomerReferenceSeed, _previous: ReferenceCheckpoint | null, _deadline: number, deps: any) => {
+      if (source.id === "a") { const outcome = await saveFailure(source, deps, "typesafe_http_520"); release(); return outcome; }
+      await afterFailure; await deps.save(progress(source, 1, 1), "complete", null, null); return "complete" as const;
+    });
+    expect(await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
+      getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify }))
+      .toMatchObject({ processed: 2, completed: 1, providerErrors: 1, stoppedBy: "provider_error" });
+    expect(classify).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops after two failed lanes without probing another customer or discarding either receipt", async () => {
+    const rows = [row("a"), row("b"), row("c")], h = store(rows);
+    const classify = vi.fn(async (source: CustomerReferenceSeed, _previous: ReferenceCheckpoint | null, _deadline: number, deps: any) =>
+      saveFailure(source, deps, source.id === "a" ? "typesafe_timeout" : "typesafe_http_520"));
+    expect(await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
+      getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify }))
+      .toMatchObject({ processed: 2, completed: 0, providerErrors: 2, failedRequests: 2, unknownUsageRequests: 2, stoppedBy: "provider_error" });
+    expect(classify).toHaveBeenCalledTimes(2);
+    expect(h.operations.filter(op => op.value?.checkpoint?.providerFailure)).toHaveLength(2);
+  });
+
+  it.each(["typesafe_http_401", "typesafe_http_402", "typesafe_http_403", "typesafe_http_429"])
+    ("keeps %s as a global stop even when the other lane is healthy", async code => {
+      const rows = [row("a"), row("b"), row("c")], h = store(rows);
+      let release!: () => void;
+      const afterFailure = new Promise<void>(resolve => { release = resolve; });
+      const classify = vi.fn(async (source: CustomerReferenceSeed, _previous: ReferenceCheckpoint | null, _deadline: number, deps: any) => {
+        if (source.id === "a") { const outcome = await saveFailure(source, deps, code); release(); return outcome; }
+        await afterFailure; await deps.save(progress(source, 1), "complete", null, null); return "complete" as const;
+      });
+      expect(await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
+        getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify }))
+        .toMatchObject({ processed: 2, completed: 1, stoppedBy: "provider_error" });
+      expect(classify).toHaveBeenCalledTimes(2);
+    });
+
+  it("holds a customer-specific malformed request without declaring the provider unavailable", async () => {
+    const rows = [row("a"), row("b"), row("c")], h = store(rows);
+    const classify = vi.fn(async (source: CustomerReferenceSeed, _previous: ReferenceCheckpoint | null, _deadline: number, deps: any) =>
+      source.id === "a" ? saveFailure(source, deps, "typesafe_http_400") : "complete" as const);
+    expect(await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
+      getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify }))
+      .toMatchObject({ processed: 3, completed: 2, providerErrors: 1, stoppedBy: "references_exhausted" });
+    expect(classify).toHaveBeenCalledTimes(3);
+  });
+
   it("admits a proven packed final, memoizes an oversized negative under lease, and skips both on a cold pass", async () => {
     const makeHeld = (id: string, uniqueLines: number) => {
       const shared = Array.from({ length: 360 }, (_, i) =>
