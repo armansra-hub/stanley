@@ -249,9 +249,12 @@ export async function sweepUsaspendingCompany(
           if (state.collection !== "idvs") {
             // Same frozen company/identities/date window, separate provider
             // collection. Never carry a contracts search_after into IDVs.
-            state.collection = "idvs"; state.searchTargetIndex = 0;
+            state.collection = "idvs";
             const first = state.searchTargets?.[0];
             if (first) {
+              // Legacy unbound checkpoints have no alias list. Preserve that
+              // valid shape; an index without its frozen targets cannot commit.
+              state.searchTargetIndex = 0;
               state.recipientName = first.query; state.entityId = first.identity?.entityId ?? null;
               state.uei = first.identity?.uei ?? null; state.recipientId = first.identity?.recipientId ?? null;
             }

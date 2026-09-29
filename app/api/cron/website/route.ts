@@ -4,7 +4,7 @@ import { logEvent } from "@/lib/db/events";
 
 /** Website watch over the base (FREE). Secret-guarded. ?n= / ?offset= / ?scope=claimable|tail. */
 export const dynamic = "force-dynamic";
-// Source workers use up to 240 seconds plus final-batch and receipt headroom.
+// Admit website batches for 150 seconds, leaving room for their pages and feeds.
 export const maxDuration = 300;
 
 async function run(req: NextRequest) {

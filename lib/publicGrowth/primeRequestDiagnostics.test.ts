@@ -12,8 +12,8 @@ vi.mock("./usaspending", () => ({ autocompleteRecipients: mocks.autocomplete, se
 vi.mock("./storage", () => ({ saveGovernmentEntity: mocks.entity, saveCompanyGovernmentMatch: mocks.match,
   saveFederalAward: mocks.award, saveFederalTransactions: mocks.saveTransactions,
   saveFederalSubaward: vi.fn(), recordPublicGrowthTrigger: vi.fn(), stableHash: () => "hash" }));
-import { sweepUsaspendingCompany } from "./usaspendingSweep";
-import { queuePublicGrowthMainFailures, type PublicGrowthAwardContinuation } from "./sweepState";
+import { sweepUsaspendingCompany, sweepUsaspendingCompanySteps } from "./usaspendingSweep";
+import { applyPublicGrowthRetryOutcomes, pendingPublicGrowthRetries, queuePublicGrowthMainFailures, type PublicGrowthAwardContinuation } from "./sweepState";
 import { FederalIdentityDeferredError } from "./federalIdentityResolution";
 import { PublicGrowthDeadlineError } from "./http";
 
@@ -44,6 +44,46 @@ function timeout(mock: ReturnType<typeof vi.fn>) {
 }
 
 describe("prime request diagnostics", () => {
+  it("checkpoints a legacy unbound contracts-to-IDV transition without inventing an alias index", async () => {
+    const prior = continuation({ recipientName: "JAAW GROUP LLC THE", searchEndDate: "2026-12-26",
+      seenAwardIds: ["prior-1", "prior-2", "prior-3"], ignoredAwardIds: ["other-1", "other-2"] });
+    const original = structuredClone(prior);
+    const cursor = queuePublicGrowthMainFailures({}, [{ companyId: ID, status: "no_awards", awardDone: false, awardContinuation: prior }], 0).cursorPatch;
+    const planned = pendingPublicGrowthRetries(cursor, 1);
+    const result = await sweepUsaspendingCompany(company, { awardContinuation: planned[0].awardContinuation! });
+    // Exercise the same strict serializer that previously rejected the scheduled
+    // retry's otherwise successful source transition before committing its cursor.
+    const saved = applyPublicGrowthRetryOutcomes(cursor, planned, [result]);
+    expect(saved.cursorPatch.retryQueue[0].awardContinuation).toMatchObject({
+      recipientName: prior.recipientName, searchEndDate: prior.searchEndDate, seenAwardIds: prior.seenAwardIds,
+      entityId: null, uei: null, recipientId: null, collection: "idvs", searchPage: 1, searchAfter: null,
+    });
+    expect(result.awardContinuation).not.toHaveProperty("searchTargets");
+    expect(result.awardContinuation).not.toHaveProperty("searchTargetIndex");
+    expect(prior).toEqual(original);
+    expect(mocks.resolve).not.toHaveBeenCalled(); expect(mocks.entity).not.toHaveBeenCalled();
+    expect(mocks.match).not.toHaveBeenCalled(); expect(mocks.award).not.toHaveBeenCalled();
+  });
+  it("saves a legacy IDV source failure after the contracts transition without losing its retry checkpoint", async () => {
+    const prior = continuation({ seenAwardIds: ["prior-award"] });
+    const cursor = queuePublicGrowthMainFailures({}, [{ companyId: ID, status: "no_awards", awardDone: false, awardContinuation: prior }], 0).cursorPatch;
+    const planned = pendingPublicGrowthRetries(cursor, 1);
+    mocks.search.mockResolvedValueOnce({ rows: [], hasNext: false }).mockRejectedValueOnce(new Error("IDV source unavailable"));
+    const result = await sweepUsaspendingCompanySteps(company, { awardContinuation: planned[0].awardContinuation! }, 3);
+    const saved = applyPublicGrowthRetryOutcomes(cursor, planned, [result]);
+    expect(saved.errors).toBe(1);
+    expect(saved.cursorPatch.retryQueue[0]).toMatchObject({ failureAttempts: 1,
+      awardContinuation: { collection: "idvs", recipientName: prior.recipientName, searchEndDate: prior.searchEndDate,
+        seenAwardIds: ["prior-award"], searchAfter: null, entityId: null, uei: null, recipientId: null } });
+    expect(mocks.search).toHaveBeenCalledTimes(2);
+    expect(mocks.search.mock.calls[1][6]).toBe("idvs");
+  });
+  it("still rejects an orphan alias index rather than weakening continuation validation", () => {
+    expect(() => queuePublicGrowthMainFailures({}, [{ companyId: ID, status: "no_awards", awardDone: false,
+      awardContinuation: continuation({ searchTargetIndex: 0 }) }], 0)).toThrow("has invalid search targets");
+    expect(() => queuePublicGrowthMainFailures({}, [{ companyId: ID, status: "no_awards", awardDone: false,
+      awardContinuation: continuation({ searchTargets: [], searchTargetIndex: 0 }) }], 0)).toThrow("has invalid search targets");
+  });
   it("retains an exact pending award when Jev is deferred", async () => {
     mocks.resolve.mockRejectedValue(new FederalIdentityDeferredError("budget_deferred"));
     const before = continuation({ pendingAwardId: "A1", searchTargets: [{ query: "Acme", identity: null }], searchTargetIndex: 0 });

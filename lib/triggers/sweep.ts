@@ -2,7 +2,7 @@ import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate, headlineCandidateSeen } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
-import { fetchNewsForCompany, fetchNewsForCompanyResult, fetchNewsItems, type NewsItem } from "@/lib/sources/googleNews";
+import { fetchNewsForCompanyResult, fetchNewsItemsResult, type NewsItem } from "@/lib/sources/googleNews";
 import { claimClassifierCall } from "@/lib/db/settings";
 import { classifyEventLLM, HEADLINE_CLASSIFIER_BATCH_BUDGET_MS } from "@/lib/triggers/classify";
 import { classifyHeadline } from "@/lib/triggers/config";
@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { enqueueObservation, intelligenceEnabled } from "@/lib/intelligence/observations";
 import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
 import { readNewsEvidence } from "@/lib/sources/newsEvidence";
+import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepOutcomes } from "./sweepOutcomes";
 import {
   isCareerEvidenceUrl,
   isFinanceHireEligible,
@@ -250,7 +251,8 @@ async function classifyLegacyHeadline(
   return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
-export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boolean; classifierDeadlineMs?: number } = {}): Promise<number> {
+export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boolean; classifierDeadlineMs?: number;
+  onOutcome?: (outcome: SweepOutcome) => void; onError?: (stage: string, error: unknown) => void } = {}): Promise<number> {
   let added = 0;
   if (intelligenceEnabled()) {
     const sourceKey = "news:google";
@@ -266,7 +268,7 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
     const nextRetries: typeof retries = {};
     const items = [...new Map([...pending, ...fetched.items].filter(item => isFresh(item.signal_date)).map(item => [headlineKey(item), item])).values()];
     const failed: HeadlineItem[] = [];
-    let saved = 0, bodyCount = 0, storageFailures = 0;
+    let saved = 0, bodyCount = 0, storageFailures = 0, processingFailures = 0;
     const warningCodes: Record<string, number> = {};
     const articleDeadline = Date.now() + 50_000;
     for (let start = 0; start < items.length; start += 4) {
@@ -286,7 +288,7 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
           seen.has(key) ? Promise.resolve(null) : observeHeadline(company, item),
           classifyLegacyHeadline(company, item, { ...opts, requireNameMatch: true }),
         ]);
-        if (capture.status === "rejected") { storageFailures++; throw capture.reason; }
+        if (capture.status === "rejected") { storageFailures++; opts.onError?.("observation", capture.reason); throw capture.reason; }
         if (capture.value) {
           saved++;
           if (capture.value.bodyAvailable) { bodyCount++; seen.add(key); }
@@ -298,7 +300,7 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
             warningCodes[code] = (warningCodes[code] ?? 0) + 1;
           }
         }
-        if (legacy.status === "rejected") throw legacy.reason;
+        if (legacy.status === "rejected") { processingFailures++; opts.onError?.("classification", legacy.reason); throw legacy.reason; }
         return legacy.value;
       }));
       results.forEach((result, index) => {
@@ -314,16 +316,21 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
         queryCycle: fetched.nextCycle, queryCaches: fetched.caches, scope: "broad_name_24_plus_rotating_targeted_12_and_pending" },
       complete: !incomplete,
       status, successful: saved > 0 || fetched.status !== "unavailable",
-      details: { feedStatus: fetched.status, feedError: fetched.error ?? null, httpStatus: fetched.httpStatus ?? null, queries: fetched.queries, saved, bodyCount, headlineOnly: saved - bodyCount, storageFailures, warningCodes },
+      details: { feedStatus: fetched.status, feedError: fetched.error ?? null, httpStatus: fetched.httpStatus ?? null, queries: fetched.queries, saved, bodyCount, headlineOnly: saved - bodyCount, storageFailures, processingFailures, warningCodes },
       ...(incomplete ? { error: fetched.error ? `News feed: ${fetched.error}` : storageFailures ? "News storage unavailable" : "Headline evidence saved; publisher bodies pending" } : {}),
     });
-    if (storageFailures || fetched.status === "unavailable") throw new Error("News capture incomplete");
+    opts.onOutcome?.(storageFailures || processingFailures ? "failed" : fetched.status === "unavailable" ? "unavailable" : incomplete ? "partial" : "succeeded");
+    if (fetched.status === "unavailable" || fetched.partial) opts.onError?.("feed", fetched.error ?? "News feed unavailable");
+    if (storageFailures || processingFailures || fetched.status === "unavailable") throw new Error("News capture incomplete");
     return added;
   }
-  for (const it of await fetchNewsForCompany(company.name, 6)) {
+  const fetched = await fetchNewsForCompanyResult(company.name, 6);
+  if (fetched.status === "unavailable") { opts.onOutcome?.("unavailable"); throw new Error(`News feed unavailable: ${fetched.error ?? "unknown"}`); }
+  for (const it of fetched.items) {
     if (!isFresh(it.signal_date)) continue;
     if (await classifyAndRecordHeadline(company, it, { llm: opts.llm, requireNameMatch: true, classifierDeadlineMs: opts.classifierDeadlineMs })) added++;
   }
+  opts.onOutcome?.("succeeded");
   return added;
 }
 
@@ -337,7 +344,9 @@ export async function checkExecChange(company: { id: string; name: string; netsu
   if (!isFinanceHireEligible(company)) return 0;
   let added = 0;
   const q = `"${company.name}" (CFO OR controller OR "chief financial officer" OR "VP Finance" OR "head of finance" OR "finance director")`;
-  for (const it of await fetchNewsItems(q, 6)) {
+  const fetched = await fetchNewsItemsResult(q, 6);
+  if (fetched.status === "unavailable") throw new Error(`Executive-change feed unavailable: ${fetched.error ?? "unknown"}`);
+  for (const it of fetched.items) {
     if (!isFresh(it.signal_date, 120)) continue;
     const clean = cleanHeadline(it.raw_excerpt);
     if (!headlineIsAboutCompany(company.name, clean)) continue;
@@ -355,12 +364,13 @@ export async function checkExecChange(company: { id: string; name: string; netsu
  *     domains → finance_hire (in-house-finance confirmation) + erp_tech (QuickBooks,
  *     no ERP, from the JD) triggers. One call per ~50 domains ≈ $0.13.
  */
-export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number } = {}): Promise<{ checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number }> {
+export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number } = {}): Promise<SweepOutcomes & { checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number }> {
   // The optional paid actor needs one fixed domain list. Normal recurring news
   // reserves only the next immediately attempted micro-batch below.
   const companies = opts.finance ? await pickForRotation(limit, opts.offset ?? 0) : null;
   const touched = new Set<string>();
   let news = 0, finance = 0, erp = 0;
+  const outcomes = newSweepOutcomes();
 
   // ── FINANCE HIRING + ERP-readiness (PAID, OFF by default) ──────────────────────
   // Tested 2026-06-27: 0 hits across 250 base domains — the NetSuite-TAM base skews to
@@ -392,7 +402,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
           if (await recordTrigger(cid, { type: "erp_tech", summary: `Runs QuickBooks, no ERP — per the "${role}" posting`, source_url: url ? `${url}#erp` : null, signal_date: sd })) { erp++; touched.add(cid); }
         }
       }
-    } catch { /* paid source isolated — never breaks the free sweep */ }
+    } catch (error) { sweepError(outcomes, "finance", "actor", error); }
   }
 
   // ── NEWS (free; per company, in parallel batches) ──
@@ -405,29 +415,38 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   // the 240-second source budget ends.
   let processed = 0;
   for await (const slice of rotationBatches(pickForRotation, {
-    limit, batchSize: 20, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
+    limit, batchSize: 4, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
   })) {
     const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
     const completed: string[] = [];
     await Promise.all(slice.map(async (c) => {
+      let outcome: SweepOutcome = "failed";
+      outcomes.attempted++;
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
         let n = 0;
-        let newsComplete = false;
-        try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs }); newsComplete = true; }
-        catch (error) { if (!intelligenceEnabled()) throw error; }
+        try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs,
+          onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id) }); }
+        catch (error) { sweepError(outcomes, "news", "collection", error, c.id); }
         // Exec-change (new finance leader) — claimable NetSuite-TAM leads only.
-        if (claimable) { try { n += await checkExecChange(c); } catch { /* isolated */ } }
+        if (claimable) { try { n += await checkExecChange(c); } catch (error) {
+          sweepError(outcomes, "news:executive-change", "collection", error, c.id);
+          if ((outcome as SweepOutcome) === "succeeded") outcome = "partial";
+        } }
         if (n > 0) { news += n; touched.add(c.id); }
-        if (newsComplete) completed.push(c.id);
-      } catch { /* source-isolated */ }
+        if ((outcome as SweepOutcome) === "succeeded") completed.push(c.id);
+      } catch (error) { outcome = "failed"; sweepError(outcomes, "news", "collection", error, c.id); }
+      finally { outcomes[outcome]++; }
     }));
     // Rotation reservations already record attempts. Only successful new-lane
     // persistence receives this completion stamp; failures retain retry state.
-    await markChecked(intelligenceEnabled() ? completed : slice.map((c) => c.id));
+    try { await markChecked(completed); }
+    catch (error) { outcomes.succeeded -= completed.length; outcomes.failed += completed.length; sweepError(outcomes, "news", "completion_stamp", error); }
     processed += slice.length;
   }
 
-  for (const cid of touched) await recomputePriority(cid);
-  return { checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp };
+  for (const cid of touched) {
+    try { await recomputePriority(cid); } catch (error) { sweepError(outcomes, "news", "priority", error, cid); }
+  }
+  return { ...outcomes, checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp };
 }

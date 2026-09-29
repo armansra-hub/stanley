@@ -251,6 +251,83 @@ async function resumeJournaledRetrySearch(lease: PublicGrowthSweepLease, hold: R
   return receipt;
 }
 
+/** Finish only a saved pending-search wave that failed before any source request
+ * or enrollment write. Its untouched continuations stay in place; the journal
+ * records historical preflight failures, never successful source coverage. */
+async function resumeJournaledMembershipFailures(lease: PublicGrowthSweepLease, hold: ReadbackHold | null) {
+  const ids = lease.cursor.discoveryInFlight;
+  const eventId = lease.cursor.discoveryInFlightEventId;
+  const priorResume = lease.cursor.discoveryLastJournalResume as { eventId?: unknown } | undefined;
+  const uncertain = lease.cursor.discoveryUncertainOutcomes;
+  if (!Array.isArray(ids) || ids.length < 1 || ids.length > CONCURRENCY
+      || ids.some((id) => typeof id !== "string" || !UUID.test(id) || id !== id.toLowerCase())
+      || new Set(ids).size !== ids.length || typeof eventId !== "string" || !UUID.test(eventId)
+      || eventId !== eventId.toLowerCase() || priorResume?.eventId === eventId
+      || (uncertain != null && (!Array.isArray(uncertain) || uncertain.length > 0))
+      || lease.cursor.discoveryReconciliationReason != null) return null;
+  const after = publicGrowthAfterCompanyId(lease.cursor);
+  const continuations = readFederalDiscoveryContinuations(lease.cursor);
+  const timeouts = strategyTimeouts(lease.cursor);
+  const held = new Set([...heldCompanies(timeouts), ...(hold?.companyIds ?? [])].map(id => id.toLowerCase()));
+  const debt = readPublicGrowthRetryState(lease.cursor);
+  const debtIds = new Set([...debt.retryQueue, ...debt.deadLetters].map(row => row.companyId));
+  // Main selection is strictly above the keyset. Recovery here supports only
+  // existing pending work below it, with no debt to replay or overwrite.
+  if (after === null || ids.some(id => id >= after || !continuations[id] || held.has(id) || debtIds.has(id))) return null;
+
+  const { data: event, error } = await serviceClient().from("app_events")
+    .select("id,module,kind,entity_type,meta").eq("id", eventId).maybeSingle();
+  if (error) throw new Error("discovery membership journal read failed");
+  const meta = event?.meta;
+  const holdSummary = { unresolvedReadbackCompanyIds: hold?.companyIds ?? [],
+    unresolvedReadbackCompanies: hold?.companyIds.length ?? 0,
+    readbackHoldStatus: hold?.status ?? null, readbackHoldReason: hold?.reason ?? null };
+  if (event?.id !== eventId || event.module !== "headhunter" || event.kind !== "federal.discovery.attempts"
+      || event.entity_type !== "cron" || !meta || meta.source !== SOURCE || meta.requestStrategy !== REQUEST_STRATEGY
+      || meta.coverageVerified !== false || meta.historyComplete !== false
+      || !isDeepStrictEqual(meta.newStrategyHeldCompanyIds, [])
+      || meta.strategyHoldReason !== "second_identical_request_timeout"
+      || meta.heldStrategyCompanies !== heldCompanies(timeouts).size
+      || Object.entries(holdSummary).some(([key, value]) => !isDeepStrictEqual(meta[key], value))
+      || typeof meta.attemptedAt !== "string" || !Number.isFinite(Date.parse(meta.attemptedAt))
+      || Date.parse(meta.attemptedAt) > Date.now()
+      || !Array.isArray(meta.attemptedCompanies) || meta.attemptedCompanies.length !== ids.length) return null;
+  const allowedFields = new Set(["companyId", "status", "reason", "stage", "elapsedMs", "sourceRequests",
+    "verified", "historyComplete", "exhaustive", "mayHaveWritten", "httpStatus"]);
+  const wave: Outcome[] = [];
+  for (let index = 0; index < ids.length; index++) {
+    const row = meta.attemptedCompanies[index];
+    if (!row || typeof row !== "object" || Array.isArray(row)
+        || Object.keys(row).some(key => !allowedFields.has(key))
+        || row.companyId !== ids[index] || row.status !== "error" || row.stage !== "membership"
+        || row.reason !== "database_operation_failed" || row.sourceRequests !== 0
+        || row.mayHaveWritten !== false || row.verified !== false || row.historyComplete !== false || row.exhaustive !== false
+        || !Number.isFinite(row.elapsedMs) || row.elapsedMs < 0 || row.httpStatus != null) return null;
+    wave.push(row as Outcome);
+  }
+  const queued = queuePublicGrowthMainFailures(lease.cursor, wave.map(debtOutcome), wave.length, meta.attemptedAt);
+  if (queued.queued !== wave.length) throw new Error("discovery membership failure debt mismatch");
+  // The shared parser normalizes old timestamps/extensions. Preserve every old
+  // debt row exactly; only the journal's newly proven failures are additions.
+  const retryQueue = [...structuredClone((lease.cursor.retryQueue ?? []) as unknown[]),
+    ...queued.cursorPatch.retryQueue.filter(row => ids.includes(row.companyId))];
+  const resumedAt = new Date().toISOString();
+  const receipt = { source: SOURCE, status: "journaled_membership_failures_resumed", checked: 0, mainChecked: 0, retryChecked: 0,
+    resumedAttempts: wave.length, resumedMembershipFailures: wave.length, resumedJournalId: eventId, resumedCompanyIds: ids,
+    sourceRequests: 0, journaledSourceRequests: 0, providerReplay: false, matched: 0, errors: wave.length,
+    afterCompanyId: after, pendingSearches: Object.keys(continuations).length,
+    retryQueued: wave.length, retryRemaining: retryQueue.length, ...holdSummary,
+    historyComplete: false, attemptCycleComplete: false, coverageVerified: false };
+  await checkpointPublicGrowthSweep(lease, { retryQueue,
+    discoveryInFlight: [], discoveryInFlightEventId: null,
+    discoveryAttemptsTotal: counter(lease.cursor.discoveryAttemptsTotal) + wave.length,
+    discoveryLastJournalResume: { eventId, companyIds: ids, attemptedAt: meta.attemptedAt, resumedAt,
+      kind: "membership_preflight_failures", sourceRequests: 0 },
+    lastDiscoveryOutcomes: wave, lastDiscoveryAttemptedAt: meta.attemptedAt, lastDiscoveryReceipt: receipt });
+  await completePublicGrowthSweep(lease, { ...receipt, done: false, advanceCursor: false, mode: "retry" });
+  return receipt;
+}
+
 async function inspectState() {
   try {
     const { data, error } = await serviceClient().from("public_growth_sweep_state")
@@ -329,6 +406,8 @@ async function run(req: NextRequest) {
     if (!Array.isArray(inFlight) || inFlight.length > 0) {
       const resumed = await resumeJournaledRetrySearch(lease, unresolvedHold);
       if (resumed) return NextResponse.json(resumed);
+      const membershipFailures = await resumeJournaledMembershipFailures(lease, unresolvedHold);
+      if (membershipFailures) return NextResponse.json(membershipFailures);
       await failPublicGrowthSweep(lease, new Error("interrupted_discovery_requires_readback"));
       return NextResponse.json({ source: SOURCE, status: "interrupted_attempt_requires_readback", checked: 0, coverageVerified: false }, { status: 409 });
     }

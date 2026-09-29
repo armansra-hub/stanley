@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildDailyWavePaths, DAILY_STAGE_SIZE } from "@/lib/cron/dailyPlan";
+import { readDailyChildReceipt } from "@/lib/cron/dailyOutcome";
 import { logEvent } from "@/lib/db/events";
 
 /**
@@ -58,30 +59,34 @@ async function run(req: NextRequest) {
       const response = await fetch(`${base}${path}`, {
         headers: { "x-cron-secret": cronSecret },
         cache: "no-store",
+        signal: AbortSignal.timeout(275_000),
       });
-      void response.body?.cancel().catch(() => {});
-      return { path, status: response.status };
-    } catch (error) {
-      return { path, error: error instanceof Error ? error.message : String(error) };
+      return { path, status: response.status, ...await readDailyChildReceipt(response) };
+    } catch {
+      return { path, outcome: "failed" as const, issue: "request_failed" };
     }
   }));
-  const ok = results.filter((result) => result.status === 200).length;
-  const failed = results.length - ok;
+  const httpOk = results.filter((result) => "status" in result && result.status >= 200 && result.status < 300).length;
+  const ok = results.filter((result) => result.outcome === "reported_success").length;
+  const failed = results.filter((result) => result.outcome === "failed").length;
+  const partial = results.filter((result) => result.outcome === "partial").length;
+  const unverified = results.filter((result) => result.outcome === "unverified").length;
   await logEvent("headhunter", "daily.stage", {
-    summary: `Daily stage ${stage + 1}/${stageCount}: ${ok}/${results.length} sweeps OK`,
+    summary: `Daily stage ${stage + 1}/${stageCount}: ${ok} reported successful, ${partial} partial, ${failed} failed, ${unverified} unverified`,
     entity_type: "cron",
-    meta: { runId, stage, stageCount, ok, failed, results },
+    meta: { runId, stage, stageCount, httpOk, ok, failed, partial, unverified, coverageVerified: false, results },
   }).catch(() => {});
 
   if (stage + 1 === stageCount) {
-    await logEvent("headhunter", "daily.done", {
-      summary: `Hourly sweep rotation reached stage ${stageCount}/${stageCount}`,
+    // Reaching the last clock slot proves nothing about the preceding stages.
+    await logEvent("headhunter", "daily.rotation_reached_end", {
+      summary: `Hourly sweep rotation reached stage ${stageCount}/${stageCount}; rotation completeness unverified`,
       entity_type: "cron",
-      meta: { runId, status: "rotation_complete", total: paths.length, stageCount },
+      meta: { runId, status: "completeness_unverified", total: paths.length, stageCount, coverageVerified: false },
     }).catch(() => {});
   }
 
-  return NextResponse.json({ completed: true, runId, stage, stageCount, children: stagePaths.length, ok, failed });
+  return NextResponse.json({ completed: true, runId, stage, stageCount, children: stagePaths.length, httpOk, ok, failed, partial, unverified, coverageVerified: false, results });
 }
 
 export async function GET(req: NextRequest) { return run(req); }

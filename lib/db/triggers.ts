@@ -340,7 +340,13 @@ export async function pickForRotation(limit: number, offset = 0): Promise<Array<
 export async function markChecked(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const db = serviceClient();
-  await db.from("companies").update({ last_checked_at: new Date().toISOString() }).in("id", ids);
+  const { error } = await db.from("companies").update({ last_checked_at: new Date().toISOString() }).in("id", ids);
+  if (error) throw rotationCheckpointError("News", error);
+}
+
+function rotationCheckpointError(source: string, error: { code?: string }, operation: "read" | "write" = "write"): Error {
+  const code = /^[A-Z0-9]{5}$/i.test(error.code ?? "") ? error.code : "database_error";
+  return new Error(`${source} checkpoint ${operation} failed: ${code}`);
 }
 
 /** The next batch of base companies to ATS-check — must have a domain; longest-since
@@ -359,12 +365,11 @@ export async function pickAtsForRotation(limit: number, offset = 0): Promise<Arr
   return (data ?? []).map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) })) as any[];
 }
 
-/** Record the ATS detection/poll outcome (stamps ats_checked_at). Graceful pre-0020. */
+/** Persist ATS identity and the attempt timestamp; callers separately report coverage. */
 export async function setAtsChecked(id: string, patch: { ats_type?: string; ats_token?: string | null }): Promise<void> {
-  try {
-    const db = serviceClient();
-    await db.from("companies").update({ ...patch, ats_checked_at: new Date().toISOString() }).eq("id", id);
-  } catch { /* columns missing pre-0020 → no-op */ }
+  const db = serviceClient();
+  const { error } = await db.from("companies").update({ ...patch, ats_checked_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw rotationCheckpointError("ATS", error);
 }
 
 /** Rotation for the slow structured-signal sweep (USAspending; name-only Form D
@@ -392,27 +397,30 @@ export async function markSignalsChecked(ids: string[]): Promise<void> {
 }
 
 /** All TAL (claimed) companies, for the daily highest-priority news sweep. */
-export async function listTalCompanies(): Promise<Array<{ id: string; name: string } & RotationSignalContext>> {
+export async function listTalCompanies(): Promise<Array<{ id: string; name: string; domain: string | null; last_checked_at: string | null } & RotationSignalContext>> {
   const db = serviceClient();
-  const out: Array<{ id: string; name: string } & RotationSignalContext> = [];
+  const out: Array<{ id: string; name: string; domain: string | null; last_checked_at: string | null } & RotationSignalContext> = [];
   for (let from = 0; ; from += 1000) {
-    const { data } = await db.from("companies").select("id, name, record_dead, description, subindustry, ns_industry").eq("tal_claimed", true).range(from, from + 999);
-    const batch = (data ?? []) as Array<{ id: string; name: string } & RotationSignalContext>;
+    const { data, error } = await db.from("companies").select("id, name, domain, last_checked_at, record_dead, description, subindustry, ns_industry")
+      .eq("tal_claimed", true).order("id", { ascending: true }).range(from, from + 999);
+    if (error) throw rotationCheckpointError("TAL companies", error, "read");
+    const batch = (data ?? []) as typeof out;
     out.push(...batch);
     if (batch.length < 1000) break;
   }
-  return out;
+  // News workers can update timestamps between pages. Page by immutable ID,
+  // then prioritize the complete loaded set without shifting offset boundaries.
+  return out.sort((a, b) => (a.last_checked_at ?? "").localeCompare(b.last_checked_at ?? "") || a.id.localeCompare(b.id));
 }
 
 /** Raise the in-app alert flag on TAL leads that just got a new signal. */
 export async function setTalAlert(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  try {
-    const db = serviceClient();
-    for (let i = 0; i < ids.length; i += 200) {
-      await db.from("companies").update({ tal_alert: true }).in("id", ids.slice(i, i + 200));
-    }
-  } catch { /* column missing pre-0025 → no-op */ }
+  const db = serviceClient();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await db.from("companies").update({ tal_alert: true }).in("id", ids.slice(i, i + 200));
+    if (error) throw rotationCheckpointError("TAL alert", error);
+  }
 }
 
 /** Clear TAL alerts (specific ids, or all when ids omitted) once the AE has seen them. */
@@ -478,10 +486,9 @@ export async function setParent(id: string, name: string, confidence: "high" | "
 
 /** Store the latest website growth-phrase fingerprint + stamp the check time. */
 export async function setSiteChecked(id: string, hash: string): Promise<void> {
-  try {
-    const db = serviceClient();
-    await db.from("companies").update({ site_hash: hash, site_checked_at: new Date().toISOString() }).eq("id", id);
-  } catch { /* columns missing pre-0027 → no-op */ }
+  const db = serviceClient();
+  const { error } = await db.from("companies").update({ site_hash: hash, site_checked_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw rotationCheckpointError("Website", error);
 }
 
 /** Stamp a failed website attempt without replacing its last known fingerprint. */

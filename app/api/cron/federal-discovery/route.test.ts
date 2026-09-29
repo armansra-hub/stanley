@@ -50,9 +50,15 @@ const retryJournal = (ns = [2, 3], hold = readbackHold([id(1)])) => ({
   id: id(901), module: "headhunter", kind: "federal.discovery.attempts", entity_type: "cron",
   meta: { source: "federal-discovery", requestStrategy: "name-only-v1", attemptedAt: "2026-09-15T00:00:00Z",
     attemptedCompanies: ns.map((n) => ({ ...row(n, "in_progress"), reason: "candidate_search_continues", stage: "award_search", continuation: searchContinuation(n) })),
-    newStrategyHeldCompanyIds: [], heldStrategyCompanies: 0, strategyHoldReason: "second_identical_request_timeout",
+    newStrategyHeldCompanyIds: [] as string[], heldStrategyCompanies: 0, strategyHoldReason: "second_identical_request_timeout",
     unresolvedReadbackCompanyIds: hold.companyIds, unresolvedReadbackCompanies: hold.companyIds.length,
     readbackHoldStatus: hold.status, readbackHoldReason: hold.reason, coverageVerified: false, historyComplete: false },
+});
+const membershipJournal = (ns = [2, 3], hold = readbackHold([id(1)])) => ({
+  ...retryJournal(ns, hold),
+  meta: { ...retryJournal(ns, hold).meta, attemptedCompanies: ns.map(n => ({
+    ...row(n, "error"), reason: "database_operation_failed", stage: "membership", sourceRequests: 0,
+  })) },
 });
 
 describe("federal discovery managed admission", () => {
@@ -230,6 +236,116 @@ describe("federal discovery managed admission", () => {
     expect(mocks.journal).toHaveBeenCalledTimes(1);
     expect(mocks.worker.mock.calls.map(([companyId]) => companyId)).toEqual([id(2), id(3)]);
     expect(lease.cursor.discoveryAttemptsTotal).toBe(81); expect(lease.cursor.discoveryReadbackHold).toEqual(hold);
+  });
+
+  it("reconciles zero-query membership failures once while preserving pending searches and unrelated debt exactly", async () => {
+    const hold = readbackHold([id(1)]), journal = membershipJournal([2, 3, 4, 5], hold);
+    const continuations = Object.fromEntries([1, 2, 3, 4, 5].map(n => [id(n), { ...searchContinuation(n), retainedEvidence: { exact: n } }]));
+    const timeouts = [{ ...timeoutState(6), historicalEvidence: { unchanged: true } }];
+    journal.meta.heldStrategyCompanies = 1;
+    const oldRetry = { ...retry(1), extraEvidence: { unchanged: true } };
+    const oldDead = { companyId: id(8), totalFailures: 3, firstFailedAt: "2026-09-13T00:00:00Z",
+      lastFailedAt: "2026-09-14T00:00:00Z", lastError: "prior_error", deadLetteredAt: "2026-09-14T00:00:00Z",
+      resolvedAt: null, occurrences: 1, awardContinuation: null, extraEvidence: { preserve: true } };
+    lease.cursor = { discoveryReadbackHold: hold, discoveryInFlight: [2, 3, 4, 5].map(id), discoveryInFlightEventId: journal.id,
+      discoveryContinuations: continuations, retryQueue: [oldRetry], deadLetters: [oldDead], retryServedLast: true,
+      discoveryAttemptsTotal: 77, afterCompanyId: id(20), discoveryStrategyTimeouts: timeouts, historicalField: { unchanged: true } };
+    mocks.journal.mockResolvedValue({ data: journal, error: null });
+    const response = await GET(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "journaled_membership_failures_resumed", checked: 0, mainChecked: 0,
+      retryChecked: 0, resumedAttempts: 4, resumedMembershipFailures: 4, sourceRequests: 0, journaledSourceRequests: 0,
+      providerReplay: false, matched: 0, errors: 4, retryQueued: 4, retryRemaining: 5,
+      historyComplete: false, coverageVerified: false, attemptCycleComplete: false });
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.event).not.toHaveBeenCalled();
+    expect(mocks.checkpoint).toHaveBeenCalledTimes(1); expect(mocks.complete).toHaveBeenCalledTimes(1);
+    expect(lease.cursor.discoveryContinuations).toEqual(continuations);
+    expect(lease.cursor.discoveryReadbackHold).toEqual(hold); expect(lease.cursor.deadLetters).toEqual([oldDead]);
+    expect(lease.cursor.discoveryStrategyTimeouts).toEqual(timeouts); expect(lease.cursor.retryServedLast).toBe(true);
+    expect(lease.cursor.afterCompanyId).toBe(id(20)); expect(lease.cursor.historicalField).toEqual({ unchanged: true });
+    expect(lease.cursor.discoveryAttemptsTotal).toBe(81); expect(lease.cursor.discoveryInFlight).toEqual([]);
+    expect(lease.cursor.discoveryInFlightEventId).toBeNull();
+    const failureTime = new Date(journal.meta.attemptedAt).toISOString();
+    expect(lease.cursor.retryQueue).toEqual([oldRetry, ...[2, 3, 4, 5].map(n => ({ ...retry(n),
+      lastError: "membership:database_operation_failed", queuedAt: failureTime,
+      lastAttemptedAt: failureTime, firstFailedAt: failureTime }))]);
+    expect(mocks.complete).toHaveBeenCalledWith(lease, expect.objectContaining({ advanceCursor: false, done: false, checked: 0, errors: 4 }));
+    expect(lease.cursor.discoveryLastJournalResume).toMatchObject({ eventId: journal.id, kind: "membership_preflight_failures", sourceRequests: 0 });
+  });
+
+  it.each(["missing-journal", "wrong-kind", "array-order", "wrong-stage", "wrong-reason", "mixed-success", "provider-request",
+    "possible-write", "unknown-field", "continuation-in-outcome", "candidate-decision", "http-status", "verified", "coverage",
+    "changed-hold", "new-strategy-hold", "strategy-held", "readback-held", "existing-retry", "existing-dead-letter",
+    "no-saved-continuation", "main-selection", "no-keyset", "uncertain", "malformed-uncertain", "reconciliation-reason",
+    "already-resumed", "future-journal"])("keeps the membership fence unchanged without replay for unsupported evidence: %s", async failure => {
+    const hold = readbackHold([id(1)]), journal = membershipJournal();
+    lease.cursor = { discoveryReadbackHold: hold, discoveryInFlight: [id(2), id(3)], discoveryInFlightEventId: journal.id,
+      discoveryContinuations: { [id(2)]: searchContinuation(2), [id(3)]: searchContinuation(3) },
+      retryQueue: [], deadLetters: [], discoveryAttemptsTotal: 77, afterCompanyId: id(20) };
+    const first = journal.meta.attemptedCompanies[0] as Record<string, unknown>;
+    if (failure === "wrong-kind") journal.kind = "unrelated";
+    if (failure === "array-order") journal.meta.attemptedCompanies.reverse();
+    if (failure === "wrong-stage") first.stage = "award_search";
+    if (failure === "wrong-reason") first.reason = "worker_exception";
+    if (failure === "mixed-success") first.status = "no_candidate";
+    if (failure === "provider-request") first.sourceRequests = 1;
+    if (failure === "possible-write") first.mayHaveWritten = true;
+    if (failure === "unknown-field") first.unreviewed = true;
+    if (failure === "continuation-in-outcome") first.continuation = searchContinuation(2, 3);
+    if (failure === "candidate-decision") first.candidateDecision = { status: "verified" };
+    if (failure === "http-status") first.httpStatus = 500;
+    if (failure === "verified") first.verified = true;
+    if (failure === "coverage") journal.meta.coverageVerified = true;
+    if (failure === "changed-hold") journal.meta.unresolvedReadbackCompanyIds = [];
+    if (failure === "new-strategy-hold") journal.meta.newStrategyHeldCompanyIds = [id(2)];
+    if (failure === "strategy-held") lease.cursor.discoveryStrategyTimeouts = [timeoutState(2)];
+    if (failure === "readback-held") lease.cursor.discoveryReadbackHold = readbackHold([id(2)]);
+    if (failure === "existing-retry") lease.cursor.retryQueue = [retry(2)];
+    if (failure === "existing-dead-letter") lease.cursor.deadLetters = [{ companyId: id(2), totalFailures: 3,
+      firstFailedAt: "2026-09-14T00:00:00Z", lastFailedAt: "2026-09-14T00:00:00Z", lastError: "prior_error",
+      deadLetteredAt: "2026-09-14T00:00:00Z", resolvedAt: null, occurrences: 1, awardContinuation: null }];
+    if (failure === "no-saved-continuation") lease.cursor.discoveryContinuations = { [id(2)]: searchContinuation(2) };
+    if (failure === "main-selection") lease.cursor.afterCompanyId = id(2);
+    if (failure === "no-keyset") delete lease.cursor.afterCompanyId;
+    if (failure === "uncertain") lease.cursor.discoveryUncertainOutcomes = [{ companyId: id(2) }];
+    if (failure === "malformed-uncertain") lease.cursor.discoveryUncertainOutcomes = {};
+    if (failure === "reconciliation-reason") lease.cursor.discoveryReconciliationReason = "enrollment_write_requires_readback";
+    if (failure === "already-resumed") lease.cursor.discoveryLastJournalResume = { eventId: journal.id };
+    if (failure === "future-journal") journal.meta.attemptedAt = "2026-09-16T00:00:00Z";
+    mocks.journal.mockResolvedValue({ data: failure === "missing-journal" ? null : journal, error: null });
+    const before = structuredClone(lease.cursor);
+    expect((await GET(request())).status).toBe(409); expect(lease.cursor).toEqual(before);
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.event).not.toHaveBeenCalled();
+    expect(mocks.checkpoint).not.toHaveBeenCalled(); expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
+  it("retains the complete membership fence when the fenced recovery checkpoint fails", async () => {
+    const journal = membershipJournal();
+    lease.cursor = { discoveryReadbackHold: readbackHold(), discoveryInFlight: [id(2), id(3)], discoveryInFlightEventId: journal.id,
+      discoveryContinuations: { [id(2)]: searchContinuation(2), [id(3)]: searchContinuation(3) },
+      retryQueue: [], discoveryAttemptsTotal: 77, afterCompanyId: id(20) };
+    mocks.journal.mockResolvedValue({ data: journal, error: null }); mocks.checkpoint.mockRejectedValue(new Error("lost lease"));
+    const before = structuredClone(lease.cursor);
+    expect((await GET(request())).status).toBe(500); expect(lease.cursor).toEqual(before);
+    expect(mocks.complete).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+
+  it("never credits the membership journal twice after completion fails beyond its atomic checkpoint", async () => {
+    const journal = membershipJournal();
+    lease.cursor = { discoveryReadbackHold: readbackHold(), discoveryInFlight: [id(2), id(3)], discoveryInFlightEventId: journal.id,
+      discoveryContinuations: { [id(2)]: searchContinuation(2), [id(3)]: searchContinuation(3) },
+      retryQueue: [], discoveryAttemptsTotal: 77, afterCompanyId: id(20) };
+    mocks.journal.mockResolvedValue({ data: journal, error: null }); mocks.complete.mockRejectedValueOnce(new Error("completion unavailable"));
+    expect((await GET(request())).status).toBe(500);
+    expect(lease.cursor.discoveryAttemptsTotal).toBe(79); expect(lease.cursor.discoveryInFlight).toEqual([]);
+    expect(lease.cursor.discoveryLastJournalResume).toMatchObject({ eventId: journal.id });
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(lease.cursor.retryQueue).toHaveLength(2);
+    mocks.rpc.mockResolvedValue({ data: [], error: null });
+    const response = await GET(request("?limit=2"));
+    expect(response.status).toBe(200); expect(mocks.journal).toHaveBeenCalledTimes(1);
+    expect(mocks.worker.mock.calls.map(([companyId]) => companyId)).toEqual([id(2), id(3)]);
+    expect(mocks.worker.mock.calls[0][1].continuation).toEqual(searchContinuation(2));
+    expect(lease.cursor.discoveryAttemptsTotal).toBe(81);
   });
 
   it("retains held search continuations without admitting them or clearing their debt", async () => {

@@ -3,7 +3,7 @@ import { markSiteAttempted, pickSitesForRotation, setSiteChecked, setParent, rec
 import { setCompaniesStatus } from "@/lib/db/companies";
 import { getAppConfig } from "@/lib/db/settings";
 import { fetchSiteSignals, readWebsiteCache, type WebsiteCacheEntry } from "@/lib/sources/website";
-import { fetchFeed, fetchFeedResult, readNewsFeedCache } from "@/lib/sources/googleNews";
+import { fetchFeedResult, readNewsFeedCache } from "@/lib/sources/googleNews";
 import { fetchConditionalText, responseValidators } from "@/lib/sources/conditionalFetch";
 import { classifyAndRecordHeadline } from "@/lib/triggers/sweep";
 import { isFinanceHireEligible, isCareerEvidenceUrl } from "@/lib/triggers/signalIntegrity";
@@ -14,8 +14,13 @@ import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceStat
 import { companyPageUrl, discoverSiteLinks, sameCompanySite, sitePageEvidence } from "@/lib/sources/siteDiscovery";
 import { nextRevisit, websiteChangeHistory } from "./adaptiveRevisit";
 import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from "@/lib/sources/outcomes";
+import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepOutcomes } from "./sweepOutcomes";
 
 const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now() - new Date(d).getTime()) / 86_400_000; return a >= 0 && a < 180; };
+
+// A final site/backlog/feed batch can use ~95 seconds of network time. Stop
+// reserving at 150 seconds to leave 125 seconds before the dispatcher's timeout.
+export const WEBSITE_ADMISSION_BUDGET_MS = 150_000;
 
 /**
  * Website watch (FREE) over claimable leads:
@@ -27,15 +32,15 @@ const fresh = (d: string | null) => { if (!d) return false; const a = (Date.now(
  * Homepage/about-page phrases never publish M&A or expansion triggers. They do not
  * provide a canonical evidence page and previously created fabricated /# links.
  */
-export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail" } = {}): Promise<{ checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
-  const stats = { checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0 };
+export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail" } = {}): Promise<SweepOutcomes & { checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
+  const stats = { ...newSweepOutcomes(), checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0 };
   const captureEnabled = intelligenceEnabled();
   let autodismiss = true;
-  try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch { /* default true */ }
+  try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch (error) { sweepError(stats, "website", "config_read", error); }
 
   for await (const slice of rotationBatches(
     (n, offset) => pickSitesForRotation(n, offset, opts.scope ?? "claimable"),
-    { limit, batchSize: 12, offset: opts.offset },
+    { limit, batchSize: 12, offset: opts.offset, budgetMs: WEBSITE_ADMISSION_BUDGET_MS },
   )) {
     // This includes the site's/feed's fetch time. Sequential headline verifier
     // calls share the remainder; expiration still queues candidates for the
@@ -43,13 +48,15 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
     const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
     stats.checked += slice.length;
     await Promise.all(slice.map(async (c) => {
+      let outcome: SweepOutcome = "failed";
+      stats.attempted++;
       try {
         const sourceKey = "website";
         let state: Awaited<ReturnType<typeof readSourceState>> | null = null;
         let stateReadFailed = false;
         if (captureEnabled) {
           try { state = await readSourceState(c.id, sourceKey); }
-          catch { stateReadFailed = true; }
+          catch (error) { stateReadFailed = true; sweepError(stats, "website", "state_read", error, c.id); }
         }
         const base = `https://${c.domain}`;
         const urls = (value: unknown): string[] => Array.isArray(value)
@@ -62,6 +69,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           ? await fetchSiteSignals(c.domain, c.name, { knownUrls, httpCache: priorCache, maxPages: baseline ? 2 : 5, mode: baseline ? "baseline" : "deep" })
           : await fetchSiteSignals(c.domain, c.name);
         let captureFailed = stateReadFailed;
+        let storageFailed = stateReadFailed;
         const fetchedPending: string[] = [];
         const failedPending: string[] = [...(scan.coverage.failedUrls ?? [])];
         const urlOutcomes: SourceUrlOutcome[] = [...(scan.coverage.urlOutcomes ?? [])];
@@ -111,9 +119,9 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
                   eventDateBasis: published.length === 1 ? "page_publication" : "unknown", collectionMode: baseline ? "baseline" : "deep",
                   discovery: { collector: "website", url: page.url, requestedUrls: page.requestedUrls ?? [page.url], title: page.title, eventDate: published.length === 1 ? published[0] : null } },
               });
-              if (!stored) captureFailed = true;
+              if (!stored) { captureFailed = storageFailed = true; sweepError(stats, "website", "observation", "Website observation persistence disabled", c.id); }
               else savedUrls.push(page.url);
-            } catch { captureFailed = true; }
+            } catch (error) { captureFailed = storageFailed = true; sweepError(stats, "website", "observation", error, c.id); }
           }
         }
         let touched = false;
@@ -134,15 +142,15 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         // event verifier, including the acquirer-position check for M&A.
         let feedCache = state?.cursor?.feedUrl === scan.feedUrl ? readNewsFeedCache(state?.cursor?.feedCache) : undefined;
         if (scan.feedUrl && !baseline) {
-          const feedResult = captureEnabled ? await fetchFeedResult(scan.feedUrl, 12, { cache: feedCache }) : null;
-          if (feedResult?.cache) feedCache = feedResult.cache;
-          if (feedResult?.status === "unavailable") captureFailed = true;
-          const feedItems = (feedResult?.items ?? await fetchFeed(scan.feedUrl, 8)).filter(it => fresh(it.signal_date));
+          const feedResult = await fetchFeedResult(scan.feedUrl, captureEnabled ? 12 : 8, { cache: feedCache });
+          if (feedResult.cache) feedCache = feedResult.cache;
+          if (feedResult.status === "unavailable") { captureFailed = true; sweepError(stats, "website", "feed", feedResult.error ?? "Website feed unavailable", c.id); }
+          const feedItems = feedResult.items.filter(it => fresh(it.signal_date));
           if (captureEnabled) {
             for (let from = 0; from < feedItems.length; from += 4) {
               const results = await Promise.allSettled(feedItems.slice(from, from + 4).map(it => classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false, classifierDeadlineMs })));
               for (const result of results) {
-                if (result.status === "rejected") captureFailed = true;
+                if (result.status === "rejected") { captureFailed = storageFailed = true; sweepError(stats, "website", "headline", result.reason, c.id); }
                 else if (result.value) { stats.triggered++; touched = true; }
               }
             }
@@ -180,6 +188,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
             !complete ? "incomplete" : changedSinceComplete ? "changed" : changes.outcome);
           const consecutiveFailures = savedUrls.length ? 0 : Math.min(8, Number(state?.cursor?.consecutiveFailures ?? 0) + 1);
           const warningCodes = [...new Set(urlOutcomes.filter(outcome => outcome.outcome === "unavailable").map(outcome => outcome.code ?? "network"))];
+          if (failedPending.length || warningCodes.length) sweepError(stats, "website", "pages", warningCodes.join(", ") || "Website pages unavailable", c.id);
           const httpCache = Object.fromEntries(Object.entries({ ...priorCache, ...scan.httpCache, ...pendingCache })
             .filter(([, entry]) => entry.retained || savedUrls.includes(entry.finalUrl))
             .map(([url, entry]) => [url, { ...entry, retained: true }]).slice(-24));
@@ -202,11 +211,18 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
             ...(incomplete ? { error: warningCodes.length ? `Website: ${warningCodes.join(", ")}` : captureFailed ? "Website evidence capture/storage incomplete" : "Website depth pending" } : {}),
           });
           if (!captureFailed) await setSiteChecked(c.id, fingerprint);
+          outcome = storageFailed ? "failed" : savedUrls.length ? (complete ? "succeeded" : "partial") : "unavailable";
+        } else {
+          const available = scan.coverage.succeededUrls.length > 0 || Boolean(scan.coverage.notModifiedUrls?.length);
+          outcome = available ? (captureFailed || failedPending.length || scan.coverage.remainingUrls.length ? "partial" : "succeeded") : "unavailable";
+          if (failedPending.length || !available) sweepError(stats, "website", "pages", "Website evidence unavailable or incomplete", c.id);
         }
-      } catch { /* per-company isolated */ }
+      } catch (error) { outcome = "failed"; sweepError(stats, "website", "collection", error, c.id); }
       finally {
         // A permanently broken domain must not monopolize the oldest-first cursor.
-        await markSiteAttempted(c.id).catch(() => {});
+        try { await markSiteAttempted(c.id); }
+        catch (error) { outcome = "failed"; sweepError(stats, "website", "attempt_stamp", error, c.id); }
+        stats[outcome]++;
       }
     }));
   }

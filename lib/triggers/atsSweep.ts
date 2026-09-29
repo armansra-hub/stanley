@@ -7,6 +7,7 @@ import { enqueueObservation } from "@/lib/intelligence/observations";
 import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
 import { applyAtsBatch, enqueuePendingAtsPatterns, atsJobIdentity, prepareAtsJob, readAtsKnownJobs, readAtsScan } from "@/lib/intelligence/atsLifecycle";
 import { atsRevisitOutcome, nextRevisit } from "./adaptiveRevisit";
+import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepOutcomes } from "./sweepOutcomes";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -21,14 +22,17 @@ import { atsRevisitOutcome, nextRevisit } from "./adaptiveRevisit";
  * accounting incumbent: QuickBooks-class boosts the readiness score; an existing
  * ERP (NetSuite/Intacct/…) suppresses the lead (not a prospect).
  */
-export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Promise<{ checked: number; detected: number; with_board: number; finance_triggers: number; erp_triggers: number; already_on_erp: number }> {
-  const stats = { checked: 0, detected: 0, with_board: 0, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0 };
+export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Promise<SweepOutcomes & { checked: number; detected: number; with_board: number; finance_triggers: number; erp_triggers: number; already_on_erp: number }> {
+  const stats = { ...newSweepOutcomes(), checked: 0, detected: 0, with_board: 0, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0 };
   const touched = new Set<string>();
   const intelligenceEnabled = process.env.STANLEY_INTELLIGENCE_ENABLED === "true";
 
   for await (const slice of rotationBatches(pickAtsForRotation, { limit, batchSize: 12, offset: opts.offset })) {
     stats.checked += slice.length;
     await Promise.all(slice.map(async (c) => {
+      let outcome: SweepOutcome = "failed";
+      let stage = "discovery";
+      stats.attempted++;
       try {
         let type = c.ats_type as AtsType | "none" | null;
         let token = c.ats_token as string | null;
@@ -49,27 +53,32 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
               ...(detection.status === "unavailable" ? { error: "ATS discovery unavailable; no absence inferred" } : {}),
             });
             if (detection.status === "none") await setAtsChecked(c.id, { ats_type: "none", ats_token: null });
+            outcome = detection.status === "none" ? "succeeded" : detection.status === "unsupported" ? "unsupported" : "unavailable";
+            if (outcome === "unavailable") sweepError(stats, "ats", "discovery", "ATS discovery unavailable", c.id);
             return;
           }
         } else {
           await setAtsChecked(c.id, {}); // just bump ats_checked_at (re-poll rotation)
         }
-        if (!type || !token) return;
+        if (!type || !token) { outcome = "unavailable"; sweepError(stats, "ats", "discovery", "ATS board identity unavailable", c.id); return; }
         stats.with_board++;
 
         // A finance role at a record-dead or finance-services company is not an
         // in-house-finance readiness signal. We still stamp/detect its board, but
         // do not infer triggers or an incumbent from its delivery-team postings.
-        if (c.record_dead === true) return;
+        if (c.record_dead === true) { outcome = "skipped"; return; }
         const financeEligible = isFinanceHireEligible(c);
 
         // 2) Poll + scan.
         const sourceKey = `ats:${type}:${token}`;
+        stage = "state_read";
         const sourceState = intelligenceEnabled ? await readSourceState(c.id, sourceKey) : null;
         const cursor = intelligenceEnabled ? await readAtsScan(c.id, sourceKey) : { scanId: null, offset: 0 };
         const offset = cursor.offset;
+        stage = "provider";
         const batch = await fetchAtsJobsBatch(type as AtsType, token, { offset, maxJobs: intelligenceEnabled ? 150 : 60 });
         const jobs = batch.jobs;
+        stage = "known_jobs_read";
         const knownJobs = intelligenceEnabled ? await readAtsKnownJobs(c.id, sourceKey, jobs.filter((job) => isCareerEvidenceUrl(job.url))) : new Map();
         const preparedJobs = [];
         let incumbent: "quickbooks" | "erp" | null = null;
@@ -81,7 +90,9 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
             const known = knownJobs.get(atsJobIdentity(sourceKey, j));
             const prepared = prepareAtsJob(sourceKey, j, known);
             preparedJobs.push(prepared);
-            if (!known || known.content_hash !== prepared.content_hash) await enqueueObservation({
+            stage = "observation";
+            if (!known || known.content_hash !== prepared.content_hash) {
+              const stored = await enqueueObservation({
               companyId: c.id, companyName: c.name, companyDomain: c.domain,
               sourceKind: "job", sourceUrl: j.url, title: j.title,
               text: `${j.title}${j.location ? ` — ${j.location}` : ""}\n${j.description}`,
@@ -89,8 +100,11 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
               metadata: { atsType: type, atsToken: token, atsJobKey: prepared.job_key, atsRoleCategories: prepared.categories,
                 listingChange: known ? "changed" : "first_observed", isClientPlacement: scan.isClientPlacement,
                 jobDateKind: type === "greenhouse" ? "updated" : "published_or_created", descriptionAvailable: Boolean(j.description) },
-            });
+              });
+              if (!stored) throw new Error("ATS observation persistence disabled");
+            }
           }
+          stage = "signals";
           // Recruiting delivery work and client placements are not an in-house
           // incumbent. New operating-role evidence stays in the research lane.
           if (!financeEligible || scan.isClientPlacement || (["jazzhr", "jobvite", "workday", "icims", "adp"].includes(type) && !j.description.trim())) continue;
@@ -113,9 +127,12 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
           touched.add(c.id); // recompute (QB boosts, ERP suppresses)
         }
         if (intelligenceEnabled) {
+          stage = "lifecycle_write";
           const lifecycle = await applyAtsBatch(c.id, sourceKey, cursor, batch, preparedJobs);
-          if (!lifecycle.accepted) return; // another invocation advanced this exact cursor
+          if (!lifecycle.accepted) { outcome = "partial"; sweepError(stats, "ats", "lifecycle_write", "ATS cursor changed", c.id); return; }
+          stage = "pattern_observation";
           await enqueuePendingAtsPatterns(c, sourceKey, type as AtsType, token);
+          stage = "state_write";
           await writeSourceState(c.id, sourceKey, {
             cursor: {
               ...(lifecycle.nextOffset == null ? {} : { offset: lifecycle.nextOffset, scanId: lifecycle.complete ? null : lifecycle.scanId }),
@@ -129,16 +146,24 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
             ...(lifecycle.restart ? { error: "ATS board changed during pagination; restarting complete scan" } : {}),
             ...(batch.status === "unavailable" ? { error: "ATS retrieval unavailable; prior offset retained" } : {}),
           });
+          outcome = batch.status === "unavailable" ? "unavailable" : lifecycle.complete ? "succeeded" : "partial";
+        } else {
+          outcome = batch.status === "unavailable" ? "unavailable" : batch.complete ? "succeeded" : "partial";
         }
-      } catch { /* per-company isolated */ }
+        if (outcome === "unavailable") sweepError(stats, "ats", "provider", "ATS provider unavailable", c.id);
+      } catch (error) { outcome = "failed"; sweepError(stats, "ats", stage, error, c.id); }
       finally {
         // Detection/network failures still advance the fair rotation; retry after
         // the rest of the TAM instead of starving every later row.
-        await setAtsChecked(c.id, {});
+        try { await setAtsChecked(c.id, {}); }
+        catch (error) { outcome = "failed"; sweepError(stats, "ats", "attempt_stamp", error, c.id); }
+        stats[outcome]++;
       }
     }));
   }
 
-  for (const id of touched) await recomputePriority(id);
+  for (const id of touched) {
+    try { await recomputePriority(id); } catch (error) { sweepError(stats, "ats", "priority", error, id); }
+  }
   return stats;
 }

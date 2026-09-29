@@ -31,7 +31,7 @@ export async function GET(req: Request) {
       ...(slot === 1 ? [sweepAts(72)] : []),
     ]);
     const outcomes = results.map(result => result.status === "fulfilled" ? result.value : { error: "source_unavailable" });
-    await logEvent("headhunter", "intelligence.collection", { summary: "Frequent public-source rotation completed", meta: { slot, outcomes } });
+    await logEvent("headhunter", "intelligence.collection", { summary: "Frequent public-source rotation attempt finished", meta: { slot, outcomes, coverageVerified: false } });
     // Start saved observations promptly using the remaining function budget.
     // The regular cron remains the durable recovery consumer if this wakeup fails.
     after(async () => {
@@ -41,6 +41,6 @@ export async function GET(req: Request) {
         summary: `Processed ${processed.processed} evidence jobs after collection`, meta: { ...processed, wakeup: "collection" },
       });
     });
-    return NextResponse.json({ enabled: true, slot, outcomes });
+    return NextResponse.json({ enabled: true, slot, outcomes, coverageVerified: false });
   } catch { return NextResponse.json({ error: "collection_unavailable" }, { status: 503 }); }
 }

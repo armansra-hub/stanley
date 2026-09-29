@@ -5,14 +5,14 @@ import { websiteChangeHistory } from "./adaptiveRevisit";
 
 const mocks = vi.hoisted(() => ({
   pick: vi.fn(), checked: vi.fn(), attempted: vi.fn(), parent: vi.fn(), trigger: vi.fn(), priority: vi.fn(), status: vi.fn(), config: vi.fn(),
-  site: vi.fn(), feed: vi.fn(), headline: vi.fn(), enqueue: vi.fn(), read: vi.fn(), write: vi.fn(), fetch: vi.fn(),
+  site: vi.fn(), feed: vi.fn(), feedResult: vi.fn(), headline: vi.fn(), enqueue: vi.fn(), read: vi.fn(), write: vi.fn(), fetch: vi.fn(),
 }));
 vi.mock("@/lib/db/triggers", () => ({ pickSitesForRotation: mocks.pick, setSiteChecked: mocks.checked, markSiteAttempted: mocks.attempted, setParent: mocks.parent, recordTrigger: mocks.trigger, recomputePriority: mocks.priority }));
 vi.mock("@/lib/db/companies", () => ({ setCompaniesStatus: mocks.status }));
 vi.mock("@/lib/db/settings", () => ({ getAppConfig: mocks.config }));
 vi.mock("@/lib/sources/website", async original => ({ ...await original<typeof import("@/lib/sources/website")>(), fetchSiteSignals: mocks.site }));
 vi.mock("@/lib/sources/googleNews", async original => ({ ...await original<typeof import("@/lib/sources/googleNews")>(), fetchFeed: mocks.feed,
-  fetchFeedResult: async () => ({ items: await mocks.feed(), status: "success" }) }));
+  fetchFeedResult: mocks.feedResult }));
 vi.mock("@/lib/triggers/sweep", () => ({ classifyAndRecordHeadline: mocks.headline }));
 vi.mock("@/lib/triggers/classify", () => ({ HEADLINE_CLASSIFIER_BATCH_BUDGET_MS: 30_000 }));
 vi.mock("@/lib/intelligence/observations", () => ({ enqueueObservation: mocks.enqueue, intelligenceEnabled: () => process.env.STANLEY_INTELLIGENCE_ENABLED === "true" }));
@@ -34,6 +34,7 @@ beforeEach(() => {
   mocks.pick.mockResolvedValue([company]); mocks.checked.mockResolvedValue(undefined); mocks.attempted.mockResolvedValue(undefined);
   mocks.config.mockResolvedValue({ parent_autodismiss: false }); mocks.site.mockImplementation(async () => scan());
   mocks.feed.mockResolvedValue([]); mocks.headline.mockResolvedValue(false); mocks.trigger.mockResolvedValue(true);
+  mocks.feedResult.mockImplementation(async () => ({ items: await mocks.feed(), status: "success" }));
   mocks.enqueue.mockResolvedValue({ id: "observation", queued: true });
   mocks.read.mockResolvedValue({ cursor: null, lastSuccessAt: null }); mocks.write.mockResolvedValue(undefined);
   mocks.fetch.mockImplementation(async url => ({ status: 200, finalUrl: String(url), body: "<main>Additional company operations evidence.</main>", contentType: "text/html" }));
@@ -41,6 +42,37 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("website evidence collection integration", () => {
+  it("reports complete, partial, and unavailable page coverage separately from attempts", async () => {
+    expect(await sweepWebsites(1)).toMatchObject({ checked: 1, attempted: 1, succeeded: 1, partial: 0, unavailable: 0, failed: 0 });
+    const missing = "https://acme.com/news/unavailable";
+    mocks.site.mockResolvedValue({ ...scan(), discoveredUrls: [articleUrl, missing],
+      coverage: { ...scan().coverage, attemptedUrls: [articleUrl, missing], failedUrls: [missing] } });
+    expect(await sweepWebsites(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 1, unavailable: 0, failed: 0 });
+    mocks.site.mockResolvedValue({ ...scan(), pages: [], discoveredUrls: [],
+      coverage: { attemptedUrls: [articleUrl], succeededUrls: [], remainingUrls: [], failedUrls: [articleUrl] } });
+    expect(await sweepWebsites(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 0, unavailable: 1, failed: 0 });
+  });
+
+  it("reports unavailable feeds and failed observation persistence without losing successful page evidence", async () => {
+    mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18" }, lastSuccessAt: null });
+    mocks.site.mockResolvedValue({ ...scan(), feedUrl: "https://acme.com/news.xml" });
+    mocks.feedResult.mockResolvedValue({ items: [], status: "unavailable", error: "timeout" });
+    const partial = await sweepWebsites(1);
+    expect(partial).toMatchObject({ attempted: 1, succeeded: 0, partial: 1, failed: 0 });
+    expect(partial.errors).toContainEqual(expect.objectContaining({ stage: "feed", code: "timeout" }));
+    mocks.enqueue.mockResolvedValue(null);
+    expect(await sweepWebsites(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 0, failed: 1 });
+  });
+
+  it("reports an unread cursor and attempt-stamp error without erasing the cursor or double-counting", async () => {
+    mocks.read.mockRejectedValue(new Error("state unavailable"));
+    mocks.attempted.mockRejectedValue(new Error("database unavailable"));
+    const result = await sweepWebsites(1);
+    expect(result).toMatchObject({ attempted: 1, failed: 1, succeeded: 0, error_count: 2 });
+    expect(result.errors.map(error => error.stage)).toEqual(["state_read", "attempt_stamp"]);
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
   it("preserves a captured page and advances its pending checkpoint on 304 without a fabricated capture", async () => {
     const cached = { finalUrl: articleUrl, retained: true, validators: { url: articleUrl, etag: '"saved"' }, discoveredUrls: [], feedUrl: null };
     mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18", knownUrls: [articleUrl], verifiedUrls: [articleUrl], pendingUrls: [articleUrl], httpCache: { [articleUrl]: cached } }, lastSuccessAt: "2026-09-18" });

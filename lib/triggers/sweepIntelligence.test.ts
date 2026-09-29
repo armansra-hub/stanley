@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkCompanyNews, classifyAndRecordHeadline, sweepBase } from "./sweep";
 
 const mocks = vi.hoisted(() => ({
-  enqueue: vi.fn(), read: vi.fn(), write: vi.fn(), fetch: vi.fn(), news: vi.fn(), newsResult: vi.fn(), newsItems: vi.fn(),
+  enqueue: vi.fn(), read: vi.fn(), write: vi.fn(), fetch: vi.fn(), news: vi.fn(), newsResult: vi.fn(), newsItems: vi.fn(), newsItemsResult: vi.fn(),
   queue: vi.fn(), seen: vi.fn(), flags: vi.fn(), classifier: vi.fn(), pick: vi.fn(), checked: vi.fn(),
 }));
 vi.mock("@/lib/intelligence/observations", () => ({ enqueueObservation: mocks.enqueue, intelligenceEnabled: () => process.env.STANLEY_INTELLIGENCE_ENABLED === "true" }));
 vi.mock("@/lib/intelligence/sourceState", () => ({ readSourceState: mocks.read, writeSourceState: mocks.write }));
 vi.mock("@/lib/triggers/urlSafety", async original => ({ ...await original<typeof import("@/lib/triggers/urlSafety")>(), fetchPublicHttpText: mocks.fetch }));
-vi.mock("@/lib/sources/googleNews", () => ({ fetchNewsForCompany: mocks.news, fetchNewsForCompanyResult: mocks.newsResult, fetchNewsItems: mocks.newsItems }));
+vi.mock("@/lib/sources/googleNews", () => ({ fetchNewsForCompany: mocks.news, fetchNewsForCompanyResult: mocks.newsResult, fetchNewsItems: mocks.newsItems, fetchNewsItemsResult: mocks.newsItemsResult }));
 vi.mock("@/lib/db/triggers", () => ({ pickForRotation: mocks.pick, recordTrigger: vi.fn(), recomputePriority: vi.fn(), markChecked: mocks.checked, setErpFlags: mocks.flags, queueCandidate: mocks.queue, headlineCandidateSeen: mocks.seen }));
 vi.mock("@/lib/db/companies", () => ({ normalizeCompanyName: (name: string) => name.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim() }));
 vi.mock("@/lib/db/settings", () => ({ claimClassifierCall: vi.fn(async () => false) }));
@@ -31,6 +31,7 @@ beforeEach(() => {
   mocks.news.mockResolvedValue([item]);
   mocks.newsResult.mockResolvedValue({ items: [item], status: "success" });
   mocks.newsItems.mockResolvedValue([]);
+  mocks.newsItemsResult.mockImplementation(async () => ({ items: await mocks.newsItems(), status: "success" }));
   mocks.queue.mockResolvedValue(true);
   mocks.seen.mockResolvedValue(false);
   mocks.flags.mockResolvedValue(undefined);
@@ -41,6 +42,51 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("broader news observation intake", () => {
+  it("partitions successful, partial, unavailable, and failed attempts from computed collection results", async () => {
+    mocks.newsResult.mockResolvedValue({ items: [], status: "empty" });
+    expect(await sweepBase(1)).toMatchObject({ checked: 1, attempted: 1, succeeded: 1, partial: 0, unavailable: 0, failed: 0 });
+    mocks.newsResult.mockResolvedValue({ items: [item], status: "success" });
+    mocks.fetch.mockResolvedValue({ status: 403, finalUrl: item.source_url, body: "Forbidden" });
+    expect(await sweepBase(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 1, unavailable: 0, failed: 0 });
+    expect(mocks.checked).toHaveBeenLastCalledWith([]);
+    mocks.newsResult.mockResolvedValue({ items: [], status: "unavailable", error: "timeout" });
+    expect(await sweepBase(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 0, unavailable: 1, failed: 0 });
+    mocks.newsResult.mockResolvedValue({ items: [item], status: "success" });
+    mocks.enqueue.mockResolvedValue(null);
+    expect(await sweepBase(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 0, unavailable: 0, failed: 1 });
+  });
+
+  it("reports state-read failures without fetching or overwriting an unknown news cursor", async () => {
+    mocks.read.mockRejectedValue(new Error("Source state read failed: database_error"));
+    const result = await sweepBase(1);
+    expect(result).toMatchObject({ attempted: 1, succeeded: 0, failed: 1 });
+    expect(result.errors).toContainEqual(expect.objectContaining({ source: "news", code: "storage_failure" }));
+    expect(mocks.newsResult).not.toHaveBeenCalled();
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("does not report swallowed executive-feed or disabled-lane provider failures as success", async () => {
+    mocks.pick.mockResolvedValue([{ ...company, claimable: true }]);
+    mocks.newsResult.mockResolvedValue({ items: [], status: "empty" });
+    mocks.newsItemsResult.mockResolvedValue({ items: [], status: "unavailable", error: "timeout" });
+    expect(await sweepBase(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 1 });
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "false");
+    mocks.pick.mockResolvedValue([company]);
+    mocks.newsResult.mockResolvedValue({ items: [], status: "unavailable", error: "timeout" });
+    expect(await sweepBase(1)).toMatchObject({ attempted: 1, succeeded: 0, unavailable: 1 });
+    expect(mocks.newsResult).toHaveBeenLastCalledWith(company.name, 6);
+    expect(mocks.checked).toHaveBeenLastCalledWith([]);
+  });
+
+  it("bounds and sanitizes failures when the whole source-state store is unavailable", async () => {
+    mocks.pick.mockResolvedValue(Array.from({ length: 25 }, (_, index) => ({ ...company, id: `account-${index}` })));
+    mocks.read.mockRejectedValue(new Error("Database failure at https://example.com?token=secret"));
+    const result = await sweepBase(25);
+    expect(result).toMatchObject({ attempted: 25, succeeded: 0, failed: 25, error_count: 25 });
+    expect(result.errors).toHaveLength(10);
+    expect(JSON.stringify(result.errors)).not.toContain("secret");
+  });
+
   it("records a quiet valid feed as empty coverage rather than a failure", async () => {
     mocks.newsResult.mockResolvedValue({ items: [], status: "empty" });
     await checkCompanyNews(company);

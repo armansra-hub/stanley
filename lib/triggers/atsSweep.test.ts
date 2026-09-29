@@ -36,10 +36,38 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("ATS collection integration", () => {
+  it("counts complete, paginated, and unavailable board retrievals independently of rotation stamps", async () => {
+    expect(await sweepAts(1)).toMatchObject({ checked: 1, attempted: 1, succeeded: 1, partial: 0, unavailable: 0, failed: 0 });
+    mocks.fetch.mockResolvedValue({ jobs: [job], nextOffset: 150, complete: false, status: "partial" });
+    expect(await sweepAts(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 1, unavailable: 0, failed: 0 });
+    mocks.fetch.mockResolvedValue({ jobs: [], nextOffset: 0, complete: false, status: "unavailable" });
+    expect(await sweepAts(1)).toMatchObject({ attempted: 1, succeeded: 0, partial: 0, unavailable: 1, failed: 0 });
+  });
+
+  it("does not advance a board when enabled observation storage returns no receipt", async () => {
+    mocks.enqueue.mockResolvedValue(null);
+    expect(await sweepAts(1)).toMatchObject({ attempted: 1, succeeded: 0, failed: 1 });
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("reports source-state read and attempt-stamp failures and preserves the unknown cursor", async () => {
+    mocks.sourceRead.mockRejectedValue(new Error("Source state read failed"));
+    // The first stamp reserves this known board; only its final stamp fails.
+    mocks.checked.mockResolvedValueOnce(undefined).mockRejectedValue(new Error("database unavailable"));
+    const result = await sweepAts(1);
+    expect(result).toMatchObject({ attempted: 1, succeeded: 0, failed: 1, error_count: 2 });
+    expect(result.errors.map(error => error.stage)).toEqual(["state_read", "attempt_stamp"]);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
   it.each(["none", "unsupported", "unavailable"] as const)("records %s discovery distinctly without inventing an empty job board", async status => {
     mocks.pick.mockResolvedValue([{ ...company, ats_type: null, ats_token: null }]);
     mocks.detect.mockResolvedValue({ status, outcomes: [] });
-    await sweepAts(1);
+    const result = await sweepAts(1);
+    expect(result).toMatchObject({ attempted: 1, [status === "none" ? "succeeded" : status]: 1 });
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.write).toHaveBeenCalledWith(company.id, "ats:discovery", expect.objectContaining({ status: status === "none" ? "empty" : status, complete: status === "none" }));
     if (status !== "none") expect(mocks.checked).not.toHaveBeenCalledWith(company.id, expect.objectContaining({ ats_type: "none" }));
