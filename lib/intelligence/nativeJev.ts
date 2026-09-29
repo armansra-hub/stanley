@@ -20,12 +20,39 @@ export type NativeAnswer = { type: "noul" | "choice" | "score"; noul?: number; c
   confidence?: number; probabilities?: Record<string, number>; legend?: Record<string, string> };
 export type NativeProviderResult = { model: string; answers: Record<string, NativeAnswer>;
   usage?: { input_tokens?: number; output_tokens?: number }; [key: string]: unknown };
+export type NativeContextLimitEvidence = { kind: "provider_error_code"; code: string };
 export type NativeJevResult =
   | { ok: true; provider_result: NativeProviderResult; usage: EvaluationUsage }
-  | { ok: false; error: { code: string; retryable: boolean }; usage: EvaluationUsage | null };
+  | { ok: false; error: { code: string; retryable: boolean; contextLimit?: NativeContextLimitEvidence }; usage: EvaluationUsage | null };
 const VERSION = "stanley-native-jev-v1";
 const object = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
 const probability = (x: unknown) => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1;
+const CONTEXT_LIMIT_CODES = new Set(["context_length_exceeded", "max_context_length_exceeded", "context_window_exceeded", "too_many_tokens", "input_token_limit_exceeded"]);
+
+/** Retain only an unambiguous structured rejection code, never provider text
+ * that could echo a source. An arbitrary 400 is not evidence of a token limit.
+ * Bounded reading is customer-only and never causes an inference retry. */
+async function customerContextLimitEvidence(response: Response): Promise<NativeContextLimitEvidence | undefined> {
+  const reader = response.body?.getReader();
+  if (!reader) return;
+  try {
+    const chunks: Uint8Array[] = []; let bytes = 0;
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > 16_384) { await reader.cancel(); return; }
+      chunks.push(part.value);
+    }
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!object(parsed)) return;
+    const nested = object(parsed.error) ? parsed.error : {};
+    for (const code of [nested.code, nested.type, parsed.code, parsed.type]) {
+      if (typeof code === "string" && CONTEXT_LIMIT_CODES.has(code)) return { kind: "provider_error_code", code };
+    }
+  } catch { /* Unknown diagnostics leave the original explicit provider hold. */ }
+  finally { reader.releaseLock(); }
+}
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
   if (object(value)) return Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])]));
@@ -89,10 +116,13 @@ export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fet
     if (!response.ok) {
       // Preserve the exact HTTP code: the durable receipt's global provider
       // circuit recognizes 402, while 429 remains ordinary rate-limit pressure.
-      // Do not read an error body that may echo evidence or assume zero usage.
-      await response.body?.cancel().catch(() => {});
+      // For customer context recovery, retain only a whitelisted structured
+      // context-limit code. Never store an error message or assume zero usage.
+      const contextLimit = input.requestProfile && [400, 413, 422].includes(response.status)
+        ? await customerContextLimitEvidence(response) : undefined;
+      if (!response.bodyUsed) await response.body?.cancel().catch(() => {});
       return { ok: false, error: { code: "typesafe_http_" + response.status,
-        retryable: response.status === 429 || response.status >= 500 }, usage };
+        retryable: response.status === 429 || response.status >= 500, ...(contextLimit ? { contextLimit } : {}) }, usage };
     }
     const raw = await response.text();
     if (Buffer.byteLength(raw) > 524_288) throw new Error("response_too_large");

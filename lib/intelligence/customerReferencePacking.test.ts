@@ -91,7 +91,7 @@ describe("lossless customer-reference overflow packing", () => {
 const largeSeed: CustomerReferenceSeed = { id: "full-source-customer", name: "Full Source Customer", domain: "example.test",
   website: "https://example.test", announcementDate: "2026-09-01", announcementType: "new_customer",
   sources: ["operations", "services", "contracts"].map(id => {
-    const text = Array.from({ length: 270 }, (_,i) => `Service ${id}-${i}: Our employees maintain customer equipment under separately documented agreements and project schedules.`).join("\n");
+    const text = Array.from({ length: 160 }, (_,i) => `Service ${id}-${i}: Our employees maintain customer equipment under separately documented agreements and project schedules.`).join("\n");
     return { id, url: `https://example.test/${id}`, title: id, text, contentHash: createHash("sha256").update(text).digest("hex"), observedAt: "2026-09-28T00:00:00Z" };
   }) };
 
@@ -104,7 +104,7 @@ describe("customer-only full-source transport overflow", () => {
     const evaluate = vi.fn(async (input: any) => {
       const body = nativeJevBody(input);
       expect(input.requestProfile).toBe("customer-reference-full-source-v1");
-      expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThanOrEqual(192_000);
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeLessThanOrEqual(96_000);
       expect((input.state as any).guidance).toEqual(ordinaryState.guidance);
       for (const source of largeSeed.sources) expect((input.state as any).sources.filter((p: any) => p.observationId === source.id).map((p: any) => p.text).join("")).toBe(source.text);
       for (const id of Object.keys(input.questions)) expect(input.questions[id]).toEqual(operatingFacetQuestion(id));

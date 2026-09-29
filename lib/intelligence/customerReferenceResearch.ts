@@ -3,19 +3,24 @@ import { randomUUID } from "node:crypto";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
 import { OPERATING_CATALOG_VERSION, OPERATING_FACETS } from "./operatingCatalog";
 import { catalogAnswerPlans, catalogFacetVersion, catalogMappingPlans, catalogNativeResult, catalogPackets } from "./operatingCoverage";
-import { evaluateNativeCached, nativeJevFingerprint, type NativeJevInput } from "./nativeJev";
+import { evaluateNativeCached, nativeJevBody, nativeJevFingerprint, type NativeJevInput } from "./nativeJev";
 import { scopedJevFingerprint } from "./jevRequests";
 import { customerReferenceCatalogSources, customerReferenceCompany, customerReferenceEvidenceKey, type CustomerReferenceSeed } from "./customerReferenceSources";
 import type { CustomerReference } from "./customerMatches";
-import { customerReferenceAnswerPlans, customerReferenceLargeAnswerPlans, customerReferencePackedAnswerPlans } from "./customerReferencePacking";
+import { customerReferenceAnswerPlans, customerReferenceLargeAnswerPlans, customerReferencePackedAnswerPlans, CUSTOMER_REFERENCE_PLANNING_BYTES } from "./customerReferencePacking";
 import { customerReferenceRegistryProofSeed, customerReferenceRegistrySeed, getCustomerReferenceRegistryRow, loadCustomerReferenceRegistry, type CustomerReferenceRegistryRow } from "./customerReferenceRegistry";
 import { collectCustomerReferenceSources, type CustomerSourceCheckpoint } from "./customerReferenceCollector";
+import { CUSTOMER_REFERENCE_RECOVERY_VERSION, customerReferencePassagePlans, customerReferenceRecoveryNext, customerReferenceRetainedPassages,
+  type CustomerReferenceRecovery, type CustomerReferenceProviderFailure, type ReferencePlan } from "./customerReferenceRecovery";
 
-type Plan = ReturnType<typeof catalogAnswerPlans>["plans"][number];
 export type ReferenceCheckpoint = {
   version: 1; evidenceKey: string; phase: "direct" | "mapping" | "answer";
   mapped: Record<string, { scanned: string[]; candidates: string[] }>;
-  answers: CustomerReference["answers"]; pending?: Plan;
+  answers: CustomerReference["answers"]; pending?: ReferencePlan;
+  providerFailure?: CustomerReferenceProviderFailure;
+  contextReplan?: { version: "customer-context-replan-v1"; reason: "confirmed_provider_context_limit" | "historical_oversized_request_replan";
+    originalPlan: ReferencePlan; originalFailure: CustomerReferenceProviderFailure; originalReceiptFingerprint: string };
+  contextRecovery?: CustomerReferenceRecovery; contextRecoveryHistory?: CustomerReferenceRecovery[];
   requests: number; reused: number; inputTokens: number; outputTokens: number;
   unknownUsageRequests?: number;
   lastError?: string | null;
@@ -25,6 +30,27 @@ type ReferenceRow = { id: string; catalog_version: string; evidence_key: string;
   lease_token?: string | null; lease_until?: string | null };
 const context = { purpose: "operating_catalog" as const, sourceKind: "customer_reference", workload: "manual" as const };
 const decision = (value: unknown) => value && typeof value === "object" && "choice" in value ? String(value.choice) : "";
+const recoverableErrors = ["evidence_exceeds_native_request_limit", "typesafe_context_limit", "typesafe_http_400", "typesafe_http_413", "typesafe_http_422"];
+
+/** Replan once on explicit context proof, or a historical failed request now
+ * above the local planning ceiling. The latter retains an UNKNOWN 400 cause;
+ * it is a new structural plan, never a replay of the rejected request. */
+export function customerReferenceCanResumeContext(seed: CustomerReferenceSeed, checkpoint: ReferenceCheckpoint | null): boolean {
+  if (!checkpoint || checkpoint.version !== 1 || checkpoint.evidenceKey !== customerReferenceEvidenceKey(seed)
+    || !recoverableErrors.includes(checkpoint.lastError ?? "") || checkpoint.lastError === "evidence_exceeds_native_request_limit"
+    || checkpoint.contextReplan || checkpoint.contextRecovery || checkpoint.pending?.recoveryKind
+    || checkpoint.pending?.phase !== "answer" || !checkpoint.pending.facetIds.length) return false;
+  const fingerprint = nativeJevFingerprint(checkpoint.pending.input);
+  if ((checkpoint.providerFailure && checkpoint.providerFailure.requestFingerprint !== fingerprint)
+    || checkpoint.pending.facetIds.some(id => checkpoint.answers[id] || !OPERATING_FACETS.some(f => f.id === id))) return false;
+  const typedContext = checkpoint.providerFailure?.contextLimit?.kind === "provider_error_code"
+    && ["typesafe_http_400", "typesafe_http_413", "typesafe_http_422"].includes(checkpoint.providerFailure.code);
+  const oversized = /^typesafe_http_(400|413|422)$/.test(checkpoint.lastError ?? "")
+    && Buffer.byteLength(JSON.stringify(nativeJevBody(checkpoint.pending.input))) > CUSTOMER_REFERENCE_PLANNING_BYTES;
+  if (!typedContext && !oversized) return false;
+  const packets = catalogPackets(customerReferenceCatalogSources(seed));
+  return checkpoint.pending.packetIds.length > 0 && checkpoint.pending.packetIds.every(id => packets.some(p => p.id === id));
+}
 
 /** Resume only the known transport-size hold when every remaining answer now
  * fits without losing source text. Completed answers and evidence stay intact. */
@@ -41,7 +67,8 @@ export function customerReferenceCanResumePacked(seed: CustomerReferenceSeed, ch
   // native answers. Existing provider failures are not eligible for this path.
   return missing.every(facet => {
     const plans = customerReferenceAnswerPlans(customerReferenceCompany(seed), [facet], packets, candidates);
-    return !plans.blocked.length && plans.plans.some(plan => plan.facetIds.includes(facet.id));
+    return (!plans.blocked.length && plans.plans.some(plan => plan.facetIds.includes(facet.id)))
+      || customerReferencePassagePlans(customerReferenceCompany(seed), facet, packets.filter(p => candidates[facet.id].includes(p.id))).length > 0;
   });
 }
 
@@ -59,11 +86,36 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
   const save = (status: "running" | "pending" | "blocked" | "complete", result: CustomerReference | null = null, error: string | null = null) => deps.save(checkpoint, status, result, error);
   const missing = () => OPERATING_FACETS.filter(f => !checkpoint.answers[f.id]);
   if (!packets.length) { await save("blocked", null, "official_website_source_unavailable"); return "source_blocked"; }
+  if (customerReferenceCanResumeContext(seed, checkpoint)) {
+    const original = checkpoint.pending!, fingerprint = nativeJevFingerprint(original.input);
+    checkpoint.contextReplan = { version: "customer-context-replan-v1",
+      reason: checkpoint.providerFailure?.contextLimit ? "confirmed_provider_context_limit" : "historical_oversized_request_replan",
+      originalPlan: original, originalFailure: checkpoint.providerFailure ?? { requestFingerprint: fingerprint, code: checkpoint.lastError!, retryable: false,
+        usage: null, billingUncertain: true },
+      originalReceiptFingerprint: scopedJevFingerprint(fingerprint, context) };
+    delete checkpoint.pending;
+    // A formerly direct multi-question request first receives the same coarse
+    // full-source routing as any newly planned oversized customer. Existing
+    // coarse routing and completed answers are reused exactly.
+    checkpoint.phase = "mapping";
+    if (!await save("running")) return "lease_changed";
+  } else if (!checkpoint.contextRecovery && (checkpoint.lastError === "typesafe_context_limit" || /^typesafe_http_(400|413|422)$/.test(checkpoint.lastError ?? ""))) {
+    await save("blocked", null, checkpoint.lastError); return "provider_error";
+  }
   if (checkpoint.phase === "direct" && catalogAnswerPlans(company, missing(), packets).blocked.length
     && customerReferencePackedAnswerPlans(company, missing(), packets).blocked.length
     && customerReferenceLargeAnswerPlans(company, missing(), packets).blocked.length) checkpoint.phase = "mapping";
   while (Date.now() < deadline - 35_000) {
     let plan = checkpoint.pending;
+    if (!plan && checkpoint.contextRecovery) {
+      const recovery = checkpoint.contextRecovery;
+      const facet = OPERATING_FACETS.find(f => f.id === recovery.facetId);
+      if (!facet || checkpoint.answers[facet.id]) throw new Error("invalid_customer_context_recovery_facet");
+      const selected = packets.filter(p => recovery.packetIds.includes(p.id));
+      const next = customerReferenceRecoveryNext(company, facet, selected, recovery);
+      if (next.blocked) { await save("blocked", null, next.blocked); return "source_blocked"; }
+      plan = next.plan;
+    }
     if (!plan && checkpoint.phase === "mapping") {
       for (const packet of packets) {
         const unscanned = missing().filter(f => !checkpoint.mapped[packet.id]?.scanned.includes(f.id));
@@ -77,7 +129,17 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
       const next = customerReferenceAnswerPlans(company, missing(), packets, candidates);
       plan = next.plans[0];
       if (!plan) {
-        if (next.blocked.length) { await save("blocked", null, "evidence_exceeds_native_request_limit"); return "source_blocked"; }
+        if (next.blocked.length) {
+          const facet = missing().find(f => next.blocked.includes(f.id))!;
+          if (checkpoint.phase === "answer" && candidates?.[facet.id]?.length
+            && packets.every(p => checkpoint.mapped[p.id]?.scanned.includes(facet.id))) {
+            checkpoint.contextRecovery = { version: CUSTOMER_REFERENCE_RECOVERY_VERSION, facetId: facet.id,
+              packetIds: candidates[facet.id], origin: "local_planning_limit", decisions: {} };
+            if (!await save("running")) return "lease_changed";
+            continue;
+          }
+          await save("blocked", null, "evidence_exceeds_native_request_limit"); return "source_blocked";
+        }
         const result: CustomerReference = {
           id: seed.id, name: seed.name, domain: seed.domain, website: seed.website,
           announcementDate: seed.announcementDate, announcementType: seed.announcementType,
@@ -101,12 +163,23 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
     if (!receipt.evaluation.ok) {
       // Leave transient provider failures resumable, with the exact pending
       // request intact for receipt reconciliation. This pass never retries it.
-      await save(receipt.evaluation.error.retryable ? "pending" : "blocked", null, receipt.evaluation.error.code);
+      checkpoint.providerFailure = { ...receipt.evaluation.error, requestFingerprint: nativeJevFingerprint(plan.input),
+        usage: receipt.evaluation.usage, reused: receipt.reused,
+        billingUncertain: !receipt.reused && (receipt.evaluation.usage?.inputTokens == null || receipt.evaluation.usage?.outputTokens == null) };
+      const error = receipt.evaluation.error.contextLimit && !plan.recoveryKind ? "typesafe_context_limit" : receipt.evaluation.error.code;
+      await save(receipt.evaluation.error.retryable ? "pending" : "blocked", null, error);
       return "provider_error";
     }
     const native = receipt.evaluation.provider_result;
     const fingerprint = nativeJevFingerprint(plan.input), receiptFingerprint = scopedJevFingerprint(fingerprint, context);
-    if (plan.phase === "mapping") {
+    if (plan.recoveryKind === "passage_mapping") {
+      if (!checkpoint.contextRecovery || !plan.passageIds) throw new Error("missing_customer_context_recovery");
+      for (const [index, id] of plan.passageIds.entries()) {
+        const answer = native.answers[`p${index}`];
+        if (!answer || !["candidate", "no_evidence"].includes(decision(answer))) throw new Error("invalid_customer_passage_answer");
+        checkpoint.contextRecovery.decisions[id] = { answer, requestFingerprint: fingerprint, receiptFingerprint };
+      }
+    } else if (plan.phase === "mapping") {
       const mapped = checkpoint.mapped[plan.packetId!] ?? { scanned: [], candidates: [] };
       for (const id of plan.facetIds) {
         const answer = decision(native.answers[id]);
@@ -117,10 +190,17 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
       checkpoint.mapped[plan.packetId!] = mapped;
     } else for (const id of plan.facetIds) {
       const facet = OPERATING_FACETS.find(f => f.id === id)!;
-      const result = catalogNativeResult(facet, native.answers[id], packets.filter(p => plan!.packetIds.includes(p.id)), native.model, fingerprint, receiptFingerprint);
+      const answerPackets = plan.recoveryKind === "passage_answer" && checkpoint.contextRecovery
+        ? customerReferenceRetainedPassages(packets.filter(p => checkpoint.contextRecovery!.packetIds.includes(p.id)), checkpoint.contextRecovery)
+        : packets.filter(p => plan!.packetIds.includes(p.id));
+      const result = catalogNativeResult(facet, native.answers[id], answerPackets, native.model, fingerprint, receiptFingerprint);
       checkpoint.answers[id] = { decision: result.decision as CustomerReference["answers"][string]["decision"],
         nativeResult: result.nativeResult, facetVersion: catalogFacetVersion(facet),
         sourceUrls: [...new Set(result.citations!.map(c => c.url))] };
+    }
+    if (plan.recoveryKind === "passage_answer") {
+      checkpoint.contextRecoveryHistory = [...checkpoint.contextRecoveryHistory ?? [], checkpoint.contextRecovery!];
+      delete checkpoint.contextRecovery;
     }
     checkpoint.requests++; checkpoint.reused += receipt.reused ? 1 : 0;
     if (!receipt.reused) {
@@ -147,10 +227,10 @@ export async function customerReferenceProgress() {
     const proof = customerReferenceRegistryProofSeed(row);
     const compatible = !!proof && row.native_catalog_version === OPERATING_CATALOG_VERSION && row.native_evidence_key === customerReferenceEvidenceKey(proof);
     let resumable = false;
-    if (compatible && row.native_status === "blocked" && row.native_last_error === "evidence_exceeds_native_request_limit") {
+    if (compatible && row.native_status === "blocked" && recoverableErrors.includes(row.native_last_error ?? "")) {
       const [full, native] = await Promise.all([getCustomerReferenceRegistryRow(row.id), readRow(row.id)]);
       const seed = full && customerReferenceRegistrySeed(full);
-      resumable = !!seed && customerReferenceCanResumePacked(seed, native?.checkpoint ?? null);
+      resumable = !!seed && (customerReferenceCanResumePacked(seed, native?.checkpoint ?? null) || customerReferenceCanResumeContext(seed, native?.checkpoint ?? null));
     }
     const status = row.source_status === "blocked" ? "blocked"
       : row.source_status !== "ready" ? row.source_status === "running" && Date.parse(row.source_lease_until ?? "") > Date.now() ? "running" : "pending"
@@ -229,7 +309,7 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
         if (collection.outcome === "blocked") { sourceBlocked++; continue; }
         registryRow = { ...registryRow, source_status: "ready", sources: collection.sources, source_checkpoint: collection.checkpoint };
       }
-      if (savedCompatible && registryRow.native_status === "blocked" && registryRow.native_last_error !== "evidence_exceeds_native_request_limit") continue;
+      if (savedCompatible && registryRow.native_status === "blocked" && !recoverableErrors.includes(registryRow.native_last_error ?? "")) continue;
       const full = registryRow.sources.every(source => typeof source.text === "string") ? registryRow
         : await (deps.getRow ?? getCustomerReferenceRegistryRow)(registryRow.id);
       const seed = full && customerReferenceRegistrySeed(full);
@@ -240,7 +320,7 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
       if (compatible && old.status === "complete") continue;
       // A source/provider rejection is explicit. Do not blind-replay the same
       // rejected input; changed source/version earns a new first pass.
-      if (compatible && old.status === "blocked" && !customerReferenceCanResumePacked(seed, old.checkpoint)) continue;
+      if (compatible && old.status === "blocked" && !customerReferenceCanResumePacked(seed, old.checkpoint) && !customerReferenceCanResumeContext(seed, old.checkpoint)) continue;
       const initial = await db.from("intelligence_customer_references").upsert({ id: seed.id, catalog_version: OPERATING_CATALOG_VERSION,
         evidence_key: evidenceKey, status: "pending", checkpoint: null, result: null }, { onConflict: "id", ignoreDuplicates: true });
       if (initial.error) throw new Error("customer_reference_admission_failed");

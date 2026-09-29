@@ -6,6 +6,7 @@ import { nativeJevBody, type NativeJevInput } from "./nativeJev";
 type Plan = ReturnType<typeof catalogAnswerPlans>["plans"][number];
 type TextPart = string | { sharedLine: number };
 export const CUSTOMER_REFERENCE_PACKING_VERSION = "exact-shared-lines-v1";
+export const CUSTOMER_REFERENCE_PLANNING_BYTES = 96_000;
 
 /** This is text deduplication, not summarization. Newline bytes, ordering,
  * source membership and packet citation offsets remain exactly recoverable. */
@@ -108,7 +109,9 @@ export function customerReferenceLargeAnswerPlans(company: Record<string, unknow
     questions: Object.fromEntries(selected.map(facet => [facet.id, operatingFacetQuestion(facet.id)!])),
   });
   const fits = (input: NativeJevInput) => {
-    try { nativeJevBody(input); return true; }
+    // Planning is conservative after the provider rejected a 154KB state.
+    // The transport still accepts frozen older requests verbatim for reuse.
+    try { return Buffer.byteLength(JSON.stringify(nativeJevBody(input))) <= CUSTOMER_REFERENCE_PLANNING_BYTES; }
     catch (error) {
       if (error instanceof Error && ["native_request_too_large", "invalid_question_count"].includes(error.message)) return false;
       throw error;

@@ -68,6 +68,19 @@ describe("native Jev shared transport", () => {
     expect(await evaluateNativeQuestions(input, { fetch })).toEqual({ ok: false, error: { code: "typesafe_http_429", retryable: true }, usage: null });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it("retains only explicit structured context codes, never echoed source text or a guessed400 cause", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-private-key");
+    const customer = { ...input, privacy: "public" as const, requestProfile: "customer-reference-full-source-v1" as const };
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "context_length_exceeded", message: "DO NOT STORE source echo" } }), { status: 400 }));
+    const result = await evaluateNativeQuestions(customer, { fetch });
+    expect(result).toEqual({ ok: false, error: { code: "typesafe_http_400", retryable: false,
+      contextLimit: { kind: "provider_error_code", code: "context_length_exceeded" } }, usage: null });
+    expect(JSON.stringify(result)).not.toContain("DO NOT STORE"); expect(fetch).toHaveBeenCalledOnce();
+    const unknown = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "bad_request", message: "context_length_exceeded quoted inside the source" } }), { status: 400 }));
+    expect(await evaluateNativeQuestions(customer, { fetch: unknown })).toEqual({ ok: false, error: { code: "typesafe_http_400", retryable: false }, usage: null });
+    const oversized = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "context_length_exceeded", message: "x".repeat(20_000) } }), { status: 400 }));
+    expect(await evaluateNativeQuestions(customer, { fetch: oversized })).toEqual({ ok: false, error: { code: "typesafe_http_400", retryable: false }, usage: null });
+  });
   it("records payment-required distinctly from rate limiting without assuming zero usage or reading its body", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-private-key");
     const response = new Response("Private provider echo must not be read", { status: 402 });
