@@ -30,8 +30,9 @@ function customerCoreLinks(html: string, base: string): string[] {
     // A footer's "Terms of Service" is a legal page, not an operating service.
     // Explicit evidence URLs and previously captured text are still retained.
     const path = new URL(url).pathname.toLowerCase().replace(/\/+$/, "");
-    if (/\/(?:terms(?:[-_]of[-_](?:use|service))?|privacy(?:[-_]policy)?|cookie(?:s|[-_]policy)?|legal(?:[-_]notice)?)(?:\.[a-z]+)?$/.test(path)
-      || /^(?:terms(?: of (?:use|service))?|privacy policy|cookie policy|legal notice)$/i.test(label.trim())) continue;
+    const operatingPath = /\/(?:services?|solutions?|products?|capabilities|offerings?)(?:\/|$)/.test(path);
+    if (!operatingPath && (/\/(?:terms(?:[-_]of[-_](?:use|service))?|privacy(?:[-_]policy)?|cookie(?:s|[-_]policy)?|legal(?:[-_]notice)?)(?:\.[a-z]+)?$/.test(path)
+      || /^(?:terms(?: of (?:use|service))?|privacy policy|cookie policy|legal notice)$/i.test(label.trim()))) continue;
     const kind = sitePageKind(`${new URL(url).pathname} ${label}`);
     if (kind === "about" || kind === "services") links.add(url);
   }

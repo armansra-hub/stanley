@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomerMatchAccount } from "@/lib/intelligence/customerMatches";
 import OperatingMatches from "./OperatingMatches";
 import { CustomerMatchCard, CustomerReferenceCoverage, CustomerCohortCounts, customerMatchesWithStatus, customerMatchesNeedRefresh } from "./RecentCustomerMatches";
-import CustomerReferenceProgress from "./CustomerReferenceProgress";
+import CustomerReferenceProgress, { CustomerReferenceProgressRow } from "./CustomerReferenceProgress";
 import { summarizeCustomerCohort } from "@/lib/intelligence/customerCohortSummary";
 import { OPERATING_FACETS } from "@/lib/intelligence/operatingCatalog";
 
@@ -54,12 +54,29 @@ describe("recent-customer shortlist", () => {
     expect(customerMatchesNeedRefresh(0, 1)).toBe(true);
   });
 
+  it("refreshes for newly saved partial answers, but not unchanged mapping or source progress", () => {
+    expect(customerMatchesNeedRefresh(38, 38, 1000, 1005)).toBe(true);
+    expect(customerMatchesNeedRefresh(38, 38, 1005, 1005)).toBe(false);
+    expect(customerMatchesNeedRefresh(38, 38, 1005, 1000)).toBe(false);
+  });
+
+  it("keeps completed coverage separate from usable partial readings", () => {
+    const markup = renderToStaticMarkup(React.createElement(CustomerReferenceCoverage, {
+      coverage: { verified: 38, partial: 2, usable: 40, pending: 785, total: 823, asOf: "2026-09-28" },
+    }));
+    expect(markup).toContain("Website analysis complete: 38 of 823 customer records");
+    expect(markup).toContain("38 complete and 2 partial website analyses");
+    expect(markup).toContain("2 partial analyses are not included in the completed count");
+    expect(markup).toContain("unanswered characteristics stay unanswered");
+    expect(markup).not.toContain("Website analysis complete: 40");
+  });
+
   it("renders every existing category with separate native unknown and conflict counts", () => {
     const cohort = summarizeCustomerCohort([{ id: "reference", name: "Reference", domain: "reference.example", website: "https://reference.example",
       announcementDate: "2026-09-01", announcementType: "new_customer", catalogVersion: "catalog", completedAt: "2026-09-28", status: "verified", sources: [],
       answers: Object.fromEntries(OPERATING_FACETS.map(facet => [facet.id, { decision: "insufficient_evidence", nativeResult: {}, facetVersion: "version", sourceUrls: [] }])) }], Date.parse("2026-09-29"));
     const markup = renderToStaticMarkup(React.createElement(CustomerCohortCounts, { cohort }));
-    expect(markup).toContain("1 completed customer references");
+    expect(markup).toContain("1 customer references in this match snapshot: 1 complete and 0 partial");
     expect(markup).toContain("not the full registry or the original 704 research entries");
     expect(markup).toContain("Insufficient evidence"); expect(markup).toContain("Conflicting"); expect(markup).toContain("Unanswered");
     expect(markup.match(/<tr /g)).toHaveLength(48);
@@ -128,6 +145,28 @@ describe("recent-customer shortlist", () => {
     expect(markup).toContain("Historical customer comparison");
     expect(markup).toContain("Sep 28, 2025");
     expect(markup).not.toContain("Recent customer example");
+  });
+
+  it("labels a partially read customer and explains why the remaining answer is held", () => {
+    const account = makeAccount();
+    account.reference.reading = { status: "blocked", answered: 46, total: 47, lastError: "typesafe_context_limit", updatedAt: "2026-09-29" };
+    const markup = renderToStaticMarkup(React.createElement(CustomerMatchCard, { account, selected: false, statusBusy: false }));
+    expect(markup).toContain("Partial website analysis · 46/47 characteristics answered");
+    expect(markup).toContain("remaining source text exceeds the provider’s request size limit");
+    expect(markup).toContain("Every required trait below is already supported");
+    expect(markup).toContain("Raw Jev answers · customer");
+    expect(markup).not.toContain("Complete website analysis");
+  });
+
+  it("keeps a blocked 43-answer progress row visibly partial with its saved work retained", () => {
+    const markup = renderToStaticMarkup(React.createElement(CustomerReferenceProgressRow, { reference: {
+      id: "held-customer", name: "Held Customer", website: "https://customer.example", status: "blocked", answered: 43, totalQuestions: 47,
+      lastError: "typesafe_http_422", sourceGaps: 2,
+    } }));
+    expect(markup).toContain("Partial reading · 43/47 characteristics answered");
+    expect(markup).toContain("provider could not process the remaining reading request");
+    expect(markup).toContain("2 source gaps retained");
+    expect(markup).not.toContain("Complete ·");
   });
 
   it("separates unknowns and documented differences from a reason to act now", () => {

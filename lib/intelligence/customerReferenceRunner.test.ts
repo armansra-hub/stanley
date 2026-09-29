@@ -34,7 +34,11 @@ function store(registryRows: CustomerReferenceRegistryRow[]) {
       if (table === "intelligence_customer_reference_registry" && operation.value?.source_status === "running") {
         return { data: { ...registryRows.find(row => row.id === id)!, sources: [], native_status: undefined }, error: null };
       }
-      if (operation.action === "read") return { data: null, error: null };
+      if (operation.action === "read") {
+        const saved = registryRows.find(row => row.id === id);
+        return { data: saved?.native_status === "blocked" ? { id, status: "blocked", catalog_version: saved.native_catalog_version,
+          evidence_key: saved.native_evidence_key, checkpoint: null } : null, error: null };
+      }
       if (operation.value?.lease_token) return { data: { checkpoint: null }, error: null };
       return { data: { id }, error: null };
     };
@@ -65,8 +69,8 @@ describe("full registry foreground reference runner", () => {
     });
     const result = await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
       getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify });
-    expect(classify.mock.calls[0][0].id).toBe("unfinished"); expect(classify).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ stoppedBy: "continued", requests: 2, reused: 1, inputTokens: 300, outputTokens: 40 });
+    expect(classify.mock.calls[0][0].id).toBe("unfinished"); expect(classify).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ stoppedBy: "continued", requests: 4, reused: 2, inputTokens: 600, outputTokens: 80, concurrency: 2 });
   });
 
   it("collects and saves an exact customer's raw website sources before classification", async () => {
@@ -92,6 +96,50 @@ describe("full registry foreground reference runner", () => {
     const classify = vi.fn(async () => "provider_hold" as const), collect = vi.fn();
     const result = await runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows, getRow, classify, collect });
     expect(result.stoppedBy).toBe("provider_hold"); expect(classify).toHaveBeenCalledTimes(1);
-    expect(getRow).toHaveBeenCalledTimes(1); expect(getRow).toHaveBeenCalledWith("hold"); expect(collect).not.toHaveBeenCalled();
+    expect(getRow).toHaveBeenCalledTimes(2); expect(getRow).toHaveBeenCalledWith("hold"); expect(collect).not.toHaveBeenCalled();
+  });
+
+  it("overlaps exactly two different customers and never dispatches the third after a global hold", async () => {
+    const rows = [row("a"), row("b"), row("c")], h = store(rows);
+    let releaseHealthy!: () => void, releaseHold!: () => void;
+    const healthy = new Promise<void>(resolve => { releaseHealthy = resolve; });
+    const hold = new Promise<void>(resolve => { releaseHold = resolve; });
+    const finished: string[] = [];
+    const classify = vi.fn(async (source: CustomerReferenceSeed, _previous: ReferenceCheckpoint | null, _deadline: number, deps: any) => {
+      if (source.id === "a") { await hold; return "provider_hold" as const; }
+      await healthy;
+      await deps.save({ version: 1, evidenceKey: customerReferenceEvidenceKey(source), phase: "answer", mapped: {}, answers: {},
+        requests: 1, reused: 0, inputTokens: 100, outputTokens: 1 }, "complete", null, null);
+      finished.push(source.id); return "complete" as const;
+    });
+    let returned = false;
+    const run = runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
+      getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify }).then(value => { returned = true; return value; });
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2));
+    expect(classify.mock.calls.map(call => call[0].id)).toEqual(["a", "b"]);
+    releaseHold(); await Promise.resolve(); await Promise.resolve();
+    expect(returned).toBe(false); expect(finished).toEqual([]);
+    releaseHealthy();
+    expect(await run).toMatchObject({ processed: 2, completed: 1, stoppedBy: "provider_hold", requests: 1 });
+    expect(finished).toEqual(["b"]); expect(classify).toHaveBeenCalledTimes(2);
+    expect(h.operations.some(operation => operation.filters.some(([column, value]) => column === "id" && value === "c"))).toBe(false);
+  });
+
+  it("drains a healthy customer checkpoint before rejecting another lane's storage failure", async () => {
+    const rows = [row("a"), row("b"), row("c")], h = store(rows);
+    let fail!: () => void, finish!: () => void;
+    const failed = new Promise<void>(resolve => { fail = resolve; }), healthy = new Promise<void>(resolve => { finish = resolve; });
+    const saved: string[] = [];
+    const classify = vi.fn(async (source: CustomerReferenceSeed) => {
+      if (source.id === "a") { await failed; throw new Error("exact_checkpoint_failed"); }
+      await healthy; saved.push(source.id); return "complete" as const;
+    });
+    let rejected = false;
+    const run = runCustomerReferenceReading(Date.now() + 120_000, { ...h, registry: async () => rows,
+      getRow: async id => ({ ...row(id), sources: seed(id).sources }), classify }).catch(error => { rejected = true; return error; });
+    await vi.waitFor(() => expect(classify).toHaveBeenCalledTimes(2));
+    fail(); await Promise.resolve(); await Promise.resolve(); expect(rejected).toBe(false);
+    finish(); expect((await run).message).toBe("exact_checkpoint_failed");
+    expect(saved).toEqual(["b"]); expect(classify).toHaveBeenCalledTimes(2);
   });
 });

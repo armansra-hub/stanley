@@ -39,6 +39,25 @@ describe("customer reference native provenance", () => {
     const row = stored(); Object.assign(row.result, { name: "Wrong name", announcementDate: "2026-09-28", website: "https://wrong.test" });
     expect(readyCustomerReference(seed, row)).toMatchObject({ name: "Reference", announcementDate: "2026-07-31", website: "https://reference.test" });
   });
+  it("exposes current paid partial facts while preserving missing facets and held status", () => {
+    const row = stored(), original = row.result.answers.rr_c01;
+    original.decision = "supported"; original.nativeResult.answer.choice = "supported"; original.sourceUrls = [seed.sources[0].url];
+    const partial = { id: row.id, status: "blocked", catalog_version: row.catalog_version, evidence_key: row.evidence_key,
+      checkpoint_version: 1, checkpoint_evidence_key: row.evidence_key, checkpoint_answers: { rr_c01: original },
+      checkpoint_last_error: "customer_context_relevant_evidence_still_large", updated_at: "2026-09-29T01:00:00Z" };
+    const ref = readyCustomerReference(seed, partial)!;
+    expect(ref).toMatchObject({ status: "partial", completedAt: null, reading: { status: "blocked", answered: 1, total: 47,
+      lastError: "customer_context_relevant_evidence_still_large" } });
+    expect(ref.answers.rr_c01).toBe(original); expect(ref.answers.rr_c11).toBeUndefined();
+    expect(Object.keys(ref.answers)).toEqual(["rr_c01"]);
+    expect(readyCustomerReference(seed, { ...partial, checkpoint_evidence_key: "old" })).toBeNull();
+    expect(readyCustomerReference(seed, { ...partial, checkpoint_version: 2 })).toBeNull();
+    expect(readyCustomerReference(seed, { ...partial, checkpoint_answers: {} })).toBeNull();
+    const stale = structuredClone(original); stale.facetVersion = "old";
+    const mixed = readyCustomerReference(seed, { ...partial, checkpoint_answers: { rr_c01: original, rr_i01: stale } })!;
+    expect(mixed.answers.rr_c01).toBe(original); expect(mixed.answers.rr_i01).toBeUndefined();
+    expect(mixed.reading).toMatchObject({ answered: 1, unavailableAnswers: 1 });
+  });
 });
 
 describe("separate dated timing", () => {

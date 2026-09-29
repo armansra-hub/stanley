@@ -13,6 +13,26 @@ export type ReferenceProgress = {
 
 const API = "/api/headhunter/intelligence/customer-references";
 
+export function customerReferenceHoldDescription(error: string | null | undefined): string {
+  if (!error) return "The remaining characteristics are awaiting reading.";
+  if (/evidence_exceeds_native_request_limit|typesafe_context_limit|typesafe_http_413/.test(error)) return "The remaining source text exceeds the provider’s request size limit.";
+  if (/typesafe_http_(400|422)/.test(error)) return "The provider could not process the remaining reading request.";
+  if (/typesafe_http_(402|429)|provider_hold|credit|rate_limit/.test(error)) return "Waiting for provider availability or account access.";
+  if (/website.*(missing|unresolved)|missing.*website/.test(error)) return "An official website is still needed.";
+  if (/source|fetch|website/.test(error)) return "Some website evidence could not be read.";
+  return "The remaining reading needs attention; saved answers are retained.";
+}
+
+export function CustomerReferenceProgressRow({ reference }: { reference: ReferenceProgress["references"][number] }) {
+  const partial = reference.status !== "complete" && reference.answered > 0;
+  return <div className="flex flex-wrap items-start justify-between gap-2 px-3 py-2">
+    {reference.website ? <a href={reference.website} target="_blank" rel="noopener noreferrer" className="text-[var(--gold)] hover:underline">{reference.name} ↗</a> : <span>{reference.name} · Website unresolved</span>}
+    <span className="text-[var(--text-muted)]">{reference.status === "complete" ? "Complete" : partial ? "Partial reading" : reference.status === "running" ? "Reading" : reference.status === "blocked" ? "Needs attention" : "Awaiting reading"} · {reference.answered}/{reference.totalQuestions} characteristics answered</span>
+    {(reference.status === "blocked" || reference.lastError) && <span className="w-full text-[var(--text-muted)]">{customerReferenceHoldDescription(reference.lastError)}</span>}
+    {!!reference.sourceGaps && <span className="w-full text-[var(--text-muted)]">{reference.sourceGaps} source gaps retained.</span>}
+  </div>;
+}
+
 export function customerReferenceProgressKey(value: ReferenceProgress): string {
   return JSON.stringify([...value.references].sort((a, b) => a.id.localeCompare(b.id))
     .map(ref => [ref.id, ref.status, ref.answered, ref.sourcePages, ref.sourceGaps, ref.checkpointUpdatedAt, ref.sourceAttempts]));
@@ -47,11 +67,11 @@ export default function CustomerReferenceProgress({ enabled, onComplete }: { ena
       const response = await fetch(API, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
       if (!response.ok) throw new Error("reference_progress_unavailable");
       const next: ReferenceProgress = await response.json();
-      if (mounted.current && current === sequence.current) setData(next);
+      if (mounted.current && current === sequence.current) { setData(next); onComplete(next); }
     } catch {
       if (mounted.current && current === sequence.current) setError("Could not load customer reading progress. Try Refresh progress.");
     } finally { if (mounted.current && current === sequence.current) setLoading(false); }
-  }, [enabled]);
+  }, [enabled, onComplete]);
 
   useEffect(() => { if (open) void refresh(); }, [open, refresh]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; stopRequested.current = true; sequence.current++; }; }, []);
@@ -93,14 +113,16 @@ export default function CustomerReferenceProgress({ enabled, onComplete }: { ena
   const filtered = (data?.references ?? []).filter(reference => `${reference.name} ${reference.website ?? ""}`.toLowerCase().includes(filter.trim().toLowerCase()));
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
   const visible = filtered.slice(currentPage * 50, (currentPage + 1) * 50);
+  const partial = data?.references.filter(reference => reference.status !== "complete" && reference.answered > 0).length ?? 0;
 
   return <details className="mt-4 rounded border p-3 text-xs" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary className="cursor-pointer font-medium">Customer reference sources{data ? ` · ${data.complete} of ${data.total} read` : ""}</summary>
+    <summary className="cursor-pointer font-medium">Customer reference sources{data ? ` · ${data.complete} of ${data.total} complete` : ""}</summary>
     <p className="mt-2 max-w-3xl leading-relaxed text-[var(--text-muted)]">Read the full registered customer set against the same 47 characteristics used for prospects. Slack establishes customer status; website reading establishes operating characteristics. Saved website evidence and answers are reused. Records with missing names or websites stay visible as source gaps. Opening this list or refreshing progress does not start paid research.</p>
     {loading && <p className="mt-3 text-[var(--text-muted)]" role="status">Loading saved progress…</p>}
     {error && <p className="mt-3 text-[var(--gold)]" role="alert">{error}</p>}
     {data && <>
-      <p className="mt-3 text-[var(--text-muted)]" role="status">{data.complete} complete · {data.pending} awaiting reading{data.running ? ` · ${data.running} being read` : ""}{data.blocked ? ` · ${data.blocked} need source or processing attention` : ""}</p>
+      <p className="mt-3 text-[var(--text-muted)]" role="status">{data.complete} complete · {data.pending} awaiting completion{data.running ? ` · ${data.running} being read` : ""}{data.blocked ? ` · ${data.blocked} need source or processing attention` : ""}</p>
+      {partial > 0 && <p className="mt-1 text-[var(--text-muted)]">Among unfinished records, {partial} have partial readings with saved answers. Those answers can support a comparison when every required characteristic is established; unanswered characteristics remain unanswered.</p>}
       {data.announcements !== undefined && <p className="mt-2 text-[var(--text-muted)]">{data.announcements.toLocaleString()} announcement records accounted for · {data.total.toLocaleString()} customer records · {(data.sourcePages ?? 0).toLocaleString()} website pages captured{data.withSourceGaps ? ` · ${data.withSourceGaps.toLocaleString()} records have source gaps` : ""}.</p>}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {data.pending > 0 && <button type="button" disabled={!enabled || reading || loading || data.running > 0} onClick={() => void read()}
@@ -110,11 +132,7 @@ export default function CustomerReferenceProgress({ enabled, onComplete }: { ena
       </div>
       {reading && <p className="mt-2 text-[var(--text-muted)]" role="status">Keep this view open to continue through the full unread set. Each pass saves its progress; closing this view stops further passes.</p>}
       <input aria-label="Find a customer reference" value={filter} onChange={event => { setFilter(event.target.value); setPage(0); }} placeholder="Find a customer or website" className="mt-3 w-full rounded border bg-[var(--background)] px-3 py-2" />
-      <div className="mt-3 max-h-72 overflow-auto rounded border divide-y">{visible.map(reference => <div key={reference.id} className="flex flex-wrap items-start justify-between gap-2 px-3 py-2">
-        {reference.website ? <a href={reference.website} target="_blank" rel="noopener noreferrer" className="text-[var(--gold)] hover:underline">{reference.name} ↗</a> : <span>{reference.name} · Website unresolved</span>}
-        <span className="text-[var(--text-muted)]">{reference.status === "complete" ? "Read" : reference.status === "running" ? "Reading" : reference.status === "blocked" ? "Needs attention" : "Awaiting reading"} · {reference.answered}/{reference.totalQuestions} characteristics answered</span>
-        {!!reference.sourceGaps && <span className="w-full text-[var(--text-muted)]">{reference.sourceGaps} source gaps retained.</span>}
-      </div>)}</div>
+      <div className="mt-3 max-h-72 overflow-auto rounded border divide-y">{visible.map(reference => <CustomerReferenceProgressRow key={reference.id} reference={reference} />)}</div>
       {filtered.length > 50 && <div className="mt-2 flex items-center gap-3"><button disabled={!currentPage} onClick={() => setPage(currentPage - 1)} className="rounded border px-2 py-1 disabled:opacity-40">Previous</button><span>Page {currentPage + 1} of {Math.ceil(filtered.length / 50)} · {filtered.length.toLocaleString()} entries</span><button disabled={(currentPage + 1) * 50 >= filtered.length} onClick={() => setPage(currentPage + 1)} className="rounded border px-2 py-1 disabled:opacity-40">Next</button></div>}
     </>}
     {!data && !loading && <button type="button" disabled={!enabled} onClick={() => void refresh()} className="mt-3 rounded border px-3 py-2 text-xs disabled:opacity-50">Refresh progress</button>}

@@ -4,10 +4,13 @@ import { summarizeCustomerCohort, type CustomerCohortSummary } from "./customerC
 
 /** Public response types and deterministic cached-fact ranking. No provider calls. */
 export type CustomerReferenceSource = { url: string; title: string; contentHash: string; text?: string };
+export type CustomerReferenceReading = { status: "complete" | "pending" | "running" | "blocked"; answered: number; total: 47;
+  lastError: string | null; updatedAt: string | null; unavailableAnswers?: number };
 export type CustomerReference = {
   id: string; name: string; domain: string; website: string; announcementDate: string;
   announcementType: "new_customer" | "expansion" | "renewal" | "unknown"; buyingProgramId?: string;
-  subindustry?: string; catalogVersion: string; completedAt: string; status: "verified" | "pending";
+  subindustry?: string; catalogVersion: string; completedAt: string | null; status: "verified" | "partial" | "pending";
+  reading?: CustomerReferenceReading;
   sources: CustomerReferenceSource[];
   answers: Record<string, { decision: OperatingFacetDecision; nativeResult: unknown; facetVersion: string; sourceUrls: string[] }>;
   identityNotes?: string[];
@@ -71,6 +74,7 @@ export type CustomerMatchAccount = Omit<CustomerMatchCandidate, "decisions"> & {
   otherPatterns: { id: string; label: string }[];
   reference: { id: string; name: string; domain: string; website: string; announcementDate: string;
     announcementType: CustomerReference["announcementType"]; recent: boolean; ageDays: number; sources: CustomerReferenceSource[];
+    reading?: CustomerReferenceReading;
     sharedTraits: Trait[]; unknownTraits: Trait[]; differentTraits: Trait[];
     sharedTraitSources: { traitId: string; urls: string[] }[];
     sharedNativeAnswers?: { traitId: string; nativeResult: unknown }[] };
@@ -80,7 +84,7 @@ export type CustomerMatchAccount = Omit<CustomerMatchCandidate, "decisions"> & {
 export type CustomerMatchesResult = {
   patterns: { id: string; label: string; description: string; count: number; referenceCount: number }[];
   accounts: CustomerMatchAccount[]; total: number; page: number; pageSize: 25; hasMore: boolean;
-  referenceCoverage: { verified: number; pending: number; asOf: string; total?: number };
+  referenceCoverage: { verified: number; pending: number; asOf: string; total?: number; partial?: number; usable?: number };
   customerCohort?: CustomerCohortSummary;
   /** Completion is reported by the canonical catalog endpoint, not recomputed by the shortlist. */
   coverage: { eligible: number; assessed: number | null; asOf: string };
@@ -123,7 +127,7 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
   // businesses can share a website or buying program and still have different
   // operating facts; neither relationship removes a customer from comparison.
   // Renewal-only customers remain comparable, with their event type displayed.
-  const refs = [...input.references].filter(ref => ref.status === "verified"
+  const refs = [...input.references].filter(ref => ["verified", "partial"].includes(ref.status)
     && Number.isFinite(Date.parse(ref.announcementDate)) && Date.parse(ref.announcementDate) <= now)
     .sort((a, b) => b.announcementDate.localeCompare(a.announcementDate) || a.id.localeCompare(b.id));
   const entities = new Set<string>();
@@ -171,7 +175,9 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
       ...candidate, primaryPattern: { id: best.pattern.id, label: best.pattern.label, branchId: best.branch.id, branchLabel: best.branch.label },
       otherPatterns: related, reference: { id: best.reference.id, name: best.reference.name, domain: best.reference.domain,
         website: best.reference.website, announcementDate: best.reference.announcementDate, announcementType: best.reference.announcementType,
-        recent: best.recent, ageDays: best.ageDays,
+        recent: best.recent, ageDays: best.ageDays, reading: best.reference.reading ?? {
+          status: best.reference.status === "verified" ? "complete" : "pending", answered: Object.keys(best.reference.answers).length,
+          total: 47, lastError: null, updatedAt: best.reference.completedAt },
         sources: best.reference.sources, sharedTraits: shared.map(trait), unknownTraits: notEstablished.map(trait), differentTraits: different.map(trait),
         sharedTraitSources: shared.map(id => ({ traitId: id, urls: best.reference.answers[id].sourceUrls })),
         sharedNativeAnswers: shared.map(id => ({ traitId: id, nativeResult: best.reference.answers[id].nativeResult })) },
@@ -191,13 +197,15 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
       || b.fitOrder - a.fitOrder || a.account.companyId.localeCompare(b.account.companyId);
   });
   const start = (page - 1) * 25;
+  const complete = references.filter(ref => ref.status === "verified").length;
   return {
     patterns: CUSTOMER_PATTERNS.map(p => ({ id: p.id, label: p.label, description: p.description, count: patternCounts.get(p.id)!.size,
       referenceCount: new Set(branches.filter(b => b.pattern.id === p.id).flatMap(b => b.refs.map(r => r.id))).size })),
     accounts: ranked.slice(start, start + 25).map(r => r.account), total: ranked.length, page, pageSize: 25, hasMore: start + 25 < ranked.length,
-    referenceCoverage: { verified: references.length, pending: Math.max(0, input.referenceTotal - references.length), asOf: input.asOf, total: input.referenceTotal },
+    referenceCoverage: { verified: complete, partial: references.length - complete, usable: references.length,
+      pending: Math.max(0, input.referenceTotal - complete), asOf: input.asOf, total: input.referenceTotal },
     customerCohort: summarizeCustomerCohort(references, now),
     coverage: { eligible: candidates.length, assessed: null, asOf: new Date(now).toISOString() },
-    note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives. All registered customers are eligible for comparison once their website evidence is read. A customer appears in a pattern only when its required facts are supported. Customer announcements include new customers, expansions and renewals; dates do not establish a new purchase. Rarity describes assessed prospects only. Ranking reads saved answers and makes no Jev requests.",
+    note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives, and unanswered questions remain absent. Completed and partial customer readings can contribute only their current source-backed native facts; every required pattern fact must be supported. Partial readings stay visibly incomplete, including held questions. Customer announcements include new customers, expansions and renewals; dates do not establish a new purchase. Rarity describes assessed prospects only. Ranking reads saved answers and makes no Jev requests.",
   };
 }

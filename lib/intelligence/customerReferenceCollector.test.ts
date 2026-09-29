@@ -69,6 +69,17 @@ describe("full-cohort official website collection", () => {
     expect(second.sources[0]).toEqual(first.sources[0]);
   });
 
+  it("keeps an actual privacy service page while excluding the generic privacy footer", async () => {
+    const h = harness({
+      "https://acme.com/": page("https://acme.com/", '<main>Privacy consulting.</main><a href="/services/privacy">Data privacy</a><a href="/privacy-policy">Privacy Policy</a>'),
+      "https://acme.com/services/privacy": page("https://acme.com/services/privacy", '<main>We provide managed privacy operations and compliance services.</main>'),
+    });
+    const result = await collectCustomerReferenceSources(input, null, Date.now() + 100_000, h);
+    expect(h.fetchText.mock.calls.map(([url]) => url)).toEqual(["https://acme.com/", "https://acme.com/services/privacy"]);
+    expect(result.sources[1].text).toBe("We provide managed privacy operations and compliance services.");
+    expect(result.outcome).toBe("ready");
+  });
+
   it("checkpoints anti-bot failures once and does not repeatedly download a blocked site", async () => {
     const h = harness({ "https://acme.com/": page("https://acme.com/", "Access denied", 403) });
     const first = await collectCustomerReferenceSources(input, null, Date.now() + 100_000, h);

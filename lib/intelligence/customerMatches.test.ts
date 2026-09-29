@@ -28,6 +28,20 @@ describe("recent-customer cached ranking", () => {
     r.answers.rr_i01.decision = "not_supported";
     expect(rank([candidate()], [r]).accounts).toHaveLength(0);
   });
+  it("uses supported partial combinations without inflating completion or filling missing answers", () => {
+    const r = reference("partial"); r.status = "partial"; r.completedAt = null;
+    r.answers = { rr_c01: r.answers.rr_c01, rr_i01: r.answers.rr_i01 };
+    r.reading = { status: "blocked", answered: 2, total: 47, lastError: "customer_context_relevant_evidence_still_large", updatedAt: now.toString() };
+    const result = rank([candidate()], [r], { referenceTotal: 823 });
+    expect(result.accounts).toHaveLength(1);
+    expect(result.accounts[0].reference.reading).toEqual(r.reading);
+    expect(result.referenceCoverage).toMatchObject({ verified: 0, partial: 1, usable: 1, pending: 823, total: 823 });
+    expect(result.accounts[0].reference.sharedTraits.map(t => t.id)).toEqual(["rr_c01", "rr_i01"]);
+    expect(r.answers.rr_c11).toBeUndefined();
+    delete r.answers.rr_i01;
+    expect(rank([candidate()], [r]).accounts).toHaveLength(0);
+    expect(rank([candidate()], [r, reference()]).referenceCoverage).toMatchObject({ verified: 1, partial: 1, usable: 2 });
+  });
   it("separates an unknown prospect trait from an explicit contradictory answer", () => {
     const unknown = rank([candidate()]).accounts[0];
     expect(unknown.reference.unknownTraits.map(t => t.id)).toEqual(["rr_c05"]);

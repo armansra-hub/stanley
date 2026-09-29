@@ -273,83 +273,109 @@ export async function runCustomerReferenceReading(deadline: number, deps: {
     registry.sort((a, b) => priority(a) - priority(b) || b.announcement_date.localeCompare(a.announcement_date) || a.id.localeCompare(b.id));
     let processed = 0, completed = 0, captured = 0, sourceBlocked = 0, stoppedBy = "references_exhausted";
     const usage = { requests: 0, reused: 0, inputTokens: 0, outputTokens: 0, unknownUsageRequests: 0 };
-    for (let registryRow of registry) {
-      if (Date.now() >= deadline - 40_000) { stoppedBy = "deadline"; break; }
-      const proof = customerReferenceRegistryProofSeed(registryRow);
-      const savedCompatible = !!proof && registryRow.native_catalog_version === OPERATING_CATALOG_VERSION
-        && registryRow.native_evidence_key === customerReferenceEvidenceKey(proof);
-      if (registryRow.source_status === "ready" && savedCompatible && registryRow.native_status === "complete") continue;
-      if (registryRow.source_status === "blocked") continue;
-      if (registryRow.source_status !== "ready") {
-        const lease = randomUUID(), now = new Date().toISOString();
-        const claim = await db.from("intelligence_customer_reference_registry").update({ source_lease_token: lease,
-          source_lease_until: new Date(deadline + 10_000).toISOString(), source_status: "running" })
-          .eq("id", registryRow.id).eq("active", true).neq("source_status", "ready").neq("source_status", "blocked")
-          .or(`source_lease_until.is.null,source_lease_until.lt.${now}`).select("*").maybeSingle();
-        if (claim.error) throw new Error("customer_source_claim_failed");
-        if (!claim.data) continue;
-        registryRow = claim.data as CustomerReferenceRegistryRow;
-        const existingSources = registryRow.sources.filter((source): source is typeof source & { text: string } => typeof source.text === "string");
-        if (existingSources.length !== registryRow.sources.length) throw new Error("customer_source_capture_incomplete");
-        const collection = await (deps.collect ?? collectCustomerReferenceSources)({ id: registryRow.id, name: registryRow.name,
-          domain: registryRow.domain, website: registryRow.website, candidateUrls: registryRow.candidate_urls, sources: existingSources },
-          registryRow.source_checkpoint as CustomerSourceCheckpoint | null, deadline - 35_000, {
-            save: async capture => {
-              const saved = await db.from("intelligence_customer_reference_registry").update({ sources: capture.sources,
-                source_status: capture.status, source_checkpoint: capture.checkpoint, updated_at: new Date().toISOString(),
-                ...(capture.status !== "running" ? { source_lease_token: null, source_lease_until: null } : {}) })
-                .eq("id", registryRow.id).eq("source_lease_token", lease).gt("source_lease_until", new Date().toISOString()).select("id").maybeSingle();
-              if (saved.error) throw new Error("customer_source_checkpoint_failed");
-              return !!saved.data;
-            },
-          });
-        captured += Math.max(0, collection.sources.length - existingSources.length);
-        if (collection.outcome === "lease_changed") { stoppedBy = "source_lease_changed"; break; }
-        if (collection.outcome === "continued") { stoppedBy = "source_continuation"; break; }
-        if (collection.outcome === "blocked") { sourceBlocked++; continue; }
-        registryRow = { ...registryRow, source_status: "ready", sources: collection.sources, source_checkpoint: collection.checkpoint };
-      }
-      if (savedCompatible && registryRow.native_status === "blocked" && !recoverableErrors.includes(registryRow.native_last_error ?? "")) continue;
-      const full = registryRow.sources.every(source => typeof source.text === "string") ? registryRow
-        : await (deps.getRow ?? getCustomerReferenceRegistryRow)(registryRow.id);
-      const seed = full && customerReferenceRegistrySeed(full);
-      if (!seed) throw new Error("customer_reference_source_proof_unavailable");
-      const old = await readRow(seed.id, db);
-      const evidenceKey = customerReferenceEvidenceKey(seed);
-      const compatible = old?.catalog_version === OPERATING_CATALOG_VERSION && old.evidence_key === evidenceKey;
-      if (compatible && old.status === "complete") continue;
-      // A source/provider rejection is explicit. Do not blind-replay the same
-      // rejected input; changed source/version earns a new first pass.
-      if (compatible && old.status === "blocked" && !customerReferenceCanResumePacked(seed, old.checkpoint) && !customerReferenceCanResumeContext(seed, old.checkpoint)) continue;
-      const initial = await db.from("intelligence_customer_references").upsert({ id: seed.id, catalog_version: OPERATING_CATALOG_VERSION,
-        evidence_key: evidenceKey, status: "pending", checkpoint: null, result: null }, { onConflict: "id", ignoreDuplicates: true });
-      if (initial.error) throw new Error("customer_reference_admission_failed");
-      const lease = randomUUID(), now = new Date().toISOString();
-      const claimed = await db.from("intelligence_customer_references").update({ lease_token: lease,
-        lease_until: new Date(deadline + 10_000).toISOString(), status: "running", catalog_version: OPERATING_CATALOG_VERSION,
-        evidence_key: evidenceKey, ...(compatible ? {} : { checkpoint: null, result: null }) })
-        .eq("id", seed.id).or(`lease_until.is.null,lease_until.lt.${now}`).select("checkpoint").maybeSingle();
-      if (claimed.error) throw new Error("customer_reference_claim_failed");
-      if (!claimed.data) continue;
-      const initialCheckpoint = claimed.data.checkpoint as ReferenceCheckpoint | null;
-      const initialUsage = { requests: initialCheckpoint?.requests ?? 0, reused: initialCheckpoint?.reused ?? 0,
-        inputTokens: initialCheckpoint?.inputTokens ?? 0, outputTokens: initialCheckpoint?.outputTokens ?? 0, unknownUsageRequests: initialCheckpoint?.unknownUsageRequests ?? 0 };
-      let latestUsage = { ...initialUsage };
-      const save = async (checkpoint: ReferenceCheckpoint, status: "running" | "pending" | "blocked" | "complete", result: CustomerReference | null, error: string | null) => {
-        const saved = await db.from("intelligence_customer_references").update({ status, result,
-          checkpoint: { ...checkpoint, lastError: error }, updated_at: new Date().toISOString(),
-          ...(status !== "running" ? { lease_token: null, lease_until: null } : {}) })
-          .eq("id", seed.id).eq("lease_token", lease).eq("evidence_key", evidenceKey).gt("lease_until", new Date().toISOString()).select("id").maybeSingle();
-        if (saved.error) throw new Error("customer_reference_checkpoint_failed");
-        if (saved.data) latestUsage = { requests: checkpoint.requests, reused: checkpoint.reused, inputTokens: checkpoint.inputTokens,
-          outputTokens: checkpoint.outputTokens, unknownUsageRequests: checkpoint.unknownUsageRequests ?? 0 };
-        return !!saved.data;
-      };
-      const outcome = await (deps.classify ?? classifyCustomerReference)(seed, initialCheckpoint, deadline, { save });
-      for (const key of Object.keys(usage) as (keyof typeof usage)[]) usage[key] += Math.max(0, latestUsage[key] - initialUsage[key]);
-      processed++; if (outcome === "complete") completed++;
-      if (["provider_hold", "native_busy", "provider_error", "lease_changed", "continued"].includes(outcome)) { stoppedBy = outcome; break; }
-    }
-    return { processed, completed, captured, sourceBlocked, stoppedBy, ...usage };
+    // Two distinct customers share this one finite invocation. The cursor is
+    // only an in-memory traversal of the canonical registry, not another work
+    // queue. Every source/native write still needs its existing exact row lease.
+    let cursor = 0, stopNewAdmissions = false;
+    const stopRank: Record<string, number> = { references_exhausted: 0, deadline: 1, continued: 1, source_continuation: 1,
+      native_busy: 2, source_lease_changed: 3, lease_changed: 3, provider_error: 4, provider_hold: 5, storage_failure: 6 };
+    const stop = (reason: string) => {
+      stopNewAdmissions = true;
+      if ((stopRank[reason] ?? 6) > (stopRank[stoppedBy] ?? 0)) stoppedBy = reason;
+    };
+    const lane = async () => {
+      try {
+        while (!stopNewAdmissions && cursor < registry.length) {
+          if (Date.now() >= deadline - 40_000) { stop("deadline"); break; }
+          // Advance synchronously before awaiting anything; a customer is assigned
+          // to at most one lane even while the other lane awaits network I/O.
+          let registryRow = registry[cursor++];
+          const proof = customerReferenceRegistryProofSeed(registryRow);
+          const savedCompatible = !!proof && registryRow.native_catalog_version === OPERATING_CATALOG_VERSION
+            && registryRow.native_evidence_key === customerReferenceEvidenceKey(proof);
+          if (registryRow.source_status === "ready" && savedCompatible && registryRow.native_status === "complete") continue;
+          if (registryRow.source_status === "blocked") continue;
+          if (registryRow.source_status !== "ready") {
+            const lease = randomUUID(), now = new Date().toISOString();
+            const claim = await db.from("intelligence_customer_reference_registry").update({ source_lease_token: lease,
+              source_lease_until: new Date(deadline + 10_000).toISOString(), source_status: "running" })
+              .eq("id", registryRow.id).eq("active", true).neq("source_status", "ready").neq("source_status", "blocked")
+              .or(`source_lease_until.is.null,source_lease_until.lt.${now}`).select("*").maybeSingle();
+            if (claim.error) throw new Error("customer_source_claim_failed");
+            if (!claim.data) continue;
+            registryRow = claim.data as CustomerReferenceRegistryRow;
+            const existingSources = registryRow.sources.filter((source): source is typeof source & { text: string } => typeof source.text === "string");
+            if (existingSources.length !== registryRow.sources.length) throw new Error("customer_source_capture_incomplete");
+            const collection = await (deps.collect ?? collectCustomerReferenceSources)({ id: registryRow.id, name: registryRow.name,
+              domain: registryRow.domain, website: registryRow.website, candidateUrls: registryRow.candidate_urls, sources: existingSources },
+              registryRow.source_checkpoint as CustomerSourceCheckpoint | null, deadline - 35_000, {
+                save: async capture => {
+                  const saved = await db.from("intelligence_customer_reference_registry").update({ sources: capture.sources,
+                    source_status: capture.status, source_checkpoint: capture.checkpoint, updated_at: new Date().toISOString(),
+                    ...(capture.status !== "running" ? { source_lease_token: null, source_lease_until: null } : {}) })
+                    .eq("id", registryRow.id).eq("source_lease_token", lease).gt("source_lease_until", new Date().toISOString()).select("id").maybeSingle();
+                  if (saved.error) throw new Error("customer_source_checkpoint_failed");
+                  return !!saved.data;
+                },
+              });
+            captured += Math.max(0, collection.sources.length - existingSources.length);
+            if (collection.outcome === "lease_changed") { stop("source_lease_changed"); break; }
+            if (collection.outcome === "continued") { stop("source_continuation"); break; }
+            if (collection.outcome === "blocked") { sourceBlocked++; continue; }
+            registryRow = { ...registryRow, source_status: "ready", sources: collection.sources, source_checkpoint: collection.checkpoint };
+          }
+          // A source capture already in flight can finish and save. Once another
+          // lane reports a global failure, do not admit a new native phase.
+          if (stopNewAdmissions) break;
+          if (savedCompatible && registryRow.native_status === "blocked" && !recoverableErrors.includes(registryRow.native_last_error ?? "")) continue;
+          const full = registryRow.sources.every(source => typeof source.text === "string") ? registryRow
+            : await (deps.getRow ?? getCustomerReferenceRegistryRow)(registryRow.id);
+          const seed = full && customerReferenceRegistrySeed(full);
+          if (!seed) throw new Error("customer_reference_source_proof_unavailable");
+          const old = await readRow(seed.id, db);
+          const evidenceKey = customerReferenceEvidenceKey(seed);
+          const compatible = old?.catalog_version === OPERATING_CATALOG_VERSION && old.evidence_key === evidenceKey;
+          if (compatible && old.status === "complete") continue;
+          // A source/provider rejection is explicit. Do not blind-replay the same
+          // rejected input; changed source/version earns a new first pass.
+          if (compatible && old.status === "blocked" && !customerReferenceCanResumePacked(seed, old.checkpoint) && !customerReferenceCanResumeContext(seed, old.checkpoint)) continue;
+          const initial = await db.from("intelligence_customer_references").upsert({ id: seed.id, catalog_version: OPERATING_CATALOG_VERSION,
+            evidence_key: evidenceKey, status: "pending", checkpoint: null, result: null }, { onConflict: "id", ignoreDuplicates: true });
+          if (initial.error) throw new Error("customer_reference_admission_failed");
+          if (stopNewAdmissions) break;
+          const lease = randomUUID(), now = new Date().toISOString();
+          const claimed = await db.from("intelligence_customer_references").update({ lease_token: lease,
+            lease_until: new Date(deadline + 10_000).toISOString(), status: "running", catalog_version: OPERATING_CATALOG_VERSION,
+            evidence_key: evidenceKey, ...(compatible ? {} : { checkpoint: null, result: null }) })
+            .eq("id", seed.id).or(`lease_until.is.null,lease_until.lt.${now}`).select("checkpoint").maybeSingle();
+          if (claimed.error) throw new Error("customer_reference_claim_failed");
+          if (!claimed.data) continue;
+          const initialCheckpoint = claimed.data.checkpoint as ReferenceCheckpoint | null;
+          const initialUsage = { requests: initialCheckpoint?.requests ?? 0, reused: initialCheckpoint?.reused ?? 0,
+            inputTokens: initialCheckpoint?.inputTokens ?? 0, outputTokens: initialCheckpoint?.outputTokens ?? 0, unknownUsageRequests: initialCheckpoint?.unknownUsageRequests ?? 0 };
+          let latestUsage = { ...initialUsage };
+          const save = async (checkpoint: ReferenceCheckpoint, status: "running" | "pending" | "blocked" | "complete", result: CustomerReference | null, error: string | null) => {
+            const saved = await db.from("intelligence_customer_references").update({ status, result,
+              checkpoint: { ...checkpoint, lastError: error }, updated_at: new Date().toISOString(),
+              ...(status !== "running" ? { lease_token: null, lease_until: null } : {}) })
+              .eq("id", seed.id).eq("lease_token", lease).eq("evidence_key", evidenceKey).gt("lease_until", new Date().toISOString()).select("id").maybeSingle();
+            if (saved.error) throw new Error("customer_reference_checkpoint_failed");
+            if (saved.data) latestUsage = { requests: checkpoint.requests, reused: checkpoint.reused, inputTokens: checkpoint.inputTokens,
+              outputTokens: checkpoint.outputTokens, unknownUsageRequests: checkpoint.unknownUsageRequests ?? 0 };
+            return !!saved.data;
+          };
+          const outcome = await (deps.classify ?? classifyCustomerReference)(seed, initialCheckpoint, deadline, { save });
+          for (const key of Object.keys(usage) as (keyof typeof usage)[]) usage[key] += Math.max(0, latestUsage[key] - initialUsage[key]);
+          processed++; if (outcome === "complete") completed++;
+          if (["provider_hold", "native_busy", "provider_error", "lease_changed", "continued"].includes(outcome)) { stop(outcome); break; }
+        }
+      } catch (error) { stop("storage_failure"); throw error; }
+    };
+    // Drain every admitted lane, including after one fails. Never abort an
+    // accepted paid call or return while its checkpoint write is still running.
+    const settled = await Promise.allSettled([lane(), lane()]);
+    const failure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failure) throw failure.reason;
+    return { processed, completed, captured, sourceBlocked, stoppedBy, ...usage, concurrency: 2 };
   });
 }

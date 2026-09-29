@@ -17,6 +17,8 @@ describe("saved native customer cohort counts", () => {
     const before = structuredClone(refs);
     const result = summarizeCustomerCohort(refs, now);
     expect(result.customers).toBe(4);
+    expect(result.completedCustomers).toBe(4);
+    expect(result.partialCustomers).toBe(0);
     const group = result.industries[0];
     expect(group.all.customers).toBe(4);
     expect(Object.keys(group.all.traits)).toHaveLength(47);
@@ -52,11 +54,26 @@ describe("saved native customer cohort counts", () => {
     expect(summarizeCustomerCohort([incomplete], now).industries[0].all.traits.rr_c01).toEqual({ supported: 0, not_supported: 0, insufficient_evidence: 0, conflicting: 0, unanswered: 1 });
   });
 
+  it("counts saved partial answers without counting partial references as completed or missing answers as negative", () => {
+    const partial = reference("partial", "supported", { status: "partial", completedAt: null, announcementDate: "2024-09-01" });
+    delete partial.answers.rr_c01;
+    partial.answers.rr_c02.decision = "insufficient_evidence";
+    const result = summarizeCustomerCohort([reference("complete", "supported"), partial, partial, reference("not-ready", "supported", { status: "pending" })], now);
+    expect(result).toMatchObject({ customers: 2, completedCustomers: 1, partialCustomers: 1 });
+    const group = result.industries[0];
+    expect(group.all).toMatchObject({ customers: 2, completedCustomers: 1, partialCustomers: 1 });
+    expect(group.recent).toMatchObject({ customers: 1, completedCustomers: 1, partialCustomers: 0 });
+    expect(group.older).toMatchObject({ customers: 1, completedCustomers: 0, partialCustomers: 1 });
+    expect(group.all.traits.rr_c01).toEqual({ supported: 1, not_supported: 0, insufficient_evidence: 0, conflicting: 0, unanswered: 1 });
+    expect(group.all.traits.rr_c02).toEqual({ supported: 1, not_supported: 0, insufficient_evidence: 1, conflicting: 0, unanswered: 0 });
+    for (const count of Object.values(group.all.traits)) expect(Object.values(count).reduce((sum, n) => sum + n, 0)).toBe(2);
+  });
+
   it("uses the matcher's eligible completed references and reports the exact registry denominator", () => {
     const references = [reference("ready", "supported"), reference("pending", "supported", { status: "pending" }),
       reference("future", "supported", { announcementDate: "2027-01-01" }), reference("undated", "supported", { announcementDate: "unavailable" })];
     const result = rankCustomerMatches({ references, candidates: [], asOf: "2026-09-28", referenceTotal: 823, now });
-    expect(result.referenceCoverage).toEqual({ verified: 1, pending: 822, total: 823, asOf: "2026-09-28" });
+    expect(result.referenceCoverage).toMatchObject({ verified: 1, pending: 822, total: 823, asOf: "2026-09-28" });
     expect(result.customerCohort?.customers).toBe(1);
     expect(result.customerCohort?.industries[0].all.customers).toBe(1);
   });

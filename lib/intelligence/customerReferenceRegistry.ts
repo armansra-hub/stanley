@@ -23,7 +23,9 @@ export type CustomerReferenceImport = {
   announcementDate: string; announcementType: CustomerReferenceSeed["announcementType"]; asOf: string;
   announcements: ReferenceAnnouncement[]; candidateUrls: string[]; buyingProgramId?: string; comparisonIndustry?: string; identityNotes: string[];
 };
-export type StoredCustomerReference = { id: string; catalog_version: string; evidence_key: string; status: string; result: unknown };
+export type StoredCustomerReference = { id: string; catalog_version: string; evidence_key: string; status: string; result?: unknown;
+  updated_at?: string; checkpoint_version?: unknown; checkpoint_evidence_key?: unknown; checkpoint_answers?: unknown; checkpoint_last_error?: unknown };
+export const CUSTOMER_REFERENCE_CHECKPOINT_SELECT = "id,catalog_version,evidence_key,status,updated_at,checkpoint_version:checkpoint->version,checkpoint_evidence_key:checkpoint->>evidenceKey,checkpoint_answers:checkpoint->answers,checkpoint_last_error:checkpoint->>lastError";
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const announcementTypes = new Set(["new_customer", "expansion", "renewal", "unknown"]);
 const idOk = (v: unknown): v is string => typeof v === "string" && /^[a-zA-Z0-9_.-]{1,120}$/.test(v);
@@ -145,6 +147,21 @@ export async function loadCustomerReferenceMatchRows(): Promise<StoredCustomerRe
     const last = data[data.length - 1].id;
     if (after && last <= after) throw new Error("customer_reference_cursor_invalid");
     after = last; if (data.length < 100) break;
+  }
+  return rows;
+}
+
+/** Only paid facet answers from exact incomplete registry IDs; never load the
+ * large pending request, passage routing history, source text or private posts.
+ * Batches bound query size, not total cohort coverage. */
+export async function loadCustomerReferencePartialRows(registry: readonly CustomerReferenceRegistryRow[], db = serviceClient()): Promise<StoredCustomerReference[]> {
+  const ids = [...new Set(registry.filter(row => row.source_status === "ready" && (row.native_answered ?? 0) > 0
+    && ["pending", "running", "blocked"].includes(row.native_status ?? "")).map(row => row.id))];
+  const rows: StoredCustomerReference[] = [];
+  for (let start = 0; start < ids.length; start += 40) {
+    const result = await db.from("intelligence_customer_references").select(CUSTOMER_REFERENCE_CHECKPOINT_SELECT).in("id", ids.slice(start, start + 40));
+    if (result.error || !Array.isArray(result.data)) throw new Error("customer_partial_answers_unavailable");
+    rows.push(...result.data as unknown as StoredCustomerReference[]);
   }
   return rows;
 }

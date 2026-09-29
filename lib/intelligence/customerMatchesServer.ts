@@ -6,10 +6,11 @@ import { catalogFacetVersion } from "./operatingCoverage";
 import { catalogTopic, type TopicSearchAccountRow } from "./topicSearch";
 import { rankCustomerMatches, type CustomerMatchCandidate, type CustomerReference, type CustomerMatchesResult, type CustomerWhyNow } from "./customerMatches";
 import { customerReferenceEvidenceKey, customerReferenceCatalogSources, type CustomerReferenceSeed } from "./customerReferenceSources";
-import { loadCustomerReferenceRegistry, loadCustomerReferenceMatchRows, customerReferenceRegistryProofSeed, customerReferenceRegistrySeed,
-  type CustomerReferenceProofSeed, type CustomerReferenceRegistryRow } from "./customerReferenceRegistry";
+import { loadCustomerReferenceRegistry, loadCustomerReferenceMatchRows, loadCustomerReferencePartialRows, CUSTOMER_REFERENCE_CHECKPOINT_SELECT,
+  customerReferenceRegistryProofSeed, customerReferenceRegistrySeed,
+  type CustomerReferenceProofSeed, type CustomerReferenceRegistryRow, type StoredCustomerReference } from "./customerReferenceRegistry";
 
-type StoredReference = { id: string; catalog_version: string; evidence_key: string; status: string; result: unknown };
+type StoredReference = StoredCustomerReference;
 type CandidateTrigger = TriggerEvidence & { id: string; signal_date: string | null };
 type CandidateRow = Omit<CustomerMatchCandidate, "whyNow"> & {
   description: string | null; ns_industry: string | null; record_dead: boolean | null; triggers: CandidateTrigger[];
@@ -19,8 +20,8 @@ function safeUrl(v: unknown): v is string {
   try { const u = new URL(String(v)); return ["http:", "https:"].includes(u.protocol) && !u.username && !u.password; } catch { return false; }
 }
 export function readyCustomerReference(seed: CustomerReferenceProofSeed, stored: StoredReference | undefined): CustomerReference | null {
-  if (!stored || stored.status !== "complete" || stored.catalog_version !== OPERATING_CATALOG_VERSION
-    || stored.evidence_key !== customerReferenceEvidenceKey(seed) || !object(stored.result)) return null;
+  if (!stored || stored.id !== seed.id || !["complete", "pending", "running", "blocked"].includes(stored.status)
+    || stored.catalog_version !== OPERATING_CATALOG_VERSION || stored.evidence_key !== customerReferenceEvidenceKey(seed)) return null;
   try {
     if (!seed.sources.length) return null;
     const domain = seed.domain.toLowerCase().replace(/^www\./, ""), ids = new Set<string>();
@@ -34,25 +35,46 @@ export function readyCustomerReference(seed: CustomerReferenceProofSeed, stored:
     // reads need only that manifest; full bodies are checked for shown examples.
     if (seed.sources.every(source => typeof source.text === "string")) customerReferenceCatalogSources(seed as CustomerReferenceSeed);
   } catch { return null; }
-  const result = stored.result;
-  if (result.id !== seed.id || result.catalogVersion !== OPERATING_CATALOG_VERSION || result.status !== "verified"
-    || !object(result.answers) || typeof result.completedAt !== "string" || !Number.isFinite(Date.parse(result.completedAt))) return null;
+  const complete = stored.status === "complete", result = stored.result;
+  let rawAnswers: Record<string, unknown>, completedAt: string | null = null;
+  if (complete) {
+    if (!object(result) || result.id !== seed.id || result.catalogVersion !== OPERATING_CATALOG_VERSION || result.status !== "verified"
+      || !object(result.answers) || typeof result.completedAt !== "string" || !Number.isFinite(Date.parse(result.completedAt))) return null;
+    rawAnswers = result.answers; completedAt = result.completedAt;
+  } else {
+    if (stored.checkpoint_version !== 1 || stored.checkpoint_evidence_key !== stored.evidence_key || !object(stored.checkpoint_answers)) return null;
+    rawAnswers = stored.checkpoint_answers;
+  }
   const sources = new Map(seed.sources.map(source => [source.url, source]));
+  const answers: CustomerReference["answers"] = {}; let unavailableAnswers = 0;
   for (const facet of OPERATING_FACETS) {
-    const answer = result.answers[facet.id];
+    const answer = rawAnswers[facet.id];
+    if (answer === undefined && !complete) continue;
     if (!object(answer) || !object(answer.nativeResult) || answer.facetVersion !== catalogFacetVersion(facet)
       || answer.nativeResult.questionId !== facet.id || operatingFacetDecision(answer.nativeResult.answer) !== answer.decision
       || !Array.isArray(answer.sourceUrls) || (!answer.sourceUrls.length && answer.decision !== "insufficient_evidence")
-      || answer.sourceUrls.some(url => typeof url !== "string" || !sources.has(url))) return null;
+      || answer.sourceUrls.some(url => typeof url !== "string" || !sources.has(url))) {
+      if (complete) return null;
+      unavailableAnswers++; continue;
+    }
+    // Keep the exact paid native object/citations. Missing or stale facets do
+    // not become fabricated insufficient_evidence answers.
+    answers[facet.id] = answer as CustomerReference["answers"][string];
   }
+  if (!Object.keys(answers).length) return null;
+  const lastError = typeof stored.checkpoint_last_error === "string" && /^[a-zA-Z0-9_.:-]{1,120}$/.test(stored.checkpoint_last_error)
+    ? stored.checkpoint_last_error : null;
   // Identity and announcement come from the maintained seed, never provider prose.
   // Only public website receipts and native choices cross the browser boundary.
   return { id: seed.id, name: seed.name, domain: seed.domain, website: seed.website,
     announcementDate: seed.announcementDate, announcementType: seed.announcementType,
     buyingProgramId: seed.buyingProgramId, subindustry: seed.comparisonIndustry,
-    catalogVersion: OPERATING_CATALOG_VERSION, completedAt: result.completedAt, status: "verified",
+    catalogVersion: OPERATING_CATALOG_VERSION, completedAt, status: complete ? "verified" : "partial",
+    reading: { status: stored.status as "complete" | "pending" | "running" | "blocked", answered: Object.keys(answers).length, total: 47,
+      lastError: complete ? null : lastError, updatedAt: stored.updated_at && Number.isFinite(Date.parse(stored.updated_at)) ? stored.updated_at : completedAt,
+      ...(unavailableAnswers ? { unavailableAnswers } : {}) },
     sources: seed.sources.map(source => ({ url: source.url, title: source.title, contentHash: source.contentHash })),
-    answers: result.answers as CustomerReference["answers"], identityNotes: seed.identityNotes };
+    answers, identityNotes: seed.identityNotes };
 }
 
 const TIMING_LABELS: Record<string, string> = {
@@ -89,8 +111,9 @@ export async function loadCustomerMatches(input: { pattern: string; page: number
   ]);
   if (snapshot.error) throw snapshot.error;
   if (!snapshot.data || !Array.isArray(snapshot.data.accounts)) throw new Error("customer_matches_unavailable");
+  const partialRows = await loadCustomerReferencePartialRows(registry, db);
   const seeds = registry.filter(row => row.source_status === "ready").flatMap(row => { const seed = customerReferenceRegistryProofSeed(row); return seed ? [seed] : []; });
-  const rows = new Map(referenceRows.map(row => [row.id, row]));
+  const rows = new Map([...partialRows, ...referenceRows].map(row => [row.id, row]));
   const references = seeds.flatMap(seed => { const ref = readyCustomerReference(seed, rows.get(seed.id)); return ref ? [ref] : []; });
   const now = Date.now();
   const candidates = (snapshot.data.accounts as CandidateRow[]).map(row => ({ companyId: row.companyId, name: row.name, domain: row.domain,
@@ -105,7 +128,7 @@ export async function loadCustomerMatches(input: { pattern: string; page: number
     db.rpc("intelligence_customer_match_evidence", { p_catalog_version: OPERATING_CATALOG_VERSION, p_facet_versions: facetVersions,
       p_selection: result.accounts.map(account => ({ companyId: account.companyId, facets: account.reference.sharedTraits.map(trait => trait.id) })) }),
     db.from("intelligence_customer_reference_registry").select("*").eq("active", true).eq("source_status", "ready").in("id", selectedReferenceIds),
-    db.from("intelligence_customer_references").select("id,catalog_version,evidence_key,status,result").in("id", selectedReferenceIds),
+    db.from("intelligence_customer_references").select(`${CUSTOMER_REFERENCE_CHECKPOINT_SELECT},result`).in("id", selectedReferenceIds),
   ]);
   if (hydrated.error) throw hydrated.error;
   if (selectedRegistry.error || selectedNative.error) throw new Error("customer_reference_evidence_unavailable");
@@ -126,7 +149,7 @@ export async function loadCustomerMatches(input: { pattern: string; page: number
     // during this read. A stale answer cannot survive merely as a similarity tag.
     if (account.reference.sharedTraits.some(trait => !topics.some(topic => topic.id === trait.id))) return [];
     if (account.reference.sharedTraits.some(trait => fullReference.answers[trait.id]?.decision !== "supported")) return [];
-    return [{ ...account, topics, reference: { ...account.reference,
+    return [{ ...account, topics, reference: { ...account.reference, reading: fullReference.reading,
       sources: fullReference.sources,
       sharedTraitSources: account.reference.sharedTraits.map(trait => ({ traitId: trait.id, urls: fullReference.answers[trait.id].sourceUrls })),
       sharedNativeAnswers: account.reference.sharedTraits.map(trait => ({ traitId: trait.id, nativeResult: fullReference.answers[trait.id].nativeResult })) } }];
