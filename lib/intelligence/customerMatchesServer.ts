@@ -6,6 +6,7 @@ import { catalogFacetVersion } from "./operatingCoverage";
 import { catalogTopic, type TopicSearchAccountRow } from "./topicSearch";
 import { rankCustomerMatches, type CustomerMatchCandidate, type CustomerReference, type CustomerMatchesResult, type CustomerWhyNow } from "./customerMatches";
 import { customerReferenceEvidenceKey, customerReferenceCatalogSources, type CustomerReferenceSeed } from "./customerReferenceSources";
+import { NON_ASSET_3PL_TOPIC, savedNonAsset3plProof, type NonAssetObservation } from "./customerNonAsset3pl";
 import { loadCustomerReferenceRegistry, loadCustomerReferenceMatchRows, loadCustomerReferencePartialRows, CUSTOMER_REFERENCE_CHECKPOINT_SELECT,
   customerReferenceRegistryProofSeed, customerReferenceRegistrySeed,
   type CustomerReferenceProofSeed, type CustomerReferenceRegistryRow, type StoredCustomerReference } from "./customerReferenceRegistry";
@@ -102,12 +103,31 @@ export function customerWhyNow(row: CandidateRow, now: number): CustomerWhyNow[]
     .map(trigger => ({ id: trigger.id, label: TIMING_LABELS[trigger.type], eventDate: trigger.signal_date!, sourceUrl: trigger.source_url! }));
 }
 
+async function loadSavedNonAsset3pl(db: ReturnType<typeof serviceClient>) {
+  const observations: NonAssetObservation[] = [];
+  let after: string | null = null;
+  // Indexed supported-topic lookup; no catalog rerun, model call or total cap.
+  for (;;) {
+    let query = db.from("intelligence_observations")
+      .select("id,company_id,source_url,title,source_kind,event_date,observed_at,evidence_text,attributes,is_current,feedback_excluded")
+      .eq("is_current", true).eq("feedback_excluded", false).contains("cached_operating_topics", [NON_ASSET_3PL_TOPIC])
+      .order("id", { ascending: true }).limit(200);
+    if (after) query = query.gt("id", after);
+    const { data, error } = await query;
+    if (error || !data) throw new Error("customer_non_asset_evidence_unavailable");
+    observations.push(...data as NonAssetObservation[]);
+    if (data.length < 200) break;
+    after = data[data.length - 1].id;
+  }
+  return savedNonAsset3plProof(observations);
+}
+
 export async function loadCustomerMatches(input: { pattern: string; page: number; showHidden: boolean }): Promise<CustomerMatchesResult> {
   const db = serviceClient();
   const facetVersions = Object.fromEntries(OPERATING_FACETS.map(f => [f.id, catalogFacetVersion(f)]));
-  const [snapshot, registry, referenceRows] = await Promise.all([
+  const [snapshot, registry, referenceRows, nonAssetProofs] = await Promise.all([
     db.rpc("intelligence_customer_match_candidates", { p_catalog_version: OPERATING_CATALOG_VERSION, p_facet_versions: facetVersions, p_show_hidden: input.showHidden }),
-    loadCustomerReferenceRegistry(), loadCustomerReferenceMatchRows(),
+    loadCustomerReferenceRegistry(), loadCustomerReferenceMatchRows(), loadSavedNonAsset3pl(db),
   ]);
   if (snapshot.error) throw snapshot.error;
   if (!snapshot.data || !Array.isArray(snapshot.data.accounts)) throw new Error("customer_matches_unavailable");
@@ -118,6 +138,7 @@ export async function loadCustomerMatches(input: { pattern: string; page: number
   const now = Date.now();
   const candidates = (snapshot.data.accounts as CandidateRow[]).map(row => ({ companyId: row.companyId, name: row.name, domain: row.domain,
     subindustry: row.subindustry, internalId: row.internalId, status: row.status, decisions: row.decisions,
+    ...(nonAssetProofs.has(row.companyId) ? { nonAsset3pl: nonAssetProofs.get(row.companyId)! } : {}),
     whyNow: customerWhyNow(row, now) }));
   const asOf = registry.reduce((latest, row) => row.as_of > latest ? row.as_of : latest, "2024-01-01");
   const result = rankCustomerMatches({ candidates, references, referenceTotal: registry.length, asOf,

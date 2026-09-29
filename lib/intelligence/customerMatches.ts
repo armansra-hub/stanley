@@ -16,7 +16,7 @@ export type CustomerReference = {
   identityNotes?: string[];
 };
 export type CustomerReferenceRegistry = { schemaVersion: 1; asOf: string; references: CustomerReference[] };
-type Branch = { id: string; label: string; all: string[]; anchor: string[]; optional: string[]; subindustries?: string[] };
+type Branch = { id: string; label: string; all: string[]; anchor: string[]; optional: string[]; subindustries?: string[]; prospectNonAsset3pl?: boolean };
 export type CustomerPattern = { id: string; label: string; description: string; branches: Branch[] };
 
 const facilities = ["Facilities Management & Commercial Cleaning"];
@@ -34,11 +34,16 @@ export const CUSTOMER_PATTERNS: CustomerPattern[] = [
     { id: "delivery-providers", label: "Last-mile partners and payouts", all: ["rr_t05", "rr_c04", "rr_s03"], anchor: ["rr_t05"], optional: ["rr_c05"] },
     { id: "staffing-providers", label: "Staffing assignments and provider payments", all: ["rr_p01", "rr_c04", "rr_s03"], anchor: ["rr_p01"], optional: ["rr_c03"] },
   ] },
-  { id: "transport", label: "Transport with a specific operating model", description: "Fleet plus brokerage, specialized brokerage, and last-mile delivery stay distinct. Brokerage alone never means non-asset.", branches: [
+  { id: "transport", label: "Asset-based and other transport models", description: "Fleet plus brokerage, specialized brokerage, and last-mile delivery stay distinct. This broad view does not require non-asset status. Brokerage alone never means non-asset.", branches: [
     { id: "fleet-specialized", label: "Owned fleet and brokerage with specialized freight", all: ["rr_t02", "rr_t04"], anchor: ["rr_t02"], optional: ["rr_t03", "rr_c05"] },
     { id: "fleet-multiple", label: "Owned fleet and brokerage with several transport services", all: ["rr_t02", "rr_t03"], anchor: ["rr_t02"], optional: ["rr_t04", "rr_c05"] },
     { id: "broker-specialized", label: "Specialized brokerage; asset ownership not inferred", all: ["rr_t01", "rr_t04"], anchor: ["rr_t01"], optional: ["rr_t02", "rr_t03", "rr_c05"] },
     { id: "last-mile", label: "Last-mile delivery with partner payments", all: ["rr_t05", "rr_s03"], anchor: ["rr_t05"], optional: ["rr_c04", "rr_c05"] },
+  ] },
+  { id: "non-asset-3pl", label: "Non-asset-based 3PLs", description: "Prospects require saved, source-backed Jev non-asset-based 3PL support. Brokerage alone is insufficient, and supported or conflicting owned-fleet evidence excludes the prospect. Customer comparisons establish shared freight or last-mile characteristics, not customer non-asset status.", branches: [
+    { id: "broker-specialized", label: "Shared specialized freight brokerage", all: ["rr_t01", "rr_t04"], anchor: ["rr_t01"], optional: ["rr_t03", "rr_c05"], prospectNonAsset3pl: true },
+    { id: "broker-programs", label: "Shared brokerage and transport programs", all: ["rr_t01", "rr_t03"], anchor: ["rr_t01"], optional: ["rr_t04", "rr_c05"], prospectNonAsset3pl: true },
+    { id: "last-mile", label: "Shared last-mile delivery and partner payments", all: ["rr_t05", "rr_s03"], anchor: ["rr_t05"], optional: ["rr_c04", "rr_c05"], prospectNonAsset3pl: true },
   ] },
   { id: "field-service", label: "Equipment and field-service operators", description: "Project delivery with documented cost types and a concrete field-service mode.", branches: [
     { id: "routine-projects", label: "Project costs plus routine and reactive service", all: ["rr_f03", "rr_f01"], anchor: ["rr_f01"], optional: ["rr_c08", "rr_c05"] },
@@ -65,6 +70,8 @@ export const CUSTOMER_PATTERNS: CustomerPattern[] = [
 export type CustomerMatchCandidate = {
   companyId: string; name: string; domain: string | null; subindustry: string | null; internalId: string; status: string;
   decisions: Record<string, OperatingFacetDecision>;
+  /** Source-backed, saved native Jev answer about this prospect, never inferred from brokerage. */
+  nonAsset3pl?: OperatingMatchTopic;
   whyNow: CustomerWhyNow[];
 };
 export type CustomerWhyNow = { id: string; label: string; eventDate: string; sourceUrl: string };
@@ -109,6 +116,10 @@ export function industryMatches(subindustry: string | null | undefined, allowed:
   return COMPARISON_INDUSTRY_ALIASES.some(group => group.includes(subindustry) && allowed.some(value => group.includes(value)));
 }
 const branchIndustry = (subindustry: string | null | undefined, branch: Branch) => !branch.subindustries || industryMatches(subindustry, branch.subindustries);
+const fleetExcluded = (decisions: Record<string, OperatingFacetDecision>) => ["supported", "conflicting"].includes(decisions.rr_t02);
+const branchCandidateEligible = (candidate: CustomerMatchCandidate, branch: Branch) => branchIndustry(candidate.subindustry, branch)
+  && (!branch.prospectNonAsset3pl || (candidate.nonAsset3pl?.id === "non_asset_based_3pl"
+    && candidate.nonAsset3pl.state === "supported" && candidate.nonAsset3pl.sources.length > 0 && !fleetExcluded(candidate.decisions)));
 
 // Independent optional reasons each contribute once, regardless of overlapping
 // category count. These groups affect ordering, never native facet decisions.
@@ -137,9 +148,11 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
   });
   const referenceDecisions = new Map(references.map(ref => [ref.id, Object.fromEntries(Object.entries(ref.answers).map(([id, answer]) => [id, answer.decision]))]));
   const branches = CUSTOMER_PATTERNS.flatMap(pattern => pattern.branches.map(branch => {
-    const cohort = candidates.filter(c => branchIndustry(c.subindustry, branch) && supported(c.decisions, branch.anchor));
+    const cohort = candidates.filter(c => branchCandidateEligible(c, branch) && supported(c.decisions, branch.anchor));
     const assessed = cohort.filter(c => decisive(c.decisions, branch.all)).length;
     const matched = cohort.filter(c => supported(c.decisions, branch.all)).length;
+    // Customer references establish the shared service facts, not non-asset
+    // status. The optional ownership requirement belongs to the prospect only.
     const refs = references.filter(ref => branchIndustry(ref.subindustry, branch) && supported(referenceDecisions.get(ref.id)!, branch.all));
     // A shrinkage prior prevents tiny cohorts from creating extreme rarity.
     const distinctiveness = assessed > 0 ? Math.log2((assessed + 10) / (matched + 10)) : 0;
@@ -149,7 +162,7 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
   const ranked = candidates.flatMap(candidate => {
     const matches = branches.flatMap(info => {
       const { pattern, branch, refs, distinctiveness } = info;
-      if (!branchIndustry(candidate.subindustry, branch) || !supported(candidate.decisions, branch.all)) return [];
+      if (!branchCandidateEligible(candidate, branch) || !supported(candidate.decisions, branch.all)) return [];
       return refs.flatMap(reference => {
         if (candidate.domain?.toLowerCase().replace(/^www\./, "") === reference.domain.toLowerCase().replace(/^www\./, "")) return [];
         const refDecisions = referenceDecisions.get(reference.id)!;
@@ -162,7 +175,8 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
         patternCounts.get(pattern.id)!.add(candidate.companyId);
         return [{ ...info, reference, refDecisions, optional, fitOrder, recent: age <= 180, ageDays: Math.floor(age) }];
       });
-    }).sort((a, b) => Number(b.recent) - Number(a.recent) || b.fitOrder - a.fitOrder || b.reference.announcementDate.localeCompare(a.reference.announcementDate)
+    }).sort((a, b) => (selected === "all" ? Number(Boolean(b.branch.prospectNonAsset3pl)) - Number(Boolean(a.branch.prospectNonAsset3pl)) : 0)
+      || Number(b.recent) - Number(a.recent) || b.fitOrder - a.fitOrder || b.reference.announcementDate.localeCompare(a.reference.announcementDate)
       || a.pattern.id.localeCompare(b.pattern.id) || a.branch.id.localeCompare(b.branch.id) || a.reference.id.localeCompare(b.reference.id));
     const best = matches.find(match => selected === "all" || match.pattern.id === selected);
     if (!best) return [];
@@ -181,13 +195,18 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
         sources: best.reference.sources, sharedTraits: shared.map(trait), unknownTraits: notEstablished.map(trait), differentTraits: different.map(trait),
         sharedTraitSources: shared.map(id => ({ traitId: id, urls: best.reference.answers[id].sourceUrls })),
         sharedNativeAnswers: shared.map(id => ({ traitId: id, nativeResult: best.reference.answers[id].nativeResult })) },
-      fit: { label: "Evidence-backed operating resemblance", explanation: "Complete shared operating combination. References announced in the past 180 days come first; older examples remain available. Within those tiers: assessed-peer distinctiveness, reference recency (180-day half-life), and independent shared reasons. Dated timing breaks close fit ties.",
+      fit: { label: "Evidence-backed operating resemblance", explanation: (best.branch.prospectNonAsset3pl
+        ? "Saved Jev evidence separately establishes the prospect's non-asset-based 3PL status; the customer shares the listed service characteristics, with no claim about the customer's asset ownership. " : "")
+        + "Complete shared operating combination. Within the selected operating pattern, references announced in the past 180 days come first; older examples remain available. Within those tiers: assessed-peer distinctiveness, reference recency (180-day half-life), and independent shared reasons. Dated timing breaks close fit ties.",
         rarity: { matched: best.matched, assessed: best.assessed },
         industryBasis: best.branch.subindustries ? "Recorded CRM industry filter; business characteristics independently interpreted by Jev." : "Shared native industry-specific operating facts; no name or keyword industry guess." },
       topics: [],
     };
     // Decisions are internal routing data; the UI receives cited supported topics.
     delete (account as Partial<CustomerMatchCandidate>).decisions;
+    // This proof describes the prospect only and belongs only to branches using
+    // the explicit non-asset requirement, not unrelated customer similarities.
+    if (!best.branch.prospectNonAsset3pl) delete account.nonAsset3pl;
     return [{ account, fitOrder: best.fitOrder }];
   }).sort((a, b) => {
     // Within a small, explicit fit band, a real dated reason to act comes first.
@@ -206,6 +225,6 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
       pending: Math.max(0, input.referenceTotal - complete), asOf: input.asOf, total: input.referenceTotal },
     customerCohort: summarizeCustomerCohort(references, now),
     coverage: { eligible: candidates.length, assessed: null, asOf: new Date(now).toISOString() },
-    note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives, and unanswered questions remain absent. Completed and partial customer readings can contribute only their current source-backed native facts; every required pattern fact must be supported. Partial readings stay visibly incomplete, including held questions. Customer announcements include new customers, expansions and renewals; dates do not establish a new purchase. Rarity describes assessed prospects only. Ranking reads saved answers and makes no Jev requests.",
+    note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives, and unanswered questions remain absent. Completed and partial customer readings can contribute only their current source-backed native facts; every required pattern fact must be supported. Partial readings stay visibly incomplete, including held questions. Customer announcements include new customers, expansions and renewals; dates do not establish a new purchase. All customer patterns prefers the separate non-asset-based 3PL pattern when the prospect has the required sourced native proof; broader transport matches remain selectable. Rarity describes assessed prospects only. Ranking reads saved answers and makes no Jev requests.",
   };
 }

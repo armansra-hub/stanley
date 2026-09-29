@@ -118,6 +118,21 @@ export function CustomerMatchCard({ account, selected, statusBusy, onSelect, onS
       {account.otherPatterns.map(pattern => <span key={pattern.id} className="rounded-full border px-2.5 py-1 text-[10px] text-[var(--text-muted)]">Also: {pattern.label}</span>)}
     </div>
 
+    {account.nonAsset3pl && <section aria-label="Prospect non-asset-based 3PL qualification" className="mt-3 rounded-md border border-[var(--gold)]/40 p-3">
+      <h4 className="text-sm font-medium">Non-asset-based 3PL</h4>
+      <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">Saved Jev evidence for this prospect; customer comparison below covers shared services, not assumed customer asset ownership.</p>
+      <details className="mt-2 text-xs">
+        <summary className="cursor-pointer text-[var(--gold)]">Saved prospect evidence</summary>
+        {account.nonAsset3pl.boundary && <p className="mt-2 text-[var(--text-muted)]">Definition: {account.nonAsset3pl.boundary}</p>}
+        {account.nonAsset3pl.sources.map(source => <div key={`${source.observationId}:${source.start}:${source.end}`} className="mt-3">
+          <a href={source.url} target="_blank" rel="noopener noreferrer" aria-label="Prospect source for non-asset-based 3PL qualification" className="text-[var(--gold)] hover:underline">{source.title || "Prospect source"} ↗</a>
+          <blockquote className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words border-l-2 border-[var(--gold)] pl-3 leading-relaxed">{source.contextPreview}{source.previewTruncated ? "…" : ""}</blockquote>
+          {source.previewTruncated && <p className="mt-1 text-[10px] text-[var(--text-muted)]">Source preview. Open the page for the complete passage.</p>}
+        </div>)}
+        {account.nonAsset3pl.nativeResult != null && <details className="mt-3"><summary className="cursor-pointer">Raw Jev answer · prospect qualification</summary><pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words">{JSON.stringify(account.nonAsset3pl.nativeResult, null, 2)}</pre></details>}
+      </details>
+    </section>}
+
     <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
       <div className="rounded-md bg-[var(--surface)] p-3">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Operating fit</p>

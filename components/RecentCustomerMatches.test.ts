@@ -146,6 +146,31 @@ describe("recent-customer shortlist", () => {
     expect(markup).toContain("Recent customer example");
   });
 
+  it("separates a saved non-asset qualification from the customer's shared operating traits", () => {
+    const account = makeAccount();
+    account.nonAsset3pl = {
+      id: "non_asset_3pl", label: "Non-asset-based 3PL", state: "supported", classification: "native_choice",
+      nativeResult: { answer: { type: "choice", choice: "supported" }, source: "saved-non-asset-receipt" },
+      sources: [{ ...account.topics[0].sources[0], url: "https://prospect.example/non-asset", title: "Our logistics model",
+        contextPreview: "We are a non-asset-based 3PL and use independent carriers.", previewTruncated: false }],
+    };
+    const markup = renderToStaticMarkup(React.createElement(CustomerMatchCard, { account, selected: false, statusBusy: false }));
+    expect(markup).toContain('aria-label="Prospect non-asset-based 3PL qualification"');
+    expect(markup).toContain("Saved Jev evidence for this prospect; customer comparison below covers shared services, not assumed customer asset ownership.");
+    expect(markup).toContain('href="https://prospect.example/non-asset"');
+    expect(markup).toContain("We are a non-asset-based 3PL and use independent carriers.");
+    expect(markup).toContain("Raw Jev answer · prospect qualification");
+    expect(markup).toContain("saved-non-asset-receipt");
+    expect(markup).not.toContain('aria-label="Customer source 1 for Non-asset-based 3PL"');
+    expect(markup).toContain('aria-label="Customer source 1 for Equipment, installation and ongoing service"');
+  });
+
+  it("does not attach a non-asset qualification to other customer matches", () => {
+    const markup = renderToStaticMarkup(React.createElement(CustomerMatchCard, { account: makeAccount(), selected: false, statusBusy: false }));
+    expect(markup).not.toContain("Prospect non-asset-based 3PL qualification");
+    expect(markup).not.toContain("Raw Jev answer · prospect qualification");
+  });
+
   it("labels an older comparison as historical while keeping its exact announcement date", () => {
     const account = makeAccount();
     account.reference = { ...account.reference, recent: false, ageDays: 365, announcementDate: "2025-09-28" };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { rankCustomerMatches, CUSTOMER_PATTERNS, industryMatches, type CustomerMatchCandidate, type CustomerReference } from "./customerMatches";
 import { OPERATING_FACETS } from "./operatingCatalog";
+import type { OperatingMatchTopic } from "./topicSearch";
 
 const now = Date.parse("2026-09-28T12:00:00Z");
 const reference = (id = "teleco", facts = ["rr_c01", "rr_i01", "rr_c05"]): CustomerReference => ({
@@ -14,10 +15,14 @@ const candidate = (id = "company-1", facts = ["rr_c01", "rr_i01"]): CustomerMatc
   domain: `${id}.test`, subindustry: "Business Services", internalId: "123", status: "new", decisions: Object.fromEntries(facts.map(f => [f, "supported"])), whyNow: [] });
 const rank = (candidates: CustomerMatchCandidate[], references = [reference()], extra = {}) => rankCustomerMatches({ candidates, references,
   asOf: "2026-09-24", referenceTotal: references.length, now, ...extra });
+const nonAssetProof = (): OperatingMatchTopic => ({ id: "non_asset_based_3pl", label: "Non-asset-based 3PL",
+  state: "supported", nativeResult: { type: "boolean", value: true }, sources: [{ observationId: "saved-native-source",
+    url: "https://prospect.test/about", title: "About", sourceKind: "website", eventDate: null, observedAt: "2026-09-27",
+    probability: null, companyRelevance: null, contextPreview: "We are a non-asset-based 3PL.", previewTruncated: false, start: 0, end: 33 }] });
 
 describe("recent-customer cached ranking", () => {
-  it("offers nine views and requires complete supported combinations on both entities", () => {
-    expect(CUSTOMER_PATTERNS).toHaveLength(9);
+  it("offers ten views and requires complete supported combinations on both entities", () => {
+    expect(CUSTOMER_PATTERNS).toHaveLength(10);
     expect(rank([candidate()]).accounts).toHaveLength(1);
     expect(rank([candidate("generic", ["rr_c01"])]).accounts).toHaveLength(0);
     expect(rank([candidate()], [reference("generic", ["rr_c01"]) ]).accounts).toHaveLength(0);
@@ -140,5 +145,101 @@ describe("recent-customer cached ranking", () => {
     const result = rank([candidate("broker", ["rr_t01", "rr_t04"])], [r]);
     expect(result.accounts[0].primaryPattern.branchLabel).toContain("asset ownership not inferred");
     expect(result.accounts[0].reference.unknownTraits.map(t => t.id)).toContain("rr_t02");
+  });
+});
+
+describe("separate non-asset-based 3PL customer comparisons", () => {
+  const freightFacts = ["rr_t01", "rr_t04"];
+  const freightReference = () => reference("freight-customer", freightFacts);
+  const freightProspect = (id = "nonasset") => ({ ...candidate(id, freightFacts), nonAsset3pl: nonAssetProof() });
+
+  it("requires the exact supported native topic with a source, not brokerage alone or an unrelated answer", () => {
+    const missing = candidate("missing", freightFacts);
+    const unknown = freightProspect("unknown"); unknown.nonAsset3pl.state = "unknown";
+    const negative = freightProspect("negative"); negative.nonAsset3pl.state = "not_supported";
+    const conflicting = freightProspect("conflicting"); conflicting.nonAsset3pl.state = "conflicting";
+    const unrelated = freightProspect("unrelated"); unrelated.nonAsset3pl.id = "recurring_revenue";
+    const uncited = freightProspect("uncited"); uncited.nonAsset3pl.sources = [];
+    const prospects = [missing, unknown, negative, conflicting, unrelated, uncited, freightProspect()];
+    const result = rank(prospects, [freightReference()], { pattern: "non-asset-3pl" });
+    expect(result.accounts.map(a => a.companyId)).toEqual(["nonasset"]);
+    expect(result.patterns.find(p => p.id === "non-asset-3pl")?.count).toBe(1);
+    expect(result.patterns.find(p => p.id === "transport")?.count).toBe(prospects.length);
+    expect(result.accounts[0].fit.rarity).toEqual({ matched: 1, assessed: 1 });
+  });
+
+  it.each(["supported", "conflicting"] as const)("keeps %s fleet evidence in the broad view but out of the non-asset view and related patterns", fleetDecision => {
+    const c = freightProspect(); c.decisions.rr_t02 = fleetDecision;
+    const broad = rank([c], [freightReference()]);
+    expect(broad.accounts).toHaveLength(1);
+    expect(broad.accounts[0].primaryPattern.id).toBe("transport");
+    expect(broad.accounts[0].otherPatterns.some(p => p.id === "non-asset-3pl")).toBe(false);
+    expect(broad.accounts[0].nonAsset3pl).toBeUndefined();
+    expect(broad.patterns.find(p => p.id === "non-asset-3pl")?.count).toBe(0);
+    expect(rank([c], [freightReference()], { pattern: "non-asset-3pl" }).accounts).toEqual([]);
+  });
+
+  it("preserves pure asset-based matches without a non-asset claim", () => {
+    const c = candidate("owned-fleet", ["rr_t02", "rr_t04"]);
+    const r = reference("fleet-customer", ["rr_t02", "rr_t04"]);
+    expect(rank([c], [r]).accounts[0].primaryPattern).toMatchObject({ id: "transport", branchId: "fleet-specialized" });
+    expect(rank([c], [r], { pattern: "transport" }).total).toBe(1);
+    expect(rank([c], [r], { pattern: "non-asset-3pl" }).total).toBe(0);
+  });
+
+  it("uses all three shared-service branches and retains the prospect proof only for the non-asset match", () => {
+    for (const [branchId, facts] of [
+      ["broker-specialized", ["rr_t01", "rr_t04"]], ["broker-programs", ["rr_t01", "rr_t03"]],
+      ["last-mile", ["rr_t05", "rr_s03"]],
+    ] as const) {
+      const c = { ...candidate("prospect", [...facts]), nonAsset3pl: nonAssetProof() };
+      const r = reference("customer", [...facts]);
+      const result = rank([c], [r], { pattern: "non-asset-3pl" });
+      expect(result.accounts[0].primaryPattern.branchId).toBe(branchId);
+      expect(result.accounts[0].nonAsset3pl).toEqual(c.nonAsset3pl);
+      expect(result.accounts[0].reference.sharedTraits.map(t => t.id)).toEqual(facts);
+      expect(result.accounts[0].reference.sharedTraits.some(t => t.id === "non_asset_based_3pl")).toBe(false);
+    }
+    const c = freightProspect();
+    const all = rank([c], [freightReference()]);
+    expect(all.accounts[0].primaryPattern.id).toBe("non-asset-3pl");
+    expect(all.accounts[0].otherPatterns.map(p => p.id)).toContain("transport");
+    expect(all.accounts[0].nonAsset3pl).toEqual(c.nonAsset3pl);
+    expect(rank([c], [freightReference()], { pattern: "transport" }).accounts[0].nonAsset3pl).toBeUndefined();
+    expect(c.nonAsset3pl).toEqual(nonAssetProof());
+  });
+
+  it("does not misrepresent the reference's asset ownership as a shared non-asset claim", () => {
+    const r = reference("hybrid-customer", [...freightFacts, "rr_t02"]);
+    const result = rank([freightProspect()], [r], { pattern: "non-asset-3pl" });
+    expect(result.accounts).toHaveLength(1);
+    expect(result.accounts[0].reference.sharedTraits.map(t => t.id)).toEqual(freightFacts);
+    expect(result.accounts[0].reference.unknownTraits.map(t => t.id)).not.toContain("rr_t02");
+    expect(result.patterns.find(p => p.id === "non-asset-3pl")?.description).toContain("not customer non-asset status");
+  });
+
+  it("applies the explicit prospect requirement to the non-asset rarity denominator", () => {
+    const yes = freightProspect();
+    const no = freightProspect("assessed-no"); no.decisions.rr_t04 = "not_supported";
+    const unknown = freightProspect("unassessed"); delete unknown.decisions.rr_t04;
+    const noProof = candidate("broker-only", freightFacts);
+    const fleet = freightProspect("hybrid"); fleet.decisions.rr_t02 = "supported";
+    const result = rank([yes, no, unknown, noProof, fleet], [freightReference()], { pattern: "non-asset-3pl" });
+    expect(result.accounts.map(a => a.companyId)).toEqual(["nonasset"]);
+    expect(result.accounts[0].fit.rarity).toEqual({ matched: 1, assessed: 2 });
+  });
+
+  it("preserves provider-network and other-industry matches without requiring non-asset status", () => {
+    const deliveryFacts = ["rr_t05", "rr_c04", "rr_s03", "rr_t02"];
+    const delivery = candidate("delivery", deliveryFacts), r = reference("delivery-customer", deliveryFacts);
+    const result = rank([delivery], [r], { pattern: "provider-networks" });
+    expect(result.accounts[0].primaryPattern.branchId).toBe("delivery-providers");
+    expect(result.accounts[0].otherPatterns.map(p => p.id)).not.toContain("non-asset-3pl");
+    expect(rank([delivery], [r], { pattern: "non-asset-3pl" }).total).toBe(0);
+    const itProspect = { ...candidate(), nonAsset3pl: nonAssetProof() };
+    const itResult = rank([itProspect]);
+    expect(itResult.accounts[0].primaryPattern.id).toBe("integrators");
+    expect(itResult.accounts[0].nonAsset3pl).toBeUndefined();
+    expect(itResult.total).toBe(1);
   });
 });
