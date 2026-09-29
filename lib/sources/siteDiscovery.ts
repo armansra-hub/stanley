@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { unicodePrefix } from "@/lib/textBounds";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
 import { decodeEntities, htmlAttributes, extractSiteText, extractSiteContent, extractCompanyIdentity, type SiteCompanyIdentity } from "./siteContent";
 import { extractIdentityClaims, type SiteIdentityClaim } from "./companyIdentityEvidence";
@@ -131,8 +132,8 @@ export function sitePageEvidence(html: string, url: string): SitePageEvidence {
     add(match[2], /updated/i.test(match[1]) ? "modified" : "published", "labeled_visible_date");
   }
   return {
-    url, title: htmlToVisibleText(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "").slice(0, 300),
-    text: text.slice(0, 24_000), contentHash: createHash("sha256").update(text).digest("hex"),
+    url, title: unicodePrefix(htmlToVisibleText(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? ""), 300),
+    text: unicodePrefix(text, 24_000), contentHash: createHash("sha256").update(text).digest("hex"),
     sourceDates: sourceDates.slice(0, 12), truncated: text.length > 24_000,
     ...(companyIdentity ? { companyIdentity } : {}),
     identityClaims: extractIdentityClaims(html, url, companyIdentity),

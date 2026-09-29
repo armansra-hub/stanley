@@ -7,6 +7,7 @@ import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { publicResponseOutcome, sourceErrorCode, type SourceErrorCode } from "./outcomes";
 import { fetchConditionalText, responseValidators, retainedValidators, type HttpValidators } from "./conditionalFetch";
 import { normalizeFeedXml } from "./feedXml";
+import { unicodePrefix } from "@/lib/textBounds";
 
 /**
  * Google News RSS adapter (FREE). Each item becomes a name-only candidate whose
@@ -65,9 +66,9 @@ export async function fetchNewsItemsResult(query: string, n = 6, options: NewsFe
     const items = (feed.items ?? []).slice(0, n).map(item => {
       const source = (item as typeof item & { publisher?: { $?: { url?: string }; _?: string }[] }).publisher?.[0];
       const publisher = source && typeof source === "object" ? source.$?.url : undefined;
-      return { source_name: "Google News", source_url: (item.link ?? "").trim(), raw_excerpt: (item.title ?? "").trim().slice(0, 2000), discovery_query: query,
+      return { source_name: "Google News", source_url: (item.link ?? "").trim(), raw_excerpt: unicodePrefix((item.title ?? "").trim(), 2000), discovery_query: query,
         signal_date: parseDateLoose(item.isoDate ?? item.pubDate), ...(publisher ? { publisher_url: publisher } : {}),
-        ...(item.contentSnippet ? { feed_excerpt: item.contentSnippet.slice(0, 2000) } : {}) };
+        ...(item.contentSnippet ? { feed_excerpt: unicodePrefix(item.contentSnippet, 2000) } : {}) };
     }).filter(item => item.source_url && item.raw_excerpt);
     return { items, status: items.length ? "success" : "empty", httpStatus: response.status, cache: { items, validators: responseValidators(response) } };
   } catch { return { items: [], status: "unavailable", error: "parse_error", httpStatus: response.status }; }

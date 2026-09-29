@@ -4,6 +4,7 @@ import { serviceClient } from "@/lib/supabase/server";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
 import { operatingCriteria } from "./profiles";
 import { JEV_MODEL } from "./jev";
+import { splitsSurrogatePair, unicodePrefix } from "@/lib/textBounds";
 
 export const INTELLIGENCE_VERSION = "evidence-v2";
 export const intelligenceEnabled = () => process.env.STANLEY_INTELLIGENCE_ENABLED === "true";
@@ -32,11 +33,16 @@ export function canonicalEvidenceUrl(raw: string): string {
 export function evidenceSections(text: string, maxLength = 3000): EvidenceSection[] {
   const out: EvidenceSection[] = [];
   for (let start = 0; start < text.length && out.length < 16;) {
-    let end = Math.min(text.length, start + maxLength);
+    // Earlier paragraph breaks can consume the section count before the text
+    // bound. Keep the remaining exact tail in the last permitted section.
+    let end = out.length === 15 ? text.length : Math.min(text.length, start + maxLength);
     if (end < text.length) {
       const boundary = text.lastIndexOf("\n", end);
       if (boundary > start + maxLength / 2) end = boundary + 1;
     }
+    // A section is an exact span, not a clipped document. Include the second
+    // unit of a split pair so neither it nor the following JSONB string is invalid.
+    if (splitsSurrogatePair(text, end)) end++;
     out.push({ id: `s${out.length + 1}`, start, end, text: text.slice(start, end) });
     start = end;
   }
@@ -50,7 +56,7 @@ export function prepareObservation(input: ObservationInput) {
   if (!normalized) throw new Error("Empty evidence");
   // Public source capture is explicitly bounded. Private full-record indexing
   // uses a separate local path and must never use this clipping behavior.
-  const text = normalized.slice(0, 48_000);
+  const text = unicodePrefix(normalized, 48_000);
   const observed = new Date(input.observedAt ?? Date.now());
   if (!Number.isFinite(observed.getTime())) throw new Error("Invalid observation time");
   const event = input.eventDate ? new Date(input.eventDate) : null;
@@ -91,7 +97,7 @@ export async function enqueueObservation(input: ObservationInput): Promise<{ id:
   const prepared = prepareObservation(input);
   const { data, error } = await serviceClient().rpc("intelligence_observe", {
     p_company: input.companyId, p_source_key: prepared.sourceKey, p_source_kind: input.sourceKind,
-    p_url: prepared.url, p_title: input.title.slice(0, 500), p_text: prepared.text, p_hash: prepared.contentHash,
+    p_url: prepared.url, p_title: unicodePrefix(input.title, 500), p_text: prepared.text, p_hash: prepared.contentHash,
     p_event_date: prepared.eventDate, p_observed_at: prepared.observedAt, p_metadata: prepared.metadata,
     p_sections: prepared.sections, p_version: INTELLIGENCE_VERSION,
   });

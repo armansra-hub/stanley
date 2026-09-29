@@ -9,6 +9,7 @@ import { getSourceAttentionWeights } from "./feedback";
 import { publicResponseOutcome } from "@/lib/sources/outcomes";
 import { fetchConditionalText, responseValidators, retainedValidators, type HttpValidators } from "@/lib/sources/conditionalFetch";
 import { normalizeFeedXml } from "@/lib/sources/feedXml";
+import { unicodePrefix } from "@/lib/textBounds";
 
 export type SharedSource = {
   id: string; name: string; url: string; enabled: boolean; format: string;
@@ -111,12 +112,12 @@ export async function parseSharedFeed(xml: string, sourceUrl: string, options: {
   for (const item of eligible) {
     if (!item.title?.trim() || !item.link) throw new Error("source_item_missing_identity");
     const url = canonicalEvidenceUrl(new URL(item.link, sourceUrl).toString());
-    const title = htmlToVisibleText(item.title).slice(0, 500);
+    const title = unicodePrefix(htmlToVisibleText(item.title), 500);
     const rawText = htmlToVisibleText(item["content:encoded"] ?? item.content ?? item.contentSnippet ?? item.summary ?? "");
     const rawDate = item.isoDate ?? item.pubDate;
     const eventDate = rawDate && Number.isFinite(Date.parse(rawDate)) ? new Date(rawDate).toISOString() : null;
     const item_key = createHash("sha256").update(JSON.stringify([url, title, rawText, eventDate])).digest("hex");
-    items.set(item_key, { item_key, payload: { url, title, text: rawText.slice(0, 4_000), eventDate } });
+    items.set(item_key, { item_key, payload: { url, title, text: unicodePrefix(rawText, 4_000), eventDate } });
   }
   return [...items.values()];
 }
