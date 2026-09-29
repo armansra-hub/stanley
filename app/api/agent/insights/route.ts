@@ -4,6 +4,8 @@ import { logEvent } from "@/lib/db/events";
 import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
 import { recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { TRIGGER_SPEC } from "@/lib/triggers/config";
+import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
+import { parseRegistryFinding, registryContentHash, verifyRegistryIdentity, type RegistryProfile } from "@/lib/agent/registryProfiles";
 
 /**
  * Findings from the LinkedIn/website FULL-TEXT reading pass (2026-07-30).
@@ -33,6 +35,95 @@ export const maxDuration = 60;
 
 const MAX_FINDINGS = 300;
 const KINDS = new Set(["trigger", "netsuite_fit", "ops_profile"]);
+const COMPANY_FIELDS = "id,netsuite_internal_id,name,domain,website_raw,city,state,lists";
+type RegistryCompany = { id: string; netsuite_internal_id: string; name: string; domain: string | null; website_raw?: string | null; city?: string | null; state?: string | null; lists: string[] | null };
+const canonical = (company: RegistryCompany) => !(company.lists ?? []).includes("tam_duplicate");
+type RegistryStoredRow = { id: string; company_id: string; netsuite_internal_id: string; label: string; registry_profile: RegistryProfile };
+async function registryReceipts(rows: RegistryStoredRow[]) {
+  const eventIds = [...new Set(rows.map(row => row.registry_profile?.publication?.eventId).filter((id): id is string => Boolean(id)))];
+  if (!rows.length) return [];
+  const { data: events, error } = eventIds.length ? await serviceClient().from("app_events").select("id,kind,meta").in("id", eventIds) : { data: [], error: null };
+  return rows.map(row => {
+    const publication = row.registry_profile?.publication;
+    const event = (events ?? []).find(event => event.id === publication?.eventId && event.kind === "registry.profiles_recorded");
+    const verified = !error && Boolean(publication && Array.isArray(event?.meta?.receipts) && event.meta.receipts.some((receipt: Record<string, unknown>) => receipt.id === row.id
+      && receipt.companyId === row.company_id && receipt.internalId === row.netsuite_internal_id && receipt.profileKey === row.label && receipt.contentHash === publication.contentHash));
+    return { id: row.id, companyId: row.company_id, internalId: row.netsuite_internal_id, profileKey: row.label, ...publication, eventVerified: verified };
+  });
+}
+
+async function registryPost(req: Request, body: { agent?: unknown; findings?: unknown; dryRun?: unknown }) {
+  const findings = body.findings as unknown[];
+  if (findings.length > 50) return NextResponse.json({ error: "registry findings capped at 50 per request" }, { status: 400 });
+  let parsed;
+  try { parsed = findings.map(row => parseRegistryFinding(row)); }
+  catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid registry profile" }, { status: 422 }); }
+  const keys = parsed.map(row => `${row.companyId}:${row.label}`);
+  if (new Set(keys).size !== keys.length) return NextResponse.json({ error: "duplicate registry profile keys in batch" }, { status: 422 });
+  const db = serviceClient();
+  const ids = [...new Set(parsed.map(row => row.internalId))];
+  const { data: companies, error } = await db.from("companies").select(COMPANY_FIELDS).in("netsuite_internal_id", ids);
+  if (error) return NextResponse.json({ error: "registry company lookup failed" }, { status: 503 });
+  const rows: Record<string, unknown>[] = [];
+  const contexts = new Map<string, Awaited<ReturnType<typeof loadCompanyIdentityContext>>>();
+  const { data: existing, error: priorError } = await db.from("lead_insights").select("*").in("company_id", parsed.map(row => row.companyId)).eq("source", "registry");
+  if (priorError) return NextResponse.json({ error: "registry prior profiles unavailable" }, { status: 503 });
+  for (const row of parsed) {
+    const matches = ((companies ?? []) as RegistryCompany[]).filter(c => c.netsuite_internal_id === row.internalId && canonical(c));
+    if (matches.length !== 1 || matches[0].id !== row.companyId) return NextResponse.json({ error: "registry exact company identity is missing or ambiguous", internalId: row.internalId }, { status: 422 });
+    const company = matches[0];
+    let context = contexts.get(company.id);
+    if (!context) {
+      try { context = await loadCompanyIdentityContext(company); contexts.set(company.id, context); }
+      catch { return NextResponse.json({ error: "registry company identity context unavailable", internalId: row.internalId }, { status: 503 }); }
+    }
+    const prior = (existing ?? []).filter(old => old.company_id === company.id && old.netsuite_internal_id === row.internalId && old.registry_profile).map(old => old.registry_profile as RegistryProfile);
+    const verification = verifyRegistryIdentity(row.profile, company, context, prior);
+    if (!verification) return NextResponse.json({ error: "registry identity requires corroborated legal name and full street/postal/state, or an unchanged verified binding", internalId: row.internalId }, { status: 422 });
+    row.profile.verification = verification;
+    rows.push({ company_id: company.id, netsuite_internal_id: row.internalId, source: "registry", kind: "ops_profile", label: row.label,
+      detail: row.detail, evidence: row.evidence, evidence_url: row.sourceUrl, registry_profile: row.profile, content_hash: registryContentHash(row.profile, row.sourceUrl, row.detail) });
+  }
+  if (body.dryRun === true) return NextResponse.json({ dryRun: true, wouldWriteInsights: rows.length, wouldWriteTriggers: 0,
+    profiles: rows.map(row => ({ companyId: row.company_id, internalId: row.netsuite_internal_id, profileKey: row.label, contentHash: row.content_hash, verification: (row.registry_profile as RegistryProfile).verification })) });
+  // One transaction rechecks canonical rows, saves profiles and their event.
+  // On any uncertain response the caller must inspect GET, never blind-repeat.
+  const { data: published, error: publishError } = await db.rpc("registry_profiles_publish", { p_rows: rows, p_agent: callerAgent(req, body.agent) });
+  if (publishError || !published || !Array.isArray(published.rows) || published.rows.length !== rows.length) return NextResponse.json({ state: "verification_pending", error: "registry publication receipt unavailable; inspect exact profiles before another write" }, { status: 502 });
+  const receiptIds = published.rows.map((row: { id: string }) => row.id);
+  const { data: readback, error: readError } = await db.from("lead_insights").select("*").in("id", receiptIds);
+  const verified = !readError && readback?.length === rows.length && rows.every(row => readback.some(saved => saved.company_id === row.company_id
+    && saved.netsuite_internal_id === row.netsuite_internal_id && saved.source === "registry" && saved.kind === "ops_profile" && saved.label === row.label
+    && saved.evidence === row.evidence && saved.evidence_url === row.evidence_url && saved.registry_profile?.publication?.contentHash === row.content_hash));
+  const receipts = await registryReceipts(readback ?? []);
+  const eventVerified = receipts.length === rows.length && receipts.every(receipt => receipt.eventVerified);
+  if (!verified || !eventVerified) return NextResponse.json({ state: "verification_pending", error: "registry exact row/event readback did not verify; inspect GET before another write", receiptIds, eventId: published.eventId }, { status: 502 });
+  return NextResponse.json({ state: published.changed ? "published" : "unchanged", insightsWritten: published.changed, triggersWritten: 0, eventId: published.eventId,
+    receipts, profiles: readback });
+}
+
+async function registryGet(internalIds: string[]) {
+  if (!internalIds.length || internalIds.length > 50 || internalIds.some(id => !/^\d+$/.test(id)) || new Set(internalIds).size !== internalIds.length)
+    return NextResponse.json({ error: "registry inspection requires 1–50 distinct exact internalIds" }, { status: 400 });
+  const db = serviceClient();
+  const { data: companies, error } = await db.from("companies").select(COMPANY_FIELDS).in("netsuite_internal_id", internalIds);
+  if (error) return NextResponse.json({ error: "registry identity lookup failed" }, { status: 503 });
+  const identities = [], missingInternalIds = [], ambiguousInternalIds = [];
+  for (const internalId of internalIds) {
+    const matches = ((companies ?? []) as RegistryCompany[]).filter(c => c.netsuite_internal_id === internalId && canonical(c));
+    if (!matches.length) { missingInternalIds.push(internalId); continue; }
+    if (matches.length !== 1) { ambiguousInternalIds.push(internalId); continue; }
+    const company = matches[0];
+    let context;
+    try { context = await loadCompanyIdentityContext(company); }
+    catch { return NextResponse.json({ error: "registry identity context unavailable", internalId }, { status: 503 }); }
+    const { data: profiles, error: profileError } = await db.from("lead_insights").select("*").eq("company_id", company.id).eq("source", "registry").order("created_at", { ascending: false });
+    if (profileError) return NextResponse.json({ error: "registry profile inspection failed", internalId }, { status: 503 });
+    identities.push({ companyId: company.id, internalId, name: company.name, domain: company.domain, legalNames: context.aliases, addresses: context.addresses, profiles: profiles ?? [] });
+  }
+  const receipts = await registryReceipts(identities.flatMap(row => row.profiles));
+  return NextResponse.json({ identities, missingInternalIds, ambiguousInternalIds, receipts });
+}
 
 export async function POST(req: Request) {
   if (!agentAuthOk(req)) return unauthorized();
@@ -48,6 +139,7 @@ export async function POST(req: Request) {
   if (body.findings.length > MAX_FINDINGS) {
     return NextResponse.json({ error: `findings capped at ${MAX_FINDINGS} per request` }, { status: 400 });
   }
+  if (body.findings.some(row => row && typeof row === "object" && row.source === "registry")) return registryPost(req, body);
 
   const agent = callerAgent(req, body.agent);
   const dryRun = body.dryRun === true;
@@ -75,7 +167,7 @@ export async function POST(req: Request) {
       triggerRows.push({ internalId, type, label, evidence, sourceUrl: f.sourceUrl ? String(f.sourceUrl) : undefined, postedAt: f.postedAt ? String(f.postedAt) : undefined });
     } else {
       rows.push({
-        netsuite_internal_id: internalId, source: "linkedin", kind, label,
+        netsuite_internal_id: internalId, source: f.source === "website" || f.source === "record" ? f.source : "linkedin", kind, label,
         detail: f.detail ? String(f.detail).slice(0, 500) : null,
         evidence: evidence.slice(0, 600),
         evidence_url: f.sourceUrl ? String(f.sourceUrl) : null,
@@ -91,9 +183,10 @@ export async function POST(req: Request) {
 
   const db = serviceClient();
   const allIds = [...new Set([...rows.map((r) => String(r.netsuite_internal_id)), ...triggerRows.map((t) => t.internalId)])];
-  const { data: companies, error: lookupErr } = await db.from("companies").select("id, netsuite_internal_id").in("netsuite_internal_id", allIds);
+  const { data: companies, error: lookupErr } = await db.from("companies").select("id, netsuite_internal_id, lists").in("netsuite_internal_id", allIds);
   if (lookupErr) return NextResponse.json({ error: lookupErr.message }, { status: 500 });
-  const byNsid = new Map((companies ?? []).map((c) => [String(c.netsuite_internal_id), String(c.id)]));
+  const eligible = (companies ?? []).filter(c => !(c.lists ?? []).includes("tam_duplicate"));
+  const byNsid = new Map(eligible.filter(c => eligible.filter(other => other.netsuite_internal_id === c.netsuite_internal_id).length === 1).map(c => [String(c.netsuite_internal_id), String(c.id)]));
   const missing = allIds.filter((id) => !byNsid.has(id));
 
   if (dryRun) {
@@ -144,7 +237,9 @@ export async function POST(req: Request) {
 /** GET ?internalId=123 — a lead's recorded insights, for review or re-reading decisions. */
 export async function GET(req: Request) {
   if (!agentAuthOk(req)) return unauthorized();
-  const internalId = new URL(req.url).searchParams.get("internalId");
+  const params = new URL(req.url).searchParams;
+  if (params.has("internalIds") || params.get("registry") === "1") return registryGet((params.get("internalIds") ?? params.get("internalId") ?? "").split(",").map(v => v.trim()));
+  const internalId = params.get("internalId");
   if (!internalId) return NextResponse.json({ error: "internalId is required" }, { status: 400 });
   const { data, error } = await serviceClient().from("lead_insights").select("*").eq("netsuite_internal_id", internalId).order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

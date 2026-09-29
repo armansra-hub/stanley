@@ -5,6 +5,7 @@ import IntelligenceClassification from "./IntelligenceClassification";
 import FederalAwardLifecycle from "./FederalAwardLifecycle";
 import GovernmentIntelligence from "./GovernmentIntelligence";
 import RegionalContracts from "./RegionalContracts";
+import RegistryProfiles from "./RegistryProfiles";
 import FederalIdentityContext from "@/components/FederalIdentityContext";
 import { federalAwardLabel, type FederalCoverage, type RelatedFederalEntity } from "@/lib/publicGrowth/federalPresentation";
 
@@ -22,10 +23,10 @@ import { ACTORS } from "@/config/actors";
 import { ScoreBadge, TierBadge, SignalChips, SourceBadge, sourceLabel, strongestSignal } from "./badges";
 import ChatPanel from "./ChatPanel";
 import { readTriggerSourceEvidence, type TriggerSourceEvidence } from "@/lib/intelligence/triggerEvidence";
+import { insightHeading, type InsightBadge } from "@/lib/insights";
 
 type Tab = "triggered" | "oldgold" | "tal" | "imported" | "starred" | "history";
 type TriggerPreview = { type: string; summary: string; source_name: string | null; source_url: string | null; signal_date: string | null; detected_at: string; source_evidence?: TriggerSourceEvidence | null };
-type InsightBadge = { kind: string; label: string; detail: string | null; evidence: string; evidence_url: string | null; confidence: string };
 
 function download(filename: string, text: string, mime: string) {
   const blob = new Blob([text], { type: mime });
@@ -1089,7 +1090,7 @@ export default function Dashboard({
                     {((c as TriggeredRow).insights ?? []).slice(0, 3).map((ins, ii) => (
                       <div key={ii} className="mt-0.5 text-[11px]" style={{ color: "var(--accent)" }}>
                         <div className="truncate" title={ins.detail ?? ins.evidence}>
-                          🔗 LinkedIn {ins.kind === "netsuite_fit" ? "NetSuite fit" : "ops profile"} — {ins.label}
+                          🔗 {insightHeading(ins)}
                           {ins.confidence === "low" ? " (low confidence)" : ""}
                         </div>
                         {ins.evidence_url ? (
@@ -1576,6 +1577,7 @@ function DetailDrawer({
   const c = detail?.company ?? company; // merged: full record once loaded, row projection meanwhile
   const triggers = detail?.triggers ?? [];
   const insights = detail?.insights ?? [];
+  const researchInsights = insights.filter(insight => insight.source !== "registry");
   const publicGrowth = detail?.publicGrowth;
   const opportunitySummary = oldGoldOpportunity(c);
   const introCallDate = oldGoldIntroCall(c);
@@ -1621,6 +1623,7 @@ function DetailDrawer({
         <button type="button" className="mb-4 w-full rounded-md border border-[var(--gold)] px-3 py-2 text-sm text-[var(--gold)] hover:bg-[var(--surface-2)]" onClick={() => setResearchFrames([{ id: c.id, name: c.name }])}>Account intelligence →</button>
         <GovernmentIntelligence companyId={c.id} />
         <RegionalContracts companyId={c.id} />
+        <RegistryProfiles insights={insights} loaded={Boolean(detail)} />
 
         {publicGrowth && (publicGrowth.federalCoverage || publicGrowth.entities.length > 0 || publicGrowth.awards.length > 0 || publicGrowth.naicsSize.length > 0 || publicGrowth.headcount.length > 0 || publicGrowth.revenue.length > 0 || publicGrowth.opportunities.length > 0) && (
           <div className="mb-4 rounded-md border p-3 text-sm" style={{ borderColor: "rgba(110,168,230,0.45)", background: "rgba(110,168,230,0.05)" }}>
@@ -1840,14 +1843,14 @@ function DetailDrawer({
         {/* LinkedIn NetSuite-fit / ops-profile findings — tag-only, but must still say
             WHY they're here and link back to source (Arman 2026-07-31: the lead-record
             popup was showing generic company description with no "why" framing). */}
-        {insights.length > 0 && (
+        {researchInsights.length > 0 && (
           <>
-            <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">LinkedIn findings ({insights.length})</h3>
+            <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Research findings ({researchInsights.length})</h3>
             <div className="space-y-2">
-              {insights.map((ins, i) => (
+              {researchInsights.map((ins, i) => (
                 <div key={i} className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
                   <div className="mb-1 font-medium" style={{ color: "var(--accent)" }}>
-                    🔗 LinkedIn {ins.kind === "netsuite_fit" ? "NetSuite fit" : "ops profile"} — {ins.label}
+                    🔗 {insightHeading(ins)}
                     {ins.confidence === "low" ? " (low confidence)" : ""}
                   </div>
                   {ins.detail && <p className="text-[var(--text-muted)]">{ins.detail}</p>}
