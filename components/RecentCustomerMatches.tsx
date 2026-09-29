@@ -233,7 +233,7 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
     } catch {
       if (current === sequence.current) setError(resultRef.current
         ? "Could not refresh customer matches. Your loaded accounts and review decisions are still shown."
-        : "Could not load customer matches. Try again; the saved research is still available in All characteristics.");
+        : "Could not load customer matches. Try Refresh matches; your saved research is still retained.");
     } finally {
       clearTimeout(timeout);
       if (current === sequence.current) setBusy(false);
@@ -321,7 +321,7 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
         <p>{pattern !== "all" && !result.patterns.find(item => item.id === pattern)?.referenceCount
           ? "No website-supported customer reference matches this pattern yet."
           : "No visible, source-supported matches on this page."}</p>
-        <p className="mt-1 text-xs">Try another pattern, return to the first page, or use Show hidden to restore dismissed accounts. Unknown traits are still available for research in All characteristics.</p>
+        <p className="mt-1 text-xs">Try another pattern, return to the first page, or use Show hidden to restore dismissed accounts.</p>
       </div>}
       <div className="space-y-3">{accounts.map(account => <CustomerMatchCard key={account.companyId} account={account}
         selected={selectedAccounts.has(account.companyId)} statusBusy={statusBusy} onOpenAccount={onOpenAccount} onStatus={onStatus ? updateStatus : undefined}
