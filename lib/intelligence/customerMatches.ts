@@ -117,17 +117,17 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
   if (selected !== "all" && !CUSTOMER_PATTERNS.some(p => p.id === selected)) throw new Error("invalid_customer_pattern");
   if (!Number.isSafeInteger(page) || page < 1) throw new Error("invalid_customer_page");
   const candidates = [...new Map(input.candidates.map(c => [c.companyId, c])).values()];
-  // Registry IDs and explicit buying-program identities are the deduplication
-  // boundary. Distinct businesses can legitimately share a corporate website.
+  // Audited registry IDs are the entity deduplication boundary. Distinct
+  // businesses can share a website or buying program and still have different
+  // operating facts; neither relationship removes a customer from comparison.
   // Renewal-only customers remain comparable, with their event type displayed.
   const refs = [...input.references].filter(ref => ref.status === "verified"
     && Number.isFinite(Date.parse(ref.announcementDate)) && Date.parse(ref.announcementDate) <= now)
     .sort((a, b) => b.announcementDate.localeCompare(a.announcementDate) || a.id.localeCompare(b.id));
-  const programs = new Set<string>(), entities = new Set<string>();
+  const entities = new Set<string>();
   const references = refs.filter(ref => {
-    const program = ref.buyingProgramId;
-    if (entities.has(ref.id) || (program && programs.has(program))) return false;
-    entities.add(ref.id); if (program) programs.add(program); return true;
+    if (entities.has(ref.id)) return false;
+    entities.add(ref.id); return true;
   });
   const referenceDecisions = new Map(references.map(ref => [ref.id, Object.fromEntries(Object.entries(ref.answers).map(([id, answer]) => [id, answer.decision]))]));
   const branches = CUSTOMER_PATTERNS.flatMap(pattern => pattern.branches.map(branch => {

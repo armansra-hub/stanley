@@ -158,7 +158,9 @@ export async function customerReferenceProgress() {
     return { id: row.id, name: row.name, website: row.website, status, answered: compatible ? row.native_answered ?? 0 : 0,
       totalQuestions: 47, lastError: row.source_status === "blocked" ? String(gaps.at(-1) ?? "official_website_source_unavailable")
         : compatible ? row.native_last_error ?? undefined : undefined,
-      sourceStatus: row.source_status, sourcePages: row.sources.length, sourceGaps };
+      sourceStatus: row.source_status, sourcePages: row.sources.length, sourceGaps,
+      checkpointUpdatedAt: compatible ? row.native_updated_at ?? null : null,
+      sourceAttempts: Object.keys((row.source_checkpoint?.attempts ?? {}) as object).length };
   }));
   const count = (status: string) => references.filter(ref => ref.status === status).length;
   return { asOf: registry.map(row => row.as_of).sort().at(-1) ?? null, total: references.length, complete: count("complete"), pending: count("pending"), blocked: count("blocked"), running: count("running"), references,

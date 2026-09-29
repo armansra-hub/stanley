@@ -61,12 +61,12 @@ describe("recent-customer cached ranking", () => {
     delete creativeProspect.decisions.rr_c07;
     expect(rank([creativeProspect], [creativeRef], { pattern: "creative" }).accounts).toHaveLength(0);
   });
-  it("keeps unique companies, deduplicates buying programs and includes renewal-only customers honestly", () => {
+  it("keeps unique prospects while comparing distinct customers in one buying program and renewal-only customers", () => {
     const recent = reference("recent"); recent.buyingProgramId = "program"; recent.announcementDate = "2026-09-01";
     const older = reference("older"); older.buyingProgramId = "program";
     const renewal = reference("renewal"); renewal.announcementType = "renewal";
     const result = rank([candidate(), candidate()], [older, recent, renewal]);
-    expect(result.total).toBe(1); expect(result.referenceCoverage.verified).toBe(2);
+    expect(result.total).toBe(1); expect(result.referenceCoverage.verified).toBe(3);
     expect(result.accounts[0].reference.id).toBe("recent");
     expect(result.patterns.find(p => p.id === "integrators")?.count).toBe(1);
     expect(rank([candidate()], [renewal]).accounts[0].reference.announcementType).toBe("renewal");

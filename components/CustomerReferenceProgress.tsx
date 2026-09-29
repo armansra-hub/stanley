@@ -2,15 +2,29 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type ReferenceProgress = {
+export type ReferenceProgress = {
   asOf: string | null; total: number; complete: number; pending: number; blocked: number; running: number;
   announcements?: number; sourceReady?: number; sourceBlocked?: number; sourcePages?: number; withSourceGaps?: number;
   references: { id: string; name: string; website: string | null; status: "pending" | "running" | "complete" | "blocked";
-    answered: number; totalQuestions: number; lastError?: string; sourcePages?: number; sourceGaps?: number }[];
+    answered: number; totalQuestions: number; lastError?: string; sourcePages?: number; sourceGaps?: number;
+    checkpointUpdatedAt?: string | null; sourceAttempts?: number }[];
   run?: { processed: number; completed: number; stoppedBy: string };
 };
 
 const API = "/api/headhunter/intelligence/customer-references";
+
+export function customerReferenceProgressKey(value: ReferenceProgress): string {
+  return JSON.stringify([...value.references].sort((a, b) => a.id.localeCompare(b.id))
+    .map(ref => [ref.id, ref.status, ref.answered, ref.sourcePages, ref.sourceGaps, ref.checkpointUpdatedAt, ref.sourceAttempts]));
+}
+
+/** Only a confirmed saved continuation can start another paid foreground pass.
+ * Native mapping can advance before the final facet-answer count changes. */
+export function customerReferenceCanContinue(previous: ReferenceProgress, next: ReferenceProgress): boolean {
+  return next.pending > 0 && next.running === 0
+    && ["deadline", "continued", "source_continuation", "references_exhausted"].includes(next.run?.stoppedBy ?? "")
+    && customerReferenceProgressKey(next) !== customerReferenceProgressKey(previous);
+}
 
 export default function CustomerReferenceProgress({ enabled, onComplete }: { enabled: boolean; onComplete: () => void }) {
   const [open, setOpen] = useState(false);
@@ -51,14 +65,13 @@ export default function CustomerReferenceProgress({ enabled, onComplete }: { ena
       // One explicit action continues the finite saved cohort. A confirmed
       // checkpoint permits the next request; an uncertain response never does.
       let previous = data;
-      const progressKey = (value: ReferenceProgress) => JSON.stringify(value.references.map(ref => [ref.id, ref.status, ref.answered, ref.sourcePages, ref.sourceGaps]));
       while (mounted.current && !stopRequested.current) {
         const response = await fetch(API, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(290_000) });
         if (!response.ok) throw new Error("reference_reading_unconfirmed");
         const next: ReferenceProgress = await response.json();
         if (mounted.current) { setData(next); onComplete(); }
         if (!next.pending || next.running || stopRequested.current) break;
-        if (!["deadline", "continued", "source_continuation", "references_exhausted"].includes(next.run?.stoppedBy ?? "") || progressKey(next) === progressKey(previous)) {
+        if (!customerReferenceCanContinue(previous, next)) {
           if (mounted.current) setError("Reading paused at a saved checkpoint that needs attention. Review the progress before continuing.");
           break;
         }
