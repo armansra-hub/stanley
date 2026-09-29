@@ -147,9 +147,9 @@ describe("recent-customer shortlist", () => {
     expect(markup).not.toContain("Recent customer example");
   });
 
-  it("labels a partially read customer and explains why the remaining answer is held", () => {
+  it.each(["typesafe_context_limit", "customer_context_relevant_evidence_still_large"])("explains a partially read customer's size hold (%s)", lastError => {
     const account = makeAccount();
-    account.reference.reading = { status: "blocked", answered: 46, total: 47, lastError: "typesafe_context_limit", updatedAt: "2026-09-29" };
+    account.reference.reading = { status: "blocked", answered: 46, total: 47, lastError, updatedAt: "2026-09-29" };
     const markup = renderToStaticMarkup(React.createElement(CustomerMatchCard, { account, selected: false, statusBusy: false }));
     expect(markup).toContain("Partial website analysis · 46/47 characteristics answered");
     expect(markup).toContain("remaining source text exceeds the provider’s request size limit");
@@ -167,6 +167,16 @@ describe("recent-customer shortlist", () => {
     expect(markup).toContain("provider could not process the remaining reading request");
     expect(markup).toContain("2 source gaps retained");
     expect(markup).not.toContain("Complete ·");
+  });
+
+  it.each(["reference_continuation", "source_continuation"])("describes %s as saved continuation rather than a failure", lastError => {
+    const markup = renderToStaticMarkup(React.createElement(CustomerReferenceProgressRow, { reference: {
+      id: "continuing-customer", name: "Continuing Customer", website: "https://customer.example", status: "pending", answered: 5, totalQuestions: 47, lastError,
+    } }));
+    expect(markup).toContain("Partial reading · 5/47 characteristics answered");
+    expect(markup).toContain("Waiting for the next reading pass; progress is saved");
+    expect(markup).not.toContain("needs attention");
+    expect(markup).not.toContain("could not be read");
   });
 
   it("separates unknowns and documented differences from a reason to act now", () => {

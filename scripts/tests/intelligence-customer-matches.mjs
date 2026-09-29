@@ -147,5 +147,59 @@ try {
   assert.equal(await scalar("select count(*)::int from intelligence_catalog_facets where decision='insufficient_evidence'"),1003);
   assert.equal(await scalar("select md5(jsonb_agg(to_jsonb(c) order by id)::text) from companies c"),before);
   passed++; console.log("PASS omitting unknowns from the shortlist read preserves all candidates, facts, native answers and source semantics");
+  const beforeProofReads = await candidates();
+  const proofReads = await readFile(new URL("../../supabase/migrations/0133_customer_match_proof_reads.sql", import.meta.url), "utf8");
+  const proofFunctionStart = proofReads.indexOf("begin;");
+  // Every CONCURRENTLY command is a standalone operation in production.
+  for (const statement of proofReads.slice(0, proofFunctionStart).split(";").map(s => s.trim()).filter(Boolean)) {
+    if (/create index concurrently/i.test(statement)) await db.exec(statement + ";");
+  }
+  await db.exec(proofReads.slice(proofFunctionStart));
+  assert.deepEqual((await candidates()).accounts, beforeProofReads.accounts);
+  await check("proof indexes preserve complete shared-set validity, fallback and native identity", async () => {
+    await db.query("update intelligence_observations set content_hash='source-hash' where id=$1", [id]);
+    const expected = (await candidates()).accounts.find(a => a.companyId === id).decisions;
+    assert.deepEqual(expected, { rr_c01: "supported", rr_i01: "supported" });
+    await db.query(`update intelligence_catalog_facets set citations=(select citations from intelligence_catalog_citation_sets where company_id=$1)
+      where company_id=$1 and facet_id='rr_c01'`, [id]);
+    // An existing but invalid shared set cannot be replaced by valid inline proof.
+    await db.exec("savepoint invalid_shared");
+    await db.query("update intelligence_catalog_citation_sets set citations='[]' where company_id=$1", [id]);
+    assert.deepEqual((await candidates()).accounts.find(a => a.companyId === id).decisions, {});
+    await db.exec("rollback to savepoint invalid_shared");
+    // Missing and foreign shared sets follow the exact prior inline fallback.
+    for (const citationKey of [null, "missing-set"]) {
+      await db.exec("savepoint inline");
+      await db.query("update intelligence_catalog_facets set citation_set_key=$2 where company_id=$1 and facet_id='rr_c01'", [id, citationKey]);
+      assert.deepEqual((await candidates()).accounts.find(a => a.companyId === id).decisions, expected);
+      await db.exec("rollback to savepoint inline");
+    }
+    await db.exec("savepoint foreign_set");
+    await db.query("update intelligence_catalog_citation_sets set company_id=gen_random_uuid() where company_id=$1", [id]);
+    assert.deepEqual((await candidates()).accounts.find(a => a.companyId === id).decisions, { rr_c01: "supported" });
+    await db.exec("rollback to savepoint foreign_set");
+    // A single bad citation invalidates the whole set, including after compaction.
+    await db.exec("savepoint one_bad_source");
+    await db.query(`update intelligence_catalog_citation_sets set citations=citations||jsonb_build_array(
+      jsonb_build_object('observationId','invalid-id','contentHash','source-hash')) where company_id=$1`, [id]);
+    assert.deepEqual((await candidates()).accounts.find(a => a.companyId === id).decisions, {});
+    await db.exec("rollback to savepoint one_bad_source");
+    for (const update of ["facet_version='old'", "evidence_key='old'", "native_result='{}'"]) {
+      await db.exec("savepoint invalid_native");
+      await db.query(`update intelligence_catalog_facets set ${update} where company_id=$1 and facet_id='rr_c01'`, [id]);
+      assert.equal((await candidates()).accounts.find(a => a.companyId === id).decisions.rr_c01, undefined);
+      await db.exec("rollback to savepoint invalid_native");
+    }
+    for (const update of ["content_hash='changed'", "is_current=false", "feedback_excluded=true", "company_id=gen_random_uuid()"]) {
+      await db.exec("savepoint invalid_source");
+      await db.query(`update intelligence_observations set ${update} where id=$1`, [id]);
+      assert.deepEqual((await candidates()).accounts.find(a => a.companyId === id).decisions, {});
+      await db.exec("rollback to savepoint invalid_source");
+    }
+    assert.equal((await candidates()).accounts.length, 1003);
+  });
+  assert.equal(await scalar("select count(*)::int from pg_index where indexrelid in ('intelligence_current_observation_proof'::regclass,'intelligence_catalog_decisive_native_read'::regclass) and indisvalid"), 2);
+  assert.equal(await scalar("select md5(jsonb_agg(to_jsonb(c) order by id)::text) from companies c"), before);
+  passed++; console.log("PASS proof-only indexed read is exactly equivalent for all1003 candidates and preserves grades/native rows");
   console.log(`${passed} actual PostgreSQL customer-match checks passed; no model calls or live writes.`);
 } finally { await db.close(); }

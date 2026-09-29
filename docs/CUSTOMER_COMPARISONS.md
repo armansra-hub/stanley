@@ -29,6 +29,8 @@ Customer reference sources shows the full accounting, searchable entries, comple
 
 Apply migration `0131_private_customer_reference_registry.sql` before deploying this version. The private registry is service-only; no customer roster, Slack provenance or private narratives belong in the public repository.
 
+Migration `0133_customer_match_proof_reads.sql` adds compact indexes for current source proofs and decisive native answers. The candidate read loads inline citations only when a matching shared citation set is absent. This preserves the same matching facts, source-hash checks and visibility rules while avoiding repeated wide evidence reads. Build its indexes concurrently outside a transaction, then install the function; no research rerun is needed.
+
 Authenticated app routes expose `/api/headhunter/intelligence/customer-references` (GET progress, POST `{}` for one bounded pass) and `/import` (POST up to 100 exact records). The existing dedicated agent credential exposes the identical operations at `/api/agent/customer-references` and `/import`. No credential or permission expansion is required. Import batches limit request size only; keyset reads cover the full registry without a total limit.
 
 Imports reuse explicitly mapped existing reference IDs and never reset paid results. Source collection and native classification have separate exact-record leases and checkpoints. Confirmed progress includes request reuse, input/output tokens and unknown-usage receipts; token counts are not a provider invoice. No new scheduler, TAM grading work or outreach is introduced.
