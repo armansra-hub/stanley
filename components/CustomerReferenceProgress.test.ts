@@ -6,16 +6,16 @@ const snapshot = (): ReferenceProgress => ({ asOf: "2026-09-28", total: 1, compl
     sourcePages: 3, sourceGaps: 0, sourceAttempts: 3, checkpointUpdatedAt: "2026-09-29T01:00:00Z" }],
   run: { processed: 1, completed: 0, stoppedBy: "continued" } });
 
-describe("finite customer reference continuation", () => {
-  it("recognizes durable native mapping progress before any final answer is ready", () => {
+describe("retired customer reference continuation", () => {
+  it("does not restart paid customer reading even when a legacy checkpoint advanced", () => {
     const before = snapshot(), next = structuredClone(before);
     next.references[0].checkpointUpdatedAt = "2026-09-29T01:04:00Z";
-    expect(customerReferenceCanContinue(before, next)).toBe(true);
+    expect(customerReferenceCanContinue(before, next)).toBe(false);
   });
   it("recognizes source attempts that resolve to an already captured page without inflating page counts", () => {
     const before = snapshot(), next = structuredClone(before);
     next.references[0].sourceAttempts = 4; next.run!.stoppedBy = "source_continuation";
-    expect(customerReferenceCanContinue(before, next)).toBe(true);
+    expect(customerReferenceCanContinue(before, next)).toBe(false);
   });
   it("stops when the durable checkpoint is unchanged", () => {
     const before = snapshot();

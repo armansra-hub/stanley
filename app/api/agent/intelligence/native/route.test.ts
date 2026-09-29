@@ -17,13 +17,21 @@ describe("Codex native Jev endpoint",()=>{
  it("reports database pause and catalog version without a provider call",async()=>{
   const result=await GET(new Request("http://localhost"));const body=await result.json();
   expect(body.enabled).toBe(false);expect(body.budget).toMatchObject({available:true,enabled:false,blockedReason:"policy_disabled"});
+  expect(body).toMatchObject({cacheOnly:true,arbitraryQuestionsEnabled:false});
   expect(body.catalog.facets).toBe(47);expect(body.catalog.industryGuides).toBe(35);expect(body.catalog.version).toMatch(/^ring-ring-v1-/);
   expect(mocks.evaluate).not.toHaveBeenCalled();expect(mocks.cached).not.toHaveBeenCalled();
   mocks.budget.mockResolvedValue({available:false});expect((await (await GET(new Request("http://localhost"))).json()).enabled).toBe(false);
  });
  it("returns the original public native receipt with connector attribution",async()=>{
+  mocks.enabled.mockReturnValue(false);
   const result=await POST(request("public"));expect(await result.json()).toEqual({status:"complete",evaluation:answer,reused:true});
   expect(mocks.cached.mock.calls[0][1]).toMatchObject({purpose:"codex_connector",sourceKind:"codex_public",workload:"manual"});expect(mocks.evaluate).not.toHaveBeenCalled();
+ });
+ it("returns a terminal cache-miss response instead of a paid generic retry",async()=>{
+  mocks.cached.mockResolvedValue({status:"budget_deferred",reason:"purpose_retired",retryAt:null});
+  const response=await POST(request("public"));expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({error:"generic_jev_evaluation_retired",cacheOnly:true});
+  expect(mocks.evaluate).not.toHaveBeenCalled();expect(mocks.reserve).not.toHaveBeenCalled();
  });
  it("blocks all private evaluation before reservation or provider dispatch",async()=>{
   const result=await POST(request("private_excerpt"));

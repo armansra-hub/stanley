@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 import type { EvaluationUsage } from "./evaluation";
 import { JevBudgetDeferredError, withJevDispatchPermit, type JevBudgetDeferral } from "./budget";
+import { jevPaidPurposeAllowed, JEV_RETIRED_PURPOSE_REASON } from "./jevPurposePolicy";
 
 export type JevPurpose = "operating_catalog" | "public_interpretation" | "research_ranking" | "saved_view" | "private_tam" | "federal_identity" | "event_match" | "codex_connector";
 export type JevWorkload = "initial_coverage" | "monitoring" | "manual" | "unattributed";
@@ -28,6 +29,22 @@ export async function durableJevRequest<T extends StoredEvaluation>(args: {
   if (args.context.purpose === "private_tam") throw new Error("Private evidence cannot use the public response cache");
   const rpc = deps.rpc ?? ((name, values) => serviceClient().rpc(name, values));
   const fingerprint = scopedJevFingerprint(args.fingerprint, args.context);
+  // Retired purposes can read already paid exact responses, but cannot enter
+  // the claim/reservation path even if an older database deployment is live.
+  if (!jevPaidPurposeAllowed(args.context)) {
+    let cached;
+    try { cached = await rpc("intelligence_jev_cached", {
+      p_fingerprint: fingerprint, p_purpose: args.context.purpose, p_company: args.context.companyId ?? null,
+    }); } catch { cached = null; }
+    const receipt = cached?.data as { status?: string; evaluation?: T; reservationId?: string } | null;
+    if (!cached?.error && receipt?.status === "complete" && receipt.evaluation
+      && typeof receipt.evaluation.ok === "boolean" && receipt.reservationId) {
+      try { await rpc("intelligence_jev_settle", { p_fingerprint: fingerprint, p_reservation: receipt.reservationId }); }
+      catch { /* Saved answers remain readable; accounting is independently recoverable. */ }
+      return { status: "complete", evaluation: receipt.evaluation, reused: true };
+    }
+    return { status: "budget_deferred", reason: JEV_RETIRED_PURPOSE_REASON, retryAt: null };
+  }
   const { data, error } = await rpc("intelligence_jev_claim", {
     p_fingerprint: fingerprint, p_purpose: args.context.purpose, p_company: args.context.companyId ?? null,
     p_observation: args.context.observationId ?? null, p_source_kind: args.context.sourceKind ?? null,
@@ -53,7 +70,7 @@ export async function durableJevRequest<T extends StoredEvaluation>(args: {
   let evaluation: T;
   try {
     evaluation = await withJevDispatchPermit({ fingerprint, rawFingerprint: args.fingerprint,
-      reservationId: claim.reservationId, leaseToken: claim.leaseToken, rpc }, args.execute);
+      reservationId: claim.reservationId, leaseToken: claim.leaseToken, context: args.context, rpc }, args.execute);
   } catch (error) {
     if (!(error instanceof JevBudgetDeferredError)) throw error;
     // No provider HTTP attempt occurred. Unlike an accepted timeout, this is

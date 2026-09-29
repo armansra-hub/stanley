@@ -1,6 +1,7 @@
 import { operatingFacet, type OperatingFacetDecision } from "./operatingCatalog";
 import type { OperatingMatchTopic } from "./topicSearch";
 import { summarizeCustomerCohort, type CustomerCohortSummary } from "./customerCohortSummary";
+import type { loadCustomerResearchSummary } from "./customerResearchServer";
 
 /** Public response types and deterministic cached-fact ranking. No provider calls. */
 export type CustomerReferenceSource = { url: string; title: string; contentHash: string; text?: string };
@@ -89,6 +90,9 @@ export type CustomerMatchAccount = Omit<CustomerMatchCandidate, "decisions"> & {
   topics: OperatingMatchTopic[];
 };
 export type CustomerMatchesResult = {
+  research?: Awaited<ReturnType<typeof loadCustomerResearchSummary>>;
+  industry?: string;
+  industries?: { id: string; label: string; prospects: number; customers: number }[];
   patterns: { id: string; label: string; description: string; count: number; referenceCount: number }[];
   accounts: CustomerMatchAccount[]; total: number; page: number; pageSize: 25; hasMore: boolean;
   referenceCoverage: { verified: number; pending: number; asOf: string; total?: number; partial?: number; usable?: number };
@@ -129,11 +133,13 @@ const INDEPENDENT_REASONS = [
 ];
 
 export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[]; references: CustomerReference[]; asOf: string;
-  referenceTotal: number; pattern?: string; page?: number; now?: number }): CustomerMatchesResult {
+  referenceTotal: number; pattern?: string; industry?: string; page?: number; now?: number }): CustomerMatchesResult {
   const now = input.now ?? Date.now(), selected = input.pattern ?? "all", page = input.page ?? 1;
+  const industry = input.industry ?? "all";
   if (selected !== "all" && !CUSTOMER_PATTERNS.some(p => p.id === selected)) throw new Error("invalid_customer_pattern");
   if (!Number.isSafeInteger(page) || page < 1) throw new Error("invalid_customer_page");
-  const candidates = [...new Map(input.candidates.map(c => [c.companyId, c])).values()];
+  const allCandidates = [...new Map(input.candidates.map(c => [c.companyId, c])).values()];
+  const candidates = industry === "all" ? allCandidates : allCandidates.filter(candidate => industryMatches(candidate.subindustry, [industry]));
   // Audited registry IDs are the entity deduplication boundary. Distinct
   // businesses can share a website or buying program and still have different
   // operating facts; neither relationship removes a customer from comparison.
@@ -142,10 +148,16 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
     && Number.isFinite(Date.parse(ref.announcementDate)) && Date.parse(ref.announcementDate) <= now)
     .sort((a, b) => b.announcementDate.localeCompare(a.announcementDate) || a.id.localeCompare(b.id));
   const entities = new Set<string>();
-  const references = refs.filter(ref => {
+  const allReferences = refs.filter(ref => {
     if (entities.has(ref.id)) return false;
     entities.add(ref.id); return true;
   });
+  const industryNames = [...new Set([...allCandidates.map(row => row.subindustry), ...allReferences.map(row => row.subindustry)]
+    .filter((value): value is string => typeof value === "string" && !!value.trim()))].sort((a, b) => a.localeCompare(b));
+  const industries = industryNames.map(label => ({ id: label, label,
+    prospects: allCandidates.filter(row => industryMatches(row.subindustry, [label])).length,
+    customers: allReferences.filter(row => industryMatches(row.subindustry, [label])).length }));
+  const references = industry === "all" ? allReferences : allReferences.filter(reference => industryMatches(reference.subindustry, [industry]));
   const referenceDecisions = new Map(references.map(ref => [ref.id, Object.fromEntries(Object.entries(ref.answers).map(([id, answer]) => [id, answer.decision]))]));
   const branches = CUSTOMER_PATTERNS.flatMap(pattern => pattern.branches.map(branch => {
     const cohort = candidates.filter(c => branchCandidateEligible(c, branch) && supported(c.decisions, branch.anchor));
@@ -216,12 +228,13 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
       || b.fitOrder - a.fitOrder || a.account.companyId.localeCompare(b.account.companyId);
   });
   const start = (page - 1) * 25;
-  const complete = references.filter(ref => ref.status === "verified").length;
+  const complete = allReferences.filter(ref => ref.status === "verified").length;
   return {
+    industry, industries,
     patterns: CUSTOMER_PATTERNS.map(p => ({ id: p.id, label: p.label, description: p.description, count: patternCounts.get(p.id)!.size,
       referenceCount: new Set(branches.filter(b => b.pattern.id === p.id).flatMap(b => b.refs.map(r => r.id))).size })),
     accounts: ranked.slice(start, start + 25).map(r => r.account), total: ranked.length, page, pageSize: 25, hasMore: start + 25 < ranked.length,
-    referenceCoverage: { verified: complete, partial: references.length - complete, usable: references.length,
+    referenceCoverage: { verified: complete, partial: allReferences.length - complete, usable: allReferences.length,
       pending: Math.max(0, input.referenceTotal - complete), asOf: input.asOf, total: input.referenceTotal },
     customerCohort: summarizeCustomerCohort(references, now),
     coverage: { eligible: candidates.length, assessed: null, asOf: new Date(now).toISOString() },

@@ -1,4 +1,5 @@
 import "server-only";
+import { loadCustomerResearchSummary } from "./customerResearchServer";
 import { serviceClient } from "@/lib/supabase/server";
 import { isPublishableTriggerForCompany, type TriggerEvidence } from "@/lib/triggers/signalIntegrity";
 import { OPERATING_CATALOG_VERSION, OPERATING_FACETS, operatingFacetDecision } from "./operatingCatalog";
@@ -122,12 +123,12 @@ async function loadSavedNonAsset3pl(db: ReturnType<typeof serviceClient>) {
   return savedNonAsset3plProof(observations);
 }
 
-export async function loadCustomerMatches(input: { pattern: string; page: number; showHidden: boolean }): Promise<CustomerMatchesResult> {
+export async function loadCustomerMatches(input: { pattern: string; industry?: string; page: number; showHidden: boolean }): Promise<CustomerMatchesResult> {
   const db = serviceClient();
   const facetVersions = Object.fromEntries(OPERATING_FACETS.map(f => [f.id, catalogFacetVersion(f)]));
-  const [snapshot, registry, referenceRows, nonAssetProofs] = await Promise.all([
+  const [snapshot, registry, referenceRows, nonAssetProofs, research] = await Promise.all([
     db.rpc("intelligence_customer_match_candidates", { p_catalog_version: OPERATING_CATALOG_VERSION, p_facet_versions: facetVersions, p_show_hidden: input.showHidden }),
-    loadCustomerReferenceRegistry(), loadCustomerReferenceMatchRows(), loadSavedNonAsset3pl(db),
+    loadCustomerReferenceRegistry(), loadCustomerReferenceMatchRows(), loadSavedNonAsset3pl(db), loadCustomerResearchSummary(db),
   ]);
   if (snapshot.error) throw snapshot.error;
   if (!snapshot.data || !Array.isArray(snapshot.data.accounts)) throw new Error("customer_matches_unavailable");
@@ -142,7 +143,8 @@ export async function loadCustomerMatches(input: { pattern: string; page: number
     whyNow: customerWhyNow(row, now) }));
   const asOf = registry.reduce((latest, row) => row.as_of > latest ? row.as_of : latest, "2024-01-01");
   const result = rankCustomerMatches({ candidates, references, referenceTotal: registry.length, asOf,
-    pattern: input.pattern, page: input.page, now });
+    pattern: input.pattern, industry: input.industry, page: input.page, now });
+  result.research = research;
   if (!result.accounts.length) return result;
   const selectedReferenceIds = [...new Set(result.accounts.map(account => account.reference.id))];
   const [hydrated, selectedRegistry, selectedNative] = await Promise.all([

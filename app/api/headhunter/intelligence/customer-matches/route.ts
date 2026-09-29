@@ -9,12 +9,13 @@ export const maxDuration = 30;
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const pattern = req.nextUrl.searchParams.get("pattern") ?? "all";
+  const industry = req.nextUrl.searchParams.get("industry") ?? "all";
   const page = Number(req.nextUrl.searchParams.get("page") ?? "1");
   const hidden = req.nextUrl.searchParams.get("showHidden") ?? "false";
   if ((pattern !== "all" && !CUSTOMER_PATTERNS.some(p => p.id === pattern)) || !Number.isSafeInteger(page) || page < 1
-    || !["true", "false"].includes(hidden)) return NextResponse.json({ error: "invalid_customer_match_query" }, { status: 400 });
+    || !["true", "false"].includes(hidden) || !industry.trim() || industry.length > 180 || /[\u0000-\u001f\u007f]/.test(industry)) return NextResponse.json({ error: "invalid_customer_match_query" }, { status: 400 });
   try {
-    const result = await withServiceDeadline(Date.now() + 24_000, () => loadCustomerMatches({ pattern, page, showHidden: hidden === "true" }));
+    const result = await withServiceDeadline(Date.now() + 24_000, () => loadCustomerMatches({ pattern, industry, page, showHidden: hidden === "true" }));
     return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? error.code : null;

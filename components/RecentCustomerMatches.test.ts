@@ -45,13 +45,13 @@ describe("recent-customer shortlist", () => {
       coverage: { verified: 18, pending: 805, total: 823, asOf: "2026-09-28" },
       progress: { total: 823, complete: 18, pending: 796, blocked: 9, running: 0 },
     }));
-    expect(markup).toContain("Website analysis complete: 18 of 823 customer records");
+    expect(markup).toContain("Saved Jev question sets: 18 of 823 customer records answered");
     expect(markup).toContain("Slack establishes that these companies are customers");
     expect(markup).toContain("source gaps, not questions about customer status");
     expect(markup).toContain("partial customer cohort");
-    expect(markup).toContain("796 awaiting completion · 9 need attention");
-    expect(markup).toContain("704 announcement entries");
-    expect(markup).toContain("not all fully read");
+    expect(markup).toContain("legacy Jev completion is not substituted for it");
+    expect(markup).toContain("existing 47 definitions are the legacy library");
+    expect(markup).toContain("do not mean every website page was researched");
     expect(markup).not.toContain("more need supporting website evidence");
   });
 
@@ -60,6 +60,20 @@ describe("recent-customer shortlist", () => {
     expect(customerMatchesNeedRefresh(18, 17)).toBe(false);
     expect(customerMatchesNeedRefresh(18, 19)).toBe(true);
     expect(customerMatchesNeedRefresh(0, 1)).toBe(true);
+  });
+  it("separates authored site research from legacy answer counts and preserves source gaps", () => {
+    const markup = renderToStaticMarkup(React.createElement(CustomerReferenceCoverage, {
+      coverage: { verified: 76, pending: 747, total: 823, asOf: "2026-09-28" },
+      research: { available: true, progress: { total: 823, started: 8, notStarted: 815, draft: 0, inProgress: 2,
+        complete: 3, completeWithGaps: 3, unresolved: 0, facts: 61, readPages: 80, pendingPages: 200, unreadPages: 100,
+        unavailablePages: 9, latestUpdatedAt: "2026-09-29T20:00:00Z", origin: "codex_research", providerCalls: 0 } },
+    }));
+    expect(markup).toContain("Saved Jev question sets: 76 of 823");
+    expect(markup).toContain("New Codex website research: 3 complete · 3 reviewed with source gaps · 0 unresolved · 2 in progress · 815 not started");
+    expect(markup).toContain("Unresolved records do not count as researched examples");
+    expect(markup).toContain("80 pages read");
+    expect(markup).toContain("revised categories are not active yet");
+    expect(markup).not.toContain("76 complete · 3 reviewed");
   });
 
   it("refreshes for newly saved partial answers, but not unchanged mapping or source progress", () => {
@@ -72,9 +86,9 @@ describe("recent-customer shortlist", () => {
     const markup = renderToStaticMarkup(React.createElement(CustomerReferenceCoverage, {
       coverage: { verified: 38, partial: 2, usable: 40, pending: 785, total: 823, asOf: "2026-09-28" },
     }));
-    expect(markup).toContain("Website analysis complete: 38 of 823 customer records");
-    expect(markup).toContain("38 complete and 2 partial website analyses");
-    expect(markup).toContain("2 partial analyses are not included in the completed count");
+    expect(markup).toContain("Saved Jev question sets: 38 of 823 customer records answered");
+    expect(markup).toContain("38 complete and 2 partial legacy question sets");
+    expect(markup).toContain("2 partial readings are not included in the completed question-set count");
     expect(markup).toContain("unanswered characteristics stay unanswered");
     expect(markup).not.toContain("Website analysis complete: 40");
   });
@@ -184,11 +198,11 @@ describe("recent-customer shortlist", () => {
     const account = makeAccount();
     account.reference.reading = { status: "blocked", answered: 46, total: 47, lastError, updatedAt: "2026-09-29" };
     const markup = renderToStaticMarkup(React.createElement(CustomerMatchCard, { account, selected: false, statusBusy: false }));
-    expect(markup).toContain("Partial website analysis · 46/47 characteristics answered");
+    expect(markup).toContain("Partial legacy question set · 46/47 characteristics answered");
     expect(markup).toContain("remaining source text does not fit the current request size limit");
     expect(markup).toContain("Every required trait below is already supported");
     expect(markup).toContain("Raw Jev answers · customer");
-    expect(markup).not.toContain("Complete website analysis");
+    expect(markup).not.toContain("Complete legacy question set");
   });
 
   it("keeps a blocked 43-answer progress row visibly partial with its saved work retained", () => {
@@ -207,7 +221,7 @@ describe("recent-customer shortlist", () => {
       id: "continuing-customer", name: "Continuing Customer", website: "https://customer.example", status: "pending", answered: 5, totalQuestions: 47, lastError,
     } }));
     expect(markup).toContain("Partial reading · 5/47 characteristics answered");
-    expect(markup).toContain("Waiting for the next reading pass; progress is saved");
+    expect(markup).toContain("The legacy reading stopped at a saved checkpoint");
     expect(markup).not.toContain("needs attention");
     expect(markup).not.toContain("could not be read");
   });
@@ -239,11 +253,13 @@ describe("recent-customer shortlist", () => {
     expect(markup.match(/disabled=""/g)).toHaveLength(2);
   });
 
-  it("keeps customer reading an explicit action separate from viewing saved results", () => {
+  it("keeps saved customer evidence available without offering retired paid reading", () => {
     const markup = renderToStaticMarkup(React.createElement(CustomerReferenceProgress, { enabled: true, onComplete: vi.fn() }));
-    expect(markup).toContain("Customer reference sources");
-    expect(markup).toContain("the same 47 characteristics used for prospects");
-    expect(markup).toContain("does not start paid research");
+    expect(markup).toContain("Saved customer reference sources");
+    expect(markup).toContain("without paid Jev calls");
+    expect(markup).toContain("This list is read-only");
+    expect(markup).not.toContain("Read all customer websites");
+    expect(markup).not.toContain("Continue all unread customers");
     expect(markup).not.toContain("Reading customer websites…");
   });
 });

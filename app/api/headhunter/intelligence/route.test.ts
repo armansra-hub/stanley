@@ -32,6 +32,13 @@ afterEach(() => vi.restoreAllMocks());
 const post = (body: Record<string, unknown>) => POST(new NextRequest("https://stanley.test/api/headhunter/intelligence", { method: "POST", body: JSON.stringify(body) }));
 
 describe("reversible intelligence feedback API", () => {
+  it("retires new arbitrary saved questions without enqueuing or waking any worker", async () => {
+    const response = await post({ action: "save_view", name: "New question", question: "Which accounts are expanding?" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "purpose_retired" });
+    expect(m.calls.some(call => call.method === "upsert")).toBe(false);
+    expect(m.worker).not.toHaveBeenCalled(); expect(m.questionWorker).not.toHaveBeenCalled();
+  });
   it.each(["", `?viewId=${company}`])("hides dismissed accounts before pagination while Jev is paused: %s", async suffix => {
     m.enabled = false;
     expect((await GET(new NextRequest(`https://stanley.test/api/headhunter/intelligence${suffix}`))).status).toBe(200);
