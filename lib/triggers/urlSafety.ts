@@ -4,6 +4,8 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { createGunzip, createInflate, createBrotliDecompress } from "node:zlib";
+import type { Transform } from "node:stream";
 
 export interface ResolvedPublicAddress {
   address: string;
@@ -248,6 +250,7 @@ function requestPinnedBytes(
   return new Promise((resolve, reject) => {
     let settled = false;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let decoder: Transform | undefined;
     const finish = (
       result: { status: number; location: string | null; body: Uint8Array; contentType: string | null; etag?: string; lastModified?: string } | null,
       error?: Error,
@@ -255,7 +258,7 @@ function requestPinnedBytes(
       if (settled) return;
       settled = true;
       if (deadlineTimer) clearTimeout(deadlineTimer);
-      if (error) reject(error);
+      if (error) { decoder?.destroy(); reject(error); }
       else resolve(result!);
     };
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
@@ -289,6 +292,14 @@ function requestPinnedBytes(
         return;
       }
 
+      const encodingHeader = response.headers["content-encoding"];
+      const encoding = (Array.isArray(encodingHeader) ? encodingHeader.join(",") : encodingHeader ?? "identity").trim().toLowerCase();
+      if (!["identity", "gzip", "x-gzip", "deflate", "br"].includes(encoding)) {
+        response.destroy();
+        finish(null, new Error("Unsupported HTTP content encoding"));
+        return;
+      }
+
       const chunks: Buffer[] = [];
       let bytes = 0;
       response.on("data", (chunk: Buffer | string) => {
@@ -300,19 +311,37 @@ function requestPinnedBytes(
         }
         chunks.push(buffer);
       });
-      response.once("end", () => finish({
-        status,
-        location,
-        body: new Uint8Array(Buffer.concat(chunks)),
-        contentType,
-        ...validators,
-      }));
+      response.once("end", () => {
+        if (settled) return;
+        const encoded = Buffer.concat(chunks);
+        const complete = (body: Buffer) => finish({ status, location, body: new Uint8Array(body), contentType, ...validators });
+        if (encoding === "identity") { complete(encoded); return; }
+        // The wire representation and decoded document each have the same cap.
+        // Decode before either text extraction or binary/PDF consumers see it;
+        // compressed bytes must never masquerade as successfully fetched text.
+        decoder = encoding === "br" ? createBrotliDecompress() : encoding === "deflate" ? createInflate() : createGunzip();
+        const decoded: Buffer[] = [];
+        let decodedBytes = 0;
+        decoder.on("data", (chunk: Buffer) => {
+          decodedBytes += chunk.length;
+          if (decodedBytes > maxBytes) { finish(null, new Error("HTTP decoded response exceeded size limit")); return; }
+          decoded.push(chunk);
+        });
+        decoder.once("end", () => complete(Buffer.concat(decoded)));
+        decoder.once("error", () => finish(null, new Error("HTTP response content decoding failed")));
+        decoder.end(encoded);
+      });
       response.once("error", (error) => finish(null, error));
     });
-    // Absolute wall-clock bound includes connection, headers, and body. A peer
+    // Absolute wall-clock bound includes connection, headers, body, and decoding. A peer
     // cannot extend it indefinitely by trickling bytes.
     deadlineTimer = setTimeout(
-      () => request.destroy(new Error("HTTP fetch timed out")),
+      () => {
+        const error = new Error("HTTP fetch timed out");
+        // After the response ends, request.destroy alone need not emit an error.
+        finish(null, error);
+        request.destroy(error);
+      },
       timeoutMs,
     );
     request.once("error", (error) => finish(null, error));
