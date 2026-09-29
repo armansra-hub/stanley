@@ -1,17 +1,9 @@
 import "server-only";
-import { readJevBudgetPolicy } from "./budget";
-import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
-import { createHash } from "node:crypto";
-import { evaluateNativeCached, type NativeJevInput, type NativeProviderResult } from "./nativeJev";
-import { intelligenceEnabled } from "./observations";
+import type { NativeJevInput } from "./nativeJev";
 
 export const ACCOUNT_QUESTION_VERSION = "account-question-v1";
 type Source = { id:string; source_url:string; title:string; evidence_text:string; event_date:string|null };
 type Passage = { observationId:string; url:string; title:string; date:string|null; start:number; end:number; text:string; relevance:number };
-type Checkpoint = { version:string; snapshotAt:string; ids:string[]; source:number; offset:number; passages:Passage[];
-  receipts:{sourceId:string;start:number;end:number;native:NativeProviderResult}[]; scannedCharacters:number; skippedSources:number };
-type Job = {view_id:string;company_id:string;lease_token:string;question:string;company:string;source_ids?:string[];checkpoint:Checkpoint|null};
-
 /** Unicode-safe section bounds are retained with every citation. */
 export function questionSections(text:string, start=0, maxBytes=6000) {
  const sections:{id:string;start:number;end:number;text:string}[]=[];
@@ -41,66 +33,9 @@ export function accountAnswerInput(company:string,question:string,passages:Passa
   evidence_sufficiency:{type:"choice",instructions:"Describe the evidence available to answer the complete question. This is coverage context, not a second evaluation of another model.",criteria:{sufficient:"The combined passages address the material parts",partial:"Some material parts remain unestablished",conflicting:"Sources conflict on a material part",unknown:"The supplied passages do not answer it"}},
  }};
 }
-function selectedPassages(passages:Passage[]):Passage[]{
- // Keep the best passage per distinct source first, so repetition from a long
- // single document cannot evict the complementary source in a compound query.
- const ranked=[...passages].sort((a,b)=>b.relevance-a.relevance||a.observationId.localeCompare(b.observationId)||a.start-b.start);
- const seen=new Set<string>();const first=ranked.filter(p=>{if(seen.has(p.observationId))return false;seen.add(p.observationId);return true;});
- const result=[...first,...ranked.filter(p=>!first.includes(p))];let bytes=0;
- return result.filter(p=>{const n=Buffer.byteLength(JSON.stringify(p));if(bytes+n>26000)return false;bytes+=n;return true;}).slice(0,24);
-}
-async function runQuestion(job:Job,deadline:number){
- const db=serviceClient();const state:Checkpoint=job.checkpoint??{version:ACCOUNT_QUESTION_VERSION,snapshotAt:new Date().toISOString(),ids:job.source_ids??[],source:0,offset:0,passages:[],receipts:[],scannedCharacters:0,skippedSources:0};
- const save=async()=>{const r=await db.from("intelligence_account_question_jobs").update({checkpoint:state}).eq("view_id",job.view_id).eq("company_id",job.company_id)
-  .eq("lease_token",job.lease_token).eq("status","running").gt("lease_until",new Date().toISOString()).select("view_id").maybeSingle();if(r.error||!r.data)throw new Error("account_question_checkpoint_failed");};
- const finish=async(result:unknown,error:string|null,retry=30)=>{const r=await db.rpc("intelligence_account_question_finish",{p_view:job.view_id,p_company:job.company_id,p_lease:job.lease_token,p_result:result,p_error:error,p_retry:retry});if(r.error||r.data!==true)throw new Error("account_question_finish_failed");};
- const deferBudget=async(reason:string,retryAt:string|null)=>{const r=await db.rpc("intelligence_account_question_budget_defer",{p_view:job.view_id,p_company:job.company_id,p_lease:job.lease_token,p_reason:reason,p_retry_at:retryAt});if(r.error||r.data!==true)throw new Error("account_question_budget_defer_failed");};
- if(!job.checkpoint)await save();
- while(state.source<state.ids.length){
-  if(Date.now()>deadline-30_000){await finish(null,"continuation");return "continued";}
-  const r=await db.from("intelligence_observations").select("id,source_url,title,evidence_text,event_date").eq("id",state.ids[state.source]).eq("company_id",job.company_id).eq("feedback_excluded",false).maybeSingle();
-  if(r.error)throw new Error("question_source_unavailable");
-  const source=r.data as Source|null;
-  if(!source){state.source++;state.offset=0;state.skippedSources++;await save();continue;}
-  if(state.offset>=source.evidence_text.length){state.source++;state.offset=0;await save();continue;}
-  const sections=questionSections(source.evidence_text,state.offset);const end=sections.at(-1)!.end;
-  const result=await evaluateNativeCached(accountSelectionInput(job.company,job.question,source,sections),{purpose:"saved_view",companyId:job.company_id,observationId:source.id,sourceKind:"account_question_selection",workload:"monitoring"});
-  if(result.status!=="complete"){if(result.status==="budget_deferred")await deferBudget(result.reason,result.retryAt);else await finish(null,result.status,60);return result.status;}
-  if(!result.evaluation.ok){await finish(null,result.evaluation.error.code,3600);return "provider_unavailable";}
-  const native=result.evaluation.provider_result;const ids=new Set([native.answers.first.choice,native.answers.second.choice]);
-  const found=sections.filter(s=>ids.has(s.id)).map(s=>({observationId:source.id,url:source.source_url,title:source.title,date:source.event_date,
-   start:s.start,end:s.end,text:s.text,relevance:native.answers.relevance.noul??0}));
-  state.passages=selectedPassages([...state.passages,...found]);
-  state.receipts.push({sourceId:source.id,start:state.offset,end,native});state.scannedCharacters+=end-state.offset;state.offset=end;
-  await save();
- }
- if(Date.now()>deadline-30_000){await finish(null,"answer_continuation");return "continued";}
- if(state.passages.length){
-  const live=await db.from("intelligence_observations").select("id").eq("company_id",job.company_id)
-   .eq("feedback_excluded",false).in("id",[...new Set(state.passages.map(p=>p.observationId))]);
-  if(live.error)throw new Error("question_source_status_unavailable");
-  const allowed=new Set((live.data??[]).map(row=>row.id));state.passages=state.passages.filter(p=>allowed.has(p.observationId));
- }
- const coverage={evidenceSnapshotAt:state.snapshotAt,sourceCount:state.ids.length,scannedCharacters:state.scannedCharacters,packets:state.receipts.length,skippedSources:state.skippedSources,
-  selectedSources:new Set(state.passages.map(p=>p.observationId)).size,selectedPassages:state.passages.length,
-  basis:"All retained source packets were scanned for the custom question; the answer uses bounded selected passages. Unretained source text and missing public evidence remain unknown."};
- const result=await evaluateNativeCached(accountAnswerInput(job.company,job.question,state.passages,coverage),{purpose:"saved_view",companyId:job.company_id,sourceKind:"account_question_answer",workload:"monitoring"});
- if(result.status!=="complete"){if(result.status==="budget_deferred")await deferBudget(result.reason,result.retryAt);else await finish(null,result.status,60);return result.status;}
- if(!result.evaluation.ok){await finish(null,result.evaluation.error.code,3600);return "provider_unavailable";}
- await finish({version:ACCOUNT_QUESTION_VERSION,question:job.question,probability:result.evaluation.provider_result.answers.account_match.noul,
-  native:result.evaluation.provider_result,citations:state.passages,coverage,selectionReceipts:state.receipts,
-  evidenceHash:createHash("sha256").update(JSON.stringify([job.question,state.ids])).digest("hex")},null);
- return "complete";
-}
-export async function runAccountQuestionWorker(limit=1,deadlineMs=Date.now()+90_000){
- if(!intelligenceEnabled())return {enabled:false,processed:0,outcomes:{} as Record<string,number>};
- return withServiceDeadline(deadlineMs,async()=>{let processed=0;const outcomes:Record<string,number>={};
- const cfg=await serviceClient().from("intelligence_config").select("catalog_mode").eq("id",1).maybeSingle();
- if(cfg.error)throw new Error("account_question_configuration_unavailable");
- if(cfg.data?.catalog_mode==="pilot"||cfg.data?.catalog_mode==="rollout"){
- const budget=await readJevBudgetPolicy();if(cfg.data?.catalog_mode==="pilot"||!budget.available||!budget.enabled
-  ||(budget.phase!=="maintenance"&&budget.phase!=="ongoing"))return {enabled:false,processed:0,outcomes};}
- while(processed<Math.max(0,Math.min(8,limit))&&Date.now()<deadlineMs-30_000){const r=await serviceClient().rpc("intelligence_account_question_claim");if(r.error)throw new Error("account_question_claim_failed");if(!r.data)break;
-  let outcome;try{outcome=await runQuestion(r.data as Job,deadlineMs);}catch{outcome="service_error";}outcomes[outcome]=(outcomes[outcome]??0)+1;processed++;if(outcome==="budget_deferred")break;}
- return {enabled:true,processed,outcomes};});
+/** The historical question/answer builders remain for exact saved provenance.
+ * New arbitrary questions are retired; never claim, requeue, or reread evidence.
+ * Existing matches are served by the ordinary read endpoints. */
+export async function runAccountQuestionWorker(_limit=1, _deadlineMs=Date.now()+90_000) {
+ return { enabled:false, processed:0, outcomes:{} as Record<string,number>, stoppedBy:"purpose_retired" };
 }

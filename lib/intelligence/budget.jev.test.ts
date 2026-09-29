@@ -6,7 +6,8 @@ import { authorizeJevDispatch, withJevDispatchPermit, JevBudgetDeferredError, je
 import { durableJevRequest } from "./jevRequests";
 import { providerBudget } from "@/test/jev-budget-status-fixture";
 const fp = "a".repeat(64);
-const permit = () => ({ fingerprint: fp, rawFingerprint: fp, reservationId: "reservation", leaseToken: "lease", rpc });
+const permit = () => ({ fingerprint: fp, rawFingerprint: fp, reservationId: "reservation", leaseToken: "lease", rpc,
+  context: { purpose: "public_interpretation" as const, sourceKind: "website" } });
 const authorized = () => ({ data: { status: "authorized", model: "jev-1.13.0", expiresAt: new Date(Date.now() + 30_000).toISOString() }, error: null });
 beforeEach(() => { vi.clearAllMocks(); rpc.mockResolvedValue(authorized()); });
 describe("global Jev dispatch gate", () => {
@@ -41,12 +42,17 @@ describe("global Jev dispatch gate", () => {
     });
     expect(rpc).toHaveBeenCalledTimes(1);
   });
+  it("blocks a retired source even when a caller presents a formerly valid dispatch ticket", async () => {
+    await expect(withJevDispatchPermit({ ...permit(), context: { purpose: "operating_catalog", sourceKind: "customer_reference" } },
+      () => authorizeJevDispatch("jev-1.13.0", fp))).rejects.toThrow("purpose_retired");
+    expect(rpc).not.toHaveBeenCalled();
+  });
   it("propagates daily retryAt and terminal holds without invoking paid work", async () => {
     for (const retryAt of ["2026-09-26T07:00:00Z", null]) {
       const decision = { status: "budget_deferred" as const, reason: retryAt ? "daily_allowance_exhausted" : "maintenance_allowance_exhausted", retryAt };
       rpc.mockResolvedValue({ data: decision, error: null });
       const execute = vi.fn();
-      expect(await durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "catalog" }, execute }, { rpc })).toEqual(decision);
+      expect(await durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "account_catalog" }, execute }, { rpc })).toEqual(decision);
       expect(execute).not.toHaveBeenCalled();
     }
   });
@@ -56,7 +62,7 @@ describe("global Jev dispatch gate", () => {
       ? { status: "execute", reservationId: "reservation", leaseToken: "lease" }
       : name === "intelligence_jev_dispatch" ? decision : true }));
     const paid = vi.fn();
-    const result = await durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "catalog" },
+    const result = await durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "account_catalog" },
       execute: async () => { await authorizeJevDispatch("jev-1.13.0", fp); paid(); return { ok: true, usage: null }; } }, { rpc });
     expect(result).toEqual(decision); expect(paid).not.toHaveBeenCalled();
     expect(rpc).toHaveBeenLastCalledWith("intelligence_settle", { p_id: "reservation", p_actual: 0, p_tokens: 0 });
@@ -65,7 +71,7 @@ describe("global Jev dispatch gate", () => {
     rpc.mockImplementation(async name => name === "intelligence_jev_claim"
       ? { data: { status: "execute", reservationId: "reservation", leaseToken: "lease" }, error: null } : authorized());
     const paid = vi.fn(() => { throw new Error("acceptance unknown"); });
-    await expect(durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "catalog" },
+    await expect(durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "account_catalog" },
       execute: async () => { await authorizeJevDispatch("jev-1.13.0", fp); paid(); return { ok: true, usage: null }; } }, { rpc })).rejects.toThrow("acceptance unknown");
     expect(paid).toHaveBeenCalledTimes(1);
     expect(rpc.mock.calls.map(call => call[0])).toEqual(["intelligence_jev_claim", "intelligence_jev_dispatch"]);
@@ -76,7 +82,7 @@ describe("global Jev dispatch gate", () => {
       ? { status: "execute", reservationId: "reservation", leaseToken: "lease" }
       : name === "intelligence_jev_dispatch" ? { ...authorized().data, expiresAt: "2020-01-01T00:00:00Z" } : true }));
     const paid = vi.fn();
-    const result = await durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "catalog" },
+    const result = await durableJevRequest({ fingerprint: fp, context: { purpose: "operating_catalog", sourceKind: "account_catalog" },
       execute: async () => { await authorizeJevDispatch("jev-1.13.0", fp); paid(); return { ok: true, usage: null }; } }, { rpc });
     expect(result).toMatchObject({ status: "budget_deferred", reason: "dispatch_ticket_expired" });
     if (result.status !== "budget_deferred") throw new Error("Expected deferral");

@@ -18,20 +18,22 @@ type ReferenceReadingCounts = Pick<ReferenceProgress, "total" | "complete" | "pe
 export const customerMatchesNeedRefresh = (previousCompleted: number, completed: number, previousAnswered = 0, answered = 0) =>
   completed > previousCompleted || answered > previousAnswered;
 
-export function CustomerReferenceCoverage({ coverage, progress }: {
+export function CustomerReferenceCoverage({ coverage, progress, research }: {
   coverage: CustomerMatchesResult["referenceCoverage"]; progress?: ReferenceReadingCounts | null;
+  research?: CustomerMatchesResult["research"];
 }) {
   const total = progress?.total ?? coverage.total ?? coverage.verified + coverage.pending;
   const complete = progress?.complete ?? coverage.verified;
   const partial = coverage.partial ?? 0;
   return <div className="mt-4 rounded-md border border-[var(--gold)]/40 bg-[var(--background)] p-3 text-xs leading-relaxed">
-    <p className="font-semibold">Website analysis complete: {complete.toLocaleString()} of {total.toLocaleString()} customer records</p>
-    <p className="mt-1 text-[var(--text-muted)]">Slack establishes that these companies are customers. This match snapshot uses {coverage.verified.toLocaleString()} complete{partial ? ` and ${partial.toLocaleString()} partial` : ""} website analyses of their operations. Missing names or websites are source gaps, not questions about customer status.</p>
-    {partial > 0 && <p className="mt-1 text-[var(--text-muted)]">Partial analyses contribute only saved answers. Every required characteristic must be supported for a match; unanswered characteristics stay unanswered. The {partial.toLocaleString()} partial analyses are not included in the completed count.</p>}
+    <p className="font-semibold">Saved Jev question sets: {complete.toLocaleString()} of {total.toLocaleString()} customer records answered</p>
+    <p className="mt-1 text-[var(--text-muted)]">Slack establishes that these companies are customers. This snapshot uses {coverage.verified.toLocaleString()} complete{partial ? ` and ${partial.toLocaleString()} partial` : ""} legacy question sets. These counts do not mean every website page was researched. Missing names or websites are source gaps, not questions about customer status.</p>
+    {partial > 0 && <p className="mt-1 text-[var(--text-muted)]">Partial readings contribute only saved answers. Every required characteristic must be supported for a match; unanswered characteristics stay unanswered. The {partial.toLocaleString()} partial readings are not included in the completed question-set count.</p>}
     {complete < total && <p className="mt-1 text-[var(--text-muted)]">This is a partial customer cohort. Existing matches remain available while research continues; they do not establish how common a characteristic is across all customers.</p>}
-    {progress && <p className="mt-1 text-[var(--text-muted)]">{progress.pending.toLocaleString()} awaiting completion · {progress.blocked.toLocaleString()} need attention{progress.running ? ` · ${progress.running.toLocaleString()} being read` : ""}.</p>}
+    {research?.available ? <p className="mt-2 text-[var(--text-muted)]">New Codex website research: {research.progress.complete.toLocaleString()} complete · {research.progress.completeWithGaps.toLocaleString()} reviewed with source gaps · {research.progress.unresolved.toLocaleString()} unresolved · {research.progress.inProgress.toLocaleString()} in progress · {research.progress.notStarted.toLocaleString()} not started, across {research.progress.total.toLocaleString()} customer records. {research.progress.readPages.toLocaleString()} pages read. Unresolved records do not count as researched examples. This research uses no Jev calls; the revised categories are not active yet.</p>
+      : <p className="mt-2 text-[var(--text-muted)]">New Codex website research is separate. Its live coverage is not available in this snapshot; legacy Jev completion is not substituted for it.</p>}
     <details className="mt-2 text-[var(--text-muted)]"><summary className="cursor-pointer">Where the characteristics came from</summary>
-      <p className="mt-2">The 47 definitions came from the broader research across 704 announcement entries. Those entries were not all fully read against the definitions. Customer comparisons use saved, source-supported answers under the same definitions as prospects, including usable answers from partial readings.</p>
+      <p className="mt-2">The existing 47 definitions are the legacy library. Codex is reviewing the full customer cohort to develop universal and industry-specific characteristics. Saved comparisons remain available under their original definitions until the new library is reviewed.</p>
       <p className="mt-1">Announcement coverage through {dated(coverage.asOf)}; this date does not mean all registered customers have been researched.</p>
     </details>
   </div>;
@@ -140,8 +142,8 @@ export function CustomerMatchCard({ account, selected, statusBusy, onSelect, onS
         <p className="mt-1 text-[10px] text-[var(--gold)]">{account.reference.recent ? "Recent customer example" : "Historical customer comparison"}</p>
         <p className="mt-1 text-xs text-[var(--text-muted)]">{account.reference.announcementType === "renewal" ? "Renewal announcement" : account.reference.announcementType === "expansion" ? "Expansion announcement" : account.reference.announcementType === "new_customer" ? "New customer announcement" : "Customer announcement"}: {dated(account.reference.announcementDate)}</p>
         {account.reference.reading && <div className="mt-2 text-[10px] leading-relaxed text-[var(--text-muted)]">
-          <span className="inline-block rounded border px-2 py-1">{account.reference.reading.status === "complete" ? "Complete website analysis" : "Partial website analysis"} · {account.reference.reading.answered}/{account.reference.reading.total} characteristics answered</span>
-          {account.reference.reading.status !== "complete" && <p className="mt-1">{account.reference.reading.status === "running" ? "Remaining characteristics are being read." : customerReferenceHoldDescription(account.reference.reading.lastError)} Every required trait below is already supported.</p>}
+          <span className="inline-block rounded border px-2 py-1">{account.reference.reading.status === "complete" ? "Complete legacy question set" : "Partial legacy question set"} · {account.reference.reading.answered}/{account.reference.reading.total} characteristics answered</span>
+          {account.reference.reading.status !== "complete" && <p className="mt-1">{account.reference.reading.status === "running" ? "The previous reading is saved at an unfinished checkpoint." : customerReferenceHoldDescription(account.reference.reading.lastError)} Every required trait below is already supported.</p>}
         </div>}
         <p className="mt-2 text-xs text-[var(--text-muted)]">{account.primaryPattern.branchLabel}</p>
         <ul className="mt-3 space-y-2 text-sm">{account.reference.sharedTraits.map(trait => {
@@ -205,10 +207,11 @@ export function CustomerMatchCard({ account, selected, statusBusy, onSelect, onS
 
 export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccount, showHidden = false, statusBusy = false, statusOverrides = {}, onStatus }: OperatingMatchesProps) {
   const [pattern, setPattern] = useState("all");
+  const [industry, setIndustry] = useState("all");
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<CustomerMatchesResult | null>(null);
   const [referenceProgress, setReferenceProgress] = useState<ReferenceReadingCounts | null>(null);
-  const [summary, setSummary] = useState<Pick<CustomerMatchesResult, "patterns" | "referenceCoverage"> | null>(null);
+  const [summary, setSummary] = useState<Pick<CustomerMatchesResult, "patterns" | "referenceCoverage" | "industry" | "industries" | "research"> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedAccounts, setSelectedAccounts] = useState(new Set<string>());
@@ -235,14 +238,14 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
     const timeout = setTimeout(() => request.abort(), 20_000);
     const requestedStatus = statusSignatureRef.current;
     setBusy(true); setError(null);
-    const params = new URLSearchParams({ pattern, page: String(page), showHidden: String(showHidden) });
+    const params = new URLSearchParams({ pattern, industry, page: String(page), showHidden: String(showHidden) });
     try {
       const response = await fetch(`/api/headhunter/intelligence/customer-matches?${params}`, { cache: "no-store", signal: request.signal });
       if (!response.ok) throw new Error("customer_matches_unavailable");
       const next: CustomerMatchesResult = await response.json();
       if (current !== sequence.current) return;
       setResult(next);
-      setSummary({ patterns: next.patterns, referenceCoverage: next.referenceCoverage });
+      setSummary({ patterns: next.patterns, referenceCoverage: next.referenceCoverage, industry: next.industry, industries: next.industries, research: next.research });
       lastCompleted.current = Math.max(lastCompleted.current ?? 0, next.referenceCoverage.verified);
       setResultStatusSignature(statusBusyRef.current ? "pending" : requestedStatus);
     } catch {
@@ -253,7 +256,7 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
       clearTimeout(timeout);
       if (current === sequence.current) setBusy(false);
     }
-  }, [enabled, pattern, page, showHidden]);
+  }, [enabled, pattern, industry, page, showHidden]);
   const loadRef = useRef(load);
   loadRef.current = load;
   const onReferenceProgress = useCallback((next: ReferenceProgress) => {
@@ -305,17 +308,28 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
       <button type="button" disabled={!enabled || busy || statusBusy} onClick={() => void load()} className="rounded-md border px-3 py-2 text-xs disabled:opacity-50">{busy ? "Refreshing…" : "Refresh matches"}</button>
     </div>
 
-    {summary && <CustomerReferenceCoverage coverage={summary.referenceCoverage} progress={referenceProgress} />}
+    {summary && <CustomerReferenceCoverage coverage={summary.referenceCoverage} progress={referenceProgress} research={summary.research} />}
     <CustomerReferenceProgress enabled={enabled} onComplete={onReferenceProgress} />
     {result?.customerCohort && <CustomerCohortCounts cohort={result.customerCohort} />}
 
     {summary && <>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <label className="text-sm" htmlFor="customer-match-industry">Industry</label>
+        <select id="customer-match-industry" value={industry} disabled={statusBusy} onChange={event => {
+          sequence.current++; controller.current?.abort(); setResult(null); setError(null); setSelectedAccounts(new Set());
+          setIndustry(event.target.value); setPage(1);
+        }} className="rounded-md border bg-[var(--surface)] px-3 py-2 text-sm disabled:opacity-50">
+          <option value="all">All industries</option>
+          {summary.industries?.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+        {industry !== "all" && <p className="text-xs text-[var(--text-muted)]">Showing customer patterns within {industry}. Both customer examples and prospects use this industry.</p>}
+      </div>
       <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Customer operating patterns">
         <button type="button" aria-pressed={pattern === "all"} disabled={statusBusy} onClick={() => changeView("all")}
-          className={`rounded-md border px-3 py-2 text-left text-xs disabled:opacity-50 ${pattern === "all" ? "border-[var(--gold)] bg-[var(--surface-2)] text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>All customer patterns</button>
+          className={`rounded-md border px-3 py-2 text-left text-xs disabled:opacity-50 ${pattern === "all" ? "border-[var(--gold)] bg-[var(--surface-2)] text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>{industry === "all" ? "All customer patterns" : "All customer patterns within industry"}</button>
         {summary.patterns.map(item => <button key={item.id} type="button" title={item.description} aria-pressed={pattern === item.id} disabled={statusBusy}
           onClick={() => changeView(item.id)} className={`rounded-md border px-3 py-2 text-left text-xs disabled:opacity-50 ${pattern === item.id ? "border-[var(--gold)] bg-[var(--surface-2)] text-[var(--gold)]" : "text-[var(--text-muted)]"}`}>
-          {item.label} <span className="opacity-70">({item.count.toLocaleString()}{countsCurrent ? "" : "*"})</span>
+          {item.label} <span className="opacity-70">({(summary.industry ?? "all") === industry ? `${item.count.toLocaleString()}${countsCurrent ? "" : "*"}` : "…"})</span>
         </button>)}
       </div>
       {pattern !== "all" && <p className="mt-3 text-sm text-[var(--text-muted)]">{summary.patterns.find(item => item.id === pattern)?.description}</p>}

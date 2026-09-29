@@ -30,20 +30,18 @@ describe("shared foreground reference handlers", () => {
     expect(await (await GET(new Request("https://stanley.example.com/api/agent/customer-references"))).json()).toMatchObject({ total: 823 });
     expect(mocks.run).not.toHaveBeenCalled();
   });
-  it.each(['{"id":"force-one"}', '{"ignoreBudget":true}', '[]', 'null', 'not-json'])("rejects foreground options %s", async body => {
-    expect((await POST(request(body))).status).toBe(400); expect(mocks.run).not.toHaveBeenCalled();
+  it.each(['{}', '{"id":"force-one"}', '{"ignoreBudget":true}', '[]', 'null', 'not-json'])("retires paid customer reads before any claim for body %s", async body => {
+    const response = await POST(request(body));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "customer_research_is_codex_owned" });
+    expect(mocks.run).not.toHaveBeenCalled(); expect(mocks.progress).not.toHaveBeenCalled();
   });
-  it("reuses the same bounded pipeline and respects disabled/hold outcomes", async () => {
-    mocks.enabled.mockReturnValue(false); expect((await POST(request())).status).toBe(409); expect(mocks.run).not.toHaveBeenCalled();
-    mocks.enabled.mockReturnValue(true); mocks.run.mockResolvedValue({ processed: 0, completed: 0, stoppedBy: "provider_hold" });
+  it("keeps the customer-owned research instruction even while paid work is paused", async () => {
+    mocks.enabled.mockReturnValue(false);
     const response = await customerReferenceRunResponse(request());
-    expect(await response.json()).toMatchObject({ total: 823, run: { stoppedBy: "provider_hold" } });
-    expect(mocks.run).toHaveBeenCalledTimes(1);
-  });
-  it("reconciles uncertain failures through saved progress without an automatic paid replay", async () => {
-    mocks.run.mockRejectedValue(new Error("private error"));
-    const response = await POST(request()); expect(response.status).toBe(503);
-    expect(JSON.stringify(await response.json())).not.toContain("private error"); expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "customer_research_is_codex_owned" });
+    expect(mocks.run).not.toHaveBeenCalled();
   });
   it("imports a bounded registry payload without starting website or model work", async () => {
     const response = await IMPORT(request('{"records":[{"id":"example"}]}'));

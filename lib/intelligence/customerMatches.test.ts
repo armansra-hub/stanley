@@ -21,6 +21,21 @@ const nonAssetProof = (): OperatingMatchTopic => ({ id: "non_asset_based_3pl", l
     probability: null, companyRelevance: null, contextPreview: "We are a non-asset-based 3PL.", previewTruncated: false, start: 0, end: 33 }] });
 
 describe("recent-customer cached ranking", () => {
+  it("scopes both prospects and customer examples by industry without shrinking total research coverage", () => {
+    const itRef = { ...reference("it"), subindustry: "IT services" };
+    const agencyRef = { ...reference("agency"), subindustry: "Agencies" };
+    const itProspect = { ...candidate("it-prospect"), subindustry: "IT services" };
+    const agencyProspect = { ...candidate("agency-prospect"), subindustry: "Advertising & Marketing" };
+    const result = rank([itProspect, agencyProspect], [itRef, agencyRef], { industry: "IT services", referenceTotal: 823 });
+    expect(result.accounts.map(row => row.companyId)).toEqual(["it-prospect"]);
+    expect(result.accounts[0].reference.id).toBe("it");
+    expect(result.referenceCoverage).toMatchObject({ verified: 2, total: 823 });
+    expect(result.patterns.find(row => row.id === "integrators")?.count).toBe(1);
+    expect(result.industries?.find(row => row.id === "IT services")).toMatchObject({ customers: 1, prospects: 1 });
+    expect(rank([itProspect], [agencyRef], { industry: "IT services" }).accounts).toEqual([]);
+    expect(rank([agencyProspect], [agencyRef], { industry: "Agencies" }).accounts).toHaveLength(1);
+    expect(rank([itProspect], [itRef], { industry: "Unknown industry" }).accounts).toEqual([]);
+  });
   it("offers ten views and requires complete supported combinations on both entities", () => {
     expect(CUSTOMER_PATTERNS).toHaveLength(10);
     expect(rank([candidate()]).accounts).toHaveLength(1);

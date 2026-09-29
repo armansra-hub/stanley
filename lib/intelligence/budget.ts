@@ -4,6 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { serviceClient } from "@/lib/supabase/server";
 import type { JevSpendContext } from "./jevRequests";
 import { parseJevBudgetStatus, type JevBudgetSnapshot } from "./budgetStatus";
+import { jevPaidPurposeAllowed, JEV_RETIRED_PURPOSE_REASON } from "./jevPurposePolicy";
 
 export const JEV_USD_PER_MILLION = 0.042;
 export const PRICED_JEV_MODEL = "jev-1.13.0";
@@ -30,7 +31,8 @@ export class JevBudgetDeferredError extends Error {
   constructor(readonly decision: JevBudgetDeferral) { super(decision.reason); }
 }
 type DispatchRpc = (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
-type JevDispatchPermit = { fingerprint: string; rawFingerprint: string; reservationId: string; leaseToken: string; rpc: DispatchRpc; consumed?: boolean };
+type JevDispatchPermit = { fingerprint: string; rawFingerprint: string; reservationId: string; leaseToken: string;
+  context: JevSpendContext; rpc: DispatchRpc; consumed?: boolean };
 const dispatchPermit = new AsyncLocalStorage<JevDispatchPermit>();
 
 /** One scope per reserved attempt, never an environment flag or a caller boolean. */
@@ -46,6 +48,7 @@ export async function authorizeJevDispatch(model: string, rawFingerprint: string
   if (!permit || permit.consumed || permit.rawFingerprint !== rawFingerprint) defer("dispatch_ticket_required");
   const ticket = permit!;
   ticket.consumed = true;
+  if (!jevPaidPurposeAllowed(ticket.context)) defer(JEV_RETIRED_PURPOSE_REASON);
   let response;
   try { response = await ticket.rpc("intelligence_jev_dispatch", {
     p_fingerprint: ticket.fingerprint, p_reservation: ticket.reservationId, p_lease: ticket.leaseToken, p_model: model,

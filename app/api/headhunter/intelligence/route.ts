@@ -1,10 +1,8 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { serviceClient, withServiceDeadline } from "@/lib/supabase/server";
 import { intelligenceEnabled } from "@/lib/intelligence/observations";
 import { intelligenceUiAuthorized, isUuid, sameOriginMutation, smallJson } from "@/lib/intelligence/http";
-import { runIntelligenceWorker } from "@/lib/intelligence/worker";
 import { recomputePriority } from "@/lib/db/triggers";
-import { runAccountQuestionWorker } from "@/lib/intelligence/accountQuestions";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -122,17 +120,8 @@ export async function POST(req: NextRequest) {
   const db = serviceClient();
   try {
     if (body.action === "save_view") {
-      const name = typeof body.name === "string" ? body.name.trim() : "";
-      const question = typeof body.question === "string" ? body.question.trim() : "";
-      if (!name || name.length > 120 || question.length < 8 || Buffer.byteLength(question) > 1200) return NextResponse.json({ error: "invalid_view" }, { status: 400 });
-      const { data, error } = await db.from("intelligence_views").upsert({ name, question, active: true }, { onConflict: "question" }).select("id").single();
-      if (error) throw new Error("view_save_failed");
-      // The cron consumer remains the durable recovery path if this wakeup fails.
-      after(async () => {
-        await runIntelligenceWorker(1, Date.now() + 40_000).catch(() => {});
-        await runAccountQuestionWorker(1, Date.now() + 120_000).catch(() => {});
-      });
-      return NextResponse.json({ ok: true, id: data.id });
+      return NextResponse.json({ error: "purpose_retired",
+        action: "Use customer-pattern filters. Existing saved question answers remain readable." }, { status: 409 });
     }
     if (body.action === "archive_view" && isUuid(body.viewId)) {
       const { error } = await db.from("intelligence_views").update({ active: false }).eq("id", body.viewId);

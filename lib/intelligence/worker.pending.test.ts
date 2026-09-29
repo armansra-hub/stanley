@@ -80,6 +80,29 @@ beforeEach(() => {
 });
 
 describe("paid-request intent recovery", () => {
+  it("retires an owned legacy view job before source reads, preserving every saved packet", async () => {
+    savedResult = { parts: [{ start: 0, end: observation.evidence_text.length, evaluation }], legacyField: { untouched: true } };
+    const prior = structuredClone(savedResult);
+    const base = mocks.rpc.getMockImplementation()!;
+    mocks.rpc.mockImplementation(async (name: string, args: any) => name === "intelligence_claim"
+      ? { data: [{ id: "job", observation_id: observation.id, kind: "view", view_id: "view", lease_token: "current-lease", attempts: 2, result: prior }], error: null }
+      : base(name, args));
+    expect(await runIntelligenceWorker(1)).toMatchObject({ processed: 1, outcomes: { purpose_retired: 1 } });
+    expect(completion).toMatchObject({ p_status: "superseded", p_error: "purpose_retired", p_result: prior });
+    expect(savedResult).toEqual(prior);
+    expect(mocks.from.mock.calls.map(([table]) => table)).toEqual(["intelligence_config"]);
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_backfill_view" || name === "intelligence_job_budget_defer")).toBe(false);
+    expect(mocks.durable).not.toHaveBeenCalled(); expect(mocks.evaluate).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
+  });
+
+  it("finishes a retired purpose terminally instead of creating a recurring budget retry", async () => {
+    mocks.durable.mockResolvedValue({ status: "budget_deferred", reason: "purpose_retired", retryAt: null });
+    await runIntelligenceWorker(1);
+    expect(completion).toMatchObject({ p_status: "superseded", p_error: "purpose_retired", p_result: { pendingRequest: expect.any(Object) } });
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "intelligence_job_budget_defer")).toBe(false);
+    expect(mocks.evaluate).not.toHaveBeenCalled();
+  });
+
   it("reuses the original paid request after its job checkpoint fails despite new company context and feedback", async () => {
     failAnswerCheckpoint = true;
     expect(await runIntelligenceWorker(1)).toMatchObject({ outcomes: { checkpoint_or_service_error: 1 } });

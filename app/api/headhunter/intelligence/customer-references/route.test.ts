@@ -56,72 +56,31 @@ describe("customer reference research API", () => {
     expect(m.event).not.toHaveBeenCalled();
   });
 
-  it("rejects paid processing when intelligence is disabled", async () => {
-    m.enabled.mockReturnValue(false);
+  it.each([true, false])("retires the old paid pipeline regardless of enabled state %s", async enabled => {
+    m.enabled.mockReturnValue(enabled);
     const response = await post();
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error: "intelligence_disabled" });
-    expect(m.run).not.toHaveBeenCalled();
-    expect(m.progress).not.toHaveBeenCalled();
+    expect(await response.json()).toMatchObject({ error: "customer_research_is_codex_owned" });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(m.run).not.toHaveBeenCalled(); expect(m.progress).not.toHaveBeenCalled(); expect(m.event).not.toHaveBeenCalled();
   });
 
-  it.each([
-    '{"sources":["https://arbitrary.example"]}', '{"companyId":"other"}', '{"force":true}',
-    "[]", "null", '"text"', "true", "", "{", `{${" ".repeat(100)}}`,
-  ])("accepts only an empty object and rejects arbitrary input %s", async body => {
+  it.each(['{"sources":["https://arbitrary.example"]}', '{"force":true}', "[]", "null", "not-json"])("never turns input %s into a new paid customer read", async body => {
     const response = await post(body);
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "invalid_body" });
-    expect(m.run).not.toHaveBeenCalled();
-    expect(m.progress).not.toHaveBeenCalled();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "customer_research_is_codex_owned" });
+    expect(m.run).not.toHaveBeenCalled(); expect(m.progress).not.toHaveBeenCalled();
   });
 
-  it("returns checkpointed partial work within the shorter window without replaying the paid pass", async () => {
-    const continuedRun = { processed: 1, completed: 0, stoppedBy: "continued" };
+  it("keeps previously checkpointed source/native work readable after retirement", async () => {
     const partial = { ...saved, references: [{ id: "in-progress-customer", status: "pending", answered: 12,
       totalQuestions: 47, sourceStatus: "ready", sourcePages: 6 }] };
-    m.run.mockResolvedValue(continuedRun);
     m.progress.mockResolvedValue(partial);
-    const before = Date.now();
-    const response = await post();
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ...partial, run: continuedRun });
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(m.run).toHaveBeenCalledTimes(1);
-    expect(m.run.mock.calls[0][0]).toBeGreaterThanOrEqual(before + 110_000);
-    expect(m.run.mock.calls[0][0]).toBeLessThanOrEqual(Date.now() + 110_000);
-    expect(m.event).toHaveBeenCalledWith("headhunter", "intelligence.customer_references", {
-      summary: "Read 1 customer reference websites; 0 completed", meta: continuedRun,
-    });
-    expect(m.progress).toHaveBeenCalledTimes(1);
     expect(await (await get()).json()).toEqual(partial);
-    expect(m.run).toHaveBeenCalledTimes(1);
+    expect((await post()).status).toBe(409);
+    expect(await (await get()).json()).toEqual(partial);
+    expect(m.run).not.toHaveBeenCalled(); expect(m.event).not.toHaveBeenCalled();
   });
-
-  it("reports an interrupted paid pass for read-only reconciliation without replaying it", async () => {
-    m.run.mockRejectedValue(new Error("private provider response"));
-    const response = await post();
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "customer_reference_reading_interrupted",
-      action: "Read saved progress before continuing; request receipts and leases are retained." });
-    expect(m.run).toHaveBeenCalledTimes(1);
-    expect(m.event).not.toHaveBeenCalled();
-    expect(m.progress).not.toHaveBeenCalled();
-    expect((await get()).status).toBe(200);
-    expect(m.progress).toHaveBeenCalledTimes(1);
-    expect(m.run).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not replay a completed pass when its final progress read fails", async () => {
-    m.progress.mockRejectedValue(new Error("private database message"));
-    const response = await post();
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ error: "customer_reference_reading_interrupted" });
-    expect(m.run).toHaveBeenCalledTimes(1);
-    expect(m.event).toHaveBeenCalledTimes(1);
-    expect(m.progress).toHaveBeenCalledTimes(1);
-  });
-
   it("returns a safe read failure without paid recovery or private diagnostics", async () => {
     m.progress.mockRejectedValue(new Error("private database message"));
     const response = await get();

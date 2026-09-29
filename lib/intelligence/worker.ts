@@ -130,12 +130,20 @@ async function finish(job: Job, status: string, result: unknown, extra: Record<s
 }
 
 async function deferBudget(job: Job, result: unknown, reason: string, retryAt: string | null) {
+  if (reason === "purpose_retired") {
+    await finish(job, "superseded", result, { p_error: reason });
+    return;
+  }
   const saved = await serviceClient().rpc("intelligence_job_budget_defer", { p_id: job.id, p_lease: job.lease_token,
     p_result: result, p_reason: reason, p_retry_at: retryAt });
   if (saved.error || saved.data !== true) throw new Error("intelligence_budget_defer_failed");
 }
 
 async function runJob(job: Job, deadline: number, publicContexts: Map<string, Promise<PublicContextObservation[]>>, identityContexts: Map<string, Promise<string>>): Promise<string> {
+  if (job.kind === "view") {
+    await finish(job, "superseded", job.result, { p_error: "purpose_retired" });
+    return "purpose_retired";
+  }
   const db = serviceClient();
   const { data: raw, error } = await db.from("intelligence_observations").select("*").eq("id", job.observation_id).single();
   if (error || !raw) throw new Error("Observation unavailable");
@@ -146,13 +154,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     .eq("id", observation.company_id).single();
   if (companyError) throw new Error("Account unavailable");
   if (!company || company.status === "removed_from_tam") { await finish(job, "superseded", {}); return "superseded"; }
-  let question: string | null = null;
-  if (job.kind === "view") {
-    const { data: view, error: viewError } = await db.from("intelligence_views").select("question,active").eq("id", job.view_id).single();
-    if (viewError) throw new Error("Saved view unavailable");
-    if (!view?.active) { await finish(job, "superseded", {}); return "superseded"; }
-    question = view.question;
-  }
+  const question = null;
   const feedback = await loadFeedbackExamples(observation.company_id);
   const priorParts = (job.result?.parts ?? []).filter(part => [JEV_QUESTION_VERSION, JEV_PUBLIC_SCALE_QUESTION_VERSION, JEV_BUSINESS_SERVICES_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V2_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V3_QUESTION_VERSION, JEV_BUSINESS_SERVICES_V4_QUESTION_VERSION].includes(part.evaluation.questionVersion));
   // Preserve already-paid v2 work under its original contract. New jobs receive
@@ -227,7 +229,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
       await persistCheckpoint();
     }
     const response = await durableJevRequest({ fingerprint,
-      context: { purpose: job.kind === "view" ? "saved_view" : "public_interpretation", companyId: observation.company_id,
+      context: { purpose: "public_interpretation", companyId: observation.company_id,
         observationId: observation.id, sourceKind: observation.source_kind, workload: observationWorkload(observation.metadata) },
       execute: () => {
         if (evidenceRequestFingerprint(input) !== fingerprint) throw new Error("Pending Jev request contract changed");
@@ -257,8 +259,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     await persistCheckpoint();
   }
   const ranked = [...parts].sort((a, b) => {
-    const score = (p: PartResult) => job.kind === "view" ? (p.evaluation.criteria.view_match ?? 0) :
-      p.evaluation.attributes.companyRelevance * (0.5 + p.evaluation.attributes.concreteEvent) * (0.5 + p.evaluation.attributes.operationalComplexity);
+    const score = (p: PartResult) => p.evaluation.attributes.companyRelevance * (0.5 + p.evaluation.attributes.concreteEvent) * (0.5 + p.evaluation.attributes.operationalComplexity);
     return score(b) - score(a);
   });
   const best = ranked[0];
@@ -308,9 +309,7 @@ async function runJob(job: Job, deadline: number, publicContexts: Map<string, Pr
     signalTypes: [...new Set(parts.filter((p) => p.evaluation.attributes.companyRelevance >= 0.8).map((p) => p.evaluation.attributes.signalType))],
     ...aggregatePacketFindings(observation, parts, publications),
   };
-  await finish(job, "complete", { ...checkpoint(), excerptStart, excerptEnd }, job.kind === "view"
-    ? { p_probability: best.evaluation.criteria.view_match ?? 0 }
-    : { p_attributes: attributes, p_version: INTELLIGENCE_VERSION });
+  await finish(job, "complete", { ...checkpoint(), excerptStart, excerptEnd }, { p_attributes: attributes, p_version: INTELLIGENCE_VERSION });
   if (job.kind === "interpret") await queueAccountStory(company.id);
   return "complete";
 }
@@ -360,12 +359,6 @@ export async function runIntelligenceWorker(limitOrOptions: number | Intelligenc
         || (budget.phase !== "maintenance" && budget.phase !== "ongoing")) return disabled();
     }
     await reconcileJevReceipts().catch(() => {});
-    const { data: views, error: viewsError } = await db.from("intelligence_views").select("id").eq("active", true).eq("backfill_complete", false).limit(3);
-    if (viewsError) throw new Error("Saved view queue unavailable");
-    for (const view of views ?? []) {
-      const { error: backfillError } = await db.rpc("intelligence_backfill_view", { p_view: view.id, p_limit: 100 });
-      if (backfillError) throw new Error("Saved view backfill failed");
-    }
     const outcomes: Record<string, number> = {};
     const publicContexts = new Map<string, Promise<PublicContextObservation[]>>();
     const identityContexts = new Map<string, Promise<string>>();

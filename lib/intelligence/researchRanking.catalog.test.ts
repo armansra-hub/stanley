@@ -37,24 +37,8 @@ describe("catalog research ranking with complete semantic context", () => {
     expect(nativeJevFingerprint(catalogResearchRankingInput(first)!.input))
       .toBe(nativeJevFingerprint(catalogResearchRankingInput(second)!.input));
   });
-  it("makes one scoped native request, preserves native answers and keeps every unranked candidate", async () => {
-    const answers: Record<string, any> = {};
-    mocked.native.mockImplementation(async (request: any) => {
-      Object.keys(request.questions).forEach((id, index) => { answers[id] = { type: "noul", noul: index / 10, confidence: .25 }; });
-      return { status: "complete", reused: true, evaluation: { ok: true, usage: { inputTokens: 123, outputTokens: 0 },
-        provider_result: { model: "jev-1.13.0", answers } } };
-    });
-    const result = await rankResearchCandidates(input);
-    expect(result).toMatchObject({ outcome: "ranked", providerUsed: false, reused: true });
-    expect(mocked.native).toHaveBeenCalledOnce();
-    expect(mocked.native).toHaveBeenCalledWith(expect.any(Object), { purpose: "research_ranking", companyId: "company",
-      sourceKind: "catalog_research_options", workload: "monitoring" });
-    expect(new Set(result.candidates)).toEqual(new Set(input.candidates));
-    expect(result.candidates.slice(8)).toEqual(input.candidates.slice(8));
-    expect(result.scores[0].rawAnswer).toBe(answers.source_1);
-  });
-  it("retains the complete research worklist on a budget hold", async () => {
-    mocked.native.mockResolvedValue({ status: "budget_deferred", reason: "daily_allowance", retryAt: "2026-09-25T07:00:00Z" });
-    expect(await rankResearchCandidates(input)).toMatchObject({ outcome: "budget_deferred", candidates: input.candidates, providerUsed: false });
+  it("keeps the complete catalog worklist in discovery order without native evaluation", async () => {
+    expect(await rankResearchCandidates(input)).toMatchObject({ outcome: "deterministic_order", candidates: input.candidates, providerUsed: false, scores: [] });
+    expect(mocked.native).not.toHaveBeenCalled();
   });
 });
