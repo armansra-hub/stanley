@@ -61,14 +61,22 @@ describe("recent-customer cached ranking", () => {
     delete creativeProspect.decisions.rr_c07;
     expect(rank([creativeProspect], [creativeRef], { pattern: "creative" }).accounts).toHaveLength(0);
   });
-  it("keeps unique companies, deduplicates buying programs and excludes renewal-only references", () => {
+  it("keeps unique companies, deduplicates buying programs and includes renewal-only customers honestly", () => {
     const recent = reference("recent"); recent.buyingProgramId = "program"; recent.announcementDate = "2026-09-01";
     const older = reference("older"); older.buyingProgramId = "program";
     const renewal = reference("renewal"); renewal.announcementType = "renewal";
     const result = rank([candidate(), candidate()], [older, recent, renewal]);
-    expect(result.total).toBe(1); expect(result.referenceCoverage.verified).toBe(1);
+    expect(result.total).toBe(1); expect(result.referenceCoverage.verified).toBe(2);
     expect(result.accounts[0].reference.id).toBe("recent");
     expect(result.patterns.find(p => p.id === "integrators")?.count).toBe(1);
+    expect(rank([candidate()], [renewal]).accounts[0].reference.announcementType).toBe("renewal");
+  });
+  it("preserves distinct customer entities sharing an official domain", () => {
+    const a = reference("business-a"), b = reference("business-b");
+    b.domain = a.domain; b.website = a.website;
+    const result = rank([candidate()], [a, b, { ...a }]);
+    expect(result.referenceCoverage.verified).toBe(2);
+    expect(result.patterns.find(p => p.id === "integrators")?.referenceCount).toBe(2);
   });
   it("does not inflate fit using unrelated category count", () => {
     const base = candidate("a"), bloated = candidate("z", [...OPERATING_FACETS.map(f => f.id)].filter(id => !["rr_c05", "rr_c06"].includes(id)));

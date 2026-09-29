@@ -15,13 +15,15 @@ export type CustomerReferenceSeed = {
   sources: CustomerReferenceSource[];
 };
 
-export function customerReferenceCompany(seed: CustomerReferenceSeed) {
+export function customerReferenceCompany(seed: Pick<CustomerReferenceSeed, "name" | "domain">) {
   // Customer relationship, announcement, sales notes and pattern expectations
   // never enter the public native request. The website must establish the facts.
   return { name: seed.name, domain: seed.domain };
 }
 
-export function customerReferenceEvidenceKey(seed: CustomerReferenceSeed): string {
+export function customerReferenceEvidenceKey(seed: Pick<CustomerReferenceSeed, "name" | "domain"> & {
+  sources: Pick<CustomerReferenceSource, "id" | "url" | "contentHash">[];
+}): string {
   return createHash("sha256").update(JSON.stringify([
     OPERATING_CATALOG_VERSION, customerReferenceCompany(seed),
     seed.sources.map(source => ({ id: source.id, url: source.url, contentHash: source.contentHash })),

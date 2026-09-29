@@ -71,7 +71,7 @@ export function CustomerMatchCard({ account, selected, statusBusy, onSelect, onS
         <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Operating fit</p>
         <p className="mt-1 text-sm font-medium">Similar to <a href={account.reference.website} target="_blank" rel="noopener noreferrer" className="text-[var(--gold)] hover:underline">{account.reference.name} ↗</a></p>
         <p className="mt-1 text-[10px] text-[var(--gold)]">{account.reference.recent ? "Recent customer example" : "Historical customer comparison"}</p>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">Customer announcement: {dated(account.reference.announcementDate)}</p>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">{account.reference.announcementType === "renewal" ? "Renewal announcement" : account.reference.announcementType === "expansion" ? "Expansion announcement" : account.reference.announcementType === "new_customer" ? "New customer announcement" : "Customer announcement"}: {dated(account.reference.announcementDate)}</p>
         <p className="mt-2 text-xs text-[var(--text-muted)]">{account.primaryPattern.branchLabel}</p>
         <ul className="mt-3 space-y-2 text-sm">{account.reference.sharedTraits.map(trait => {
           const customerSources = account.reference.sharedTraitSources.find(item => item.traitId === trait.id)?.urls ?? [];

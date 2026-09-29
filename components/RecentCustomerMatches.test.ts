@@ -80,7 +80,7 @@ describe("recent-customer shortlist", () => {
     expect(markup).toContain("Raw Jev answer");
     expect(markup).toContain("Raw Jev answers · customer");
     expect(markup).toContain("customer-native-receipt");
-    expect(markup).toContain("Customer announcement: ");
+    expect(markup).toContain("New customer announcement: ");
     expect(markup).toContain("Jul 31, 2026");
     expect(markup).toContain("Recent customer example");
   });

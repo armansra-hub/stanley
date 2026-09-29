@@ -117,16 +117,17 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
   if (selected !== "all" && !CUSTOMER_PATTERNS.some(p => p.id === selected)) throw new Error("invalid_customer_pattern");
   if (!Number.isSafeInteger(page) || page < 1) throw new Error("invalid_customer_page");
   const candidates = [...new Map(input.candidates.map(c => [c.companyId, c])).values()];
-  // One entity or buying program contributes at most one recent reference.
-  // Renewal announcements remain historical context, not prospecting comparators.
-  const refs = [...input.references].filter(ref => ref.status === "verified" && ref.announcementType !== "renewal"
+  // Registry IDs and explicit buying-program identities are the deduplication
+  // boundary. Distinct businesses can legitimately share a corporate website.
+  // Renewal-only customers remain comparable, with their event type displayed.
+  const refs = [...input.references].filter(ref => ref.status === "verified"
     && Number.isFinite(Date.parse(ref.announcementDate)) && Date.parse(ref.announcementDate) <= now)
     .sort((a, b) => b.announcementDate.localeCompare(a.announcementDate) || a.id.localeCompare(b.id));
-  const programs = new Set<string>(), domains = new Set<string>();
+  const programs = new Set<string>(), entities = new Set<string>();
   const references = refs.filter(ref => {
-    const domain = ref.domain.toLowerCase().replace(/^www\./, ""), program = ref.buyingProgramId;
-    if (domains.has(domain) || (program && programs.has(program))) return false;
-    domains.add(domain); if (program) programs.add(program); return true;
+    const program = ref.buyingProgramId;
+    if (entities.has(ref.id) || (program && programs.has(program))) return false;
+    entities.add(ref.id); if (program) programs.add(program); return true;
   });
   const referenceDecisions = new Map(references.map(ref => [ref.id, Object.fromEntries(Object.entries(ref.answers).map(([id, answer]) => [id, answer.decision]))]));
   const branches = CUSTOMER_PATTERNS.flatMap(pattern => pattern.branches.map(branch => {
@@ -194,6 +195,6 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
     accounts: ranked.slice(start, start + 25).map(r => r.account), total: ranked.length, page, pageSize: 25, hasMore: start + 25 < ranked.length,
     referenceCoverage: { verified: references.length, pending: Math.max(0, input.referenceTotal - input.references.length), asOf: input.asOf },
     coverage: { eligible: candidates.length, assessed: null, asOf: new Date(now).toISOString() },
-    note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives. Counts use unique companies. References are a curated researched sample, not customer prevalence; rarity describes assessed prospects only. Historical customer announcements remain dated context. Ranking reads saved answers and makes no Jev requests.",
+    note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives. All registered customers are eligible for comparison once their website evidence is read. A customer appears in a pattern only when its required facts are supported. Customer announcements include new customers, expansions and renewals; dates do not establish a new purchase. Rarity describes assessed prospects only. Ranking reads saved answers and makes no Jev requests.",
   };
 }

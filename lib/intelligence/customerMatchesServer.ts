@@ -6,7 +6,8 @@ import { catalogFacetVersion } from "./operatingCoverage";
 import { catalogTopic, type TopicSearchAccountRow } from "./topicSearch";
 import { rankCustomerMatches, type CustomerMatchCandidate, type CustomerReference, type CustomerMatchesResult, type CustomerWhyNow } from "./customerMatches";
 import { customerReferenceEvidenceKey, customerReferenceCatalogSources, type CustomerReferenceSeed } from "./customerReferenceSources";
-import referenceData from "./customerReferenceData.json";
+import { loadCustomerReferenceRegistry, loadCustomerReferenceMatchRows, customerReferenceRegistryProofSeed, customerReferenceRegistrySeed,
+  type CustomerReferenceProofSeed, type CustomerReferenceRegistryRow } from "./customerReferenceRegistry";
 
 type StoredReference = { id: string; catalog_version: string; evidence_key: string; status: string; result: unknown };
 type CandidateTrigger = TriggerEvidence & { id: string; signal_date: string | null };
@@ -17,10 +18,22 @@ const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 function safeUrl(v: unknown): v is string {
   try { const u = new URL(String(v)); return ["http:", "https:"].includes(u.protocol) && !u.username && !u.password; } catch { return false; }
 }
-export function readyCustomerReference(seed: CustomerReferenceSeed, stored: StoredReference | undefined): CustomerReference | null {
+export function readyCustomerReference(seed: CustomerReferenceProofSeed, stored: StoredReference | undefined): CustomerReference | null {
   if (!stored || stored.status !== "complete" || stored.catalog_version !== OPERATING_CATALOG_VERSION
     || stored.evidence_key !== customerReferenceEvidenceKey(seed) || !object(stored.result)) return null;
-  try { customerReferenceCatalogSources(seed); } catch { return null; }
+  try {
+    if (!seed.sources.length) return null;
+    const domain = seed.domain.toLowerCase().replace(/^www\./, ""), ids = new Set<string>();
+    const official = (url: string) => { const host = new URL(url).hostname.toLowerCase().replace(/^www\./, ""); return host === domain || host.endsWith("." + domain); };
+    for (const source of seed.sources) {
+      if (new URL(source.url).protocol !== "https:" || ids.has(source.id) || !/^[a-f0-9]{64}$/.test(source.contentHash)
+        || !Number.isFinite(Date.parse(source.observedAt)) || (!official(source.url) && !seed.sources.some(parent => parent.url === source.firstPartyLinkedFrom && official(parent.url)))) return null;
+      ids.add(source.id);
+    }
+    // The private registry records validated hashes at capture. Ordinary cohort
+    // reads need only that manifest; full bodies are checked for shown examples.
+    if (seed.sources.every(source => typeof source.text === "string")) customerReferenceCatalogSources(seed as CustomerReferenceSeed);
+  } catch { return null; }
   const result = stored.result;
   if (result.id !== seed.id || result.catalogVersion !== OPERATING_CATALOG_VERSION || result.status !== "verified"
     || !object(result.answers) || typeof result.completedAt !== "string" || !Number.isFinite(Date.parse(result.completedAt))) return null;
@@ -69,37 +82,54 @@ export function customerWhyNow(row: CandidateRow, now: number): CustomerWhyNow[]
 
 export async function loadCustomerMatches(input: { pattern: string; page: number; showHidden: boolean }): Promise<CustomerMatchesResult> {
   const db = serviceClient();
-  const seeds = referenceData.references as CustomerReferenceSeed[];
   const facetVersions = Object.fromEntries(OPERATING_FACETS.map(f => [f.id, catalogFacetVersion(f)]));
-  const [snapshot, referenceRows] = await Promise.all([
+  const [snapshot, registry, referenceRows] = await Promise.all([
     db.rpc("intelligence_customer_match_candidates", { p_catalog_version: OPERATING_CATALOG_VERSION, p_facet_versions: facetVersions, p_show_hidden: input.showHidden }),
-    db.from("intelligence_customer_references").select("id,catalog_version,evidence_key,status,result").in("id", seeds.map(seed => seed.id)),
+    loadCustomerReferenceRegistry(), loadCustomerReferenceMatchRows(),
   ]);
   if (snapshot.error) throw snapshot.error;
-  if (referenceRows.error) throw referenceRows.error;
   if (!snapshot.data || !Array.isArray(snapshot.data.accounts)) throw new Error("customer_matches_unavailable");
-  const rows = new Map((referenceRows.data as StoredReference[] ?? []).map(row => [row.id, row]));
+  const seeds = registry.filter(row => row.source_status === "ready").flatMap(row => { const seed = customerReferenceRegistryProofSeed(row); return seed ? [seed] : []; });
+  const rows = new Map(referenceRows.map(row => [row.id, row]));
   const references = seeds.flatMap(seed => { const ref = readyCustomerReference(seed, rows.get(seed.id)); return ref ? [ref] : []; });
   const now = Date.now();
   const candidates = (snapshot.data.accounts as CandidateRow[]).map(row => ({ companyId: row.companyId, name: row.name, domain: row.domain,
     subindustry: row.subindustry, internalId: row.internalId, status: row.status, decisions: row.decisions,
     whyNow: customerWhyNow(row, now) }));
-  const result = rankCustomerMatches({ candidates, references, referenceTotal: seeds.length, asOf: referenceData.asOf,
+  const asOf = registry.reduce((latest, row) => row.as_of > latest ? row.as_of : latest, "2024-01-01");
+  const result = rankCustomerMatches({ candidates, references, referenceTotal: registry.length, asOf,
     pattern: input.pattern, page: input.page, now });
   if (!result.accounts.length) return result;
-  const hydrated = await db.rpc("intelligence_customer_match_evidence", { p_catalog_version: OPERATING_CATALOG_VERSION, p_facet_versions: facetVersions,
-    p_selection: result.accounts.map(account => ({ companyId: account.companyId, facets: account.reference.sharedTraits.map(trait => trait.id) })) });
+  const selectedReferenceIds = [...new Set(result.accounts.map(account => account.reference.id))];
+  const [hydrated, selectedRegistry, selectedNative] = await Promise.all([
+    db.rpc("intelligence_customer_match_evidence", { p_catalog_version: OPERATING_CATALOG_VERSION, p_facet_versions: facetVersions,
+      p_selection: result.accounts.map(account => ({ companyId: account.companyId, facets: account.reference.sharedTraits.map(trait => trait.id) })) }),
+    db.from("intelligence_customer_reference_registry").select("*").eq("active", true).eq("source_status", "ready").in("id", selectedReferenceIds),
+    db.from("intelligence_customer_references").select("id,catalog_version,evidence_key,status,result").in("id", selectedReferenceIds),
+  ]);
   if (hydrated.error) throw hydrated.error;
+  if (selectedRegistry.error || selectedNative.error) throw new Error("customer_reference_evidence_unavailable");
   if (!Array.isArray(hydrated.data)) throw new Error("customer_match_evidence_unavailable");
+  const fullNative = new Map((selectedNative.data as StoredReference[] ?? []).map(row => [row.id, row]));
+  const fullReferences = new Map((selectedRegistry.data as CustomerReferenceRegistryRow[] ?? []).flatMap(row => {
+    if (fullNative.get(row.id)?.evidence_key !== rows.get(row.id)?.evidence_key) return [];
+    const seed = customerReferenceRegistrySeed(row), ref = seed ? readyCustomerReference(seed, fullNative.get(seed.id)) : null;
+    return ref ? [[ref.id, ref] as const] : [];
+  }));
   const evidence = new Map((hydrated.data as Pick<TopicSearchAccountRow, "companyId" | "observations" | "catalogFacets">[]).map(row => [row.companyId, row]));
   result.accounts = result.accounts.flatMap(account => {
     const row = evidence.get(account.companyId);
-    if (!row) return [];
+    const fullReference = fullReferences.get(account.reference.id);
+    if (!row || !fullReference) return [];
     const topics = (row.catalogFacets ?? []).flatMap(facet => { const topic = catalogTopic(facet, row.observations); return topic ? [topic] : []; });
     // Current proof must cover every stated shared fact even if a source changed
     // during this read. A stale answer cannot survive merely as a similarity tag.
     if (account.reference.sharedTraits.some(trait => !topics.some(topic => topic.id === trait.id))) return [];
-    return [{ ...account, topics }];
+    if (account.reference.sharedTraits.some(trait => fullReference.answers[trait.id]?.decision !== "supported")) return [];
+    return [{ ...account, topics, reference: { ...account.reference,
+      sources: fullReference.sources,
+      sharedTraitSources: account.reference.sharedTraits.map(trait => ({ traitId: trait.id, urls: fullReference.answers[trait.id].sourceUrls })),
+      sharedNativeAnswers: account.reference.sharedTraits.map(trait => ({ traitId: trait.id, nativeResult: fullReference.answers[trait.id].nativeResult })) } }];
   });
   return result;
 }

@@ -4,6 +4,8 @@ Stanley is a single-user prospecting and workflow assistant for a NetSuite accou
 
 **Next.js · Supabase · Jev (TypeSafe) · Claude · Vercel**. Jev interprets source evidence and guides account research; Claude provides chat, account-story writing, and the separate legacy classification path. See the [Jev usage and code map](docs/JEV_USAGE.md).
 
+**Latest: full customer comparisons.** Explore Jev Intelligence now compares prospect operating facts with the full private customer registry, replacing the initial reference sample. Customer websites use the same 47 Jev criteria as prospects; completed evidence is reused, unknowns stay visible, and recent customer examples are prioritized without changing TAM grades. The shortlist retains quick copy, in-record opening, selection and dismissal. See [customer comparisons and source coverage](docs/CUSTOMER_COMPARISONS.md).
+
 The [September 24 operating-catalog rollout](docs/JEV_OPERATING_CATALOG_RUNBOOK.md) adds 47 public prospecting categories, 35 industry guides and shared daily spending limits. It retains the existing 22 operating traits. Paid processing requires a confirmed funded policy; installing the release does not enable it. Jev is excluded from TAM grading.
 
 **Sharing this with a colleague?** Start with the [architecture and logic guide](docs/ARCHITECTURE.md), then [setup and infrastructure](docs/SETUP.md) and the [local workflow guide](operations/README.md).
