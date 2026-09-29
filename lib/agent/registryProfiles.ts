@@ -136,18 +136,45 @@ export function parseRegistryFinding(input: unknown, now = new Date()): Registry
   return { internalId: input.internalId, companyId: input.companyId, label: registryProfileKey(profile), detail: input.detail ? String(input.detail) : null, evidence: input.evidence, sourceUrl: url.toString(), profile };
 }
 
-// Deliberately conservative: punctuation/spacing are normalized, legal suffixes,
-// street numbers and unit designators are not discarded to manufacture a match.
+// Formatting equivalents only: substantive name words, street numbers and unit
+// identifiers survive normalization. A missing legal suffix is not a new entity.
 const normalized = (v: string) => v.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-const street = (v: string) => normalized(v).replace(/\b(street|avenue|road|boulevard|drive|lane|court|suite)\b/g, v => ({ street: "st", avenue: "ave", road: "rd", boulevard: "blvd", drive: "dr", lane: "ln", court: "ct", suite: "ste" })[v]!);
+function legalName(v: string) {
+  const name = normalized(v).replace(/\b(l l c|l l p|p l l c|l p|p c)$/, suffix => suffix.replace(/ /g, ""));
+  const suffix = name.match(/\s+(incorporated|inc|corporation|corp|limited|ltd|llc|llp|pllc|lp|pc)$/);
+  const equivalences: Record<string, string> = { incorporated: "inc", corporation: "corp", limited: "ltd" };
+  return { core: suffix ? name.slice(0, suffix.index) : name, suffix: suffix ? equivalences[suffix[1]] ?? suffix[1] : null };
+}
+function sameLegalName(left: string, right: string) {
+  const a = legalName(left), b = legalName(right);
+  return Boolean(a.core && a.core === b.core && (!a.suffix || !b.suffix || a.suffix === b.suffix));
+}
+const addressWords: Record<string, string> = {
+  street: "st", avenue: "ave", road: "rd", boulevard: "blvd", drive: "dr", lane: "ln", court: "ct",
+  highway: "hwy", parkway: "pkwy", place: "pl", circle: "cir", terrace: "ter", trail: "trl",
+  north: "n", south: "s", east: "e", west: "w", northeast: "ne", northwest: "nw", southeast: "se", southwest: "sw",
+  suite: "unit", ste: "unit", apartment: "unit", apt: "unit",
+  first: "1st", second: "2nd", third: "3rd", fourth: "4th", fifth: "5th", sixth: "6th", seventh: "7th", eighth: "8th", ninth: "9th",
+  tenth: "10th", eleventh: "11th", twelfth: "12th", thirteenth: "13th", fourteenth: "14th", fifteenth: "15th",
+  sixteenth: "16th", seventeenth: "17th", eighteenth: "18th", nineteenth: "19th", twentieth: "20th",
+};
+function street(address: { addressLine1: string; addressLine2?: string }) {
+  return normalized(`${address.addressLine1} ${address.addressLine2 ?? ""}`.replace(/#/g, " unit "))
+    .replace(/\b(north|south)\s+(east|west)\b/g, "$1$2")
+    .replace(/\b(suite|ste|unit|apartment|apt)(?=\d)/g, "$1 ")
+    .split(" ").map(word => addressWords[word] ?? word).join(" ")
+    .replace(/\bunit\s+unit\b/g, "unit");
+}
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {
   const p = profile.identity;
-  const names = [company.name, ...context.aliases].map(normalized);
-  const address = context.addresses.find(a => names.includes(normalized(p.legalName)) && street(a.addressLine1) === street(p.addressLine1)
-    && street(a.addressLine2 ?? "") === street(p.addressLine2 ?? "") && normalized(a.state ?? "") === normalized(p.state)
+  const names = [company.name, ...context.aliases];
+  // Postal city aliases are immaterial only after the entire street/unit, ZIP,
+  // state and compatible country agree with an independently sourced address.
+  const address = context.addresses.find(a => names.some(name => sameLegalName(name, p.legalName)) && street(a) === street(p)
+    && normalized(a.state ?? "") === normalized(p.state)
     && (!a.countryCode || a.countryCode === (p.countryCode ?? "US"))
-    && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode) && (!p.city || !a.city || normalized(p.city) === normalized(a.city)));
+    && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));
   if (address) return { method: "exact_legal_name_address", verifiedAt: now.toISOString(), sourceIds: [address.sourceId] };
   const binding = prior.find(old => old.dataset === profile.dataset && old.recordId === profile.recordId && old.publication?.contentHash
     && old.verification?.sourceIds.length && ["exact_legal_name_address", "prior_registry_binding"].includes(old.verification.method)

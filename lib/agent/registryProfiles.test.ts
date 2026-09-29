@@ -91,4 +91,43 @@ describe("registry identity admission", () => {
     expect(verifyRegistryIdentity({ ...profile(), recordId: "other" }, { name: "renamed" }, empty, [old], now)).toBeNull();
     expect(verifyRegistryIdentity(profile(), { name: "renamed" }, empty, [{ ...old, publication: undefined }], now)).toBeNull();
   });
+  it.each([
+    ["Acme Logistics Incorporated", "Acme Logistics Inc."],
+    ["Acme Logistics Corporation", "Acme Logistics Corp"],
+    ["Acme Logistics L.L.C.", "Acme Logistics LLC"],
+    ["Acme Logistics", "Acme Logistics Inc"],
+    ["Acme Logistics LLC", "Acme Logistics"],
+  ])("accepts only equivalent or omitted terminal legal suffixes: %s / %s", (companyName, sourceName) => {
+    expect(verifyRegistryIdentity({ ...profile(), identity: { ...identity, legalName: sourceName } }, { name: companyName }, context, [], now)?.method).toBe("exact_legal_name_address");
+  });
+  it.each(["Acme Logistics Holdings Inc", "Acme Logistics Group Inc", "Acme Logistics West Inc", "Acme Logistics LLC", "Acme Logistics Inc Services"])("preserves substantive name words and conflicting explicit legal forms: %s", name => {
+    expect(verifyRegistryIdentity(profile(), { name }, context, [], now)).toBeNull();
+  });
+  it("matches the MSBA Sixth Street formatting hold without dropping its unit or direction", () => {
+    const source = { ...profile(), identity: { legalName: "MINNESOTA STATE BAR ASSOCIATION MSBA", addressLine1: "33 S 6TH ST STE4540", city: "MINNEAPOLIS", state: "MN", postalCode: "55402-3714" } };
+    const crm = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "33 South Sixth Street #4540", state: "MN", postalCode: "55402", countryCode: "US" }] };
+    const company = { name: "Minnesota State Bar Association (MSBA)" };
+    expect(verifyRegistryIdentity(source, company, crm, [], now)?.sourceIds).toEqual(["record-1"]);
+    for (const addressLine1 of ["33 N 6TH ST STE 4540", "33 S 6TH ST STE 4541", "33 S 6TH ST", "34 S 6TH ST STE 4540"]) {
+      expect(verifyRegistryIdentity({ ...source, identity: { ...source.identity, addressLine1 } }, company, crm, [], now)).toBeNull();
+    }
+  });
+  it("combines address lines while preserving exact units and permits postal-city aliases", () => {
+    const source = { ...profile(), identity: { legalName: "STRATIS HEALTH", addressLine1: "2901 METRO DR STE 400", city: "BLOOMINGTON", state: "MN", postalCode: "55425-1558" } };
+    const crm = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "2901 Metro Drive", addressLine2: "Suite 400", city: "Minneapolis", state: "MN", postalCode: "55425-1525", countryCode: "US" }] };
+    const company = { name: "Stratis Health" };
+    expect(verifyRegistryIdentity(source, company, crm, [], now)?.method).toBe("exact_legal_name_address");
+    for (const override of [{ addressLine2: "Suite 401" }, { addressLine2: undefined }, { postalCode: "55424" }, { state: "WI" }, { countryCode: "CA" }]) {
+      expect(verifyRegistryIdentity(source, company, { ...crm, addresses: [{ ...crm.addresses[0], ...override }] }, [], now)).toBeNull();
+    }
+    expect(verifyRegistryIdentity(source, company, { ...crm, addresses: [] }, [], now)).toBeNull();
+  });
+  it("normalizes directional and street abbreviations without conflating different directions or streets", () => {
+    const source = { ...profile(), identity: { ...identity, addressLine1: "123 NW FIRST AVE UNIT 2" } };
+    const crm = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "123 North West First Avenue", addressLine2: "Suite #2" }] };
+    expect(verifyRegistryIdentity(source, { name: identity.legalName }, crm, [], now)?.method).toBe("exact_legal_name_address");
+    for (const addressLine1 of ["123 NE 1ST AVE UNIT 2", "123 NW 2ND AVE UNIT 2", "123 NW 1ST ST UNIT 2"]) {
+      expect(verifyRegistryIdentity({ ...source, identity: { ...source.identity, addressLine1 } }, { name: identity.legalName }, crm, [], now)).toBeNull();
+    }
+  });
 });
