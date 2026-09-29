@@ -53,8 +53,16 @@ try {
   await test("request recovery is idempotent and includes retired canonical TAL", async () => {
     await seed(); const request = { requestId: randomUUID(), taskId: "/root/reader" };
     const p = await rpc("claim", request); assert.ok(p); assert.equal(p.snapshot.company.status, "removed_from_tam");
+    assert.equal(await scalar("select codex_news_request_id value from intelligence_jobs where id=$1", [p.jobId]), request.requestId);
+    assert.equal(p.review.requestId, request.requestId);
     assert.equal((await rpc("claim", request)).lease, p.lease);
     assert.equal((await rpc("status", { requestId: request.requestId })).jobId, p.jobId);
+    assert.equal((await rpc("status", { jobId: p.jobId, requestId: request.requestId })).jobId, p.jobId);
+    assert.equal(await rpc("status", { jobId: p.jobId, requestId: randomUUID() }), null);
+    await assert.rejects(db.query("insert into intelligence_jobs(id,operation_key,observation_id,kind,codex_news_request_id) values($1,'duplicate',$2,'interpret',$3)",
+      [randomUUID(), p.snapshot.observation.id, request.requestId]), /intelligence_codex_news_request/);
+    assert.equal(await scalar("select pg_get_expr(indexprs,indrelid) value from pg_index where indexrelid='intelligence_codex_news_request'::regclass"), null);
+    assert.equal(await scalar("select pg_get_expr(indpred,indrelid) value from pg_index where indexrelid='intelligence_codex_news_request'::regclass"), "(codex_news_request_id IS NOT NULL)");
     await assert.rejects(rpc("claim", { ...request, taskId: "/root/other" }), /identity conflict/);
     await rpc("hold", { ...bound(p), taskId: "/root/reader", reason: "Explicit test hold preserves unfinished work and all prior native receipts." });
   });
@@ -105,6 +113,11 @@ try {
   await test("claims exclude duplicate history, nonnews and unresolved paid dispatch; no anonymous RPC", async () => {
     await seed({ kind: "website" }); await seed({ result: { pendingRequest: { fingerprint: "unresolved-paid" } } });
     assert.equal(await claim(), null);
+    const orphan = { requestId: randomUUID(), history: "must remain intact" };
+    const orphaned = await seed({ result: { codexNews: orphan }, priority: 100 });
+    await assert.rejects(claim(), /receipt requires reconciliation/);
+    assert.deepEqual(await scalar("select result->'codexNews' value from intelligence_jobs where id=$1", [orphaned.id]), orphan);
+    await db.query("update intelligence_jobs set codex_news_request_id=$1 where id=$2", [orphan.requestId, orphaned.id]);
     await seed(); await db.query("update companies set lists=array['tam_duplicate'] where id=$1", [company]); assert.equal(await claim(), null);
     for (const role of ["anon", "authenticated"]) assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value", [role]), false);
   });

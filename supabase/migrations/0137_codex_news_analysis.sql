@@ -2,9 +2,11 @@
 -- No queue copy, paid dispatch, grade edit, source deletion or rollout activation.
 begin;
 
+-- A nullable scalar adds no table rewrite. Indexing historical result JSONB
+-- would detoast every paid packet just to discover that no request ID exists.
+alter table public.intelligence_jobs add column if not exists codex_news_request_id uuid;
 create unique index if not exists intelligence_codex_news_request
-  on public.intelligence_jobs ((result->'codexNews'->>'requestId'))
-  where result->'codexNews'->>'requestId' is not null;
+  on public.intelligence_jobs (codex_news_request_id) where codex_news_request_id is not null;
 
 create or replace function public.intelligence_codex_news_snapshot(p_job uuid)
 returns jsonb language sql stable security definer set search_path=public,extensions,pg_temp as $$
@@ -42,40 +44,48 @@ begin
  if jsonb_typeof(p_payload)<>'object' or octet_length(p_payload::text)>64000 then raise exception 'Invalid news request'; end if;
  if p_action='status' then
   if p_payload->>'jobId' is null and p_payload->>'requestId' is null then raise exception 'Exact news identity required'; end if;
-  select * into j from intelligence_jobs where result->'codexNews' is not null
-   and (p_payload->>'jobId' is null or id=(p_payload->>'jobId')::uuid)
-   and (p_payload->>'requestId' is null or result->'codexNews'->>'requestId'=p_payload->>'requestId');
+  -- Separate exact-key branches keep recovery on the PK or scalar index even
+  -- after PostgreSQL switches this function to a generic prepared plan.
+  if p_payload->>'jobId' is not null then
+   select * into j from intelligence_jobs where id=(p_payload->>'jobId')::uuid and codex_news_request_id is not null;
+   if found and p_payload->>'requestId' is not null and j.codex_news_request_id is distinct from (p_payload->>'requestId')::uuid then return null; end if;
+  else
+   select * into j from intelligence_jobs where codex_news_request_id=(p_payload->>'requestId')::uuid;
+  end if;
   if not found then return null; end if;
+  if j.result->'codexNews'->>'requestId' is distinct from j.codex_news_request_id::text then raise exception 'Request receipt identity conflict'; end if;
   return intelligence_codex_news_packet(j.id);
  end if;
  if p_action='claim' then
   request_id:=(p_payload->>'requestId')::uuid; actor:=p_payload->>'taskId';
   if request_id is null or actor is null or actor!~'^[a-zA-Z0-9_:/.-]{3,180}$' then raise exception 'Invalid reader identity'; end if;
   perform pg_advisory_xact_lock(hashtextextended('codex-news-request:'||request_id,0));
-  select * into j from intelligence_jobs where result->'codexNews'->>'requestId'=request_id::text for update;
+  select * into j from intelligence_jobs where codex_news_request_id=request_id for update;
   if found then
-   if j.result->'codexNews'->>'actor' is distinct from actor then raise exception 'Request identity conflict'; end if;
+   if j.result->'codexNews'->>'actor' is distinct from actor or j.result->'codexNews'->>'requestId' is distinct from request_id::text then raise exception 'Request identity conflict'; end if;
    return intelligence_codex_news_packet(j.id);
   end if;
   -- Explicitly scoped to the existing paused provider policy. Never enable it.
   perform 1 from intelligence_jev_budget_policy where id='jev-rollout-2026-09-24' and not enabled for share;
   if not found or not coalesce((select enabled from intelligence_config where id=1),false) then raise exception 'Codex review admission unavailable'; end if;
   perform pg_advisory_xact_lock(hashtextextended('intelligence-worker-capacity',0));
-  select least(12-count(*)::integer,3-count(*) filter(where result->'codexNews' is not null)::integer)
+  select least(12-count(*)::integer,3-count(*) filter(where codex_news_request_id is not null)::integer)
    into slots from intelligence_jobs where status='running' and lease_until>now();
   if slots<1 then return null; end if;
   select q.* into j from intelligence_jobs q join intelligence_observations n on n.id=q.observation_id join companies co on co.id=n.company_id
    where q.kind='interpret' and n.source_kind='news' and n.is_current and not n.feedback_excluded
    and q.status='queued' and (q.due_at<=now() or q.last_error in('budget_deferred','intelligence_disabled'))
-   and q.result->'codexNews' is null
+   and q.codex_news_request_id is null
    -- An unresolved paid request remains recoverable by its existing owner.
    and coalesce(q.result->'pendingRequest','null'::jsonb)='null'::jsonb
    and not ('tam_duplicate'=any(coalesce(co.lists,'{}'::text[])))
    and (co.tal_claimed is true or (co.lists @> array['netsuite_tam']::text[] and co.status is distinct from 'removed_from_tam'))
    order by co.tal_claimed desc nulls last,q.priority desc,q.created_at,q.id limit 1 for update of q skip locked;
   if not found then return null; end if;
+  -- Inspect only the selected row; never overwrite an orphaned restored receipt.
+  if j.result->'codexNews' is not null then raise exception 'Existing news receipt requires reconciliation'; end if;
   s:=intelligence_codex_news_snapshot(j.id); h:=encode(digest(convert_to(s::text,'UTF8'),'sha256'),'hex'); lease:=gen_random_uuid();
-  update intelligence_jobs set status='running',lease_token=lease,lease_until=now()+interval '20 minutes',
+  update intelligence_jobs set status='running',lease_token=lease,lease_until=now()+interval '20 minutes',codex_news_request_id=request_id,
    result=coalesce(result,'{}'::jsonb)||jsonb_build_object('codexNews',jsonb_build_object('version','codex-news-review-v1',
     'actor',actor,'requestId',request_id,'claimLease',lease,'snapshotHash',h,'claimedAt',now())) where id=j.id;
   return intelligence_codex_news_packet(j.id);
@@ -84,6 +94,7 @@ begin
  select * into j from intelligence_jobs where id=(p_payload->>'jobId')::uuid for update;
  if not found then return null; end if;
  v:=j.result->'codexNews'; lease:=(p_payload->>'lease')::uuid;
+ if v->>'requestId' is distinct from j.codex_news_request_id::text then raise exception 'Request receipt identity conflict'; end if;
  if v is null or v->>'claimLease' is distinct from lease::text then raise exception 'News claim mismatch'; end if;
  -- Identical completion retries only return the saved receipt; never republish.
  if j.status='complete' and p_action in('read','finish') then
@@ -103,7 +114,7 @@ begin
   perform 1 from intelligence_jev_budget_policy where id='jev-rollout-2026-09-24' and not enabled for share;
   if not found then raise exception 'Codex review admission unavailable'; end if;
   perform pg_advisory_xact_lock(hashtextextended('intelligence-worker-capacity',0));
-  select least(12-count(*)::integer,3-count(*) filter(where result->'codexNews' is not null)::integer)
+  select least(12-count(*)::integer,3-count(*) filter(where codex_news_request_id is not null)::integer)
    into slots from intelligence_jobs where status='running' and lease_until>now() and id<>j.id;
   if slots<1 then raise exception 'News worker capacity unavailable'; end if;
   update intelligence_jobs set lease_until=now()+interval '20 minutes' where id=j.id;
