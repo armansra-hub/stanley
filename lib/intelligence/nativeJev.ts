@@ -13,6 +13,8 @@ export type NativeJevInput = {
   state: unknown;
   questions: Record<string, NativeQuestion>;
   privacy?: "public" | "private_excerpt";
+  /** Internal public-customer transport allowance; never sent to the provider. */
+  requestProfile?: "customer-reference-full-source-v1";
 };
 export type NativeAnswer = { type: "noul" | "choice" | "score"; noul?: number; choice?: string; score?: number;
   confidence?: number; probabilities?: Record<string, number>; legend?: Record<string, string> };
@@ -51,7 +53,16 @@ export function nativeJevBody(input: NativeJevInput) {
   }
   const body = { model: JEV_MODEL, state: input.state, questions: input.questions };
   const serialized = JSON.stringify(body);
-  if (!serialized || Buffer.byteLength(serialized) > 48_000) throw new Error("native_request_too_large");
+  if (input.requestProfile !== undefined && (input.requestProfile !== "customer-reference-full-source-v1" || input.privacy !== "public"))
+    throw new Error("invalid_native_request_profile");
+  // 48KB is Stanley's ordinary transport guard, not Jev's context window.
+  // A customer-only overflow request may retain up to 192KB verbatim instead
+  // of truncating it or paying for another semantic mapping pass. This byte
+  // allowance is NOT a tokenizer or a promise of context acceptance. Jev 1.13
+  // enforces 64k total / 32k state+longest-question tokens; any provider rejection
+  // remains one exact persisted failure, with no automatic inference replay.
+  // Official limits: https://docs.typesafe.ai/models (checked 2026-09-29).
+  if (!serialized || Buffer.byteLength(serialized) > (input.requestProfile ? 192_000 : 48_000)) throw new Error("native_request_too_large");
   return body;
 }
 
@@ -109,5 +120,7 @@ export async function evaluateNativeQuestions(input: NativeJevInput, deps: { fet
 
 export async function evaluateNativeCached(input: NativeJevInput, context: JevSpendContext) {
   if (input.privacy === "private_excerpt") throw new Error("Private input must not enter the public response cache");
+  if (input.requestProfile && (context.purpose !== "operating_catalog" || context.sourceKind !== "customer_reference"))
+    throw new Error("customer_reference_profile_scope_required");
   return durableJevRequest({ fingerprint: nativeJevFingerprint(input), context, execute: () => evaluateNativeQuestions(input) });
 }

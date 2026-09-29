@@ -8,9 +8,58 @@ import CopyButton, { bareDomain } from "./CopyButton";
 import IntelligenceDismissButton from "./IntelligenceDismissButton";
 import IntelligenceSelectionBar from "./IntelligenceSelectionBar";
 import { hiddenIntelligenceLead } from "./intelligenceLeadStatus";
-import CustomerReferenceProgress from "./CustomerReferenceProgress";
+import CustomerReferenceProgress, { type ReferenceProgress } from "./CustomerReferenceProgress";
+import type { CustomerCohortSummary, CustomerCohortSlice } from "@/lib/intelligence/customerCohortSummary";
+import { OPERATING_FACETS } from "@/lib/intelligence/operatingCatalog";
 
 type CustomerMatch = CustomerMatchesResult["accounts"][number];
+type ReferenceReadingCounts = Pick<ReferenceProgress, "total" | "complete" | "pending" | "running" | "blocked">;
+
+export const customerMatchesNeedRefresh = (previousCompleted: number, completed: number) => completed > previousCompleted;
+
+export function CustomerReferenceCoverage({ coverage, progress }: {
+  coverage: CustomerMatchesResult["referenceCoverage"]; progress?: ReferenceReadingCounts | null;
+}) {
+  const total = progress?.total ?? coverage.total ?? coverage.verified + coverage.pending;
+  const complete = progress?.complete ?? coverage.verified;
+  return <div className="mt-4 rounded-md border border-[var(--gold)]/40 bg-[var(--background)] p-3 text-xs leading-relaxed">
+    <p className="font-semibold">Website analysis complete: {complete.toLocaleString()} of {total.toLocaleString()} customer records</p>
+    <p className="mt-1 text-[var(--text-muted)]">Slack establishes that these companies are customers. These matches use {coverage.verified.toLocaleString()} completed website analyses of their operations. Missing names or websites are source gaps, not questions about customer status.</p>
+    {complete < total && <p className="mt-1 text-[var(--text-muted)]">This is a partial customer cohort. Existing matches remain available while research continues; they do not establish how common a characteristic is across all customers.</p>}
+    {progress && <p className="mt-1 text-[var(--text-muted)]">{progress.pending.toLocaleString()} awaiting completion · {progress.blocked.toLocaleString()} need attention{progress.running ? ` · ${progress.running.toLocaleString()} being read` : ""}.</p>}
+    <details className="mt-2 text-[var(--text-muted)]"><summary className="cursor-pointer">Where the characteristics came from</summary>
+      <p className="mt-2">The 47 definitions came from the broader research across 704 announcement entries. Those entries were not all fully read against the definitions. Customer comparisons here require completed website readings using the same definitions as prospects.</p>
+      <p className="mt-1">Announcement coverage through {dated(coverage.asOf)}; this date does not mean all registered customers have been researched.</p>
+    </details>
+  </div>;
+}
+
+export function CustomerCohortCounts({ cohort }: { cohort: CustomerCohortSummary }) {
+  const [period, setPeriod] = useState<"all" | "recent" | "older">("all");
+  const [industry, setIndustry] = useState("");
+  const selected = cohort.industries.find(group => (group.industry ?? "") === industry) ?? cohort.industries[0];
+  const group: CustomerCohortSlice | undefined = selected?.[period];
+  return <details className="mt-3 rounded border p-3 text-xs">
+    <summary className="cursor-pointer font-medium">Characteristics in the completed customer reads</summary>
+    <p className="mt-2 leading-relaxed text-[var(--text-muted)]">Counts cover the {cohort.customers.toLocaleString()} completed customer references in this match snapshot, not the full registry or the original 704 research entries. These are saved Jev answers, not newly discovered categories or a win rate. Recent means an announcement within 180 days; announcements can be new customers, expansions or renewals.</p>
+    <div className="mt-3 flex flex-wrap gap-2">
+      <select aria-label="Customer count industry" value={selected?.industry ?? ""} onChange={event => setIndustry(event.target.value)} className="rounded border bg-[var(--background)] p-2">
+        {cohort.industries.map(item => <option key={item.industry ?? "unknown"} value={item.industry ?? ""}>{item.industry ?? "Industry not recorded"}</option>)}
+      </select>
+      <select aria-label="Customer announcement period" value={period} onChange={event => setPeriod(event.target.value as typeof period)} className="rounded border bg-[var(--background)] p-2">
+        <option value="all">All announcement dates</option><option value="recent">Past 180 days</option><option value="older">Older announcements</option>
+      </select>
+    </div>
+    {group && <>
+      <p className="mt-3 text-[var(--text-muted)]">{group.customers.toLocaleString()} completed customer references in this group. Each row uses that same denominator; unknowns and conflicting answers stay separate from negative answers.</p>
+      <div className="mt-2 max-h-80 overflow-auto"><table className="w-full text-left text-[10px]">
+        <thead><tr className="border-b"><th className="p-2">Characteristic</th><th className="p-2">Supported</th><th className="p-2">Not supported</th><th className="p-2">Insufficient evidence</th><th className="p-2">Conflicting</th><th className="p-2">Unanswered</th></tr></thead>
+        <tbody>{OPERATING_FACETS.map(facet => { const count = group.traits[facet.id]; return <tr key={facet.id} className="border-b"><th className="p-2 font-normal">{facet.label}</th>
+          <td className="p-2">{count?.supported ?? 0}</td><td className="p-2">{count?.not_supported ?? 0}</td><td className="p-2">{count?.insufficient_evidence ?? 0}</td><td className="p-2">{count?.conflicting ?? 0}</td><td className="p-2">{count?.unanswered ?? group.customers}</td></tr>; })}</tbody>
+      </table></div>
+    </>}
+  </details>;
+}
 
 function dated(value: string | null | undefined): string {
   return value && Number.isFinite(Date.parse(value))
@@ -136,6 +185,7 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
   const [pattern, setPattern] = useState("all");
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<CustomerMatchesResult | null>(null);
+  const [referenceProgress, setReferenceProgress] = useState<ReferenceReadingCounts | null>(null);
   const [summary, setSummary] = useState<Pick<CustomerMatchesResult, "patterns" | "referenceCoverage"> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +194,7 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
   const sequence = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const writing = useRef(false);
+  const lastCompleted = useRef<number | null>(null);
   const resultRef = useRef(result);
   resultRef.current = result;
   const statusSignature = JSON.stringify(statusOverrides);
@@ -169,6 +220,7 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
       if (current !== sequence.current) return;
       setResult(next);
       setSummary({ patterns: next.patterns, referenceCoverage: next.referenceCoverage });
+      lastCompleted.current = Math.max(lastCompleted.current ?? 0, next.referenceCoverage.verified);
       setResultStatusSignature(statusBusyRef.current ? "pending" : requestedStatus);
     } catch {
       if (current === sequence.current) setError(resultRef.current
@@ -179,6 +231,14 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
       if (current === sequence.current) setBusy(false);
     }
   }, [enabled, pattern, page, showHidden]);
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const onReferenceProgress = useCallback((next: ReferenceProgress) => {
+    const previousCompleted = lastCompleted.current ?? resultRef.current?.referenceCoverage.verified ?? 0;
+    lastCompleted.current = next.complete;
+    setReferenceProgress({ total: next.total, complete: next.complete, pending: next.pending, running: next.running, blocked: next.blocked });
+    if (customerMatchesNeedRefresh(previousCompleted, next.complete)) void loadRef.current();
+  }, []);
 
   useEffect(() => {
     if (!statusBusy) void load();
@@ -219,7 +279,9 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
       <button type="button" disabled={!enabled || busy || statusBusy} onClick={() => void load()} className="rounded-md border px-3 py-2 text-xs disabled:opacity-50">{busy ? "Refreshing…" : "Refresh matches"}</button>
     </div>
 
-    <CustomerReferenceProgress enabled={enabled} onComplete={() => void load()} />
+    {summary && <CustomerReferenceCoverage coverage={summary.referenceCoverage} progress={referenceProgress} />}
+    <CustomerReferenceProgress enabled={enabled} onComplete={onReferenceProgress} />
+    {result?.customerCohort && <CustomerCohortCounts cohort={result.customerCohort} />}
 
     {summary && <>
       <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Customer operating patterns">
@@ -231,10 +293,6 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
         </button>)}
       </div>
       {pattern !== "all" && <p className="mt-3 text-sm text-[var(--text-muted)]">{summary.patterns.find(item => item.id === pattern)?.description}</p>}
-      <p className="mt-3 text-xs leading-relaxed text-[var(--text-muted)]">
-        {summary.referenceCoverage.verified.toLocaleString()} website-supported customer references · Research through {dated(summary.referenceCoverage.asOf)}.
-        {summary.referenceCoverage.pending > 0 ? ` ${summary.referenceCoverage.pending.toLocaleString()} more need supporting website evidence.` : ""}
-      </p>
     </>}
 
     {error && <p role="alert" className="mt-4 text-sm text-[var(--gold)]">{error}</p>}

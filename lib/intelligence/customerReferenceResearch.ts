@@ -7,7 +7,7 @@ import { evaluateNativeCached, nativeJevFingerprint, type NativeJevInput } from 
 import { scopedJevFingerprint } from "./jevRequests";
 import { customerReferenceCatalogSources, customerReferenceCompany, customerReferenceEvidenceKey, type CustomerReferenceSeed } from "./customerReferenceSources";
 import type { CustomerReference } from "./customerMatches";
-import { customerReferencePackedAnswerPlans } from "./customerReferencePacking";
+import { customerReferenceAnswerPlans, customerReferenceLargeAnswerPlans, customerReferencePackedAnswerPlans } from "./customerReferencePacking";
 import { customerReferenceRegistryProofSeed, customerReferenceRegistrySeed, getCustomerReferenceRegistryRow, loadCustomerReferenceRegistry, type CustomerReferenceRegistryRow } from "./customerReferenceRegistry";
 import { collectCustomerReferenceSources, type CustomerSourceCheckpoint } from "./customerReferenceCollector";
 
@@ -37,8 +37,12 @@ export function customerReferenceCanResumePacked(seed: CustomerReferenceSeed, ch
   if (packets.some(packet => missing.some(facet => !checkpoint.mapped[packet.id]?.scanned.includes(facet.id)))) return false;
   const candidates = Object.fromEntries(missing.map(facet => [facet.id,
     packets.filter(packet => checkpoint.mapped[packet.id]?.candidates.includes(facet.id)).map(packet => packet.id)]));
-  const plans = customerReferencePackedAnswerPlans(customerReferenceCompany(seed), missing, packets, candidates);
-  return !plans.blocked.length && new Set(plans.plans.flatMap(plan => plan.facetIds)).size === missing.length;
+  // Check each unanswered predicate without changing or reissuing its saved
+  // native answers. Existing provider failures are not eligible for this path.
+  return missing.every(facet => {
+    const plans = customerReferenceAnswerPlans(customerReferenceCompany(seed), [facet], packets, candidates);
+    return !plans.blocked.length && plans.plans.some(plan => plan.facetIds.includes(facet.id));
+  });
 }
 
 /** Same source packets, definitions, industry guidance, mapping and native
@@ -56,7 +60,8 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
   const missing = () => OPERATING_FACETS.filter(f => !checkpoint.answers[f.id]);
   if (!packets.length) { await save("blocked", null, "official_website_source_unavailable"); return "source_blocked"; }
   if (checkpoint.phase === "direct" && catalogAnswerPlans(company, missing(), packets).blocked.length
-    && customerReferencePackedAnswerPlans(company, missing(), packets).blocked.length) checkpoint.phase = "mapping";
+    && customerReferencePackedAnswerPlans(company, missing(), packets).blocked.length
+    && customerReferenceLargeAnswerPlans(company, missing(), packets).blocked.length) checkpoint.phase = "mapping";
   while (Date.now() < deadline - 35_000) {
     let plan = checkpoint.pending;
     if (!plan && checkpoint.phase === "mapping") {
@@ -69,8 +74,7 @@ export async function classifyCustomerReference(seed: CustomerReferenceSeed, pre
     if (!plan) {
       const candidates = checkpoint.phase === "answer" ? Object.fromEntries(missing().map(f => [f.id,
         packets.filter(p => checkpoint.mapped[p.id]?.candidates.includes(f.id)).map(p => p.id)])) : undefined;
-      let next = catalogAnswerPlans(company, missing(), packets, candidates);
-      if (!next.plans.length && next.blocked.length) next = customerReferencePackedAnswerPlans(company, missing(), packets, candidates);
+      const next = customerReferenceAnswerPlans(company, missing(), packets, candidates);
       plan = next.plans[0];
       if (!plan) {
         if (next.blocked.length) { await save("blocked", null, "evidence_exceeds_native_request_limit"); return "source_blocked"; }

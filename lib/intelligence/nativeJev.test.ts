@@ -35,6 +35,33 @@ describe("native Jev shared transport", () => {
     expect(() => nativeJevBody({ ...input, state: "x".repeat(50_000) })).toThrow("too_large");
     expect(() => nativeJevBody({ ...input, questions: { bad: { type: "choice", instructions: "Choose", criteria: { only: "one" } } } })).toThrow("criteria");
   });
+  it("permits complete public customer evidence without changing the wire body or existing reuse keys", async () => {
+    const profile = { ...input, privacy: "public" as const, requestProfile: "customer-reference-full-source-v1" as const };
+    expect(nativeJevFingerprint(profile)).toBe(nativeJevFingerprint({ ...input, privacy: "public" }));
+    const large = { ...profile, state: { source: "Exact retained customer source. ".repeat(2000) } };
+    expect(() => nativeJevBody({ ...large, requestProfile: undefined })).toThrow("native_request_too_large");
+    vi.stubEnv("TYPESAFE_API_KEY", "test-private-key");
+    const raw = { model: "jev-1.13.0", answers: { expansion: { type: "noul", noul: .87 } }, usage: { input_tokens: 15_200, output_tokens: 10 } };
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(raw)));
+    expect(await evaluateNativeQuestions(large, { fetch })).toMatchObject({ ok: true, provider_result: raw });
+    const sent = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(sent).toEqual({ model: "jev-1.13.0", state: large.state, questions: large.questions });
+    expect(fetch).toHaveBeenCalledOnce();
+    await expect(evaluateNativeCached(large, { purpose: "codex_connector" })).rejects.toThrow("customer_reference_profile_scope_required");
+    expect(() => nativeJevBody({ ...large, privacy: "private_excerpt" })).toThrow("invalid_native_request_profile");
+    expect(() => nativeJevBody({ ...large, state: "x".repeat(192_001) })).toThrow("native_request_too_large");
+  });
+  it.each([400, 422])("retains a customer context rejection %s after one provider call without a smaller-text retry", async status => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-private-key");
+    const large = { ...input, state: "Complete retained source. ".repeat(2200), privacy: "public" as const,
+      requestProfile: "customer-reference-full-source-v1" as const };
+    const response = new Response("provider detail may contain source content", { status });
+    const read = vi.spyOn(response, "text");
+    const fetch = vi.fn().mockResolvedValue(response);
+    expect(await evaluateNativeQuestions(large, { fetch })).toEqual({ ok: false,
+      error: { code: `typesafe_http_${status}`, retryable: false }, usage: null });
+    expect(fetch).toHaveBeenCalledOnce(); expect(read).not.toHaveBeenCalled();
+  });
   it("never loops or leaks provider error bodies", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-private-key");
     const fetch = vi.fn().mockResolvedValue(new Response("do not log this", { status: 429 }));

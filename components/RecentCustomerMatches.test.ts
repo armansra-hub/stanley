@@ -3,8 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomerMatchAccount } from "@/lib/intelligence/customerMatches";
 import OperatingMatches from "./OperatingMatches";
-import { CustomerMatchCard, customerMatchesWithStatus } from "./RecentCustomerMatches";
+import { CustomerMatchCard, CustomerReferenceCoverage, CustomerCohortCounts, customerMatchesWithStatus, customerMatchesNeedRefresh } from "./RecentCustomerMatches";
 import CustomerReferenceProgress from "./CustomerReferenceProgress";
+import { summarizeCustomerCohort } from "@/lib/intelligence/customerCohortSummary";
+import { OPERATING_FACETS } from "@/lib/intelligence/operatingCatalog";
 
 const makeAccount = (): CustomerMatchAccount => ({
   companyId: "prospect-1", name: "Prospect Integrator", domain: "https://www.prospect.example/services", subindustry: "IT services",
@@ -30,6 +32,40 @@ beforeEach(() => vi.stubGlobal("React", React));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("recent-customer shortlist", () => {
+  it("labels incomplete website analysis while accepting Slack-established customer status", () => {
+    const markup = renderToStaticMarkup(React.createElement(CustomerReferenceCoverage, {
+      coverage: { verified: 18, pending: 805, total: 823, asOf: "2026-09-28" },
+      progress: { total: 823, complete: 18, pending: 796, blocked: 9, running: 0 },
+    }));
+    expect(markup).toContain("Website analysis complete: 18 of 823 customer records");
+    expect(markup).toContain("Slack establishes that these companies are customers");
+    expect(markup).toContain("source gaps, not questions about customer status");
+    expect(markup).toContain("partial customer cohort");
+    expect(markup).toContain("796 awaiting completion · 9 need attention");
+    expect(markup).toContain("704 announcement entries");
+    expect(markup).toContain("not all fully read");
+    expect(markup).not.toContain("more need supporting website evidence");
+  });
+
+  it("requests a new match snapshot only when completed readings increase", () => {
+    expect(customerMatchesNeedRefresh(18, 18)).toBe(false);
+    expect(customerMatchesNeedRefresh(18, 17)).toBe(false);
+    expect(customerMatchesNeedRefresh(18, 19)).toBe(true);
+    expect(customerMatchesNeedRefresh(0, 1)).toBe(true);
+  });
+
+  it("renders every existing category with separate native unknown and conflict counts", () => {
+    const cohort = summarizeCustomerCohort([{ id: "reference", name: "Reference", domain: "reference.example", website: "https://reference.example",
+      announcementDate: "2026-09-01", announcementType: "new_customer", catalogVersion: "catalog", completedAt: "2026-09-28", status: "verified", sources: [],
+      answers: Object.fromEntries(OPERATING_FACETS.map(facet => [facet.id, { decision: "insufficient_evidence", nativeResult: {}, facetVersion: "version", sourceUrls: [] }])) }], Date.parse("2026-09-29"));
+    const markup = renderToStaticMarkup(React.createElement(CustomerCohortCounts, { cohort }));
+    expect(markup).toContain("1 completed customer references");
+    expect(markup).toContain("not the full registry or the original 704 research entries");
+    expect(markup).toContain("Insufficient evidence"); expect(markup).toContain("Conflicting"); expect(markup).toContain("Unanswered");
+    expect(markup.match(/<tr /g)).toHaveLength(48);
+    expect(markup).toContain("Industry not recorded");
+  });
+
   it("starts with customer patterns while leaving the complete advanced library collapsed", () => {
     const markup = renderToStaticMarkup(React.createElement(OperatingMatches, { enabled: true }));
     expect(markup).toContain("Similar to recent customers");

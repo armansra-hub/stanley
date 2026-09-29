@@ -80,3 +80,64 @@ export function customerReferencePackedAnswerPlans(company: Record<string, unkno
   }
   emit(); return { plans, blocked };
 }
+
+/** Keep literal source text and all ordinary questions/guidance when a customer
+ * exceeds only Stanley's ordinary byte guard. The provider still owns its token
+ * limit. A rejected request is retained as a hold, never retried with lost text.
+ * Group only identical evidence sets so one broad legal predicate cannot add
+ * irrelevant material to another predicate. Smaller complete states go first.
+ */
+export function customerReferenceLargeAnswerPlans(company: Record<string, unknown>, facets: readonly OperatingFacet[], packets: readonly CatalogPacket[],
+  candidates?: Record<string, string[]>): { plans: Plan[]; blocked: string[] } {
+  if (!facets.length) return { plans: [], blocked: [] };
+  const template = catalogAnswerPlans(company, [facets[0]], []).plans[0]?.input;
+  if (!template || !template.state || typeof template.state !== "object") return { plans: [], blocked: facets.map(f => f.id) };
+  const groups = new Map<string, { facets: OperatingFacet[]; packets: CatalogPacket[] }>();
+  for (const facet of facets) {
+    const selected = candidates ? packets.filter(packet => candidates[facet.id]?.includes(packet.id)) : [...packets];
+    const key = JSON.stringify(selected.map(packet => packet.id));
+    if (!groups.has(key)) groups.set(key, { facets: [], packets: selected });
+    groups.get(key)!.facets.push(facet);
+  }
+  const inputFor = (selected: readonly OperatingFacet[], sources: readonly CatalogPacket[]): NativeJevInput => ({
+    ...template, privacy: "public", requestProfile: "customer-reference-full-source-v1",
+    state: { ...template.state as Record<string, unknown>, sources: sources.map(packet => {
+      const { observedAt: _clock, ...citation } = packet.citation;
+      return { id: packet.id, ...citation, text: packet.text };
+    }) },
+    questions: Object.fromEntries(selected.map(facet => [facet.id, operatingFacetQuestion(facet.id)!])),
+  });
+  const fits = (input: NativeJevInput) => {
+    try { nativeJevBody(input); return true; }
+    catch (error) {
+      if (error instanceof Error && ["native_request_too_large", "invalid_question_count"].includes(error.message)) return false;
+      throw error;
+    }
+  };
+  const plans: Plan[] = [], blocked: string[] = [];
+  for (const group of [...groups.values()].sort((a, b) =>
+    Buffer.byteLength(JSON.stringify(inputFor([a.facets[0]], a.packets).state)) - Buffer.byteLength(JSON.stringify(inputFor([b.facets[0]], b.packets).state)))) {
+    let selected: OperatingFacet[] = [];
+    const emit = () => {
+      if (selected.length) plans.push({ phase: "answer", facetIds: selected.map(f => f.id), packetIds: group.packets.map(p => p.id), input: inputFor(selected, group.packets) });
+      selected = [];
+    };
+    for (const facet of group.facets) {
+      if (!fits(inputFor([facet], group.packets))) { blocked.push(facet.id); continue; }
+      if (selected.length && !fits(inputFor([...selected, facet], group.packets))) emit();
+      selected.push(facet);
+    }
+    emit();
+  }
+  return { plans, blocked };
+}
+
+/** Preserve existing ordinary/packed request fingerprints wherever they fit. */
+export function customerReferenceAnswerPlans(company: Record<string, unknown>, facets: readonly OperatingFacet[], packets: readonly CatalogPacket[],
+  candidates?: Record<string, string[]>) {
+  const ordinary = catalogAnswerPlans(company, facets, packets, candidates);
+  if (ordinary.plans.length || !ordinary.blocked.length) return ordinary;
+  const packed = customerReferencePackedAnswerPlans(company, facets, packets, candidates);
+  if (packed.plans.length || !packed.blocked.length) return packed;
+  return customerReferenceLargeAnswerPlans(company, facets, packets, candidates);
+}

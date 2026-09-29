@@ -1,5 +1,6 @@
 import { operatingFacet, type OperatingFacetDecision } from "./operatingCatalog";
 import type { OperatingMatchTopic } from "./topicSearch";
+import { summarizeCustomerCohort, type CustomerCohortSummary } from "./customerCohortSummary";
 
 /** Public response types and deterministic cached-fact ranking. No provider calls. */
 export type CustomerReferenceSource = { url: string; title: string; contentHash: string; text?: string };
@@ -79,7 +80,8 @@ export type CustomerMatchAccount = Omit<CustomerMatchCandidate, "decisions"> & {
 export type CustomerMatchesResult = {
   patterns: { id: string; label: string; description: string; count: number; referenceCount: number }[];
   accounts: CustomerMatchAccount[]; total: number; page: number; pageSize: 25; hasMore: boolean;
-  referenceCoverage: { verified: number; pending: number; asOf: string };
+  referenceCoverage: { verified: number; pending: number; asOf: string; total?: number };
+  customerCohort?: CustomerCohortSummary;
   /** Completion is reported by the canonical catalog endpoint, not recomputed by the shortlist. */
   coverage: { eligible: number; assessed: number | null; asOf: string };
   note: string;
@@ -193,7 +195,8 @@ export function rankCustomerMatches(input: { candidates: CustomerMatchCandidate[
     patterns: CUSTOMER_PATTERNS.map(p => ({ id: p.id, label: p.label, description: p.description, count: patternCounts.get(p.id)!.size,
       referenceCount: new Set(branches.filter(b => b.pattern.id === p.id).flatMap(b => b.refs.map(r => r.id))).size })),
     accounts: ranked.slice(start, start + 25).map(r => r.account), total: ranked.length, page, pageSize: 25, hasMore: start + 25 < ranked.length,
-    referenceCoverage: { verified: references.length, pending: Math.max(0, input.referenceTotal - input.references.length), asOf: input.asOf },
+    referenceCoverage: { verified: references.length, pending: Math.max(0, input.referenceTotal - references.length), asOf: input.asOf, total: input.referenceTotal },
+    customerCohort: summarizeCustomerCohort(references, now),
     coverage: { eligible: candidates.length, assessed: null, asOf: new Date(now).toISOString() },
     note: "A sourced customer resemblance, not a conversion score or confirmed finance pain. Unknown answers are not negatives. All registered customers are eligible for comparison once their website evidence is read. A customer appears in a pattern only when its required facts are supported. Customer announcements include new customers, expansions and renewals; dates do not establish a new purchase. Rarity describes assessed prospects only. Ranking reads saved answers and makes no Jev requests.",
   };

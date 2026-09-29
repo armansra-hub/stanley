@@ -26,7 +26,7 @@ export function customerReferenceCanContinue(previous: ReferenceProgress, next: 
     && customerReferenceProgressKey(next) !== customerReferenceProgressKey(previous);
 }
 
-export default function CustomerReferenceProgress({ enabled, onComplete }: { enabled: boolean; onComplete: () => void }) {
+export default function CustomerReferenceProgress({ enabled, onComplete }: { enabled: boolean; onComplete: (progress: ReferenceProgress) => void }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<ReferenceProgress | null>(null);
   const [loading, setLoading] = useState(false);
@@ -69,7 +69,7 @@ export default function CustomerReferenceProgress({ enabled, onComplete }: { ena
         const response = await fetch(API, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(290_000) });
         if (!response.ok) throw new Error("reference_reading_unconfirmed");
         const next: ReferenceProgress = await response.json();
-        if (mounted.current) { setData(next); onComplete(); }
+        if (mounted.current) { setData(next); onComplete(next); }
         if (!next.pending || next.running || stopRequested.current) break;
         if (!customerReferenceCanContinue(previous, next)) {
           if (mounted.current) setError("Reading paused at a saved checkpoint that needs attention. Review the progress before continuing.");
@@ -83,7 +83,7 @@ export default function CustomerReferenceProgress({ enabled, onComplete }: { ena
       if (mounted.current) {
         try {
           const response = await fetch(API, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
-          if (response.ok) { setData(await response.json()); onComplete(); }
+          if (response.ok) { const next: ReferenceProgress = await response.json(); setData(next); onComplete(next); }
         } catch { /* Keep the last saved progress; an explicit refresh remains available. */ }
         setError("The reading request ended before its result was confirmed. Check the saved progress below before continuing; the request has not been repeated.");
       }
@@ -96,12 +96,12 @@ export default function CustomerReferenceProgress({ enabled, onComplete }: { ena
 
   return <details className="mt-4 rounded border p-3 text-xs" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer font-medium">Customer reference sources{data ? ` · ${data.complete} of ${data.total} read` : ""}</summary>
-    <p className="mt-2 max-w-3xl leading-relaxed text-[var(--text-muted)]">Read the full registered customer set against the same 47 characteristics used for prospects. Saved website evidence and answers are reused. Unresolved companies stay visible here until their identity or website can be established. Opening this list or refreshing progress does not start paid research.</p>
+    <p className="mt-2 max-w-3xl leading-relaxed text-[var(--text-muted)]">Read the full registered customer set against the same 47 characteristics used for prospects. Slack establishes customer status; website reading establishes operating characteristics. Saved website evidence and answers are reused. Records with missing names or websites stay visible as source gaps. Opening this list or refreshing progress does not start paid research.</p>
     {loading && <p className="mt-3 text-[var(--text-muted)]" role="status">Loading saved progress…</p>}
     {error && <p className="mt-3 text-[var(--gold)]" role="alert">{error}</p>}
     {data && <>
       <p className="mt-3 text-[var(--text-muted)]" role="status">{data.complete} complete · {data.pending} awaiting reading{data.running ? ` · ${data.running} being read` : ""}{data.blocked ? ` · ${data.blocked} need source or processing attention` : ""}</p>
-      {data.announcements !== undefined && <p className="mt-2 text-[var(--text-muted)]">{data.announcements.toLocaleString()} announcement records accounted for · {data.total.toLocaleString()} customer identities and unresolved entries · {(data.sourcePages ?? 0).toLocaleString()} website pages captured{data.withSourceGaps ? ` · ${data.withSourceGaps.toLocaleString()} entries have source gaps` : ""}.</p>}
+      {data.announcements !== undefined && <p className="mt-2 text-[var(--text-muted)]">{data.announcements.toLocaleString()} announcement records accounted for · {data.total.toLocaleString()} customer records · {(data.sourcePages ?? 0).toLocaleString()} website pages captured{data.withSourceGaps ? ` · ${data.withSourceGaps.toLocaleString()} records have source gaps` : ""}.</p>}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {data.pending > 0 && <button type="button" disabled={!enabled || reading || loading || data.running > 0} onClick={() => void read()}
           className="rounded-md bg-[var(--accent)] px-3 py-2 text-xs font-medium text-white disabled:opacity-50">{reading ? "Reading customer websites…" : data.complete ? "Continue all unread customers" : "Read all customer websites"}</button>}

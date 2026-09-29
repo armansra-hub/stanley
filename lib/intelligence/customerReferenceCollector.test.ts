@@ -41,6 +41,18 @@ describe("full-cohort official website collection", () => {
     expect(result.sources[0].contentHash).toBe(digest(text));
   });
 
+  it("does not mistake legal footer terms for services, but keeps explicitly selected legal evidence", async () => {
+    const h = harness({
+      "https://acme.com/": page("https://acme.com/", '<main>Legal services and privacy consulting.</main><a href="/terms-of-use">Terms of Service</a><a href="/privacy-policy">Privacy Policy</a><a href="/legal-services">Legal services</a><a href="/commercial-terms">Terms of Service</a>'),
+      "https://acme.com/legal-services": page("https://acme.com/legal-services", '<main>Our legal operations consulting services.</main>'),
+      "https://acme.com/commercial-terms": page("https://acme.com/commercial-terms", '<main>Published charging and commercial terms.</main>'),
+    });
+    const result = await collectCustomerReferenceSources({ ...input, candidateUrls: ["https://acme.com/commercial-terms"] }, null, Date.now() + 100_000, h);
+    expect(h.fetchText.mock.calls.map(([url]) => url)).toEqual(["https://acme.com/", "https://acme.com/commercial-terms", "https://acme.com/legal-services"]);
+    expect(result.sources.map(source => source.url)).toContain("https://acme.com/commercial-terms");
+    expect(result.outcome).toBe("ready");
+  });
+
   it("resumes the exact remaining URL while preserving already captured text and not redownloading it", async () => {
     let now = Date.now(); const start = now;
     vi.spyOn(Date, "now").mockImplementation(() => now);
