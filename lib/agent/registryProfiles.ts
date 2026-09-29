@@ -38,7 +38,7 @@ const FACTS: Record<string, { label: string; unit?: string }> = {
   total_expenses_cad: { label: "Reported total expenses", unit: "CAD" },
   approval_date: { label: "Loan approval date" }, jobs_supported: { label: "Reported jobs supported", unit: "jobs" },
   naics_code: { label: "NAICS code" }, assets_under_management: { label: "Regulatory assets under management", unit: "USD" },
-  firm_employees: { label: "Reported firm employees", unit: "employees" }, advisory_clients: { label: "Reported advisory clients", unit: "clients" },
+  firm_employees: { label: "Reported employees excluding clerical workers", unit: "employees" }, advisory_clients: { label: "Reported advisory clients", unit: "clients" },
   filing_type: { label: "Filing type" }, filing_date: { label: "Filing date" }, formation_date: { label: "Formation date" },
   entity_status: { label: "Entity status" }, lien_type: { label: "UCC filing type" }, growth_percent: { label: "Reported growth", unit: "%" },
   rank: { label: "Published rank" }, npi: { label: "Organization NPI" }, organization_type: { label: "NPI entity type" },
