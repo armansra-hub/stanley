@@ -9,6 +9,14 @@ const COUNT_LABELS: Record<string, string> = {
   participants: "Plan participants", trailers: "Trailers",
   jobs_supported: "Jobs supported",
 };
+const DATASET_LABELS: Record<string, string> = {
+  fmcsa: "FMCSA carrier census", irs_exempt: "IRS nonprofit financials", sba_7a: "SBA 7(a) loan approval", sba_504: "SBA 504 loan approval",
+  tx_surveying: "Texas surveying firm registration", tx_engineering: "Texas engineering firm registration",
+  wa_contractors: "Washington contractor license", ca_contractors: "California contractor license",
+  co_sos: "Colorado business registration", co_ucc: "Colorado UCC filing", bc_orgbook: "BC business registration",
+  ca_corporations: "Canadian federal corporation", cra_charities: "Canadian charity financials",
+  cms_nppes: "Organizational NPI", sec_adv: "Investment adviser registration", sec_edgar: "SEC company filing", inc5000: "Inc. 5000 ranking",
+};
 
 function date(value: string | null | undefined): string {
   if (!value) return "Date unavailable";
@@ -37,9 +45,10 @@ export default function RegistryProfiles({ insights, loaded = true }: { insights
         if (!profile || profile.version !== 1 || !Array.isArray(profile.facts)) return <p key={index} className="mt-2 text-xs text-[var(--text-muted)]">Stored registry profile details are unavailable.</p>;
         const url = publicInsightUrl(insight.evidence_url);
         return <article className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }} key={`${profile.dataset}:${profile.recordId}`}>
-          <h4 className="font-medium">{profile.displayLabel || profile.dataset.replace(/_/g, " ")}</h4>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">Record {profile.recordId} · {profile.dataset.replace(/_/g, " ")}</p>
+          <h4 className="font-medium">{profile.displayLabel || DATASET_LABELS[profile.dataset] || profile.dataset.replace(/_/g, " ")}</h4>
+          {!profile.recordId.startsWith("row-") && <p className="mt-1 text-xs text-[var(--text-muted)]">Record {profile.recordId}</p>}
           <p className="text-xs text-[var(--text-muted)]">Source as of: {date(profile.sourceAsOf)} · Collected: {date(profile.observedAt)}</p>
+          {insight.detail && <p className="mt-1 text-xs text-[var(--text-muted)]">{insight.detail}</p>}
           <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             {profile.facts.map((fact, factIndex) => {
               const display = factDisplay(fact);

@@ -17,7 +17,7 @@ const DATASETS: Record<string, readonly string[]> = {
   tx_engineering: ["pels.texas.gov", "tbpedownloads.s3-us-west-2.amazonaws.com"],
   wa_contractors: ["data.wa.gov", "lni.wa.gov"], ca_contractors: ["cslb.ca.gov", "web.cslb.ca.gov"],
   irs_exempt: ["irs.gov", "www.irs.gov"], sba_7a: ["data.sba.gov", "sba.gov"], sba_504: ["data.sba.gov", "sba.gov"],
-  sec_adv: ["sec.gov", "www.sec.gov", "data.sec.gov"], sec_edgar: ["sec.gov", "www.sec.gov", "data.sec.gov"],
+  sec_adv: ["sec.gov", "www.sec.gov", "data.sec.gov", "reports.adviserinfo.sec.gov"], sec_edgar: ["sec.gov", "www.sec.gov", "data.sec.gov"],
   co_sos: ["data.colorado.gov", "sos.state.co.us"], co_ucc: ["data.colorado.gov", "sos.state.co.us"],
   inc5000: ["inc.com", "www.inc.com"], cms_nppes: ["download.cms.gov", "npiregistry.cms.hhs.gov"],
   bc_orgbook: ["orgbook.gov.bc.ca"], ca_corporations: ["www.ic.gc.ca", "d4bf66bykfyaf.cloudfront.net"],
