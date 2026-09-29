@@ -17,7 +17,9 @@ export async function customerReferenceRunResponse(req: Request) {
   try { if (Object.keys(await smallJson(req, 100)).length) throw new Error(); }
   catch { return NextResponse.json({ error: "invalid_body" }, { status: 400 }); }
   try {
-    const run = await runCustomerReferenceReading(Date.now() + 250_000);
+    // Return a checkpointed pass before foreground hosting/proxy timeouts.
+    // Continuation keeps the same full cohort, native questions and receipts.
+    const run = await runCustomerReferenceReading(Date.now() + 110_000);
     await logEvent("headhunter", "intelligence.customer_references", { summary: `Read ${run.processed} customer reference websites; ${run.completed} completed`, meta: run });
     return NextResponse.json({ ...await customerReferenceProgress(), run }, { headers });
   } catch {

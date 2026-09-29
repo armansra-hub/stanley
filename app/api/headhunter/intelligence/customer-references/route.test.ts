@@ -76,19 +76,26 @@ describe("customer reference research API", () => {
     expect(m.progress).not.toHaveBeenCalled();
   });
 
-  it("runs one bounded pass and returns its saved progress with a receipt", async () => {
+  it("returns checkpointed partial work within the shorter window without replaying the paid pass", async () => {
+    const continuedRun = { processed: 1, completed: 0, stoppedBy: "continued" };
+    const partial = { ...saved, references: [{ id: "in-progress-customer", status: "pending", answered: 12,
+      totalQuestions: 47, sourceStatus: "ready", sourcePages: 6 }] };
+    m.run.mockResolvedValue(continuedRun);
+    m.progress.mockResolvedValue(partial);
     const before = Date.now();
     const response = await post();
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ...saved, run });
+    expect(await response.json()).toEqual({ ...partial, run: continuedRun });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(m.run).toHaveBeenCalledTimes(1);
-    expect(m.run.mock.calls[0][0]).toBeGreaterThanOrEqual(before + 250_000);
-    expect(m.run.mock.calls[0][0]).toBeLessThanOrEqual(Date.now() + 250_000);
+    expect(m.run.mock.calls[0][0]).toBeGreaterThanOrEqual(before + 110_000);
+    expect(m.run.mock.calls[0][0]).toBeLessThanOrEqual(Date.now() + 110_000);
     expect(m.event).toHaveBeenCalledWith("headhunter", "intelligence.customer_references", {
-      summary: "Read 3 customer reference websites; 3 completed", meta: run,
+      summary: "Read 1 customer reference websites; 0 completed", meta: continuedRun,
     });
     expect(m.progress).toHaveBeenCalledTimes(1);
+    expect(await (await get()).json()).toEqual(partial);
+    expect(m.run).toHaveBeenCalledTimes(1);
   });
 
   it("reports an interrupted paid pass for read-only reconciliation without replaying it", async () => {
