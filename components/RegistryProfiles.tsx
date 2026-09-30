@@ -44,6 +44,8 @@ export default function RegistryProfiles({ insights, loaded = true }: { insights
         const profile = insight.registry_profile;
         if (!profile || profile.version !== 1 || !Array.isArray(profile.facts)) return <p key={index} className="mt-2 text-xs text-[var(--text-muted)]">Stored registry profile details are unavailable.</p>;
         const url = publicInsightUrl(insight.evidence_url);
+        const samEvidence = profile.verification?.sam;
+        const samUrl = publicInsightUrl(typeof samEvidence?.sourceUrl === "string" ? samEvidence.sourceUrl : null);
         const websiteEvidence = profile.verification?.website;
         const websiteUrl = publicInsightUrl(typeof websiteEvidence?.sourceUrl === "string" ? websiteEvidence.sourceUrl : null);
         return <article className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }} key={`${profile.dataset}:${profile.recordId}`}>
@@ -66,7 +68,14 @@ export default function RegistryProfiles({ insights, loaded = true }: { insights
             <p className="mt-1 text-[var(--text-muted)]">{profile.verification?.method === "prior_registry_binding" ? "Matched through an existing verified registry binding."
               : profile.verification?.method === "exact_legal_name_address" ? "Matched by legal name and business address."
                 : profile.verification?.method === "exact_registry_dba_address" ? "Matched by the FMCSA-reported DBA and business address."
+                : profile.verification?.method === "reviewed_sam_domain_legal_address" ? "Matched using the retained SAM official domain, legal operator and physical address."
                 : profile.verification?.method === "official_website_corroboration" ? "Matched using the company's official website and public registry record." : "Identity verification details unavailable."}</p>
+            {samEvidence && <div className="mt-1 text-[var(--text-muted)]">
+              <p>SAM source as of: {date(typeof samEvidence.sourceAsOf === "string" ? samEvidence.sourceAsOf : null)}. Registration status and addresses are snapshot observations.</p>
+              {typeof samEvidence.uei === "string" && <p>UEI {samEvidence.uei}</p>}
+              {samUrl && <a href={samUrl} target="_blank" rel="noreferrer" className="text-[var(--accent)] hover:underline">View SAM data source ↗</a>}
+              {typeof samEvidence.rawRow === "string" && <details><summary>Original SAM evidence row</summary><blockquote className="mt-1 whitespace-pre-wrap break-all">{samEvidence.rawRow}</blockquote></details>}
+            </div>}
             {websiteUrl && <a href={websiteUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">View company identity source ↗</a>}
             {typeof websiteEvidence?.quote === "string" && <blockquote className="mt-1 whitespace-pre-wrap border-l-2 pl-2 text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{websiteEvidence.quote}</blockquote>}
             <blockquote className="mt-1 whitespace-pre-wrap border-l-2 pl-2 text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{profile.provenance?.quote || insight.evidence}</blockquote>

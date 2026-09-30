@@ -2,6 +2,100 @@ import { describe, expect, it } from "vitest";
 import { parseRegistryFinding, registryContentHash, registryProfileKey, registryStreet, sameRegistryLegalName, sameRegistryStreet, verifyRegistryIdentity, type RegistryProfile } from "./registryProfiles";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 
+describe("explicit terminal US suite punctuation", () => {
+  const address = { addressLine1: "2505 Anthem Village Dr, Suite E-525", state: "NV", countryCode: "US" };
+  it.each([
+    { addressLine1: "2505 Anthem Village Drive Ste E525" },
+    { addressLine1: "2505 Anthem Village Dr, Ste. e525" },
+    { addressLine1: "2505 Anthem Village Dr", addressLine2: "Suite E525" },
+  ])("compares the same full suite inline or on its own line: $addressLine1", other => {
+    const right = { ...address, ...other };
+    expect(sameRegistryStreet(address, right)).toBe(true);
+    expect(sameRegistryStreet(right, address)).toBe(true);
+  });
+  it.each([
+    "2505 Anthem Village Dr E525", "2505 Anthem Village Dr Unit E525", "2505 Anthem Village Dr Floor E525",
+    "2505 Anthem Village Dr Suite E526", "2505 Anthem Village Dr Suite E0525", "2505 Anthem Village Dr Suite F525",
+    "2505 Anthem Village Dr Suite E525-526", "2505 Anthem Village Dr Suite EE525", "2505 Anthem Village Dr Suite E525 Floor 2",
+    "2505 Anthem Village Dr Suite E525 Suite E526", "2505 Anthem Village Dr Building A Suite E525",
+    "2506 Anthem Village Dr Suite E525", "2505 North Anthem Village Dr Suite E525", "2505 Anthem Village Road Suite E525",
+  ])("preserves explicit designators, full units and every street token: %s", addressLine1 => {
+    expect(sameRegistryStreet(address, { ...address, addressLine1 })).toBe(false);
+  });
+  it("does not discard an additional line or geography", () => {
+    const other = { ...address, addressLine1: "2505 Anthem Village Dr Ste E525" };
+    for (const change of [{ addressLine2: "Suite E525" }, { addressLine2: "Floor 2" }, { addressLine2: "North" }, { state: "TX" }, { countryCode: "CA" }, { countryCode: undefined }]) {
+      expect(sameRegistryStreet(address, { ...other, ...change })).toBe(false);
+    }
+    expect(registryStreet(address)).toBe("2505 anthem village dr unit e 525");
+    expect(registryStreet(other)).toBe("2505 anthem village dr unit e525");
+  });
+  it("retains exact legal, postal and jurisdiction checks when a canonical address uses an inline suite", () => {
+    const profile = parseRegistryFinding(registryFixture(), now).profile;
+    profile.identity = { ...profile.identity, ...address, city: "Henderson", postalCode: "89052", countryCode: "US" };
+    const a = { ...context.addresses[0], ...address, addressLine1: "2505 Anthem Village Dr Ste E525", city: "Henderson", postalCode: "89052" };
+    const ctx = { ...context, addresses: [a] }, before = JSON.stringify(profile), hash = registryContentHash(profile, "https://data.transportation.gov/resource/test.json");
+    expect(verifyRegistryIdentity(profile, { name: profile.identity.legalName }, ctx, [], now)?.method).toBe("exact_legal_name_address");
+    for (const change of [{ addressLine1: "2505 Anthem Village Dr Ste E526" }, { postalCode: "89053" }, { state: "TX" }, { countryCode: "CA" }]) {
+      expect(verifyRegistryIdentity(profile, { name: profile.identity.legalName }, { ...ctx, addresses: [{ ...a, ...change }] }, [], now)).toBeNull();
+    }
+    expect(verifyRegistryIdentity(profile, { name: "Acme Logistics LLC" }, ctx, [], now)).toBeNull();
+    expect(JSON.stringify(profile)).toBe(before);
+    expect(registryContentHash(profile, "https://data.transportation.gov/resource/test.json")).toBe(hash);
+  });
+});
+
+describe("explicit US PO-box punctuation", () => {
+  const address = { addressLine1: "P.O. Box 130808", state: "TX", countryCode: "US" };
+  it.each(["PO Box 130808", "POBox 130808", "P.O.Box 130808", "P. O. Box 130808", "po box 130808"])("compares the same complete numeric mailbox: %s", addressLine1 => {
+    const other = { ...address, addressLine1 };
+    expect(sameRegistryStreet(address, other)).toBe(true);
+    expect(sameRegistryStreet(other, address)).toBe(true);
+  });
+  it("preserves the schema's omitted US-country default, without changing fingerprints", () => {
+    const source = { addressLine1: address.addressLine1, state: "TX" };
+    const website = { ...address, addressLine1: "PO Box 130808" };
+    expect(registryStreet(source)).toBe("p o box 130808");
+    expect(registryStreet(website)).toBe("po box 130808");
+    expect(sameRegistryStreet(source, website)).toBe(true);
+  });
+  it.each([
+    "PO Box 130809", "PO Box 0130808", "PO Box 130808A", "PO Box 130808-130809",
+    "PO Box 130808 Suite 2", "PMB 130808", "130808 PO Box Road", "Rural Route 2 PO Box 130808",
+    "Care of PO Box 130808", "Old PO Box 130808", "PO Box 130808 North",
+  ])("does not discard box digits or qualifiers: %s", addressLine1 => {
+    expect(sameRegistryStreet(address, { ...address, addressLine1 })).toBe(false);
+  });
+  it("does not drop second-line station/unit information or substitute a country/state", () => {
+    const other = { ...address, addressLine1: "PO Box 130808" };
+    // Existing P.O. and P-O fingerprints are already equal. The new branch
+    // must not also merge P-O with the previously distinct PO token.
+    expect(sameRegistryStreet({ ...address, addressLine1: "P-O Box 130808" }, other)).toBe(false);
+    for (const addressLine2 of ["Station A", "Suite 2", "Floor 3", "North"]) {
+      expect(sameRegistryStreet(address, { ...other, addressLine2 })).toBe(false);
+      expect(sameRegistryStreet({ ...address, addressLine2 }, { ...other, addressLine2 })).toBe(true);
+      expect(sameRegistryStreet({ ...address, addressLine2 }, { ...other, addressLine2: "Station B" })).toBe(false);
+    }
+    for (const extra of [{ state: "OK" }, { state: undefined }, { countryCode: "CA" }, { countryCode: "GB" }]) {
+      expect(sameRegistryStreet(address, { ...other, ...extra })).toBe(false);
+    }
+  });
+  it("keeps legal-name, complete mailbox, ZIP and geography checks at the identity gate", () => {
+    const profile = parseRegistryFinding(registryFixture(), now).profile;
+    profile.identity = { ...profile.identity, addressLine1: "P.O. Box 130808", city: "Dallas", state: "TX", postalCode: "75313" };
+    const a = { ...context.addresses[0], addressLine1: "PO Box 130808", city: "Dallas", state: "TX", postalCode: "75313", countryCode: "US" };
+    const ctx = { ...context, addresses: [a] };
+    const before = JSON.stringify(profile), hash = registryContentHash(profile, "https://data.transportation.gov/resource/test.json");
+    expect(verifyRegistryIdentity(profile, { name: profile.identity.legalName }, ctx, [], now)?.method).toBe("exact_legal_name_address");
+    for (const change of [{ addressLine1: "PO Box 130809" }, { addressLine2: "Unit 3" }, { postalCode: "75314" }, { state: "OK" }, { countryCode: "CA" }]) {
+      expect(verifyRegistryIdentity(profile, { name: profile.identity.legalName }, { ...ctx, addresses: [{ ...a, ...change }] }, [], now)).toBeNull();
+    }
+    expect(verifyRegistryIdentity(profile, { name: "Acme Logistics LLC" }, ctx, [], now)).toBeNull();
+    expect(JSON.stringify(profile)).toBe(before);
+    expect(registryContentHash(profile, "https://data.transportation.gov/resource/test.json")).toBe(hash);
+  });
+});
+
 const now = new Date("2026-09-29T23:00:00Z");
 const identity = { legalName: "Acme Logistics Inc", addressLine1: "123 Main Street", city: "Austin", state: "TX", postalCode: "78701" };
 export function registryFixture() {

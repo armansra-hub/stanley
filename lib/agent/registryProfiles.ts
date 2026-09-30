@@ -7,7 +7,7 @@ export type RegistryProfile = {
   sourceAsOf: string | null; observedAt: string; facts: RegistryFact[];
   identity: { legalName: string; addressLine1: string; addressLine2?: string; city?: string; state: string; postalCode: string; countryCode?: "US" | "CA" };
   provenance: { rowSha256: string; quote: string; sourceRow: Record<string, string | number | boolean | null>; localFile?: string };
-  verification?: { method: "exact_legal_name_address" | "exact_registry_dba_address" | "prior_registry_binding" | "official_website_corroboration"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown> };
+  verification?: { method: "exact_legal_name_address" | "exact_registry_dba_address" | "prior_registry_binding" | "official_website_corroboration" | "reviewed_sam_domain_legal_address"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown>; sam?: Record<string, unknown> };
   publication?: { contentHash: string; eventId: string; publishedAt: string };
 };
 
@@ -82,7 +82,7 @@ export function registryContentHash(profile: RegistryProfile, sourceUrl: string,
 export function registryProfileKey(profile: Pick<RegistryProfile, "dataset" | "recordId">): string {
   return `registry:${profile.dataset}:${profile.recordId}`;
 }
-export type RegistryFinding = { internalId: string; companyId: string; label: string; detail: string | null; evidence: string; sourceUrl: string; profile: RegistryProfile; officialWebsiteCorroboration?: unknown };
+export type RegistryFinding = { internalId: string; companyId: string; label: string; detail: string | null; evidence: string; sourceUrl: string; profile: RegistryProfile; officialWebsiteCorroboration?: unknown; samCorroboration?: unknown };
 
 /** Closed public-field catalog. The caller supplies evidence, never a trusted identity decision. */
 export function parseRegistryFinding(input: unknown, now = new Date()): RegistryFinding {
@@ -134,7 +134,8 @@ export function parseRegistryFinding(input: unknown, now = new Date()): Registry
   const profile: RegistryProfile = { version: 1, dataset: p.dataset, recordId: p.recordId, ...(p.displayLabel ? { displayLabel: String(p.displayLabel) } : {}), sourceAsOf: p.sourceAsOf as string | null, observedAt: p.observedAt,
     facts, identity: identity as RegistryProfile["identity"], provenance: { rowSha256: provenance.rowSha256, quote: input.evidence, sourceRow: sourceRow as RegistryProfile["provenance"]["sourceRow"], ...(provenance.localFile ? { localFile: String(provenance.localFile) } : {}) } };
   return { internalId: input.internalId, companyId: input.companyId, label: registryProfileKey(profile), detail: input.detail ? String(input.detail) : null, evidence: input.evidence, sourceUrl: url.toString(), profile,
-    ...(input.officialWebsiteCorroboration !== undefined ? { officialWebsiteCorroboration: input.officialWebsiteCorroboration } : {}) };
+    ...(input.officialWebsiteCorroboration !== undefined ? { officialWebsiteCorroboration: input.officialWebsiteCorroboration } : {}),
+    ...(input.samCorroboration !== undefined ? { samCorroboration: input.samCorroboration } : {}) };
 }
 
 // Formatting equivalents only: substantive name words, street numbers and unit
@@ -212,20 +213,29 @@ function explicitUsBuilding(address: RegistryStreetAddress) {
     ? street.replace(/ building (\d+)$/, " bldg $1") : null;
 }
 function sameExplicitUsSuite(left: RegistryStreetAddress, right: RegistryStreetAddress) {
-  // Compare only a whole, explicitly labelled second-line suite. A single ASCII
-  // hyphen between one letter and an identical digit string is punctuation here;
-  // bare units, ranges, compounds and leading-zero differences remain distinct.
+  // Compare a whole labelled second-line suite or an explicit terminal suite in
+  // line 1 with no second line. Build comparison values only; retain all source
+  // fields. A single ASCII hyphen may separate one letter and identical digits.
+  // Bare units, ranges, compounds and leading-zero differences remain distinct.
   if (left.countryCode !== "US" || right.countryCode !== "US"
     || !/^[A-Z]{2}$/.test(left.state?.trim().toUpperCase() ?? "")
     || left.state!.trim().toUpperCase() !== right.state?.trim().toUpperCase()) return false;
-  const suite = /^(?:suite|ste\.?)\s+([a-z])(-?)([0-9]+)$/i;
-  const a = (left.addressLine2 ?? "").trim().match(suite), b = (right.addressLine2 ?? "").trim().match(suite);
-  if (!a || !b || a[1].toLowerCase() !== b[1].toLowerCase() || a[3] !== b[3] || a[2] === b[2]) return false;
   const designator = /\b(?:suite|ste|unit|apt|apartment|building|bldg|floor)\b/i;
-  if (designator.test(left.addressLine1) || designator.test(right.addressLine1)) return false;
-  const base = registryStreet({ addressLine1: left.addressLine1 });
-  return /^\d+[a-z]? .+/.test(base) && !/\b(?:unit|building|bldg|floor)\b/.test(base)
-    && base === registryStreet({ addressLine1: right.addressLine1 });
+  const parts = (address: RegistryStreetAddress) => {
+    const line2 = (address.addressLine2 ?? "").trim();
+    const suite = line2
+      ? line2.match(/^(?:suite|ste\.?)\s+([a-z])(-?)([0-9]+)$/i)
+      : address.addressLine1.trim().match(/^(.+?)[,\s]+(?:suite|ste\.?)\s+([a-z])(-?)([0-9]+)$/i);
+    if (!suite) return null;
+    const street = line2 ? address.addressLine1 : suite[1];
+    const index = line2 ? 1 : 2;
+    if (designator.test(street)) return null;
+    const base = registryStreet({ addressLine1: street });
+    if (!/^\d+[a-z]? .+/.test(base) || /\b(?:unit|building|bldg|floor)\b/.test(base)) return null;
+    return { base, letter: suite[index].toLowerCase(), hyphen: suite[index + 1], digits: suite[index + 2] };
+  };
+  const a = parts(left), b = parts(right);
+  return Boolean(a && b && a.base === b.base && a.letter === b.letter && a.digits === b.digits && a.hyphen !== b.hyphen);
 }
 function usPlazaSuffix(address: RegistryStreetAddress) {
   // USPS Publication 28 C1 lists PLAZA -> PLZ. Require a street suffix in line 1,
@@ -240,6 +250,20 @@ function usPlazaSuffix(address: RegistryStreetAddress) {
   return /^\d+[a-z]? .+ (?:plaza|plz)(?: unit [a-z0-9]+)?$/.test(street)
     ? street.replace(/ plaza(?= unit [a-z0-9]+$|$)/, " plz") : null;
 }
+function sameExplicitUsPoBox(left: RegistryStreetAddress, right: RegistryStreetAddress) {
+  // Only an entire, explicitly labelled numeric PO-box first line may differ in
+  // P.O./PO punctuation. Retain every box digit (including leading zeros), the
+  // complete second line and geography. Omitted country is the existing US
+  // registry default; an explicit non-US country is never admitted here.
+  if ((left.countryCode ?? "US") !== "US" || (right.countryCode ?? "US") !== "US"
+    || !/^[A-Z]{2}$/.test(left.state?.trim().toUpperCase() ?? "")
+    || left.state!.trim().toUpperCase() !== right.state?.trim().toUpperCase()) return false;
+  const box = /^(?:p\.\s*o\.|po)\s*box\s+([0-9]+)$/i;
+  const a = left.addressLine1.trim().match(box), b = right.addressLine1.trim().match(box);
+  return Boolean(a && b && a[1] === b[1]
+    && registryStreet({ addressLine1: left.addressLine2 ?? "" })
+      === registryStreet({ addressLine1: right.addressLine2 ?? "" }));
+}
 export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryStreetAddress) {
   // Keep all legacy line-split matches and fingerprints. The extra comparison
   // preserves every address token through narrowly scoped formatting rules.
@@ -249,6 +273,7 @@ export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryS
     || (albertaRangeRoad(left) !== null && albertaRangeRoad(left) === albertaRangeRoad(right))
     || (vanZandtCountyRoad(left) !== null && vanZandtCountyRoad(left) === vanZandtCountyRoad(right))
     || (explicitUsBuilding(left) !== null && explicitUsBuilding(left) === explicitUsBuilding(right))
+    || sameExplicitUsPoBox(left, right)
     || sameExplicitUsSuite(left, right)
     || (left.state?.trim().toUpperCase() === right.state?.trim().toUpperCase()
       && usPlazaSuffix(left) !== null && usPlazaSuffix(left) === usPlazaSuffix(right));
