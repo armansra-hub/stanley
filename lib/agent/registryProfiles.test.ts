@@ -86,6 +86,47 @@ describe("registry baseline validation", () => {
 });
 describe("registry identity admission", () => {
   const profile = () => parseRegistryFinding(registryFixture(), now).profile;
+  it("matches explicit Texas VZ CR and County Road labels without rewriting evidence", () => {
+    const source = { ...profile(), identity: { ...identity, legalName: "HUBBARD EXPRESS AIR FREIGHT & DELIVERY LLC", addressLine1: "153 VZ CR 4804", city: "CHANDLER", state: "TX", countryCode: "US" as const, postalCode: "75758" } };
+    const address = { ...context.addresses[0], addressLine1: "153 Vz County Road 4804", city: "Chandler", state: "TX", countryCode: "US" as const, postalCode: "75758" };
+    const company = { name: "Hubbard Express Air Freight & Delivery" };
+    const before = JSON.stringify(source);
+    const hash = registryContentHash(source, "https://safer.fmcsa.dot.gov/");
+    expect(registryStreet(source.identity)).toBe("153 vz cr 4804");
+    expect(registryStreet(address)).toBe("153 vz county rd 4804");
+    expect(sameRegistryStreet(source.identity, address)).toBe(true);
+    expect(sameRegistryStreet(address, source.identity)).toBe(true);
+    expect(verifyRegistryIdentity(source, company, { ...context, addresses: [address] }, [], now)).toMatchObject({ method: "exact_legal_name_address", sourceIds: ["record-1"] });
+    expect(JSON.stringify(source)).toBe(before);
+    expect(registryContentHash(source, "https://safer.fmcsa.dot.gov/")).toBe(hash);
+    for (const override of [{ postalCode: "75756" }, { state: "OK" }, { countryCode: "CA" as const }]) {
+      expect(verifyRegistryIdentity(source, company, { ...context, addresses: [{ ...address, ...override }] }, [], now)).toBeNull();
+    }
+    expect(verifyRegistryIdentity(source, { name: "Hubbard Express Air Freight & Delivery Inc" }, { ...context, addresses: [address] }, [], now)).toBeNull();
+  });
+  it("retains VZ road numbers, civic suffixes, directions and units", () => {
+    const address = { addressLine1: "153 Vz County Road 4804", state: "TX", countryCode: "US" };
+    for (const addressLine1 of ["154 VZ CR 4804", "153A VZ CR 4804", "153 VZ CR 4805", "153 VZ CR 4804A", "153 VZ CR 4804 North", "153 VZ CR 4804 Suite 2", "153 CR 4804", "153 VZ Court 4804", "153 VZ County Avenue 4804"]) {
+      expect(sameRegistryStreet(address, { ...address, addressLine1 })).toBe(false);
+    }
+    const unit = { ...address, addressLine2: "Suite 2" };
+    expect(sameRegistryStreet(unit, { ...unit, addressLine1: "153 VZ CR 4804" })).toBe(true);
+    for (const addressLine2 of [undefined, "Suite 3", "Floor 2"]) {
+      expect(sameRegistryStreet(unit, { ...unit, addressLine1: "153 VZ CR 4804", addressLine2 })).toBe(false);
+    }
+  });
+  it("requires explicit Texas US geography and the anchored VZ road label", () => {
+    const address = { addressLine1: "153 Vz County Road 4804", state: "TX", countryCode: "US" };
+    const abbreviated = { ...address, addressLine1: "153 VZ CR 4804" };
+    for (const override of [{ state: undefined }, { state: "OK" }, { countryCode: undefined }, { countryCode: "CA" }]) {
+      expect(sameRegistryStreet({ ...address, ...override }, abbreviated)).toBe(false);
+      expect(sameRegistryStreet(address, { ...abbreviated, ...override })).toBe(false);
+      expect(sameRegistryStreet({ ...address, ...override }, { ...abbreviated, ...override })).toBe(false);
+    }
+    for (const [expanded, short] of [["153 Old VZ County Road 4804", "153 Old VZ CR 4804"], ["153 County Road 4804", "153 CR 4804"], ["VZ County Road 4804", "VZ CR 4804"], ["153 VZ County Road", "153 VZ CR"]]) {
+      expect(sameRegistryStreet({ ...address, addressLine1: expanded }, { ...abbreviated, addressLine1: short })).toBe(false);
+    }
+  });
   it("matches explicit Alberta Range Road abbreviations without changing source fingerprints", () => {
     const source = { ...profile(), identity: { ...identity, addressLine1: "55024 RANGE ROAD 234", city: "Sturgeon County", state: "AB", countryCode: "CA" as const, postalCode: "T8T 2A7" } };
     const address = { ...context.addresses[0], addressLine1: "55024 Rge Rd 234", city: "Sturgeon County", state: "AB", countryCode: "CA" as const, postalCode: "T8T2A7" };

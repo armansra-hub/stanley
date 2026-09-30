@@ -189,13 +189,22 @@ function albertaRangeRoad(address: RegistryStreetAddress) {
   return /^\d+[a-z]? (?:rge|range) rd \d+[a-z]?(?: |$)/.test(street)
     ? street.replace(/^(\d+[a-z]?) rge rd /, "$1 range rd ") : null;
 }
+function vanZandtCountyRoad(address: RegistryStreetAddress) {
+  // VZ CR and VZ County Road are equivalent local road labels. Restrict the
+  // comparison to explicit Texas US addresses and preserve every other token.
+  if (address.countryCode !== "US" || address.state?.trim().toUpperCase() !== "TX") return null;
+  const street = registryStreet(address);
+  return /^\d+[a-z]? vz (?:cr|county rd) \d+[a-z]?(?: |$)/.test(street)
+    ? street.replace(/^(\d+[a-z]?) vz cr /, "$1 vz county rd ") : null;
+}
 export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryStreetAddress) {
   // Keep all legacy line-split matches and fingerprints. The extra comparison
   // only changes an explicit floor-only second line, never the street line.
   return registryStreet(left) === registryStreet(right)
     || registryStreet({ ...left, addressLine2: explicitFloorLine(left.addressLine2 ?? "") })
       === registryStreet({ ...right, addressLine2: explicitFloorLine(right.addressLine2 ?? "") })
-    || (albertaRangeRoad(left) !== null && albertaRangeRoad(left) === albertaRangeRoad(right));
+    || (albertaRangeRoad(left) !== null && albertaRangeRoad(left) === albertaRangeRoad(right))
+    || (vanZandtCountyRoad(left) !== null && vanZandtCountyRoad(left) === vanZandtCountyRoad(right));
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {
