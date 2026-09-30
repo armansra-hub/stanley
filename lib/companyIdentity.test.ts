@@ -23,6 +23,26 @@ describe("sourced business identity", () => {
   it("keeps Canadian postal and country evidence", () => {
     expect(parseNetSuiteIdentityHeader("Address Example Inc.\n42 King St\nSuite 100\nToronto ON M5H 1J9\nCanada", source).addresses[0]).toMatchObject({ addressLine1: "42 King St", addressLine2: "Suite 100", city: "Toronto", state: "ON", postalCode: "M5H 1J9", countryCode: "CA" });
   });
+  it("does not mistake an exact company addressee with an account number for its street", () => {
+    const parsed = parseNetSuiteIdentityHeader("Address 4580282 J MAR & Associates\n5956 Sherry Ln\n20th Floor\nDallas TX 75225\nUnited States", source, "J MAR & Associates");
+    expect(parsed.addresses[0]).toMatchObject({ addressLine1: "5956 Sherry Ln", addressLine2: "20th Floor", city: "Dallas" });
+    expect(parsed.aliases).toEqual([]);
+    expect(parseNetSuiteIdentityHeader("Address\n4580282 J MAR & Associates\n5956 Sherry Ln\nDallas TX 75225\nUnited States", source, "J MAR & Associates").addresses[0].addressLine1).toBe("5956 Sherry Ln");
+    expect(buildCompanyIdentityContext({ ...company, name: "Northwest Express Inc." }, { record: { ...source,
+      header: "Address 8077386 Northwest Express Inc.\n17W620 14th St\nOakbrook Terrace IL 60181\nUnited States" } }).addresses[0].addressLine1).toBe("17W620 14th St");
+  });
+  it("handles numeric company names while preserving an unmatched numeric street and unknown units", () => {
+    const numeric = parseNetSuiteIdentityHeader("Address 5280 Locates\n369 Uvalda St\nAurora CO 80011\nUnited States", source, "5280 Locates");
+    expect(numeric.addresses[0].addressLine1).toBe("369 Uvalda St");
+    const unrelated = parseNetSuiteIdentityHeader("Address 4580282 Main St\nSuite 900\nDallas TX 75225\nUnited States", source, "J MAR & Associates");
+    expect(unrelated.addresses[0]).toMatchObject({ addressLine1: "4580282 Main St", addressLine2: "Suite 900" });
+    expect(parseNetSuiteIdentityHeader("Address 4580282 J MAR & Associates\nDallas TX 75225\nUnited States", source, "J MAR & Associates").addresses).toEqual([]);
+    const conflict = parseNetSuiteIdentityHeader("Address 1234 Acme LLC\n42 Main St\nDallas TX 75225\nUnited States", source, "Acme Inc.");
+    expect(conflict.addresses[0].addressLine1).toBe("1234 Acme LLC");
+    expect(conflict.aliases).toEqual([]);
+    const retained = parseNetSuiteIdentityHeader("Address 1234 ACME INC.\n42 Main St\nDallas TX 75225\nUnited States", source, "Acme, Inc.");
+    expect(retained.aliases).toEqual(["ACME INC."]);
+  });
   it("preserves sourced website second lines and never silently discards an unusable unit line", () => {
     const context = buildCompanyIdentityContext(company, { websites: [{ id: "page", url: "https://example.test/contact", capturedAt: source.capturedAt,
       identity: { names: [company.name], addresses: [{ addressLine1: "100 Main St", addressLine2: "Suite 240" },

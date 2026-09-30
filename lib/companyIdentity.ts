@@ -27,7 +27,7 @@ export function isCompanyIdentitySource(url: string, domain?: string | null): bo
 
 /** Read only the labelled business-address block, never addresses in activities,
  * event invitations, signatures, contacts, or arbitrary CRM notes. */
-export function parseNetSuiteIdentityHeader(header: string, source: { id: string; capturedAt: string }) {
+export function parseNetSuiteIdentityHeader(header: string, source: { id: string; capturedAt: string }, companyName?: string) {
   const lines = header.slice(0, 6000).replace(/\r/g, "").replace(/\u00a0/g, " ").split("\n").map(line => line.trim());
   const boundary = lines.findIndex(line => /^(Firmographic Information|Lead Qualification|Research Notes|Comments|View\s+Touch Type)\b/.test(line));
   const account = boundary < 0 ? lines : lines.slice(0, boundary);
@@ -38,7 +38,17 @@ export function parseNetSuiteIdentityHeader(header: string, source: { id: string
     if (!line || /^(Primary Currency|Relationship with Oracle|Firmographic Information)\b/.test(line)) break;
     block.push(line);
   }
-  const streetIndex = block.findIndex(line => /^(?:\d+[A-Z]?(?:[-/]\d+)?\s|P\.?\s*O\.?\s+Box\s+\d)/i.test(line));
+  // NetSuite may prefix the addressee with its numeric account code. A known
+  // company name (including names such as "5280 Locates") is not a street.
+  // Skip only the first exact company-name label, never an arbitrary numeric line.
+  const labelIndex = block.findIndex(line => Boolean(line.trim()));
+  const observedLabel = block[labelIndex] ?? "", firstLabel = observedLabel.replace(/^\d+\s+/, "");
+  const exactLabel = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const matchedLabel = companyName && exactLabel(observedLabel) === exactLabel(companyName) ? observedLabel
+    : companyName && exactLabel(firstLabel) === exactLabel(companyName) ? firstLabel : undefined;
+  const isCompanyLabel = Boolean(matchedLabel);
+  const streetIndex = block.findIndex((line, i) => !(i === labelIndex && isCompanyLabel)
+    && /^(?:\d+[A-Z]?\d*(?:[-/]\d+)?\s|P\.?\s*O\.?\s+Box\s+\d)/i.test(line));
   if (streetIndex < 0) return { aliases: [] as string[], addresses: [] as IdentityAddress[] };
   const locationIndex = block.findIndex((line, i) => i > streetIndex && /^(.+?)\s+([A-Z]{2})\s+(\d{5}(?:[- ]?\d{4})?|[A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i.test(line));
   if (locationIndex < 0) return { aliases: [] as string[], addresses: [] as IdentityAddress[] };
@@ -49,14 +59,14 @@ export function parseNetSuiteIdentityHeader(header: string, source: { id: string
   const secondLine = block.slice(streetIndex + 1, locationIndex).join(" ");
   const addressLine2 = clean(secondLine);
   if (!addressLine1 || !countryCode || secondLine && !addressLine2) return { aliases: [] as string[], addresses: [] as IdentityAddress[] };
-  const label = clean(block.slice(0, streetIndex).join(" "));
+  const label = clean(block.slice(0, streetIndex).map((line, i) => i === labelIndex && isCompanyLabel ? matchedLabel! : line).join(" "));
   const aliases = label && /\b(?:inc\.?|incorporated|llc|ltd\.?|limited|corp\.?|corporation|llp|pllc|pc)\.?$/i.test(label) ? [label] : [];
   return { aliases, addresses: [{ addressLine1, ...(addressLine2 ? { addressLine2 } : {}), city: location[1], state: location[2].toUpperCase(), postalCode: location[3], countryCode,
     sourceKind: "netsuite_record" as const, sourceId: source.id, capturedAt: source.capturedAt }] };
 }
 
 export function buildCompanyIdentityContext(company: Company, sources: SourceContext): CompanyIdentityContext {
-  const record = sources.record && typeof sources.record.header === "string" ? parseNetSuiteIdentityHeader(sources.record.header, sources.record) : { aliases: [], addresses: [] };
+  const record = sources.record && typeof sources.record.header === "string" ? parseNetSuiteIdentityHeader(sources.record.header, sources.record, company.name) : { aliases: [], addresses: [] };
   const aliases: string[] = [...record.aliases], addresses: IdentityAddress[] = [...record.addresses];
   const anchored = [company.name, ...record.aliases].map(identityName);
   for (const claim of (sources.claims ?? []).slice(0, 20)) {

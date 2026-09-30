@@ -57,7 +57,7 @@ export function sitePageKind(value: string): SitePageKind | null {
   const text = value.replace(/[-_/]+/g, " ");
   if (/\b(careers?|jobs?|employment|open positions?|join (?:our )?team|work (?:with|for) us)\b/i.test(text)) return "careers";
   if (/\b(news(?:room)?|press|announcements?|acquisitions?|insights?|blog|media center)\b/i.test(text)) return "news";
-  if (/\b(locations?|offices?|branches|where we (?:are|work))\b/i.test(text)) return "locations";
+  if (/\b(locations?|offices?|branches|contact|where we (?:are|work))\b/i.test(text)) return "locations";
   if (/\b(about|our company|who we are|leadership|our team)\b/i.test(text)) return "about";
   if (/\b(services?|solutions?|what we do|industries|capabilities|expertise|practice areas?|case stud(?:y|ies)|our work|projects?|pricing|plans|terms|billing)\b/i.test(text)) return "services";
   return null;

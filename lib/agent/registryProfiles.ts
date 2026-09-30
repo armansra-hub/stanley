@@ -7,7 +7,7 @@ export type RegistryProfile = {
   sourceAsOf: string | null; observedAt: string; facts: RegistryFact[];
   identity: { legalName: string; addressLine1: string; addressLine2?: string; city?: string; state: string; postalCode: string; countryCode?: "US" | "CA" };
   provenance: { rowSha256: string; quote: string; sourceRow: Record<string, string | number | boolean | null>; localFile?: string };
-  verification?: { method: "exact_legal_name_address" | "prior_registry_binding"; verifiedAt: string; sourceIds: string[] };
+  verification?: { method: "exact_legal_name_address" | "prior_registry_binding" | "official_website_corroboration"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown> };
   publication?: { contentHash: string; eventId: string; publishedAt: string };
 };
 
@@ -82,7 +82,7 @@ export function registryContentHash(profile: RegistryProfile, sourceUrl: string,
 export function registryProfileKey(profile: Pick<RegistryProfile, "dataset" | "recordId">): string {
   return `registry:${profile.dataset}:${profile.recordId}`;
 }
-export type RegistryFinding = { internalId: string; companyId: string; label: string; detail: string | null; evidence: string; sourceUrl: string; profile: RegistryProfile };
+export type RegistryFinding = { internalId: string; companyId: string; label: string; detail: string | null; evidence: string; sourceUrl: string; profile: RegistryProfile; officialWebsiteCorroboration?: unknown };
 
 /** Closed public-field catalog. The caller supplies evidence, never a trusted identity decision. */
 export function parseRegistryFinding(input: unknown, now = new Date()): RegistryFinding {
@@ -133,7 +133,8 @@ export function parseRegistryFinding(input: unknown, now = new Date()): Registry
   if (p.dataset === "cms_nppes" && ![2, "2"].includes(sourceRow.organization_type as string | number)) throw new Error("CMS NPPES profiles require an organization (entity type 2)");
   const profile: RegistryProfile = { version: 1, dataset: p.dataset, recordId: p.recordId, ...(p.displayLabel ? { displayLabel: String(p.displayLabel) } : {}), sourceAsOf: p.sourceAsOf as string | null, observedAt: p.observedAt,
     facts, identity: identity as RegistryProfile["identity"], provenance: { rowSha256: provenance.rowSha256, quote: input.evidence, sourceRow: sourceRow as RegistryProfile["provenance"]["sourceRow"], ...(provenance.localFile ? { localFile: String(provenance.localFile) } : {}) } };
-  return { internalId: input.internalId, companyId: input.companyId, label: registryProfileKey(profile), detail: input.detail ? String(input.detail) : null, evidence: input.evidence, sourceUrl: url.toString(), profile };
+  return { internalId: input.internalId, companyId: input.companyId, label: registryProfileKey(profile), detail: input.detail ? String(input.detail) : null, evidence: input.evidence, sourceUrl: url.toString(), profile,
+    ...(input.officialWebsiteCorroboration !== undefined ? { officialWebsiteCorroboration: input.officialWebsiteCorroboration } : {}) };
 }
 
 // Formatting equivalents only: substantive name words, street numbers and unit
@@ -145,7 +146,7 @@ function legalName(v: string) {
   const equivalences: Record<string, string> = { incorporated: "inc", corporation: "corp", limited: "ltd" };
   return { core: suffix ? name.slice(0, suffix.index) : name, suffix: suffix ? equivalences[suffix[1]] ?? suffix[1] : null };
 }
-function sameLegalName(left: string, right: string) {
+export function sameRegistryLegalName(left: string, right: string) {
   const a = legalName(left), b = legalName(right);
   return Boolean(a.core && a.core === b.core && (!a.suffix || !b.suffix || a.suffix === b.suffix));
 }
@@ -158,12 +159,15 @@ const addressWords: Record<string, string> = {
   tenth: "10th", eleventh: "11th", twelfth: "12th", thirteenth: "13th", fourteenth: "14th", fifteenth: "15th",
   sixteenth: "16th", seventeenth: "17th", eighteenth: "18th", nineteenth: "19th", twentieth: "20th",
 };
-function street(address: { addressLine1: string; addressLine2?: string }) {
+export function registryStreet(address: { addressLine1: string; addressLine2?: string }) {
   return normalized(`${address.addressLine1} ${address.addressLine2 ?? ""}`.replace(/#/g, " unit "))
     .replace(/\b(north|south)\s+(east|west)\b/g, "$1$2")
     .replace(/\b(suite|ste|unit|apartment|apt)(?=\d)/g, "$1 ")
     .split(" ").map(word => addressWords[word] ?? word).join(" ")
-    .replace(/\bunit\s+unit\b/g, "unit");
+    .replace(/\bunit\s+unit\b/g, "unit")
+    // Some source headers repeat the same terminal suite in both address lines.
+    // Collapse only the identical unit token; different units/floors survive.
+    .replace(/\bunit ([a-z0-9]+)(?: unit \1)+$/, "unit $1");
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {
@@ -171,13 +175,14 @@ export function verifyRegistryIdentity(profile: RegistryProfile, company: { name
   const names = [company.name, ...context.aliases];
   // Postal city aliases are immaterial only after the entire street/unit, ZIP,
   // state and compatible country agree with an independently sourced address.
-  const address = context.addresses.find(a => names.some(name => sameLegalName(name, p.legalName)) && street(a) === street(p)
+  const address = context.addresses.find(a => names.some(name => sameRegistryLegalName(name, p.legalName)) && registryStreet(a) === registryStreet(p)
     && normalized(a.state ?? "") === normalized(p.state)
     && (!a.countryCode || a.countryCode === (p.countryCode ?? "US"))
     && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));
   if (address) return { method: "exact_legal_name_address", verifiedAt: now.toISOString(), sourceIds: [address.sourceId] };
   const binding = prior.find(old => old.dataset === profile.dataset && old.recordId === profile.recordId && old.publication?.contentHash
-    && old.verification?.sourceIds.length && ["exact_legal_name_address", "prior_registry_binding"].includes(old.verification.method)
+    && old.verification?.sourceIds.length && ["exact_legal_name_address", "prior_registry_binding", "official_website_corroboration"].includes(old.verification.method)
     && stableRegistryJson(old.identity) === stableRegistryJson(profile.identity));
-  return binding ? { method: "prior_registry_binding", verifiedAt: now.toISOString(), sourceIds: [...binding.verification!.sourceIds] } : null;
+  return binding ? { method: "prior_registry_binding", verifiedAt: now.toISOString(), sourceIds: [...binding.verification!.sourceIds],
+    ...(binding.verification!.website ? { website: binding.verification!.website } : {}) } : null;
 }

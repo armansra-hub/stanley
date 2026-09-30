@@ -6,6 +6,7 @@ import { recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { TRIGGER_SPEC } from "@/lib/triggers/config";
 import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
 import { parseRegistryFinding, registryContentHash, verifyRegistryIdentity, type RegistryProfile } from "@/lib/agent/registryProfiles";
+import { parseRegistryWebsiteCorroboration, registryWebsiteVerifier } from "@/lib/agent/registryWebsite";
 
 /**
  * Findings from the LinkedIn/website FULL-TEXT reading pass (2026-07-30).
@@ -60,6 +61,12 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
   catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid registry profile" }, { status: 422 }); }
   const keys = parsed.map(row => `${row.companyId}:${row.label}`);
   if (new Set(keys).size !== keys.length) return NextResponse.json({ error: "duplicate registry profile keys in batch" }, { status: 422 });
+  let websiteProofs;
+  try { websiteProofs = parsed.map(row => row.officialWebsiteCorroboration === undefined ? null : parseRegistryWebsiteCorroboration(row.officialWebsiteCorroboration, row)); }
+  catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid registry website evidence" }, { status: 422 }); }
+  if (new Set(websiteProofs.filter(proof => proof !== null).map(proof => proof.sourceUrl)).size > 3)
+    return NextResponse.json({ error: "registry website requests capped at three distinct pages" }, { status: 422 });
+  const verifyWebsite = registryWebsiteVerifier();
   const db = serviceClient();
   const ids = [...new Set(parsed.map(row => row.internalId))];
   const { data: companies, error } = await db.from("companies").select(COMPANY_FIELDS).in("netsuite_internal_id", ids);
@@ -68,7 +75,7 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
   const contexts = new Map<string, Awaited<ReturnType<typeof loadCompanyIdentityContext>>>();
   const { data: existing, error: priorError } = await db.from("lead_insights").select("*").in("company_id", parsed.map(row => row.companyId)).eq("source", "registry");
   if (priorError) return NextResponse.json({ error: "registry prior profiles unavailable" }, { status: 503 });
-  for (const row of parsed) {
+  for (const [index, row] of parsed.entries()) {
     const matches = ((companies ?? []) as RegistryCompany[]).filter(c => c.netsuite_internal_id === row.internalId && canonical(c));
     if (matches.length !== 1 || matches[0].id !== row.companyId) return NextResponse.json({ error: "registry exact company identity is missing or ambiguous", internalId: row.internalId }, { status: 422 });
     const company = matches[0];
@@ -78,7 +85,12 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
       catch { return NextResponse.json({ error: "registry company identity context unavailable", internalId: row.internalId }, { status: 503 }); }
     }
     const prior = (existing ?? []).filter(old => old.company_id === company.id && old.netsuite_internal_id === row.internalId && old.registry_profile).map(old => old.registry_profile as RegistryProfile);
-    const verification = verifyRegistryIdentity(row.profile, company, context, prior);
+    let verification = verifyRegistryIdentity(row.profile, company, context, prior);
+    const proof = websiteProofs[index];
+    if (proof) {
+      try { verification = await verifyWebsite(row, proof, company, context); }
+      catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry website corroboration unavailable", internalId: row.internalId }, { status: 422 }); }
+    }
     if (!verification) return NextResponse.json({ error: "registry identity requires corroborated legal name and full street/postal/state, or an unchanged verified binding", internalId: row.internalId }, { status: 422 });
     row.profile.verification = verification;
     rows.push({ company_id: company.id, netsuite_internal_id: row.internalId, source: "registry", kind: "ops_profile", label: row.label,

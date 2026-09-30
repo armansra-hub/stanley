@@ -44,6 +44,8 @@ export default function RegistryProfiles({ insights, loaded = true }: { insights
         const profile = insight.registry_profile;
         if (!profile || profile.version !== 1 || !Array.isArray(profile.facts)) return <p key={index} className="mt-2 text-xs text-[var(--text-muted)]">Stored registry profile details are unavailable.</p>;
         const url = publicInsightUrl(insight.evidence_url);
+        const websiteEvidence = profile.verification?.website;
+        const websiteUrl = publicInsightUrl(typeof websiteEvidence?.sourceUrl === "string" ? websiteEvidence.sourceUrl : null);
         return <article className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }} key={`${profile.dataset}:${profile.recordId}`}>
           <h4 className="font-medium">{profile.displayLabel || DATASET_LABELS[profile.dataset] || profile.dataset.replace(/_/g, " ")}</h4>
           {!profile.recordId.startsWith("row-") && <p className="mt-1 text-xs text-[var(--text-muted)]">Record {profile.recordId}</p>}
@@ -62,7 +64,10 @@ export default function RegistryProfiles({ insights, loaded = true }: { insights
             <p className="mt-1">{profile.identity?.legalName}</p>
             <p className="text-[var(--text-muted)]">{[profile.identity?.addressLine1, profile.identity?.addressLine2, profile.identity?.city, profile.identity?.state, profile.identity?.postalCode].filter(Boolean).join(", ")}</p>
             <p className="mt-1 text-[var(--text-muted)]">{profile.verification?.method === "prior_registry_binding" ? "Matched through an existing verified registry binding."
-              : profile.verification?.method === "exact_legal_name_address" ? "Matched by legal name and business address." : "Identity verification details unavailable."}</p>
+              : profile.verification?.method === "exact_legal_name_address" ? "Matched by legal name and business address."
+                : profile.verification?.method === "official_website_corroboration" ? "Matched using the company's official website and public registry record." : "Identity verification details unavailable."}</p>
+            {websiteUrl && <a href={websiteUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">View company identity source ↗</a>}
+            {typeof websiteEvidence?.quote === "string" && <blockquote className="mt-1 whitespace-pre-wrap border-l-2 pl-2 text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{websiteEvidence.quote}</blockquote>}
             <blockquote className="mt-1 whitespace-pre-wrap border-l-2 pl-2 text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{profile.provenance?.quote || insight.evidence}</blockquote>
           </details>
         </article>;

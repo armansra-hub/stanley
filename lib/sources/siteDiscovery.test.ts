@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { companyPageUrl, discoverSiteLinks, sitePageEvidence, sitemapLocations } from "./siteDiscovery";
 
 describe("company source discovery and evidence", () => {
+  it("discovers own-site contact pages as location evidence without following external or email links", () => {
+    expect(discoverSiteLinks('<a href="/contact-us">Contact us</a><a href="mailto:hello@acme.com">Contact</a><a href="https://unrelated.com/contact">Contact</a>', "https://acme.com/"))
+      .toEqual([{ url: "https://acme.com/contact-us", label: "Contact us", kind: "locations" }]);
+  });
   it("does not trust canonical tags to collapse unrelated or distinct documents", () => {
     for (const canonical of ["https://foreign.example/story", "https://acme.com/"]) {
       const page = sitePageEvidence(`<title>New office</title><link rel="canonical" href="${canonical}"><main>Office announcement.</main>`, "https://acme.com/news/office");

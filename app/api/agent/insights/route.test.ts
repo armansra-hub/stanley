@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), auth: vi.fn(), identity: vi.fn(), trigger: vi.fn(), priority: vi.fn(), log: vi.fn() }));
+import { createHash } from "node:crypto";
+const mocks = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), auth: vi.fn(), identity: vi.fn(), trigger: vi.fn(), priority: vi.fn(), log: vi.fn(), website: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: mocks.from, rpc: mocks.rpc }) }));
 vi.mock("@/lib/agent/auth", () => ({ agentAuthOk: mocks.auth, callerAgent: () => "codex", unauthorized: () => new Response("denied", { status: 401 }) }));
 vi.mock("@/lib/companyIdentity", () => ({ loadCompanyIdentityContext: mocks.identity }));
 vi.mock("@/lib/db/events", () => ({ logEvent: mocks.log }));
 vi.mock("@/lib/db/triggers", () => ({ recordTrigger: mocks.trigger, recomputePriority: mocks.priority }));
+vi.mock("@/lib/agent/registryWebsite", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/agent/registryWebsite")>(), registryWebsiteVerifier: () => mocks.website }));
+import { parseRegistryFinding } from "@/lib/agent/registryProfiles";
+import { registryWebsiteEvidenceHash } from "@/lib/agent/registryWebsite";
 import { POST, GET } from "./route";
 
 type Row = Record<string, any>; // DB fixture rows deliberately model the external boundary.
@@ -20,6 +24,12 @@ function finding() {
       provenance: { rowSha256: "a".repeat(64), quote: evidence, sourceRow } } };
 }
 const post = (body: unknown) => POST(new Request("https://example.test/api/agent/insights", { method: "POST", body: JSON.stringify(body) }));
+function websiteFinding(sourceUrl = "https://acme.test/") {
+  const input = finding(), quote = "Acme Inc Headquarters 123 Main St Austin TX 78701", hash = createHash("sha256").update(quote).digest("hex");
+  const proof = { sourceUrl, normalizedVisibleTextSha256: hash, quoteSha256: hash, quote, subject: "Acme Inc", address: { addressLine1: "123 Main St", city: "Austin", state: "TX", postalCode: "78701", countryCode: "US" as const } };
+  const evidenceSha256 = registryWebsiteEvidenceHash(parseRegistryFinding(input), proof);
+  return { ...input, officialWebsiteCorroboration: { ...proof, reader: { taskId: "/root/reader", reviewedAt: new Date().toISOString(), evidenceSha256 }, reviewer: { taskId: "/root/reviewer", reviewedAt: new Date().toISOString(), evidenceSha256 } } };
+}
 beforeEach(() => {
   vi.clearAllMocks(); eventReadError = false; mocks.auth.mockReturnValue(true);
   tables = { companies: [{ id: companyId, netsuite_internal_id: "123", name: "Acme Inc", domain: "acme.test", lists: ["netsuite_tam"] }], lead_insights: [], app_events: [] };
@@ -45,6 +55,33 @@ beforeEach(() => {
   });
 });
 describe("registry insight publication", () => {
+  it("uses fresh website verification for held identities through the same exact publisher and readback", async () => {
+    mocks.identity.mockResolvedValue({ aliases: [], addresses: [], context: "" });
+    mocks.website.mockResolvedValue({ method: "official_website_corroboration", verifiedAt: new Date().toISOString(), sourceIds: ["website:sha256:proof"], website: { quote: "exact reviewed passage" } });
+    const input = websiteFinding();
+    const dryRun = await post({ findings: [input], dryRun: true });
+    expect(dryRun.status).toBe(200); expect(mocks.rpc).not.toHaveBeenCalled();
+    const published = await post({ findings: [input] });
+    expect(published.status).toBe(200); expect(mocks.website).toHaveBeenCalledTimes(2);
+    expect(tables.lead_insights[0].registry_profile.verification.method).toBe("official_website_corroboration");
+    expect(mocks.rpc).toHaveBeenCalledTimes(1); expect(mocks.trigger).not.toHaveBeenCalled(); expect(mocks.priority).not.toHaveBeenCalled();
+  });
+  it("fails a forged or unavailable website proof before any write, and caps distinct reviewed pages", async () => {
+    const input = websiteFinding();
+    input.officialWebsiteCorroboration.reviewer.evidenceSha256 = "f".repeat(64);
+    expect((await post({ findings: [input] })).status).toBe(422); expect(mocks.website).not.toHaveBeenCalled();
+    mocks.website.mockRejectedValue(new Error("registry website changed or exact reviewed quote missing"));
+    expect((await post({ findings: [websiteFinding()] })).status).toBe(422);
+    const four = Array.from({ length: 4 }, (_, i) => {
+      const item = websiteFinding(`https://acme.test/page-${i}`);
+      item.registryProfile.recordId = String(i);
+      const { reader, reviewer, ...proof } = item.officialWebsiteCorroboration;
+      const evidenceSha256 = registryWebsiteEvidenceHash(parseRegistryFinding(item), proof);
+      return { ...item, officialWebsiteCorroboration: { ...proof, reader: { ...reader, evidenceSha256 }, reviewer: { ...reviewer, evidenceSha256 } } };
+    });
+    expect((await post({ findings: four })).status).toBe(422);
+    expect(mocks.rpc).not.toHaveBeenCalled(); expect(writes).not.toHaveBeenCalled();
+  });
   it("dry run verifies canonical source identity with no write or trigger/priority path", async () => {
     tables.companies.push({ ...tables.companies[0], id: "historical", lists: ["tam_duplicate"] });
     const result = await post({ findings: [finding()], dryRun: true });

@@ -14,6 +14,15 @@ export function registryFixture() {
 }
 const context: CompanyIdentityContext = { aliases: [], context: "private source headers must not leave this module", addresses: [{ addressLine1: "123 MAIN ST", city: "Austin", state: "TX", postalCode: "78701-1234", sourceKind: "netsuite_record", sourceId: "record-1", capturedAt: "2026-09-28T00:00:00Z" }] };
 describe("registry baseline validation", () => {
+  it("collapses an identical repeated terminal suite but preserves differing units and floors", () => {
+    const profile = parseRegistryFinding(registryFixture(), now).profile;
+    profile.identity = { ...profile.identity, addressLine1: "4161 N Thanksgiving Way Ste 202" };
+    const ctx = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "4161 N Thanksgiving Way Ste202", addressLine2: "Suite 202" }] };
+    expect(verifyRegistryIdentity(profile, { name: profile.identity.legalName }, ctx, [], now)?.method).toBe("exact_legal_name_address");
+    for (const addressLine2 of ["Suite 203", "Floor 202", "Suite 202 Floor 2"]) {
+      expect(verifyRegistryIdentity(profile, { name: profile.identity.legalName }, { ...ctx, addresses: [{ ...ctx.addresses[0], addressLine2 }] }, [], now)).toBeNull();
+    }
+  });
   it("retains null source date, zero facts and source-specific units; key ignores mutable label/count", () => {
     const row = parseRegistryFinding(registryFixture(), now);
     expect(row.profile.sourceAsOf).toBeNull();
