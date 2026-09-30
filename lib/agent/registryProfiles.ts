@@ -159,6 +159,17 @@ const addressWords: Record<string, string> = {
   tenth: "10th", eleventh: "11th", twelfth: "12th", thirteenth: "13th", fourteenth: "14th", fifteenth: "15th",
   sixteenth: "16th", seventeenth: "17th", eighteenth: "18th", nineteenth: "19th", twentieth: "20th",
 };
+function explicitFloorLine(line: string) {
+  // Only a whole second address line may change floor notation. Keep suites,
+  // compound designators and street numbers outside this equivalence.
+  const words = line.trim().toLowerCase().split(/\s+/).map(word => addressWords[word] ?? word).join(" ");
+  const match = words.match(/^(?:floor ([1-9]\d*)(st|nd|rd|th)?|([1-9]\d*)(st|nd|rd|th)? floor)$/);
+  if (!match) return line;
+  const digits = match[1] ?? match[3], suffix = match[2] ?? match[4], floor = Number(digits);
+  if (!Number.isSafeInteger(floor)) return line;
+  const expected = floor % 100 >= 11 && floor % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[floor % 10] ?? "th";
+  return suffix && suffix !== expected ? line : `floor ${digits}`;
+}
 export function registryStreet(address: { addressLine1: string; addressLine2?: string }) {
   return normalized(`${address.addressLine1} ${address.addressLine2 ?? ""}`.replace(/#/g, " unit "))
     .replace(/\b(north|south)\s+(east|west)\b/g, "$1$2")
@@ -169,13 +180,20 @@ export function registryStreet(address: { addressLine1: string; addressLine2?: s
     // Collapse only the identical unit token; different units/floors survive.
     .replace(/\bunit ([a-z0-9]+)(?: unit \1)+$/, "unit $1");
 }
+export function sameRegistryStreet(left: { addressLine1: string; addressLine2?: string }, right: { addressLine1: string; addressLine2?: string }) {
+  // Keep all legacy line-split matches and fingerprints. The extra comparison
+  // only changes an explicit floor-only second line, never the street line.
+  return registryStreet(left) === registryStreet(right)
+    || registryStreet({ ...left, addressLine2: explicitFloorLine(left.addressLine2 ?? "") })
+      === registryStreet({ ...right, addressLine2: explicitFloorLine(right.addressLine2 ?? "") });
+}
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {
   const p = profile.identity;
   const names = [company.name, ...context.aliases];
   // Postal city aliases are immaterial only after the entire street/unit, ZIP,
   // state and compatible country agree with an independently sourced address.
-  const address = context.addresses.find(a => names.some(name => sameRegistryLegalName(name, p.legalName)) && registryStreet(a) === registryStreet(p)
+  const address = context.addresses.find(a => names.some(name => sameRegistryLegalName(name, p.legalName)) && sameRegistryStreet(a, p)
     && normalized(a.state ?? "") === normalized(p.state)
     && (!a.countryCode || a.countryCode === (p.countryCode ?? "US"))
     && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));

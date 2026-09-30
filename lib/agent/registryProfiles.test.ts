@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRegistryFinding, registryContentHash, registryProfileKey, verifyRegistryIdentity, type RegistryProfile } from "./registryProfiles";
+import { parseRegistryFinding, registryContentHash, registryProfileKey, registryStreet, verifyRegistryIdentity, type RegistryProfile } from "./registryProfiles";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 
 const now = new Date("2026-09-29T23:00:00Z");
@@ -86,6 +86,45 @@ describe("registry baseline validation", () => {
 });
 describe("registry identity admission", () => {
   const profile = () => parseRegistryFinding(registryFixture(), now).profile;
+  it.each([
+    ["Floor 2", "Second Floor"], ["Floor 2", "2nd Floor"], ["Floor 2", "Floor 2nd"],
+    ["Floor 11", "Eleventh Floor"], ["Floor 12", "12th Floor"], ["Floor 13", "13th Floor"],
+    ["Floor 20", "Twentieth Floor"], ["Floor 21", "21st Floor"], ["Floor 112", "112th Floor"],
+  ])("matches explicit floor-only second lines without changing source evidence: %s / %s", (sourceFloor, websiteFloor) => {
+    const source = { ...profile(), identity: { ...identity, addressLine1: "1550 Wewatta St.", addressLine2: sourceFloor } };
+    const before = JSON.stringify(source);
+    const website = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "1550 Wewatta Street", addressLine2: websiteFloor }] };
+    expect(verifyRegistryIdentity(source, { name: identity.legalName }, website, [], now)?.method).toBe("exact_legal_name_address");
+    expect(JSON.stringify(source)).toBe(before);
+  });
+  it("does not discard floors, replace suites or repair invalid/compound floor designators", () => {
+    const source = { ...profile(), identity: { ...identity, addressLine1: "1550 Wewatta St", addressLine2: "Floor 2" } };
+    for (const addressLine2 of [undefined, "Floor 3", "Third Floor", "Suite 2", "Floor 02", "2rd Floor", "Floor 2th", "2nd Floor Suite 3", "Floor 2 Suite 3", "Suite 2 Floor 3"]) {
+      const website = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "1550 Wewatta Street", addressLine2 }] };
+      expect(verifyRegistryIdentity(source, { name: identity.legalName }, website, [], now)).toBeNull();
+    }
+    for (const [sourceFloor, badOrdinal] of [["Floor 11", "11st Floor"], ["Floor 12", "12nd Floor"], ["Floor 13", "13rd Floor"], ["Floor 21", "21th Floor"]]) {
+      const website = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "1550 Wewatta Street", addressLine2: badOrdinal }] };
+      expect(verifyRegistryIdentity({ ...source, identity: { ...source.identity, addressLine2: sourceFloor } }, { name: identity.legalName }, website, [], now)).toBeNull();
+    }
+  });
+  it("keeps street, legal-name and compound-designator order gates after floor normalization", () => {
+    const source = { ...profile(), identity: { ...identity, addressLine1: "1550 Second Street", addressLine2: "Floor 2" } };
+    const website = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "1550 Second Street", addressLine2: "Second Floor" }] };
+    for (const addressLine1 of ["1551 Second Street", "1550 Third Street", "1550 Second Avenue"]) {
+      expect(verifyRegistryIdentity(source, { name: identity.legalName }, { ...website, addresses: [{ ...website.addresses[0], addressLine1 }] }, [], now)).toBeNull();
+    }
+    expect(verifyRegistryIdentity(source, { name: "Acme Logistics Holdings Inc" }, website, [], now)).toBeNull();
+    const compound = { ...source, identity: { ...source.identity, addressLine2: "Suite 2 Floor 3" } };
+    expect(verifyRegistryIdentity(compound, { name: identity.legalName }, { ...website, addresses: [{ ...website.addresses[0], addressLine2: "Floor 2 Suite 3" }] }, [], now)).toBeNull();
+  });
+  it.each([["2nd Floor", "Second Floor"], ["Floor 2", "Floor 2"]])("preserves legacy inline/split floor matches and street fingerprints: %s / %s", (inlineFloor, splitFloor) => {
+    const source = { ...profile(), identity: { ...identity, addressLine1: `1550 Wewatta Street ${inlineFloor}` } };
+    const website = { ...context, addresses: [{ ...context.addresses[0], addressLine1: "1550 Wewatta Street", addressLine2: splitFloor }] };
+    expect(registryStreet(source.identity)).toBe(registryStreet(website.addresses[0]));
+    expect(registryStreet(website.addresses[0])).toBe(`1550 wewatta st ${inlineFloor.toLowerCase()}`);
+    expect(verifyRegistryIdentity(source, { name: identity.legalName }, website, [], now)?.method).toBe("exact_legal_name_address");
+  });
   it("requires exact legal-name plus street/unit, ZIP and state sourced independently", () => {
     expect(verifyRegistryIdentity(profile(), { name: identity.legalName }, context, [], now)).toMatchObject({ method: "exact_legal_name_address", sourceIds: ["record-1"] });
     for (const override of [{ addressLine1: "125 Main Street" }, { addressLine2: "Suite 2" }, { state: "CA" }, { postalCode: "78702" }, { legalName: "Acme Logistics Holdings Inc" }]) {

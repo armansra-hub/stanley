@@ -27,6 +27,31 @@ function proof(item = row(), html = "<footer>Acme Inc Headquarters 123 Main Stre
 const page = (body: string, finalUrl = "https://acme.com/") => ({ status: 200, finalUrl, body, contentType: "text/html; charset=utf-8" });
 beforeEach(() => { fetch.mockReset(); fetch.mockResolvedValue(page("<footer>Acme Inc Headquarters 123 Main Street Suite 4 Austin, TX 78701</footer>")); });
 describe("independently reviewed registry website corroboration", () => {
+  it.each([
+    ["123 Main Street", "Floor 2", "Second Floor"],
+    ["123 Main Street 2nd Floor", "", "Second Floor"],
+    ["123 Main Street Floor 2", "", "Floor 2"],
+  ])("accepts new explicit and legacy line-split floor forms through the website gate: %s %s / %s", async (street, sourceFloor, websiteFloor) => {
+    const { addressLine2: _suite, ...baseAddress } = identity;
+    const item = row({ ...baseAddress, addressLine1: street, ...(sourceFloor ? { addressLine2: sourceFloor } : {}) } as typeof identity);
+    const html = `<footer>Acme Inc Headquarters 123 Main Street ${websiteFloor} Austin, TX 78701</footer>`;
+    const address = { addressLine1: "123 Main Street", addressLine2: websiteFloor, city: "Austin", state: "TX", postalCode: "78701", countryCode: "US" };
+    const original = JSON.stringify(item), hash = registryContentHash(item.profile, item.sourceUrl);
+    fetch.mockResolvedValueOnce(page(html));
+    const result = await registryWebsiteVerifier()(item, proof(item, html, { address }), company, context, now);
+    expect(result.website?.binding).toBe("exact_legal_name_address");
+    expect(JSON.stringify(item)).toBe(original);
+    expect(registryContentHash(item.profile, item.sourceUrl)).toBe(hash);
+  });
+  it("keeps wrong/missing floors, suites and invalid ordinals held before a website fetch", async () => {
+    const item = row({ ...identity, addressLine2: "Floor 2" });
+    for (const addressLine2 of ["", "Third Floor", "Suite 2", "2rd Floor", "Second Floor Suite 3"]) {
+      const html = `<footer>Acme Inc Headquarters 123 Main Street ${addressLine2} Austin, TX 78701</footer>`;
+      const address = { addressLine1: "123 Main Street", addressLine2, city: "Austin", state: "TX", postalCode: "78701", countryCode: "US" };
+      await expect(registryWebsiteVerifier()(item, proof(item, html, { address }), company, context, now)).rejects.toThrow("street or unit differs");
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("accepts closed spelled-out state equivalents only beside the same city and postal code", async () => {
     const item = row(), good = "Acme Inc Headquarters 123 Main Street Suite 4 Austin, Texas 78701";
     fetch.mockResolvedValueOnce(page(good));

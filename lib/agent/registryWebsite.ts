@@ -4,7 +4,7 @@ import { STATE_NAMES } from "@/lib/publicGrowth/identity";
 import { htmlToVisibleText, sameCompanySite } from "@/lib/sources/siteDiscovery";
 import { extractCompanyIdentity } from "@/lib/sources/siteContent";
 import { fetchPublicHttpText, validatePublicHttpUrl, type PublicHttpTextResponse } from "@/lib/triggers/urlSafety";
-import { registryContentHash, registryStreet, sameRegistryLegalName, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
+import { registryContentHash, registryStreet, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 
 type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string };
 export type RegistryWebsiteCorroboration = {
@@ -188,7 +188,7 @@ export function registryWebsiteVerifier() {
     if (identifierMode && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
       throw new Error("registry identifier requires an explicit complete US website address");
     if (identifierMode) identifierAttribution(row, proof, proof.quote);
-    const exactStreet = registryStreet(a) === registryStreet(p);
+    const exactStreet = sameRegistryStreet(a, p);
     // FMCSA's verified USDOT binds this narrow highway-format discrepancy. No
     // unit, house number, road number, country or postal evidence is discarded.
     const dot = row.profile.dataset === "fmcsa" && /^\d+$/.test(row.profile.recordId)
