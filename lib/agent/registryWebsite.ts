@@ -114,6 +114,14 @@ function legalParts(value: string) {
   const equivalents: Record<string, string> = { incorporated: "inc", corporation: "corp", limited: "ltd" };
   return { core: suffix ? normalized.slice(0, suffix.index) : normalized, suffix: suffix ? equivalents[suffix[1]] ?? suffix[1] : null };
 }
+function sameLimitedCompanySubject(left: string, right: string): boolean {
+  // Only Company/Co immediately before the same explicit Limited/Ltd form.
+  // The caller restricts this alternative to complete US address-mode proofs.
+  const a = legalParts(left), b = legalParts(right);
+  if (a.suffix !== "ltd" || b.suffix !== "ltd") return false;
+  const x = a.core.match(/^(.+) (company|co)$/), y = b.core.match(/^(.+) (company|co)$/);
+  return Boolean(x && y && x[1] === y[1] && x[2] !== y[2]);
+}
 function exactSubjectPositions(value: string, subject: string, cslbAreaHeading = false): number[] {
   const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matches = [...value.matchAll(new RegExp(escaped, "giu"))];
@@ -199,14 +207,21 @@ export function registryWebsiteVerifier() {
     const url = ownUrl(proof.sourceUrl, domain), p = row.profile.identity, a = proof.address;
     const cslbMode = identifierMode && proof.identifier?.kind === "cslb_license";
     if (!a && !cslbMode) throw new Error("registry website complete address is required");
-    if (![company.name, ...context.aliases].some(name => sameRegistryLegalName(name, proof.subject))
-      || !sameRegistryLegalName(proof.subject, p.legalName) || !proof.quote.includes(proof.subject)) throw new Error("registry website subject does not match canonical legal entity");
+    const sameSubject = (left: string, right: string) => sameRegistryLegalName(left, right)
+      || (!identifierMode && a?.countryCode === "US" && p.countryCode === "US" && sameLimitedCompanySubject(left, right));
+    if (![company.name, ...context.aliases].some(name => sameSubject(name, proof.subject))
+      || !sameSubject(proof.subject, p.legalName) || !proof.quote.includes(proof.subject)) throw new Error("registry website subject does not match canonical legal entity");
     // Relationship/location ambiguities stay held even on the account's own site.
     if (/\b(subsidiar(?:y|ies)|parent company|registered agent|customer(?:'s|’s)? (?:address|office|headquarters)|client(?:'s|’s)? (?:address|office)|former (?:address|office)|previous (?:address|office)|old (?:address|office))\b/i.test(proof.quote))
       throw new Error("registry website address attribution is ambiguous");
-    const stateSpellings = a ? [a.state, ...(a.countryCode === "US" && stateNames.has(a.state) ? [stateNames.get(a.state)!] : [])] : [];
+    const stateSpellings = a ? [a.state, ...(a.countryCode === "US" && stateNames.has(a.state) ? [stateNames.get(a.state)!] : []),
+      ...(a.countryCode === "CA" && a.state === "AB" ? ["Alberta"] : [])] : [];
+    // Canada's country word may occur inside this one complete address block.
+    // Do not collect a province/country from elsewhere or modify street/unit data.
+    const completeLocality = a && stateSpellings.some(state => contains(proof.quote, `${a.city} ${state} ${a.postalCode}`)
+      || (a.countryCode === "CA" && a.state === "AB" && contains(proof.quote, `${a.city} ${state} Canada ${a.postalCode}`)));
     if (a && (![a.addressLine1, a.addressLine2].filter((v): v is string => Boolean(v)).every(value => contains(proof.quote, value))
-      || !stateSpellings.some(state => contains(proof.quote, `${a.city} ${state} ${a.postalCode}`))
+      || !completeLocality
       || (!identifierMode && (words(a.state) !== words(p.state) || a.countryCode !== (p.countryCode ?? "US")
       || (a.countryCode === "CA" ? words(a.postalCode).replace(/ /g, "") !== words(p.postalCode).replace(/ /g, "") : a.postalCode.slice(0, 5) !== p.postalCode.slice(0, 5))))))
       throw new Error("registry website complete address is not corroborated");

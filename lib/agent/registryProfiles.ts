@@ -211,15 +211,47 @@ function explicitUsBuilding(address: RegistryStreetAddress) {
   return /^\d+[a-z]? .+ (?:building|bldg) \d+$/.test(street)
     ? street.replace(/ building (\d+)$/, " bldg $1") : null;
 }
+function sameExplicitUsSuite(left: RegistryStreetAddress, right: RegistryStreetAddress) {
+  // Compare only a whole, explicitly labelled second-line suite. A single ASCII
+  // hyphen between one letter and an identical digit string is punctuation here;
+  // bare units, ranges, compounds and leading-zero differences remain distinct.
+  if (left.countryCode !== "US" || right.countryCode !== "US"
+    || !/^[A-Z]{2}$/.test(left.state?.trim().toUpperCase() ?? "")
+    || left.state!.trim().toUpperCase() !== right.state?.trim().toUpperCase()) return false;
+  const suite = /^(?:suite|ste\.?)\s+([a-z])(-?)([0-9]+)$/i;
+  const a = (left.addressLine2 ?? "").trim().match(suite), b = (right.addressLine2 ?? "").trim().match(suite);
+  if (!a || !b || a[1].toLowerCase() !== b[1].toLowerCase() || a[3] !== b[3] || a[2] === b[2]) return false;
+  const designator = /\b(?:suite|ste|unit|apt|apartment|building|bldg|floor)\b/i;
+  if (designator.test(left.addressLine1) || designator.test(right.addressLine1)) return false;
+  const base = registryStreet({ addressLine1: left.addressLine1 });
+  return /^\d+[a-z]? .+/.test(base) && !/\b(?:unit|building|bldg|floor)\b/.test(base)
+    && base === registryStreet({ addressLine1: right.addressLine1 });
+}
+function usPlazaSuffix(address: RegistryStreetAddress) {
+  // USPS Publication 28 C1 lists PLAZA -> PLZ. Require a street suffix in line 1,
+  // not a building/unit name or a bare second-line token. Any remaining unit
+  // must be complete and labelled; preserve every other address token.
+  if (address.countryCode !== "US" || !/^[A-Z]{2}$/.test(address.state?.trim().toUpperCase() ?? "")) return null;
+  const line1 = registryStreet({ addressLine1: address.addressLine1 });
+  const suffix = line1.match(/^(\d+[a-z]? .+) (?:plaza|plz)(?: unit [a-z0-9]+)?$/);
+  if (!suffix || /\b(?:unit|building|bldg|floor)\b/.test(suffix[1])) return null;
+  if (address.addressLine2?.trim() && !/^unit [a-z0-9]+$/.test(registryStreet({ addressLine1: address.addressLine2 }))) return null;
+  const street = registryStreet(address);
+  return /^\d+[a-z]? .+ (?:plaza|plz)(?: unit [a-z0-9]+)?$/.test(street)
+    ? street.replace(/ plaza(?= unit [a-z0-9]+$|$)/, " plz") : null;
+}
 export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryStreetAddress) {
   // Keep all legacy line-split matches and fingerprints. The extra comparison
-  // only changes an explicit floor-only second line, never the street line.
+  // preserves every address token through narrowly scoped formatting rules.
   return registryStreet(left) === registryStreet(right)
     || registryStreet({ ...left, addressLine2: explicitFloorLine(left.addressLine2 ?? "") })
       === registryStreet({ ...right, addressLine2: explicitFloorLine(right.addressLine2 ?? "") })
     || (albertaRangeRoad(left) !== null && albertaRangeRoad(left) === albertaRangeRoad(right))
     || (vanZandtCountyRoad(left) !== null && vanZandtCountyRoad(left) === vanZandtCountyRoad(right))
-    || (explicitUsBuilding(left) !== null && explicitUsBuilding(left) === explicitUsBuilding(right));
+    || (explicitUsBuilding(left) !== null && explicitUsBuilding(left) === explicitUsBuilding(right))
+    || sameExplicitUsSuite(left, right)
+    || (left.state?.trim().toUpperCase() === right.state?.trim().toUpperCase()
+      && usPlazaSuffix(left) !== null && usPlazaSuffix(left) === usPlazaSuffix(right));
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 // Keep every substantive word, including non-ASCII letters, in the whole DBA.

@@ -10,7 +10,7 @@ const now = new Date("2026-09-30T00:00:00Z"), sha = (s: string) => createHash("s
 const identity = { legalName: "Acme Inc", addressLine1: "123 Main Street", addressLine2: "Suite 4", city: "Austin", state: "TX", postalCode: "78701", countryCode: "US" as const };
 const company = { name: "Acme Inc", domain: "acme.com" };
 const context = { aliases: [], context: "private notes excluded", addresses: [{ addressLine1: "1 Old Road", state: "TX", postalCode: "78701", sourceKind: "netsuite_record" as const, sourceId: "crm-1", capturedAt: "2026-09-01T00:00:00Z" }] };
-function row(address = identity, dataset = "fmcsa", recordId = "12345") {
+function row(address: Omit<typeof identity, "countryCode"> & { countryCode: "US" | "CA" } = identity, dataset = "fmcsa", recordId = "12345") {
   const sourceRow = { ...address, usdot_number: recordId }, evidence = JSON.stringify(sourceRow);
   return parseRegistryFinding({ source: "registry", kind: "ops_profile", internalId: "123", companyId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     sourceUrl: "https://data.transportation.gov/resource/public.json", evidence,
@@ -27,6 +27,64 @@ function proof(item = row(), html = "<footer>Acme Inc Headquarters 123 Main Stre
 const page = (body: string, finalUrl = "https://acme.com/") => ({ status: 200, finalUrl, body, contentType: "text/html; charset=utf-8" });
 beforeEach(() => { fetch.mockReset(); fetch.mockResolvedValue(page("<footer>Acme Inc Headquarters 123 Main Street Suite 4 Austin, TX 78701</footer>")); });
 describe("independently reviewed registry website corroboration", () => {
+  it.each([
+    ["Acme Trading Co Ltd", "Acme Trading Company, Ltd."],
+    ["Acme Trading Company Limited", "Acme Trading Co. Ltd"],
+  ])("accepts only Company/Co before the same explicit Ltd form with a complete US address: %s / %s", async (legalName, subject) => {
+    const item = row({ ...identity, legalName });
+    const html = `<footer>${subject} 123 Main Street Suite 4 Austin, TX 78701</footer>`;
+    const before = JSON.stringify(item), hash = registryContentHash(item.profile, item.sourceUrl);
+    fetch.mockResolvedValueOnce(page(html));
+    const result = await registryWebsiteVerifier()(item, proof(item, html, { subject }), { ...company, name: legalName }, context, now);
+    expect(result.website?.binding).toBe("exact_legal_name_address");
+    expect(JSON.stringify(item)).toBe(before);
+    expect(registryContentHash(item.profile, item.sourceUrl)).toBe(hash);
+  });
+  it.each([
+    "Acme Trading Company LLC", "Acme Trading Company", "Acme Trading Companies Ltd",
+    "Global Acme Trading Company Ltd", "Acme Trading Company Holdings Ltd", "Acme Trading Ltd",
+  ])("preserves legal form and every substantive name word: %s", async subject => {
+    const item = row({ ...identity, legalName: "Acme Trading Co Ltd" });
+    const html = `<footer>${subject} 123 Main Street Suite 4 Austin, TX 78701</footer>`;
+    await expect(registryWebsiteVerifier()(item, proof(item, html, { subject }), { ...company, name: "Acme Trading Co Ltd" }, context, now)).rejects.toThrow("subject");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("does not extend Company/Co to a Canadian website-address proof", async () => {
+    const item = row({ ...identity, legalName: "Acme Trading Co Ltd", city: "Millet", state: "AB", postalCode: "T0C 1Z0", countryCode: "CA" });
+    const html = "<footer>Acme Trading Company Ltd 123 Main Street Suite 4 Millet AB T0C 1Z0</footer>";
+    await expect(registryWebsiteVerifier()(item, proof(item, html, { subject: "Acme Trading Company Ltd" }), { ...company, name: "Acme Trading Co Ltd" }, context, now)).rejects.toThrow("subject");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["Millet AB T0C 1Z0", "Millet Alberta T0C 1Z0", "Millet Alberta Canada T0C 1Z0", "Millet AB Canada T0C 1Z0"])("recognizes the complete Canadian Alberta address block: %s", async locality => {
+    const item = row({ ...identity, city: "Millet", state: "AB", postalCode: "T0C 1Z0", countryCode: "CA" });
+    const html = `<footer>Acme Inc 123 Main Street Suite 4 ${locality}</footer>`;
+    const before = JSON.stringify(item), hash = registryContentHash(item.profile, item.sourceUrl);
+    fetch.mockResolvedValueOnce(page(html));
+    const result = await registryWebsiteVerifier()(item, proof(item, html), company, context, now);
+    expect(result.website?.binding).toBe("exact_legal_name_address");
+    expect(JSON.stringify(item)).toBe(before);
+    expect(registryContentHash(item.profile, item.sourceUrl)).toBe(hash);
+  });
+  it.each([
+    "Millet Alberta Canada T0C 2Z0", "Millet British Columbia Canada T0C 1Z0",
+    "Millet Alberta United States T0C 1Z0", "Millet Alberta Office Canada T0C 1Z0",
+    "Millet T0C 1Z0. Canada Alberta", "Calmar Alberta Canada T0C 1Z0",
+    "Millet Alberta Canada T0C 1Z0X",
+  ])("does not borrow or discard Canadian locality tokens: %s", async locality => {
+    const item = row({ ...identity, city: "Millet", state: "AB", postalCode: "T0C 1Z0", countryCode: "CA" });
+    const html = `<footer>Acme Inc 123 Main Street Suite 4 ${locality}</footer>`;
+    await expect(registryWebsiteVerifier()(item, proof(item, html), company, context, now)).rejects.toThrow("complete address");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("retains Canadian country, street and unit distinctions after locality formatting", async () => {
+    const item = row({ ...identity, city: "Millet", state: "AB", postalCode: "T0C 1Z0", countryCode: "CA" });
+    const html = "<footer>Acme Inc 123 Main Street Suite 4 Millet Alberta Canada T0C 1Z0</footer>";
+    const base = proof(item, html);
+    for (const change of [{ countryCode: "US" }, { state: "BC" }, { addressLine1: "124 Main Street" }, { addressLine2: "Suite 5" }]) {
+      await expect(registryWebsiteVerifier()(item, proof(item, html, { address: { ...base.address, ...change } }), company, context, now)).rejects.toThrow();
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("passes a scoped Building/BLDG proof through the existing full-page and independent-review gates", async () => {
     const { addressLine2: _suite, ...baseAddress } = identity;
     const item = row({ ...baseAddress, addressLine1: "4051 N HIGLEY RD BLDG 25", city: "Mesa", state: "AZ", postalCode: "85215" } as typeof identity);
@@ -150,5 +208,33 @@ describe("independently reviewed registry website corroboration", () => {
     for (const path of ["contact", "locations"]) await verify(item, { ...p, sourceUrl: `https://acme.com/${path}` }, company, context, now);
     await expect(verify(item, { ...p, sourceUrl: "https://acme.com/fourth" }, company, context, now)).rejects.toThrow("three");
     expect(fetch).toHaveBeenCalledTimes(3);
+  });
+});
+
+
+describe("suite punctuation and terminal Plaza through unchanged website admission", () => {
+  it.each([
+    ["1322 Space Park Drive", "Suite C245", "1322 SPACE PARK DRIVE", "SUITE C-245"],
+    ["222 S Riverside Plz Ste 1500", "", "222 S. Riverside Plaza", "Suite 1500"],
+  ])("checks full-page/quote/independent-source gates after the street comparison: %s", async (sourceStreet, sourceSuite, street, suite) => {
+    const sourceIdentity = { ...identity, addressLine1: sourceStreet, addressLine2: sourceSuite };
+    if (!sourceSuite) delete (sourceIdentity as Partial<typeof identity>).addressLine2;
+    const { legalName: _legalName, ...websiteIdentity } = identity;
+    const item = row(sourceIdentity), address = { ...websiteIdentity, addressLine1: street, addressLine2: suite };
+    const html = '<footer>Acme Inc ' + street + ' ' + suite + ' Austin, TX 78701</footer>';
+    const p = proof(item, html, { address }), original = JSON.stringify(item), hash = registryContentHash(item.profile, item.sourceUrl);
+    fetch.mockResolvedValueOnce(page(html));
+    const result = await registryWebsiteVerifier()(item, parseRegistryWebsiteCorroboration(p, item, now), company, context, now);
+    expect(result.website?.binding).toBe("exact_legal_name_address");
+    expect(JSON.stringify(item)).toBe(original);
+    expect(registryContentHash(item.profile, item.sourceUrl)).toBe(hash);
+    expect(() => parseRegistryWebsiteCorroboration({ ...p, reviewer: p.reader }, item, now)).toThrow();
+    expect(() => parseRegistryWebsiteCorroboration(p, { ...item, internalId: "999" }, now)).toThrow();
+    expect(() => parseRegistryWebsiteCorroboration({ ...p, quote: p.quote + ' invented' }, item, now)).toThrow();
+    fetch.mockResolvedValueOnce(page(html + ' changed'));
+    await expect(registryWebsiteVerifier()(item, p, company, context, now)).rejects.toThrow();
+    for (const changes of [{ address: { ...address, postalCode: "99999" } }, { address: { ...address, countryCode: "CA" } }, { subject: "Other Acme Inc" }, { subject: "Acme LLC" }]) {
+      await expect(registryWebsiteVerifier()(item, proof(item, html, changes), company, context, now)).rejects.toThrow();
+    }
   });
 });

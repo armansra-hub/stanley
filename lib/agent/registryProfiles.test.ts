@@ -314,3 +314,106 @@ describe("registry identity admission", () => {
     }
   });
 });
+
+
+describe("explicit US suite punctuation and terminal Plaza suffix", () => {
+  const suite = { addressLine1: "1322 Space Park Drive", addressLine2: "Suite C-245", state: "TX", countryCode: "US" };
+  const compact = { ...suite, addressLine2: "Suite C245" };
+  const plaza = { addressLine1: "222 S. Riverside Plaza", addressLine2: "Suite 1500", state: "IL", countryCode: "US" };
+  const plz = { addressLine1: "222 S Riverside Plz Ste 1500", state: "IL", countryCode: "US" };
+  it("adds symmetric suite punctuation comparison without changing fingerprints or inputs", () => {
+    const original = JSON.stringify([suite, compact]);
+    expect(registryStreet(suite)).toBe("1322 space park dr unit c 245");
+    expect(registryStreet(compact)).toBe("1322 space park dr unit c245");
+    expect(sameRegistryStreet(suite, compact)).toBe(true);
+    expect(sameRegistryStreet(compact, suite)).toBe(true);
+    expect(sameRegistryStreet(suite, { ...compact, addressLine2: "Ste. c245" })).toBe(true);
+    expect(sameRegistryStreet({ ...suite, addressLine2: "Suite C-0245" }, { ...compact, addressLine2: "Suite C0245" })).toBe(true);
+    expect(JSON.stringify([suite, compact])).toBe(original);
+  });
+  it.each([
+    "C245", "Suite C246", "Suite D245", "Suite C0245", "Suite 245", "Suite C245A", "Suite CC245",
+    "Suite C-245-2", "Suite 245-250", "Suite C 245", "Suite C - 245", "Building C Suite 245",
+    "Suite C245 Floor 2", "Suite C245 and C246", "Apartment C245", "Unit C245", "SuiteC245", "Suite C/245", "Suite C–245", "Suite С245",
+  ])("does not add an equivalence for unsupported unit %s", addressLine2 => {
+    // These punctuation-only strings already match the hyphenated fingerprint;
+    // the additive branch must not broaden their equivalence to compact C245.
+    const reference = ["Suite C 245", "Suite C - 245", "Suite C/245", "Suite C–245"].includes(addressLine2) ? compact : suite;
+    expect(sameRegistryStreet(reference, { ...compact, addressLine2 })).toBe(false);
+  });
+  it.each([
+    { addressLine1: "1323 Space Park Drive" }, { addressLine1: "1322 Space Park Road" },
+    { addressLine1: "1322 East Space Park Drive" }, { addressLine1: "1322 Space Park Drive Suite C245" },
+    { state: "CA" }, { state: undefined }, { countryCode: "CA" }, { countryCode: undefined },
+  ])("keeps suite base and explicit geography exact: %j", override => {
+    expect(sameRegistryStreet(suite, { ...compact, ...override })).toBe(false);
+    expect(sameRegistryStreet({ ...suite, ...override }, compact)).toBe(false);
+  });
+  it("does not introduce suite matching for non-US pairs, bare UCC units or noncivic bases", () => {
+    expect(sameRegistryStreet({ ...suite, countryCode: "CA" }, { ...compact, countryCode: "CA" })).toBe(false);
+    expect(sameRegistryStreet(suite, { ...compact, addressLine2: "C245" })).toBe(false);
+    expect(sameRegistryStreet({ ...suite, addressLine1: "Space Park" }, { ...compact, addressLine1: "Space Park" })).toBe(false);
+  });
+  it("compares terminal Plaza/Plz across legacy line splits without changing fingerprints", () => {
+    const original = JSON.stringify([plaza, plz]);
+    expect(registryStreet(plaza)).toBe("222 s riverside plaza unit 1500");
+    expect(registryStreet(plz)).toBe("222 s riverside plz unit 1500");
+    expect(sameRegistryStreet(plaza, plz)).toBe(true);
+    expect(sameRegistryStreet(plz, plaza)).toBe(true);
+    expect(sameRegistryStreet({ ...plaza, addressLine2: undefined }, { ...plz, addressLine1: "222 S Riverside Plz" })).toBe(true);
+    expect(JSON.stringify([plaza, plz])).toBe(original);
+  });
+  it.each([
+    "223 S Riverside Plz Ste1500", "222 N Riverside Plz Ste1500", "222 S Riverside Plz Ste1501",
+    "222 S Riverside Plz", "222 S Riverside Plz 1500", "222 S Riverside Plz Ste01500",
+    "222 S Riverside Plz Ste1500 Floor2", "222 S Riverside Plz Annex Ste1500", "222 S Riverside Place Ste1500",
+  ])("keeps Plaza civic, direction, suffix and complete unit exact: %s", addressLine1 => {
+    expect(sameRegistryStreet(plaza, { ...plz, addressLine1 })).toBe(false);
+  });
+  it.each([
+    ["222 Plaza Road", "222 Plz Road"], ["222 Plaza Riverside", "222 Plz Riverside"],
+    ["222 Riverside Plaza West", "222 Riverside Plz West"], ["Plaza 222", "Plz 222"],
+    ["222 Riverside Plaza Building 2", "222 Riverside Plz Building 2"],
+  ])("never expands arbitrary Plaza tokens or compound tails: %s / %s", (left, right) => {
+    expect(sameRegistryStreet({ ...plaza, addressLine1: left, addressLine2: undefined }, { ...plz, addressLine1: right })).toBe(false);
+  });
+  it.each([{ state: undefined }, { state: "TX" }, { countryCode: undefined }, { countryCode: "CA" }])("requires explicit shared US geography for Plaza: %j", override => {
+    expect(sameRegistryStreet(plaza, { ...plz, ...override })).toBe(false);
+    expect(sameRegistryStreet({ ...plaza, ...override }, plz)).toBe(false);
+  });
+  it.each([
+    [suite, compact, "TX", "77058"], [plaza, plz, "IL", "60606"],
+  ])("retains legal, full-address, ZIP and source-content gates", (address, sourceAddress, state, postalCode) => {
+    const sample = registryFixture();
+    const sourceIdentity = { ...identity, ...sourceAddress, state, postalCode, countryCode: "US" as const };
+    const sourceRow = { ...sourceIdentity, drivers: 42, power_units: 0 }, evidence = JSON.stringify(sourceRow);
+    const item = parseRegistryFinding({ ...sample, evidence, registryProfile: { ...sample.registryProfile, identity: sourceIdentity, provenance: { ...sample.registryProfile.provenance, sourceRow, quote: evidence } } }, now);
+    const ctx = { ...context, addresses: [{ ...context.addresses[0], ...address, state, postalCode }] };
+    const original = JSON.stringify(item), hash = registryContentHash(item.profile, item.sourceUrl);
+    expect(verifyRegistryIdentity(item.profile, { name: identity.legalName }, ctx, [], now)?.method).toBe("exact_legal_name_address");
+    for (const override of [{ postalCode: "99999" }, { state: "AZ" }, { countryCode: "CA" }, { countryCode: undefined }]) {
+      expect(verifyRegistryIdentity(item.profile, { name: identity.legalName }, { ...ctx, addresses: [{ ...ctx.addresses[0], ...override }] }, [], now)).toBeNull();
+    }
+    for (const name of ["Other Acme Logistics Inc", "Acme Logistics LLC"]) expect(verifyRegistryIdentity(item.profile, { name }, ctx, [], now)).toBeNull();
+    expect(verifyRegistryIdentity(item.profile, { name: identity.legalName }, { ...ctx, addresses: [] }, [], now)).toBeNull();
+    expect(JSON.stringify(item)).toBe(original);
+    expect(registryContentHash(item.profile, item.sourceUrl)).toBe(hash);
+  });
+});
+
+
+describe("street-suffix versus secondary-designator boundaries", () => {
+  it.each(["1322 Space Park Drive #2", "1322 Space Park Drive Ste2"])("does not broaden hyphen matching when line 1 already labels a unit: %s", addressLine1 => {
+    const base = { addressLine1, state: "TX", countryCode: "US" };
+    expect(sameRegistryStreet({ ...base, addressLine2: "Suite C-245" }, { ...base, addressLine2: "Suite C245" })).toBe(false);
+  });
+  it.each([
+    [{ addressLine1: "222 Riverside", addressLine2: "Plaza" }, { addressLine1: "222 Riverside Plz" }],
+    [{ addressLine1: "222 Riverside Rd Suite Foo Plaza" }, { addressLine1: "222 Riverside Rd Suite Foo Plz" }],
+    [{ addressLine1: "222 Riverside Rd Building 2 Plaza" }, { addressLine1: "222 Riverside Rd Building 2 Plz" }],
+    [{ addressLine1: "222 Riverside Rd Floor 2 Plaza" }, { addressLine1: "222 Riverside Rd Floor 2 Plz" }],
+    [{ addressLine1: "222 Riverside Plaza", addressLine2: "Building 2" }, { addressLine1: "222 Riverside Plz", addressLine2: "Building 2" }],
+  ])("does not confuse Plaza with an appended building/unit name or second address line", (left, right) => {
+    expect(sameRegistryStreet({ ...left, state: "IL", countryCode: "US" }, { ...right, state: "IL", countryCode: "US" })).toBe(false);
+  });
+});
