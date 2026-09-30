@@ -27,6 +27,27 @@ function proof(item = row(), html = "<footer>Acme Inc Headquarters 123 Main Stre
 const page = (body: string, finalUrl = "https://acme.com/") => ({ status: 200, finalUrl, body, contentType: "text/html; charset=utf-8" });
 beforeEach(() => { fetch.mockReset(); fetch.mockResolvedValue(page("<footer>Acme Inc Headquarters 123 Main Street Suite 4 Austin, TX 78701</footer>")); });
 describe("independently reviewed registry website corroboration", () => {
+  it("passes a scoped Building/BLDG proof through the existing full-page and independent-review gates", async () => {
+    const { addressLine2: _suite, ...baseAddress } = identity;
+    const item = row({ ...baseAddress, addressLine1: "4051 N HIGLEY RD BLDG 25", city: "Mesa", state: "AZ", postalCode: "85215" } as typeof identity);
+    const address = { addressLine1: "4051 N Higley Rd Building 25", city: "Mesa", state: "AZ", postalCode: "85215", countryCode: "US" };
+    const html = "<footer>Acme Inc 4051 N Higley Rd Building 25 Mesa, AZ 85215</footer>";
+    const original = JSON.stringify(item), hash = registryContentHash(item.profile, item.sourceUrl);
+    fetch.mockResolvedValueOnce(page(html));
+    const result = await registryWebsiteVerifier()(item, proof(item, html, { address }), company, context, now);
+    expect(result.website?.binding).toBe("exact_legal_name_address");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(item)).toBe(original);
+    expect(registryContentHash(item.profile, item.sourceUrl)).toBe(hash);
+    fetch.mockResolvedValueOnce(page(html + " changed"));
+    await expect(registryWebsiteVerifier()(item, proof(item, html, { address }), company, context, now)).rejects.toThrow();
+  });
+  it("does not use the canonical-only Company/Co rule for website subject admission", async () => {
+    const item = row({ ...identity, legalName: "Acme Co" });
+    const html = "<footer>Acme Company 123 Main Street Suite 4 Austin, TX 78701</footer>";
+    await expect(registryWebsiteVerifier()(item, proof(item, html, { subject: "Acme Company" }), { ...company, name: "Acme Company" }, context, now)).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it.each([
     ["123 Main Street", "Floor 2", "Second Floor"],
     ["123 Main Street 2nd Floor", "", "Second Floor"],

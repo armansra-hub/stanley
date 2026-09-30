@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRegistryFinding, registryContentHash, registryProfileKey, registryStreet, sameRegistryStreet, verifyRegistryIdentity, type RegistryProfile } from "./registryProfiles";
+import { parseRegistryFinding, registryContentHash, registryProfileKey, registryStreet, sameRegistryLegalName, sameRegistryStreet, verifyRegistryIdentity, type RegistryProfile } from "./registryProfiles";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 
 const now = new Date("2026-09-29T23:00:00Z");
@@ -86,6 +86,64 @@ describe("registry baseline validation", () => {
 });
 describe("registry identity admission", () => {
   const profile = () => parseRegistryFinding(registryFixture(), now).profile;
+  it("compares explicit US terminal Building/BLDG without changing fingerprints or profile content", () => {
+    const source = { addressLine1: "4051 N HIGLEY RD BLDG 25", countryCode: "US" };
+    const expanded = { addressLine1: "4051 N Higley Road Building 25", countryCode: "US" };
+    const original = JSON.stringify([source, expanded]);
+    expect(registryStreet(source)).toBe("4051 n higley rd bldg 25");
+    expect(registryStreet(expanded)).toBe("4051 n higley rd building 25");
+    expect(sameRegistryStreet(source, expanded)).toBe(true);
+    expect(sameRegistryStreet(expanded, source)).toBe(true);
+    expect(sameRegistryStreet(source, { ...expanded, addressLine1: "4051 N Higley Road", addressLine2: "Building 25" })).toBe(true);
+    expect(JSON.stringify([source, expanded])).toBe(original);
+  });
+  it.each([
+    "4051 N Higley Rd Building 26", "4051 N Higley Rd Building 025", "4051 N Higley Rd Building 25A",
+    "4051 N Higley Rd Suite 25", "4051 N Higley Rd", "4051 N Higley Rd 25",
+    "4052 N Higley Rd Building 25", "4051 S Higley Rd Building 25", "4051 N Higley Rd 25 Building",
+    "4051 N Higley Rd Building25", "4051 N Higley Rd Building 25 Suite 2",
+  ])("keeps building identity, civic numbers and designators exact: %s", addressLine1 => {
+    expect(sameRegistryStreet({ addressLine1: "4051 N HIGLEY RD BLDG 25", countryCode: "US" }, { addressLine1, countryCode: "US" })).toBe(false);
+  });
+  it("requires explicit US on both building addresses and does not expand street names or bare designators", () => {
+    const source = { addressLine1: "4051 N Higley Rd BLDG 25", countryCode: "US" };
+    const expanded = { addressLine1: "4051 N Higley Rd Building 25", countryCode: "US" };
+    for (const countryCode of [undefined, "CA"]) {
+      expect(sameRegistryStreet({ ...source, countryCode }, expanded)).toBe(false);
+      expect(sameRegistryStreet(source, { ...expanded, countryCode })).toBe(false);
+    }
+    for (const [left, right] of [["Building 25", "BLDG 25"], ["4051 Building Road", "4051 BLDG Road"], ["4051 Building 25 Rd", "4051 BLDG 25 Rd"]]) {
+      expect(sameRegistryStreet({ ...source, addressLine1: left }, { ...expanded, addressLine1: right })).toBe(false);
+    }
+  });
+  it("admits terminal Company/Co only with exact independently sourced US canonical address", () => {
+    const source = { ...profile(), identity: { legalName: "AGILIS CO", addressLine1: "2380 CROSSROADS BLVD", city: "ALBERT LEA", state: "MN", postalCode: "56007", countryCode: "US" as const } };
+    const address = { ...context.addresses[0], addressLine1: "2380 Crossroads Boulevard", city: "Albert Lea", state: "MN", postalCode: "56007-4001", countryCode: "US" };
+    const before = JSON.stringify(source), hash = registryContentHash(source, "https://safer.fmcsa.dot.gov/");
+    expect(sameRegistryLegalName("Agilis Company", "AGILIS CO")).toBe(false);
+    for (const legalName of ["AGILIS CO", "Agilis Co."]) {
+      expect(verifyRegistryIdentity({ ...source, identity: { ...source.identity, legalName } }, { name: "Agilis Company" }, { ...context, addresses: [address] }, [], now)).toMatchObject({ method: "exact_legal_name_address", sourceIds: ["record-1"] });
+    }
+    expect(verifyRegistryIdentity({ ...source, identity: { ...source.identity, legalName: "Agilis Company" } }, { name: "Agilis Co" }, { ...context, addresses: [address] }, [], now)?.method).toBe("exact_legal_name_address");
+    for (const override of [{ addressLine1: "2381 Crossroads Blvd" }, { addressLine2: "Suite 2" }, { state: "CO" }, { postalCode: "56008" }, { countryCode: "CA" }, { countryCode: undefined }]) {
+      expect(verifyRegistryIdentity(source, { name: "Agilis Company" }, { ...context, addresses: [{ ...address, ...override }] }, [], now)).toBeNull();
+    }
+    for (const countryCode of [undefined, "CA" as const]) {
+      expect(verifyRegistryIdentity({ ...source, identity: { ...source.identity, countryCode } }, { name: "Agilis Company" }, { ...context, addresses: [address] }, [], now)).toBeNull();
+    }
+    expect(verifyRegistryIdentity(source, { name: "Agilis Company" }, { ...context, addresses: [] }, [], now)).toBeNull();
+    expect(JSON.stringify(source)).toBe(before);
+    expect(registryContentHash(source, "https://safer.fmcsa.dot.gov/")).toBe(hash);
+  });
+  it.each([
+    ["Agilis", "AGILIS CO"], ["Agilis Corporation", "Agilis Company"], ["Agilis Company Inc", "Agilis Co LLC"],
+    ["Agilis Company Inc", "Agilis Co Inc"], ["Agilis Company West", "Agilis Co West"],
+    ["Agilis Company", "Agilis LLC"], ["Agilis Company", "Agilis Holdings Co"],
+  ])("does not delete Company/Co, expand compound forms or conflate legal entities: %s / %s", (name, legalName) => {
+    const source = { ...profile(), identity: { ...identity, legalName, countryCode: "US" as const } };
+    const ctx = { ...context, addresses: [{ ...context.addresses[0], countryCode: "US" }] };
+    expect(verifyRegistryIdentity(source, { name }, ctx, [], now)).toBeNull();
+  });
   it("matches explicit Texas VZ CR and County Road labels without rewriting evidence", () => {
     const source = { ...profile(), identity: { ...identity, legalName: "HUBBARD EXPRESS AIR FREIGHT & DELIVERY LLC", addressLine1: "153 VZ CR 4804", city: "CHANDLER", state: "TX", countryCode: "US" as const, postalCode: "75758" } };
     const address = { ...context.addresses[0], addressLine1: "153 Vz County Road 4804", city: "Chandler", state: "TX", countryCode: "US" as const, postalCode: "75758" };

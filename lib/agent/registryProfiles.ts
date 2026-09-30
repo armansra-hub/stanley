@@ -150,6 +150,12 @@ export function sameRegistryLegalName(left: string, right: string) {
   const a = legalName(left), b = legalName(right);
   return Boolean(a.core && a.core === b.core && (!a.suffix || !b.suffix || a.suffix === b.suffix));
 }
+function sameTerminalCompanyWord(left: string, right: string) {
+  // Canonical-address admission only: retain this substantive word rather than
+  // treating Company/Co as an optional legal suffix. Compound forms stay exact.
+  const a = normalized(left).match(/^(.+) (company|co)$/), b = normalized(right).match(/^(.+) (company|co)$/);
+  return Boolean(a && b && a[1] === b[1] && a[2] !== b[2]);
+}
 const addressWords: Record<string, string> = {
   street: "st", avenue: "ave", road: "rd", boulevard: "blvd", drive: "dr", lane: "ln", court: "ct",
   highway: "hwy", parkway: "pkwy", place: "pl", circle: "cir", terrace: "ter", trail: "trl",
@@ -197,6 +203,14 @@ function vanZandtCountyRoad(address: RegistryStreetAddress) {
   return /^\d+[a-z]? vz (?:cr|county rd) \d+[a-z]?(?: |$)/.test(street)
     ? street.replace(/^(\d+[a-z]?) vz cr /, "$1 vz county rd ") : null;
 }
+function explicitUsBuilding(address: RegistryStreetAddress) {
+  // USPS Publication 28 C2: Building = BLDG. Compare only an explicit terminal
+  // designator after a civic street, retaining the complete numeric identifier.
+  if (address.countryCode !== "US") return null;
+  const street = registryStreet(address);
+  return /^\d+[a-z]? .+ (?:building|bldg) \d+$/.test(street)
+    ? street.replace(/ building (\d+)$/, " bldg $1") : null;
+}
 export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryStreetAddress) {
   // Keep all legacy line-split matches and fingerprints. The extra comparison
   // only changes an explicit floor-only second line, never the street line.
@@ -204,7 +218,8 @@ export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryS
     || registryStreet({ ...left, addressLine2: explicitFloorLine(left.addressLine2 ?? "") })
       === registryStreet({ ...right, addressLine2: explicitFloorLine(right.addressLine2 ?? "") })
     || (albertaRangeRoad(left) !== null && albertaRangeRoad(left) === albertaRangeRoad(right))
-    || (vanZandtCountyRoad(left) !== null && vanZandtCountyRoad(left) === vanZandtCountyRoad(right));
+    || (vanZandtCountyRoad(left) !== null && vanZandtCountyRoad(left) === vanZandtCountyRoad(right))
+    || (explicitUsBuilding(left) !== null && explicitUsBuilding(left) === explicitUsBuilding(right));
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {
@@ -212,7 +227,8 @@ export function verifyRegistryIdentity(profile: RegistryProfile, company: { name
   const names = [company.name, ...context.aliases];
   // Postal city aliases are immaterial only after the entire street/unit, ZIP,
   // state and compatible country agree with an independently sourced address.
-  const address = context.addresses.find(a => names.some(name => sameRegistryLegalName(name, p.legalName)) && sameRegistryStreet(a, p)
+  const address = context.addresses.find(a => names.some(name => sameRegistryLegalName(name, p.legalName)
+      || (a.countryCode === "US" && p.countryCode === "US" && sameTerminalCompanyWord(name, p.legalName))) && sameRegistryStreet(a, p)
     && normalized(a.state ?? "") === normalized(p.state)
     && (!a.countryCode || a.countryCode === (p.countryCode ?? "US"))
     && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));
