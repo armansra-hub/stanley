@@ -29,6 +29,17 @@ function render(insights: InsightBadge[], loaded = true) {
 }
 
 describe("standing registry facts", () => {
+  it("labels a source-reported DBA match without changing the displayed legal operator or evidence", () => {
+    const row = profile();
+    row.registry_profile!.verification!.method = "exact_registry_dba_address";
+    const html = render([row]);
+    expect(html).toContain("Matched by the FMCSA-reported DBA and business address.");
+    expect(html).toContain("Acme Transport LLC");
+    expect(html).toContain("Acme Transport LLC operates 26 power units with 0 drivers reported.");
+    expect(html).not.toContain("Matched by legal name and business address.");
+    expect(html).not.toContain("Identity verification details unavailable.");
+  });
+
   it("renders source dates, zero counts and original evidence without needing any trigger", () => {
     const html = render([profile()]);
     expect(html).toContain("FMCSA carrier profile");

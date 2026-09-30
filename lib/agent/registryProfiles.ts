@@ -7,7 +7,7 @@ export type RegistryProfile = {
   sourceAsOf: string | null; observedAt: string; facts: RegistryFact[];
   identity: { legalName: string; addressLine1: string; addressLine2?: string; city?: string; state: string; postalCode: string; countryCode?: "US" | "CA" };
   provenance: { rowSha256: string; quote: string; sourceRow: Record<string, string | number | boolean | null>; localFile?: string };
-  verification?: { method: "exact_legal_name_address" | "prior_registry_binding" | "official_website_corroboration"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown> };
+  verification?: { method: "exact_legal_name_address" | "exact_registry_dba_address" | "prior_registry_binding" | "official_website_corroboration"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown> };
   publication?: { contentHash: string; eventId: string; publishedAt: string };
 };
 
@@ -222,6 +222,28 @@ export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryS
     || (explicitUsBuilding(left) !== null && explicitUsBuilding(left) === explicitUsBuilding(right));
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
+// Keep every substantive word, including non-ASCII letters, in the whole DBA.
+const normalizedDba = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
+function retainedFmcsaDba(profile: RegistryProfile): string | null {
+  if (profile.dataset !== "fmcsa" || !/^[1-9]\d*$/.test(profile.recordId)
+    || profile.provenance.sourceRow.usdot_number !== profile.recordId
+    || profile.facts.find(fact => fact.field === "usdot_number")?.value !== profile.recordId) return null;
+  // The original census row is retained verbatim after the curated excerpt.
+  // Its exact bytes, operator, DOT and physical fields must all agree; merely
+  // mentioning a DBA elsewhere in the quote cannot establish this binding.
+  const parts = profile.provenance.quote.split("\nOriginal public source row: ");
+  if (parts.length !== 2 || createHash("sha256").update(parts[1]).digest("hex") !== profile.provenance.rowSha256) return null;
+  let row: unknown;
+  try { row = JSON.parse(parts[1]); } catch { return null; }
+  const p = profile.identity;
+  if (!object(row) || !text(row.dba_name, 200) || !normalizedDba(row.dba_name)
+    || row.dot_number !== profile.recordId || row.legal_name !== p.legalName
+    || row.phy_street !== p.addressLine1 || p.addressLine2 !== undefined
+    || !text(row.phy_city, 200) || row.phy_city !== p.city
+    || row.phy_state !== p.state || row.phy_zip !== p.postalCode
+    || !p.countryCode || row.phy_country !== p.countryCode) return null;
+  return row.dba_name;
+}
 export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {
   const p = profile.identity;
   const names = [company.name, ...context.aliases];
@@ -233,6 +255,18 @@ export function verifyRegistryIdentity(profile: RegistryProfile, company: { name
     && (!a.countryCode || a.countryCode === (p.countryCode ?? "US"))
     && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));
   if (address) return { method: "exact_legal_name_address", verifiedAt: now.toISOString(), sourceIds: [address.sourceId] };
+  const dba = retainedFmcsaDba(profile);
+  // Whole canonical brand only: do not split DBAs, strip legal suffixes or
+  // create aliases. Preserve the same complete address and country gates.
+  // A shared brand/address cannot override a different known legal operator.
+  const compatibleAliases = dba && context.aliases.every(alias => normalizedDba(alias) === normalizedDba(dba)
+    || normalizedDba(alias) === normalizedDba(p.legalName));
+  const dbaAddress = dba && compatibleAliases && normalizedDba(dba) === normalizedDba(company.name) && context.addresses.find(a => a.sourceId.trim() && sameRegistryStreet(a, p)
+    && normalized(a.state ?? "") === normalized(p.state)
+    && (!a.countryCode || a.countryCode === p.countryCode)
+    && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));
+  if (dbaAddress) return { method: "exact_registry_dba_address", verifiedAt: now.toISOString(), sourceIds: [dbaAddress.sourceId] };
+  // A previous DBA result does not skip the current original-row checks.
   const binding = prior.find(old => old.dataset === profile.dataset && old.recordId === profile.recordId && old.publication?.contentHash
     && old.verification?.sourceIds.length && ["exact_legal_name_address", "prior_registry_binding", "official_website_corroboration"].includes(old.verification.method)
     && stableRegistryJson(old.identity) === stableRegistryJson(profile.identity));

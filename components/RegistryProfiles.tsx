@@ -65,6 +65,7 @@ export default function RegistryProfiles({ insights, loaded = true }: { insights
             <p className="text-[var(--text-muted)]">{[profile.identity?.addressLine1, profile.identity?.addressLine2, profile.identity?.city, profile.identity?.state, profile.identity?.postalCode].filter(Boolean).join(", ")}</p>
             <p className="mt-1 text-[var(--text-muted)]">{profile.verification?.method === "prior_registry_binding" ? "Matched through an existing verified registry binding."
               : profile.verification?.method === "exact_legal_name_address" ? "Matched by legal name and business address."
+                : profile.verification?.method === "exact_registry_dba_address" ? "Matched by the FMCSA-reported DBA and business address."
                 : profile.verification?.method === "official_website_corroboration" ? "Matched using the company's official website and public registry record." : "Identity verification details unavailable."}</p>
             {websiteUrl && <a href={websiteUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[var(--accent)] hover:underline">View company identity source ↗</a>}
             {typeof websiteEvidence?.quote === "string" && <blockquote className="mt-1 whitespace-pre-wrap border-l-2 pl-2 text-[var(--text-muted)]" style={{ borderColor: "var(--border)" }}>{websiteEvidence.quote}</blockquote>}
