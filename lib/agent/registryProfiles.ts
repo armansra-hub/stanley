@@ -180,12 +180,22 @@ export function registryStreet(address: { addressLine1: string; addressLine2?: s
     // Collapse only the identical unit token; different units/floors survive.
     .replace(/\bunit ([a-z0-9]+)(?: unit \1)+$/, "unit $1");
 }
-export function sameRegistryStreet(left: { addressLine1: string; addressLine2?: string }, right: { addressLine1: string; addressLine2?: string }) {
+type RegistryStreetAddress = { addressLine1: string; addressLine2?: string; state?: string; countryCode?: string };
+function albertaRangeRoad(address: RegistryStreetAddress) {
+  // Alberta's rural-address notation abbreviates Range Road as RGE RD.
+  // Require explicit geography and retain every civic, road and unit token.
+  if (address.countryCode !== "CA" || address.state?.trim().toUpperCase() !== "AB") return null;
+  const street = registryStreet(address);
+  return /^\d+[a-z]? (?:rge|range) rd \d+[a-z]?(?: |$)/.test(street)
+    ? street.replace(/^(\d+[a-z]?) rge rd /, "$1 range rd ") : null;
+}
+export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryStreetAddress) {
   // Keep all legacy line-split matches and fingerprints. The extra comparison
   // only changes an explicit floor-only second line, never the street line.
   return registryStreet(left) === registryStreet(right)
     || registryStreet({ ...left, addressLine2: explicitFloorLine(left.addressLine2 ?? "") })
-      === registryStreet({ ...right, addressLine2: explicitFloorLine(right.addressLine2 ?? "") });
+      === registryStreet({ ...right, addressLine2: explicitFloorLine(right.addressLine2 ?? "") })
+    || (albertaRangeRoad(left) !== null && albertaRangeRoad(left) === albertaRangeRoad(right));
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {

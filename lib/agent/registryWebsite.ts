@@ -9,9 +9,11 @@ import { registryContentHash, registryStreet, sameRegistryLegalName, sameRegistr
 type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string };
 export type RegistryWebsiteCorroboration = {
   mode?: "registry_identifier";
-  identifier?: { kind: "usdot" | "ein"; value: string };
+  identifier?: { kind: "usdot" | "ein" | "cslb_license"; value: string };
   sourceUrl: string; normalizedVisibleTextSha256: string; quote: string; quoteSha256: string; subject: string;
-  address: Omit<RegistryProfile["identity"], "legalName"> & { city: string; countryCode: "US" | "CA" };
+  // Omission is accepted only for an exact ca_contractors / cslb_license proof.
+  // It means the website address is unknown, never borrowed from the registry.
+  address?: Omit<RegistryProfile["identity"], "legalName"> & { city: string; countryCode: "US" | "CA" };
   reader: Attestation; reviewer: Attestation;
 };
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -23,7 +25,7 @@ const contains = (quote: string, value: string) => (` ${words(quote)} `).include
 const stateNames = new Map(STATE_NAMES.split("|").map(entry => { const [name, code] = entry.split(":"); return [code, name]; }));
 
 /** Both actual tasks attest that they read this exact passage in its page context
- * and attributed its address and optional registry identifier to this legal entity.
+ * and attributed any provided address and registry identifier to this legal entity.
  * Mailing/HQ/physical roles remain in the exact quote. Identifier mode preserves
  * both addresses as separate observations; it does not establish their equivalence.
  * Distinct task IDs document review separation; they are not cryptographic proof
@@ -48,15 +50,16 @@ export function registryWebsiteEvidenceHash(row: Pick<RegistryFinding, "companyI
 export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistryWebsiteCorroboration {
   if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier"].includes(k))
     || !text(raw.sourceUrl, 2000) || !text(raw.quote, 1800) || raw.quote.length < 20 || !text(raw.subject, 200)
-    || !hash(raw.normalizedVisibleTextSha256) || !hash(raw.quoteSha256) || sha(raw.quote) !== raw.quoteSha256 || !object(raw.address))
+    || !hash(raw.normalizedVisibleTextSha256) || !hash(raw.quoteSha256) || sha(raw.quote) !== raw.quoteSha256)
     throw new Error("invalid registry website evidence");
   if (raw.mode !== undefined && raw.mode !== "registry_identifier" || raw.mode === undefined && raw.identifier !== undefined)
     throw new Error("invalid registry website mode");
-  if (raw.mode === "registry_identifier") identifierRule(row, raw.identifier);
+  const identifier = raw.mode === "registry_identifier" ? identifierRule(row, raw.identifier) : undefined;
   const a = raw.address;
-  if (Object.keys(a).some(k => !["addressLine1", "addressLine2", "city", "state", "postalCode", "countryCode"].includes(k))
+  if (!(a === undefined && identifier?.kind === "cslb_license") && (!object(a)
+    || Object.keys(a).some(k => !["addressLine1", "addressLine2", "city", "state", "postalCode", "countryCode"].includes(k))
     || !["addressLine1", "city", "state", "postalCode"].every(k => text(a[k], 200))
-    || a.addressLine2 !== undefined && !text(a.addressLine2, 200) || !["US", "CA"].includes(String(a.countryCode)))
+    || a.addressLine2 !== undefined && !text(a.addressLine2, 200) || !["US", "CA"].includes(String(a.countryCode))))
     throw new Error("invalid registry website address");
   const { reader, reviewer, ...evidence } = raw;
   const evidenceSha256 = registryWebsiteEvidenceHash(row, evidence as Omit<RegistryWebsiteCorroboration, "reader" | "reviewer">);
@@ -79,10 +82,17 @@ function identifierRule(row: RegistryFinding, identifier: unknown): Identifier {
     || !text(identifier.value, 12)) throw new Error("invalid registry website identifier");
   const isDot = row.profile.dataset === "fmcsa" && identifier.kind === "usdot";
   const isEin = row.profile.dataset === "irs_exempt" && identifier.kind === "ein";
-  const field = isDot ? "usdot_number" : "ein", value = identifier.value;
-  if ((!isDot && !isEin) || !(isDot ? /^[1-9]\d{3,8}$/ : /^\d{9}$/).test(value)
+  const isCslb = row.profile.dataset === "ca_contractors" && identifier.kind === "cslb_license";
+  if (isCslb) {
+    const authority = validatePublicHttpUrl(row.sourceUrl);
+    if (authority.protocol !== "https:" || !["cslb.ca.gov", "web.cslb.ca.gov"].includes(authority.hostname.replace(/^www\./, "")))
+      throw new Error("registry website license requires the California CSLB source authority");
+  }
+  const field = isDot ? "usdot_number" : isCslb ? "license_number" : "ein", value = identifier.value;
+  const facts = row.profile.facts.filter(f => f.field === field);
+  if ((!isDot && !isEin && !isCslb) || !(isDot ? /^[1-9]\d{3,8}$/ : isCslb ? /^[1-9]\d{0,7}$/ : /^\d{9}$/).test(value)
     || row.profile.recordId !== value || String(row.profile.provenance.sourceRow[field]) !== value
-    || row.profile.facts.filter(f => f.field === field && String(f.value) === value).length !== 1
+    || (isCslb ? facts.length !== 1 || String(facts[0].value) !== value : facts.filter(f => String(f.value) === value).length !== 1)
     || (row.profile.identity.countryCode ?? "US") !== "US")
     throw new Error("registry website identifier does not bind exact source dataset, record and fact");
   return identifier as Identifier;
@@ -91,8 +101,12 @@ function labelledIdentifiers(value: string, kind: Identifier["kind"]) {
   // Closed public labels. A generic number, phone, MC number or tax deduction is not an ID.
   const re = kind === "usdot"
     ? /\b(?:USDOT|US\s+DOT|U\.S\.\s*DOT|DOT)\s*(?:(?:number|no\.?)\s*)?[:#]?\s*([1-9]\d{3,8})(?![a-z0-9])/gi
-    : /\b(?:EIN|Employer Identification Number|Federal Tax (?:ID|Identification Number))\s*(?:(?:number|no\.?)\s*)?[:#]?\s*(\d{2}-?\d{7})(?![a-z0-9])/gi;
-  return [...value.matchAll(re)].map(m => ({ value: m[1].replace(/-/g, ""), start: m.index!, end: m.index! + m[0].length }));
+    : kind === "cslb_license"
+      ? /\b(?:CSLB(?:\s+(?:contractor(?:'s)?\s+)?license)?|(?:California|CA)\s+(?:contractor(?:'s)?\s+)?license|Licenses?\s*:\s*CA\s*-)\s*(?:(?:number|no\.?)\s*)?[:#]?\s*(\d+[a-z0-9_/-]*(?:\.\d+)*)/gi
+      : /\b(?:EIN|Employer Identification Number|Federal Tax (?:ID|Identification Number))\s*(?:(?:number|no\.?)\s*)?[:#]?\s*(\d{2}-?\d{7})(?![a-z0-9])/gi;
+  // Retain malformed CSLB tokens too: a second labelled 0644768 or 644768-X
+  // is conflicting evidence, not an alias that can be silently discarded.
+  return [...value.matchAll(re)].map(m => ({ value: kind === "ein" ? m[1].replace(/-/g, "") : m[1], start: m.index!, end: m.index! + m[0].length }));
 }
 function legalParts(value: string) {
   const normalized = words(value).replace(/\b(l l c|l l p|p l l c|l p|p c)$/, suffix => suffix.replace(/ /g, ""));
@@ -100,7 +114,7 @@ function legalParts(value: string) {
   const equivalents: Record<string, string> = { incorporated: "inc", corporation: "corp", limited: "ltd" };
   return { core: suffix ? normalized.slice(0, suffix.index) : normalized, suffix: suffix ? equivalents[suffix[1]] ?? suffix[1] : null };
 }
-function exactSubjectPositions(value: string, subject: string): number[] {
+function exactSubjectPositions(value: string, subject: string, cslbAreaHeading = false): number[] {
   const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matches = [...value.matchAll(new RegExp(escaped, "giu"))];
   if (!matches.length) throw new Error("registry identifier full legal subject is missing");
@@ -117,7 +131,11 @@ function exactSubjectPositions(value: string, subject: string): number[] {
     // Only closed, neutral sentence/header connectors are accepted here. This
     // conservative guard is not a parser or a substitute for both full readers.
     const prefix = before.match(/([\p{L}][\p{L}'’&-]*)\s+$/u)?.[1];
-    if (prefix && !/^(?:about|contact|copyright|name|legal|company|to|by|is|are|of)$/i.test(prefix))
+    // A complete, neutral website heading is not part of the contractor's name.
+    // This allowance belongs only to the CSLB mode; 'Served' alone, embedded
+    // heading words, negated names and other occurrences still fail the guards.
+    const neutralAreaHeading = cslbAreaHeading && /(?:^|[^\p{L}\p{N}_'’&-])Additional Areas Served\s+$/u.test(before);
+    if (prefix && !neutralAreaHeading && !/^(?:about|contact|copyright|name|legal|company|to|by|is|are|of)$/i.test(prefix))
       throw new Error("registry identifier legal subject has an ambiguous name prefix");
   }
   return matches.map(match => match.index!);
@@ -141,8 +159,11 @@ function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorro
   // A selected passage containing relationship or historic ownership ambiguity is held.
   if (/\b(customer|client|partner|affiliate|subsidiar(?:y|ies)|parent company|third[ -]party|on behalf of|formerly|previously|former|previous|old (?:DOT|USDOT|EIN))\b/i.test(proof.quote))
     throw new Error("registry website identifier attribution is ambiguous");
-  const subjects = exactSubjectPositions(proof.quote, proof.subject);
-  exactSubjectPositions(visibleText, proof.subject);
+  const cslbHistoricalOrNegated = /\b(?:(?:old|former|previous|not (?:our|the))\s+(?:CSLB|California|CA|contractor|licenses?)|(?:not|never)\s+(?:CSLB|California|CA)\b|(?:do|does) not (?:hold|own|use)|no longer (?:hold|own|use))\b/i;
+  if (identifier.kind === "cslb_license" && cslbHistoricalOrNegated.test(proof.quote))
+    throw new Error("registry website license attribution is historical or negated");
+  const subjects = exactSubjectPositions(proof.quote, proof.subject, identifier.kind === "cslb_license");
+  exactSubjectPositions(visibleText, proof.subject, identifier.kind === "cslb_license");
   if (!subjects.some(subjectAt => quoteIds.some(id => Math.min(Math.abs(id.start - subjectAt), Math.abs(id.end - (subjectAt + proof.subject.length))) <= 650)))
     throw new Error("registry website identifier is not beside its legal subject");
   // Do not borrow the same number from a customer/carrier reference elsewhere on the page.
@@ -150,6 +171,8 @@ function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorro
     const vicinity = visibleText.slice(Math.max(0, id.start - 100), Math.min(visibleText.length, id.end + 100));
     if (/\b(?:(?:customer|client|partner|affiliate|subsidiary|parent company|third[ -]party|other carrier|another carrier)(?:'s|’s)?|belongs to|licensed to|on behalf of|former (?:DOT|USDOT|EIN)|previous (?:DOT|USDOT|EIN)|old (?:DOT|USDOT|EIN)|not (?:our|the) (?:DOT|USDOT|EIN)|does not (?:belong|identify)|not assigned)\b/i.test(vicinity))
       throw new Error("registry website identifier has an ambiguous surrounding reference");
+    if (identifier.kind === "cslb_license" && cslbHistoricalOrNegated.test(vicinity))
+      throw new Error("registry website license attribution is historical or negated");
   }
 }
 
@@ -174,27 +197,29 @@ export function registryWebsiteVerifier() {
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
     const url = ownUrl(proof.sourceUrl, domain), p = row.profile.identity, a = proof.address;
+    const cslbMode = identifierMode && proof.identifier?.kind === "cslb_license";
+    if (!a && !cslbMode) throw new Error("registry website complete address is required");
     if (![company.name, ...context.aliases].some(name => sameRegistryLegalName(name, proof.subject))
       || !sameRegistryLegalName(proof.subject, p.legalName) || !proof.quote.includes(proof.subject)) throw new Error("registry website subject does not match canonical legal entity");
     // Relationship/location ambiguities stay held even on the account's own site.
     if (/\b(subsidiar(?:y|ies)|parent company|registered agent|customer(?:'s|’s)? (?:address|office|headquarters)|client(?:'s|’s)? (?:address|office)|former (?:address|office)|previous (?:address|office)|old (?:address|office))\b/i.test(proof.quote))
       throw new Error("registry website address attribution is ambiguous");
-    const stateSpellings = [a.state, ...(a.countryCode === "US" && stateNames.has(a.state) ? [stateNames.get(a.state)!] : [])];
-    if (![a.addressLine1, a.addressLine2].filter((v): v is string => Boolean(v)).every(value => contains(proof.quote, value))
+    const stateSpellings = a ? [a.state, ...(a.countryCode === "US" && stateNames.has(a.state) ? [stateNames.get(a.state)!] : [])] : [];
+    if (a && (![a.addressLine1, a.addressLine2].filter((v): v is string => Boolean(v)).every(value => contains(proof.quote, value))
       || !stateSpellings.some(state => contains(proof.quote, `${a.city} ${state} ${a.postalCode}`))
       || (!identifierMode && (words(a.state) !== words(p.state) || a.countryCode !== (p.countryCode ?? "US")
-      || (a.countryCode === "CA" ? words(a.postalCode).replace(/ /g, "") !== words(p.postalCode).replace(/ /g, "") : a.postalCode.slice(0, 5) !== p.postalCode.slice(0, 5)))))
+      || (a.countryCode === "CA" ? words(a.postalCode).replace(/ /g, "") !== words(p.postalCode).replace(/ /g, "") : a.postalCode.slice(0, 5) !== p.postalCode.slice(0, 5))))))
       throw new Error("registry website complete address is not corroborated");
-    if (identifierMode && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
+    if (identifierMode && a && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
       throw new Error("registry identifier requires an explicit complete US website address");
     if (identifierMode) identifierAttribution(row, proof, proof.quote);
-    const exactStreet = sameRegistryStreet(a, p);
+    const exactStreet = a ? sameRegistryStreet(a, p) : false;
     // FMCSA's verified USDOT binds this narrow highway-format discrepancy. No
     // unit, house number, road number, country or postal evidence is discarded.
     const dot = row.profile.dataset === "fmcsa" && /^\d+$/.test(row.profile.recordId)
       && String(row.profile.provenance.sourceRow.usdot_number) === row.profile.recordId
       && new RegExp(`\\b(?:US\\s*)?DOT\\s*#?\\s*${row.profile.recordId}\\b`, "i").test(proof.quote);
-    const highwayEquivalent = dot && registryStreet(a).replace(/\bus hwy\b/g, "hwy") === registryStreet(p).replace(/\bus hwy\b/g, "hwy");
+    const highwayEquivalent = dot && Boolean(a) && registryStreet(a!).replace(/\bus hwy\b/g, "hwy") === registryStreet(p).replace(/\bus hwy\b/g, "hwy");
     if (!identifierMode && !exactStreet && !highwayEquivalent) throw new Error("registry website street or unit differs from source record");
     if (!pages.has(url)) {
       if (pages.size >= 3) throw new Error("registry website request exceeds three source pages");
@@ -211,7 +236,7 @@ export function registryWebsiteVerifier() {
     return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [sourceId], website: {
       ...proof, finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
       binding: identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
-      ...(identifierMode ? { websiteAddress: a, addressRelationship: "separate_observations_not_address_equivalence" } : {}),
+      ...(identifierMode ? { websiteAddress: a ?? null, addressRelationship: a ? "separate_observations_not_address_equivalence" : "website_address_unknown_registry_address_retained" } : {}),
       priorAddresses: context.addresses, structuredIdentity: extractCompanyIdentity(page.body, page.finalUrl, candidate => sameCompanySite(candidate, page.finalUrl)) ?? null,
     } };
   };

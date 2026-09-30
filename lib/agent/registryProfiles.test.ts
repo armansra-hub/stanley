@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRegistryFinding, registryContentHash, registryProfileKey, registryStreet, verifyRegistryIdentity, type RegistryProfile } from "./registryProfiles";
+import { parseRegistryFinding, registryContentHash, registryProfileKey, registryStreet, sameRegistryStreet, verifyRegistryIdentity, type RegistryProfile } from "./registryProfiles";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 
 const now = new Date("2026-09-29T23:00:00Z");
@@ -86,6 +86,42 @@ describe("registry baseline validation", () => {
 });
 describe("registry identity admission", () => {
   const profile = () => parseRegistryFinding(registryFixture(), now).profile;
+  it("matches explicit Alberta Range Road abbreviations without changing source fingerprints", () => {
+    const source = { ...profile(), identity: { ...identity, addressLine1: "55024 RANGE ROAD 234", city: "Sturgeon County", state: "AB", countryCode: "CA" as const, postalCode: "T8T 2A7" } };
+    const address = { ...context.addresses[0], addressLine1: "55024 Rge Rd 234", city: "Sturgeon County", state: "AB", countryCode: "CA" as const, postalCode: "T8T2A7" };
+    const before = JSON.stringify(source);
+    expect(registryStreet(source.identity)).toBe("55024 range rd 234");
+    expect(registryStreet(address)).toBe("55024 rge rd 234");
+    expect(sameRegistryStreet(source.identity, address)).toBe(true);
+    expect(sameRegistryStreet(address, source.identity)).toBe(true);
+    expect(verifyRegistryIdentity(source, { name: identity.legalName }, { ...context, addresses: [address] }, [], now)?.method).toBe("exact_legal_name_address");
+    expect(JSON.stringify(source)).toBe(before);
+    for (const override of [{ postalCode: "T8T2A8" }, { state: "BC" }, { countryCode: "US" as const }]) {
+      expect(verifyRegistryIdentity(source, { name: identity.legalName }, { ...context, addresses: [{ ...address, ...override }] }, [], now)).toBeNull();
+    }
+    expect(verifyRegistryIdentity(source, { name: "Acme Logistics Holdings Inc" }, { ...context, addresses: [address] }, [], now)).toBeNull();
+  });
+  it("keeps the rural civic number, road number, suffix, unit and direction exact", () => {
+    const address = { addressLine1: "55024 Range Road 234", state: "AB", countryCode: "CA" };
+    for (const addressLine1 of ["55025 Rge Rd 234", "55024 Rge Rd 235", "55024 Rge Rd 234A", "55024A Rge Rd 234", "55024 Rge Rd 234 North", "55024 Rge Rd 234 Suite 2", "55024 RR 234", "55024 Rge Avenue 234", "55024 Strange Rd 234"]) {
+      expect(sameRegistryStreet(address, { ...address, addressLine1 })).toBe(false);
+    }
+    const unit = { ...address, addressLine2: "Suite 2" };
+    expect(sameRegistryStreet(unit, { ...unit, addressLine1: "55024 Rge Rd 234" })).toBe(true);
+    for (const addressLine2 of [undefined, "Suite 3", "Floor 2"]) {
+      expect(sameRegistryStreet(unit, { ...unit, addressLine1: "55024 Rge Rd 234", addressLine2 })).toBe(false);
+    }
+  });
+  it("does not expand Range Road outside explicit Alberta Canada or within other street names", () => {
+    const address = { addressLine1: "55024 Range Road 234", state: "AB", countryCode: "CA" };
+    const abbreviated = { ...address, addressLine1: "55024 Rge Rd 234" };
+    for (const override of [{ state: undefined }, { state: "BC" }, { countryCode: undefined }, { countryCode: "US" }]) {
+      expect(sameRegistryStreet({ ...address, ...override }, abbreviated)).toBe(false);
+      expect(sameRegistryStreet(address, { ...abbreviated, ...override })).toBe(false);
+      expect(sameRegistryStreet({ ...address, ...override }, { ...abbreviated, ...override })).toBe(false);
+    }
+    expect(sameRegistryStreet({ ...address, addressLine1: "55024 Old Range Road 234" }, { ...abbreviated, addressLine1: "55024 Old Rge Rd 234" })).toBe(false);
+  });
   it.each([
     ["Floor 2", "Second Floor"], ["Floor 2", "2nd Floor"], ["Floor 2", "Floor 2nd"],
     ["Floor 11", "Eleventh Floor"], ["Floor 12", "12th Floor"], ["Floor 13", "13th Floor"],
