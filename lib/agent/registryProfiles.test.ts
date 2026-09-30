@@ -107,6 +107,67 @@ export function registryFixture() {
       provenance: { rowSha256: "a".repeat(64), quote: evidence, sourceRow, localFile: "research/registry/fmcsa/12345.json" } } };
 }
 const context: CompanyIdentityContext = { aliases: [], context: "private source headers must not leave this module", addresses: [{ addressLine1: "123 MAIN ST", city: "Austin", state: "TX", postalCode: "78701-1234", sourceKind: "netsuite_record", sourceId: "record-1", capturedAt: "2026-09-28T00:00:00Z" }] };
+describe("Canadian terminal Park/PK comparison", () => {
+  const address = { addressLine1: "177 Saddlecrest Park NE", state: "AB", countryCode: "CA" as const };
+  const abbreviated = { ...address, addressLine1: "177 SADDLECREST PK NE" };
+  it.each([
+    [address, abbreviated],
+    [{ ...address, addressLine1: "177 Saddlecrest Park" }, { ...abbreviated, addressLine1: "177 Saddlecrest PK" }],
+    [{ ...address, addressLine2: "Suite 204" }, { ...abbreviated, addressLine1: "177 Saddlecrest PK NE Unit 204" }],
+    [{ ...address, addressLine1: "177 Saddlecrest Park NE Suite 204" }, { ...abbreviated, addressLine2: "Suite 204" }],
+    [{ ...address, state: "ON" }, { ...abbreviated, state: "ON" }],
+  ])("compares only the street type symmetrically with other tokens intact: %j", (left, right) => {
+    const before = JSON.stringify([left, right]);
+    expect(sameRegistryStreet(left, right)).toBe(true);
+    expect(sameRegistryStreet(right, left)).toBe(true);
+    expect(JSON.stringify([left, right])).toBe(before);
+  });
+  it.each([
+    "178 Saddlecrest PK NE", "177A Saddlecrest PK NE", "177 Another PK NE",
+    "177 Saddlecrest PK NW", "177 Saddlecrest PK", "177 Saddlecrest Parkway NE", "177 Saddlecrest PKY NE",
+    "177 Saddlecrest PK NE Suite 204", "177 Saddlecrest PK NE 204", "177 Saddlecrest PK NE Floor 2",
+  ])("preserves civic, name, direction, street type and unit: %s", addressLine1 => {
+    expect(sameRegistryStreet(address, { ...abbreviated, addressLine1 })).toBe(false);
+  });
+  it.each([
+    [{ addressLine1: "177 Park Avenue" }, { addressLine1: "177 PK Avenue" }],
+    [{ addressLine1: "177 Park Saddlecrest" }, { addressLine1: "177 PK Saddlecrest" }],
+    [{ addressLine1: "177 Saddlecrest", addressLine2: "Park NE" }, { addressLine1: "177 Saddlecrest PK NE" }],
+    [{ addressLine1: "177 Saddlecrest Road Suite Park" }, { addressLine1: "177 Saddlecrest Road Suite PK" }],
+    [{ addressLine1: "177 Saddlecrest Road Building 2 Park" }, { addressLine1: "177 Saddlecrest Road Building 2 PK" }],
+    [{ addressLine1: "177 Saddlecrest Park NE", addressLine2: "Building 2" }, { addressLine1: "177 Saddlecrest PK NE", addressLine2: "Building 2" }],
+    [{ addressLine1: "177 Saddlecrest Park NE", addressLine2: "204" }, { addressLine1: "177 Saddlecrest PK NE", addressLine2: "204" }],
+    [{ addressLine1: "177 Saddlecrest Park NE Suite 204-205" }, { addressLine1: "177 Saddlecrest PK NE Suite 204-205" }],
+    [{ addressLine1: "Saddlecrest Park NE" }, { addressLine1: "Saddlecrest PK NE" }],
+  ])("does not expand embedded, moved, bare or compound designators: %j", (left, right) => {
+    expect(sameRegistryStreet({ ...address, ...left }, { ...abbreviated, ...right })).toBe(false);
+  });
+  it.each([undefined, "Suite 205", "Floor 204", "204", "Suite 0204", "Suite 204 Floor 2"])("does not drop or substitute a complete second-line unit: %s", addressLine2 => {
+    expect(sameRegistryStreet({ ...address, addressLine2: "Suite 204" }, { ...abbreviated, addressLine2 })).toBe(false);
+  });
+  it.each([{ state: undefined }, { state: "BC" }, { state: "ZZ" }, { countryCode: undefined }, { countryCode: "US" }])("requires both explicit Canadian countries and the same valid province: %j", change => {
+    expect(sameRegistryStreet({ ...address, ...change }, abbreviated)).toBe(false);
+    expect(sameRegistryStreet(address, { ...abbreviated, ...change })).toBe(false);
+  });
+  it("keeps the Puri legal-name/full-postal gates, raw fields and content hash unchanged", () => {
+    const source = parseRegistryFinding(registryFixture(), now).profile;
+    source.identity = { ...abbreviated, legalName: "PURI BRO'S TRUCKING LTD", city: "CALGARY", postalCode: "T3J 5L6" };
+    const a = { ...context.addresses[0], ...address, city: "Calgary", postalCode: "T3J5L6" };
+    const ctx = { ...context, addresses: [a] }, before = JSON.stringify(source);
+    const hash = registryContentHash(source, "https://safer.fmcsa.dot.gov/");
+    expect(registryStreet(source.identity)).toBe("177 saddlecrest pk ne");
+    expect(registryStreet(a)).toBe("177 saddlecrest park ne");
+    expect(verifyRegistryIdentity(source, { name: "Puri Bro's Trucking Ltd" }, ctx, [], now)?.method).toBe("exact_legal_name_address");
+    for (const change of [{ postalCode: "T3J5L7" }, { postalCode: "T3J" }, { state: "BC" }, { countryCode: "US" as const }, { addressLine2: "Suite 204" }]) {
+      expect(verifyRegistryIdentity(source, { name: source.identity.legalName }, { ...ctx, addresses: [{ ...a, ...change }] }, [], now)).toBeNull();
+    }
+    for (const name of ["Puri Bro's Trucking LLC", "Other Trucking Ltd"]) {
+      expect(verifyRegistryIdentity(source, { name }, ctx, [], now)).toBeNull();
+    }
+    expect(JSON.stringify(source)).toBe(before);
+    expect(registryContentHash(source, "https://safer.fmcsa.dot.gov/")).toBe(hash);
+  });
+});
 describe("registry baseline validation", () => {
   it("collapses an identical repeated terminal suite but preserves differing units and floors", () => {
     const profile = parseRegistryFinding(registryFixture(), now).profile;

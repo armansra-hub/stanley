@@ -250,6 +250,18 @@ function usPlazaSuffix(address: RegistryStreetAddress) {
   return /^\d+[a-z]? .+ (?:plaza|plz)(?: unit [a-z0-9]+)?$/.test(street)
     ? street.replace(/ plaza(?= unit [a-z0-9]+$|$)/, " plz") : null;
 }
+function canadianParkSuffix(address: RegistryStreetAddress) {
+  // Canada Post lists Park -> PK, separately from Parkway -> PKY. Compare only
+  // a civic street suffix in line 1, retaining direction and complete unit.
+  // Source strings and registryStreet fingerprints must remain unchanged.
+  if (address.countryCode !== "CA" || !/^(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)$/.test(address.state?.trim().toUpperCase() ?? "")) return null;
+  const suffix = /^(\d+[a-z]? .+) (?:park|pk)((?: (?:n|s|e|w|ne|nw|se|sw))?(?: unit [a-z0-9]+)?)$/;
+  const first = registryStreet({ addressLine1: address.addressLine1 }).match(suffix);
+  if (!first || /\b(?:unit|building|bldg|floor)\b/.test(first[1])) return null;
+  if (address.addressLine2?.trim() && !/^unit [a-z0-9]+$/.test(registryStreet({ addressLine1: address.addressLine2 }))) return null;
+  const whole = registryStreet(address).match(suffix);
+  return whole ? `${whole[1]} pk${whole[2]}` : null;
+}
 function sameExplicitUsPoBox(left: RegistryStreetAddress, right: RegistryStreetAddress) {
   // Only an entire, explicitly labelled numeric PO-box first line may differ in
   // P.O./PO punctuation. Retain every box digit (including leading zeros), the
@@ -276,7 +288,9 @@ export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryS
     || sameExplicitUsPoBox(left, right)
     || sameExplicitUsSuite(left, right)
     || (left.state?.trim().toUpperCase() === right.state?.trim().toUpperCase()
-      && usPlazaSuffix(left) !== null && usPlazaSuffix(left) === usPlazaSuffix(right));
+      && usPlazaSuffix(left) !== null && usPlazaSuffix(left) === usPlazaSuffix(right))
+    || (left.state?.trim().toUpperCase() === right.state?.trim().toUpperCase()
+      && canadianParkSuffix(left) !== null && canadianParkSuffix(left) === canadianParkSuffix(right));
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 // Keep every substantive word, including non-ASCII letters, in the whole DBA.
