@@ -40,7 +40,7 @@ export default function OperatingMatches(props: OperatingMatchesProps) {
       if (open) setAdvancedVisited(true);
     }}>
       <summary className="cursor-pointer px-4 py-4 sm:px-5">
-        <span className="font-semibold">All characteristics</span>
+        <span className="font-semibold">All characteristics · legacy saved library</span>
         <span className="ml-2 text-xs text-[var(--text-muted)]">47 categories · 22 existing traits · 10 research combinations</span>
       </summary>
       {advancedVisited && <AdvancedOperatingMatches {...props} enabled={props.enabled && advancedOpen} />}

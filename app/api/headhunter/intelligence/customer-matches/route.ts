@@ -12,11 +12,14 @@ export async function GET(req: NextRequest) {
   const industry = req.nextUrl.searchParams.get("industry") ?? "all";
   const page = Number(req.nextUrl.searchParams.get("page") ?? "1");
   const hidden = req.nextUrl.searchParams.get("showHidden") ?? "false";
+  // This route retains original definitions and raw paid receipts. Approved
+  // research comparisons have a separate version-pinned read-only endpoint.
+  const library = req.nextUrl.searchParams.get("library") ?? "legacy";
   if ((pattern !== "all" && !CUSTOMER_PATTERNS.some(p => p.id === pattern)) || !Number.isSafeInteger(page) || page < 1
-    || !["true", "false"].includes(hidden) || !industry.trim() || industry.length > 180 || /[\u0000-\u001f\u007f]/.test(industry)) return NextResponse.json({ error: "invalid_customer_match_query" }, { status: 400 });
+    || library !== "legacy" || !["true", "false"].includes(hidden) || !industry.trim() || industry.length > 180 || /[\u0000-\u001f\u007f]/.test(industry)) return NextResponse.json({ error: "invalid_customer_match_query" }, { status: 400 });
   try {
     const result = await withServiceDeadline(Date.now() + 24_000, () => loadCustomerMatches({ pattern, industry, page, showHidden: hidden === "true" }));
-    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ...result, library: "legacy" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? error.code : null;
     console.error("intelligence.customer_matches_unavailable", { code: typeof code === "string" && /^(?:[0-9A-Z]{5}|PGRST[0-9]{3})$/.test(code) ? code : "unknown" });

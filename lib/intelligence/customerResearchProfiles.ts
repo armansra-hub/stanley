@@ -104,7 +104,7 @@ export function customerResearchCoverage(profile: Pick<CustomerResearchProfile, 
 
 /** Strict, idempotent admission. Content, URLs and citation offsets are never
  * rewritten. Sorting is only for deterministic identity and comparison. */
-export function normalizeCustomerResearchProfile(input: unknown): CustomerResearchProfile {
+export function normalizeCustomerResearchProfile(input: unknown, options: { preserveAuthoredConflictCitationRoles?: boolean } = {}): CustomerResearchProfile {
   const parsed = profileSchema.safeParse(input);
   if (!parsed.success) return fail(`schema:${parsed.error.issues.map(issue => issue.path.join(".")).join(",")}`);
   const value = parsed.data;
@@ -137,9 +137,13 @@ export function normalizeCustomerResearchProfile(input: unknown): CustomerResear
     }
     const supports = fact.citations.some(citation => citation.role === "supporting");
     const contradicts = fact.citations.some(citation => citation.role === "contradicting");
+    // Some authored conflict observations cite both incompatible passages as
+    // support for the observation of conflict. The finite-scope projection may
+    // preserve this convention; it never converts the fact into positive support.
     if ((fact.state === "supported" && (!supports || contradicts))
       || (fact.state === "not_supported" && (!contradicts || supports))
-      || (fact.state === "conflicting" && (!supports || !contradicts))
+      || (fact.state === "conflicting" && (!supports || !contradicts)
+        && !(options.preserveAuthoredConflictCitationRoles && supports && new Set(fact.citations.filter(c=>c.role==="supporting").map(c=>`${c.sourceId}:${c.start}:${c.end}`)).size >= 2))
       || (fact.state === "unknown" && (supports || contradicts))) fail(`decision_evidence:${fact.id}`);
   }
   const coverage = customerResearchCoverage(value);
@@ -234,7 +238,7 @@ export function normalizeCustomerResearchTaxonomy(input: unknown, researchedProf
   if (!parsed.success) return fail(`taxonomy_schema:${parsed.error.issues.map(issue => issue.path.join(".")).join(",")}`);
   const value = parsed.data;
   unique(value.cohort.customerIds, "cohort_customer"); unique(value.definitions.map(definition => definition.id), "definition");
-  const profiles = researchedProfiles.map(normalizeCustomerResearchProfile);
+  const profiles = researchedProfiles.map(profile => normalizeCustomerResearchProfile(profile));
   unique(profiles.map(profile => profile.customerId), "profile_customer");
   const byCustomer = new Map(profiles.map(profile => [profile.customerId, profile]));
   const cohort = new Set(value.cohort.customerIds);

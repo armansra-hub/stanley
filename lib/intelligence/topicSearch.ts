@@ -1,6 +1,7 @@
 import { buildOperatingProfile, OPERATING_TOPICS, type OperatingTopic, type ProfileObservation } from "./profiles";
 import { visibilityPolicy, type VisibilityMode } from "./visibility";
 import { isOperatingFacetId, operatingFacet, OPERATING_CATALOG_VERSION, type OperatingFacetId } from "./operatingCatalog";
+import type { ApprovedCustomerCatalog } from "./customerApprovedCatalog";
 
 export type SearchOperatingTopic = OperatingTopic | OperatingFacetId;
 export function operatingTopicFilter(values: readonly string[]): SearchOperatingTopic[] | null {
@@ -14,8 +15,36 @@ export type CatalogCitation = {
 };
 export type CatalogFacetRow = {
   id: string; catalogVersion: string; decision: string; status: string;
+  facetVersion?: string;
   probability: number | null; nativeResult: unknown; citations: CatalogCitation[];
 };
+
+/** A selected approved predicate uses its own exact version and native choice.
+ * It cannot fall through to a similarly named legacy probability topic. */
+export function approvedCatalogTopic(row: CatalogFacetRow, observations: TopicSearchAccountRow["observations"],
+  catalog: ApprovedCustomerCatalog, versions: Record<string, string>): OperatingMatchTopic | null {
+  const criterion = catalog.facets.find(f => f.id === row.id);
+  const native = row.nativeResult as { answer?: { type?: string; choice?: string } } | null;
+  if (!criterion || row.catalogVersion !== catalog.version || row.facetVersion !== versions[row.id]
+    || row.status !== "answered" || row.decision !== "supported" || native?.answer?.type !== "choice"
+    || native.answer.choice !== "supported" || !row.citations?.length) return null;
+  const sources: OperatingMatchSource[] = [];
+  for (const citation of row.citations) {
+    const observation = observations.find(o => o.id === citation.observationId && !o.feedback_excluded
+      && o.content_hash === citation.contentHash && o.source_url === citation.url);
+    try { const url = new URL(citation.url); if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null; }
+    catch { return null; }
+    if (!observation || !Number.isInteger(citation.start) || !Number.isInteger(citation.end) || citation.start < 0
+      || citation.end <= citation.start || citation.end > observation.evidence_text.length) return null;
+    const context = observation.evidence_text.slice(citation.start, citation.end);
+    if (!context.trim()) return null;
+    sources.push({ observationId: citation.observationId, url: citation.url, title: citation.title, sourceKind: citation.sourceKind,
+      eventDate: citation.eventDate, observedAt: citation.observedAt, start: citation.start, end: citation.end, probability: null,
+      companyRelevance: null, contextPreview: context, previewTruncated: false });
+  }
+  return { id: criterion.id, label: criterion.label, state: "supported", classification: "native_choice", sources,
+    nativeResult: row.nativeResult, boundary: criterion.predicate + " Exclusions: " + criterion.exclusions.join(" ") };
+}
 export type OperatingMatchSource = {
   observationId: string; url: string; title: string; sourceKind: string; eventDate: string | null; observedAt: string;
   probability: number | null; companyRelevance: unknown; contextPreview: string; previewTruncated: boolean; start: number; end: number;
@@ -111,3 +140,22 @@ export function buildTopicSearchResult(raw: TopicSearchRaw) {
 }
 
 export type TopicSearchResult = ReturnType<typeof buildTopicSearchResult>;
+
+export function buildApprovedTopicSearchResult(raw: Omit<TopicSearchRaw, "topics"> & { topics: string[] },
+  catalog: ApprovedCustomerCatalog, versions: Record<string, string>) {
+  const selected = [...new Set(raw.topics)];
+  if (selected.length > 8 || selected.some(id => !catalog.facets.some(f => f.id === id))
+    || !["all", "any"].includes(raw.mode ?? "all")) throw new Error("invalid_approved_topic_filter");
+  const accounts = raw.accounts.flatMap(account => {
+    const topics = (account.catalogFacets ?? []).flatMap(row => {
+      if (!selected.includes(row.id)) return [];
+      const topic = approvedCatalogTopic(row, account.observations, catalog, versions); return topic ? [topic] : [];
+    });
+    if (!topics.length || raw.mode !== "any" && selected.some(id => !topics.some(t => t.id === id))) return [];
+    return { companyId: account.companyId, name: account.name, domain: account.domain, subindustry: account.subindustry,
+      internalId: account.internalId, status: account.status ?? "new", topics };
+  });
+  return { library: "approved", version: catalog.version, topics: selected, mode: raw.mode ?? "all", accounts,
+    topicCounts: raw.topicCounts ?? null, catalogCoverage: raw.catalogCoverage ?? null,
+    coverage: raw.coverage ?? null, hasMore: raw.hasMore, nextCursor: raw.nextCursor, cacheOnly: true };
+}

@@ -3,6 +3,8 @@ import { OPERATING_CATALOG_VERSION, OPERATING_FACETS, operatingFacetQuestion } f
 import { OPERATING_COVERAGE_VERSION, catalogAnswerPlans, catalogFacetVersion, catalogNativeResult, catalogPackets, catalogRetryAt, runOperatingCoverage,
   type CatalogCheckpoint, type CatalogSnapshot, type CatalogSource } from "./operatingCoverage";
 import { nativeJevBody, nativeJevFingerprint, type NativeJevInput } from "./nativeJev";
+import { customerRuntimeCatalog } from "./customerCatalogRuntime";
+import { catalogFixture } from "../../test/customerCatalogFixture";
 
 const company = { id: "company", name: "Synthetic Services", domain: "synthetic.test", subindustry: null };
 const sources: CatalogSource[] = [
@@ -34,7 +36,7 @@ function harness(rows = sources, researchDue = false) {
   const from = vi.fn((table: string) => {
     let selected: string[] | null = null;
     const query: any = { select: () => query, eq: () => query, in: (_key: string, ids: string[]) => { selected = ids; return query; },
-      then: (resolve: any) => Promise.resolve({ data: table === "intelligence_catalog_facets" ? [...saved.values()] : rows.filter(row => !selected || selected.includes(row.id)), error: null }).then(resolve) };
+      then: (resolve: any) => Promise.resolve({ data: table === "intelligence_catalog_read_facets" ? [...saved.values()] : rows.filter(row => !selected || selected.includes(row.id)), error: null }).then(resolve) };
     return query;
   });
   const evaluate = vi.fn(async (input: NativeJevInput) => ({ status: "complete" as const, reused: false,
@@ -46,6 +48,22 @@ function harness(rows = sources, researchDue = false) {
 const job = { company_id: "company", lease_token: "lease", catalog_requested_version: OPERATING_CATALOG_VERSION };
 
 describe("operating catalog account coverage", () => {
+  it("separates visible criteria from mixed provider context and reevaluates only changed semantics", async () => {
+    const h = harness(), catalog = customerRuntimeCatalog(catalogFixture());
+    h.evaluate.mockImplementation(async input => ({ status: "complete" as const, reused: false,
+      evaluation: { ok: true as const, usage: { inputTokens: 10, outputTokens: 10 }, provider_result: { model: "jev-1.13.0",
+        answers: Object.fromEntries(Object.keys(input.questions).map(id => [id, { type: "choice" as const,
+          choice: ["industry_context_G01", "industry_context_G02"].includes(id) ? "supported" : "unknown" }])) } } }));
+    const result = await runOperatingCoverage({ ...job, catalog_requested_version: catalog.version }, Date.now() + 120_000, { ...h, catalog });
+    expect(result).toMatchObject({ outcome: "catalog_complete", answered: 2 });
+    expect(h.saved.size).toBe(37);
+    expect(h.writes.at(-1).p_summary.industryContext).toMatchObject({ industryIds: ["G01", "G02"], contextAnswered: 35, contextTotal: 35 });
+    const paid = h.evaluate.mock.calls.length;
+    const next = customerRuntimeCatalog(catalogFixture("approved-fixture-next", true));
+    await runOperatingCoverage({ ...job, catalog_requested_version: next.version }, Date.now() + 120_000, { ...h, catalog: next });
+    expect(h.evaluate.mock.calls.slice(paid).flatMap(([input]) => Object.keys(input.questions))).toEqual([next.wireId("inventory-project-service")]);
+    expect(h.writes.at(-1).p_summary.industryContext.contextAnswered).toBe(35);
+  });
   it("retains every character, including surrogate pairs, across byte-bounded packets", () => {
     const source = { ...sources[0], evidence_text: "中文🙂abc".repeat(80) };
     const packets = catalogPackets([source], 37);

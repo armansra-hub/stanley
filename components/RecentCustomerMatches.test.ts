@@ -69,10 +69,11 @@ describe("recent-customer shortlist", () => {
         unavailablePages: 9, latestUpdatedAt: "2026-09-29T20:00:00Z", origin: "codex_research", providerCalls: 0 } },
     }));
     expect(markup).toContain("Saved Jev question sets: 76 of 823");
-    expect(markup).toContain("New Codex website research: 3 complete · 3 reviewed with source gaps · 0 unresolved · 2 in progress · 815 not started");
+    expect(markup).toContain("Website research snapshot: 3 complete · 3 reviewed with source gaps · 0 unresolved · 2 in progress · 815 not started");
     expect(markup).toContain("Unresolved records do not count as researched examples");
     expect(markup).toContain("80 pages read");
-    expect(markup).toContain("revised categories are not active yet");
+    expect(markup).toContain("Approved criteria and their current reference coverage");
+    expect(markup).not.toContain("revised categories are not active yet");
     expect(markup).not.toContain("76 complete · 3 reviewed");
   });
 

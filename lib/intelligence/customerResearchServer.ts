@@ -2,9 +2,12 @@ import "server-only";
 import { serviceClient } from "@/lib/supabase/server";
 import { customerReferencePublicUrl } from "./customerReferenceRegistry";
 import { customerResearchTextHash, normalizeCustomerResearchProfile, projectCustomerResearchProfile, type CustomerResearchProof } from "./customerResearchProfiles";
+import { normalizeCustomerBusinessScopeProof, normalizeApprovedCustomerCatalog, customerProofHash, type CustomerBusinessScopeProof, type ApprovedCustomerCatalog } from "./customerApprovedCatalog";
+import { customerRuntimeCatalog, runtimeFacetRegistration } from "./customerCatalogRuntime";
 
 type Database = ReturnType<typeof serviceClient>;
-type StoredProfile = { customer_id: string; full_profile_sha256: string; research_status: CustomerResearchProof["status"]; profile: CustomerResearchProof; updated_at: string };
+type AnyCustomerProof = CustomerResearchProof | CustomerBusinessScopeProof;
+type StoredProfile = { customer_id: string; full_profile_sha256: string; research_status: CustomerResearchProof["status"]; profile: AnyCustomerProof; updated_at: string };
 type RegistryIdentity = { id: string; name: string; website: string | null; announcement_date: string;
   announcements: { id: string }[]; active: boolean; updated_at: string };
 const fields = "customer_id,full_profile_sha256,research_status,profile,updated_at";
@@ -16,10 +19,14 @@ export class CustomerResearchError extends Error {
   constructor(readonly code: string, readonly status = 503) { super(code); }
 }
 function checkStored(row: StoredProfile): StoredProfile {
-  if (!row || row.profile?.schema !== "customer-research-proof-v1" || row.profile.customerId !== row.customer_id
+  if (!row || !["customer-research-proof-v1","customer-research-proof-v2"].includes(row.profile?.schema) || row.profile.customerId !== row.customer_id
     || row.profile.fullProfileSha256 !== row.full_profile_sha256 || row.profile.status !== row.research_status
     || row.profile.sourceStorage !== "private_local_full_text" || row.profile.sources.some(source => Object.hasOwn(source, "text"))) {
     throw new CustomerResearchError("customer_research_proof_invalid");
+  }
+  if(row.profile.schema === "customer-research-proof-v2") {
+    try { normalizeCustomerBusinessScopeProof(row.profile); }
+    catch { throw new CustomerResearchError("customer_research_proof_invalid"); }
   }
   return row;
 }
@@ -36,8 +43,8 @@ export async function loadCustomerResearchPage(input: { after?: string; limit?: 
   return { records, nextAfter: hasMore ? records[records.length - 1].customer_id : null };
 }
 /** Keyset reads compact proofs only. No total-cohort cap or paid provider. */
-export async function loadCustomerResearchProofs(db = serviceClient()): Promise<CustomerResearchProof[]> {
-  const proofs: CustomerResearchProof[] = [];
+export async function loadCustomerResearchProofs(db = serviceClient()): Promise<AnyCustomerProof[]> {
+  const proofs: AnyCustomerProof[] = [];
   let after: string | undefined;
   do {
     const page = await loadCustomerResearchPage({ after, limit: 100 }, db);
@@ -57,6 +64,8 @@ export type CustomerResearchProgress = {
   complete: number; completeWithGaps: number; unresolved: number; facts: number; readPages: number;
   pendingPages: number; unreadPages: number; unavailablePages: number; latestUpdatedAt: string | null;
   origin: "codex_research"; providerCalls: 0;
+  businessScopeComplete?: number; businessScopeCompleteWithGaps?: number; businessScopeIdentityOrSourceGap?: number;
+  mappedReferences?: number; referencesWithCriterionBindings?: number;
 };
 export async function customerResearchProgress(db = serviceClient()): Promise<CustomerResearchProgress> {
   const result = await db.rpc("intelligence_customer_research_progress");
@@ -65,6 +74,98 @@ export async function customerResearchProgress(db = serviceClient()): Promise<Cu
   if (counts.some(key => !Number.isInteger(result.data[key]) || Number(result.data[key]) < 0)
     || result.data.origin !== "codex_research") throw new CustomerResearchError("customer_research_progress_invalid");
   return result.data as CustomerResearchProgress;
+}
+
+/** Trusted local proof admission: full text was mechanically validated locally;
+ * only its compact hash-bound result crosses this authenticated boundary. */
+export async function saveCustomerBusinessScopeProof(input: unknown, expectedPreviousProofHash: string | null = null, db = serviceClient()) {
+  if(expectedPreviousProofHash !== null && !/^[a-f0-9]{64}$/.test(expectedPreviousProofHash)) throw new CustomerResearchError("invalid_previous_hash",400);
+  let proof: CustomerBusinessScopeProof;
+  try { proof=normalizeCustomerBusinessScopeProof(input); }
+  catch(error) { throw new CustomerResearchError(error instanceof Error ? error.message : "invalid_customer_research",400); }
+  const identity=await db.from("intelligence_customer_reference_registry").select("id,name,website,announcement_date,announcements,active,updated_at")
+    .eq("id",proof.customerId).eq("active",true).maybeSingle();
+  if(identity.error) throw new CustomerResearchError("customer_registry_unavailable");
+  if(!identity.data) throw new CustomerResearchError("customer_not_in_registry",404);
+  const registry=identity.data as RegistryIdentity;
+  if(registry.name!==proof.name || JSON.stringify([...new Set(registry.announcements.map(a=>a.id))].sort())!==JSON.stringify([...proof.announcementIds].sort())) throw new CustomerResearchError("customer_registry_identity_changed",409);
+  const write=await db.rpc("intelligence_customer_research_scope_put",{p_profile:proof,p_expected_proof_hash:expectedPreviousProofHash,p_registry_updated_at:registry.updated_at});
+  if(write.error) { const conflict=/conflict|changed/i.test(String(write.error.message??"")); throw new CustomerResearchError(conflict?"customer_research_write_conflict":"customer_research_write_failed",conflict?409:503); }
+  const saved=await getCustomerResearchProof(proof.customerId,db);
+  if(!saved || saved.profile.schema!=="customer-research-proof-v2" || saved.profile.proofSha256!==proof.proofSha256) throw new CustomerResearchError("customer_research_readback_uncertain");
+  return {customerId:proof.customerId,fullProfileSha256:proof.fullProfileSha256,proofSha256:proof.proofSha256,status:proof.status,
+    businessScope:proof.businessScope.status,coverage:proof.coverage,saved:true,providerCalls:0};
+}
+
+async function verifyCatalogCohort(catalog: ApprovedCustomerCatalog,db: Database) {
+  const expected=catalog.cohortProof.customers;
+  if(!Array.isArray(expected) || expected.length!==catalog.cohortProof.cohortCount || expected.length!==catalog.cohortProof.accountedForCount) throw new CustomerResearchError("customer_catalog_cohort_manifest_missing",400);
+  const proofs=await loadCustomerResearchProofs(db),byId=new Map(proofs.map(p=>[p.customerId,p]));
+  const ids=new Set<string>();
+  for(const raw of expected) {
+    if(!object(raw)||!string(raw.customerId)||ids.has(raw.customerId)) throw new CustomerResearchError("customer_catalog_cohort_manifest_invalid",400);
+    ids.add(raw.customerId);const proof=byId.get(raw.customerId);
+    if(!proof || proof.schema!=="customer-research-proof-v2" || proof.fullProfileSha256!==raw.profileSha256 || proof.proofSha256!==raw.proofSha256) throw new CustomerResearchError("customer_catalog_cohort_stale",409);
+    for(const binding of proof.criterionBindings) if(!catalog.facets.some(f=>f.id===binding.criterionId && f.definitionVersion===binding.definitionVersion)) throw new CustomerResearchError("customer_catalog_binding_version",409);
+  }
+  if(proofs.length!==expected.length) throw new CustomerResearchError("customer_catalog_cohort_membership_changed",409);
+}
+export async function registerApprovedCustomerCatalog(input: unknown,db=serviceClient()) {
+  let catalog:ApprovedCustomerCatalog;
+  try { catalog=normalizeApprovedCustomerCatalog(input); } catch { throw new CustomerResearchError("invalid_customer_catalog",400); }
+  await verifyCatalogCohort(catalog,db);
+  const runtime=customerRuntimeCatalog(catalog);
+  const result=await db.rpc("intelligence_catalog_register",{p_version:catalog.version,p_dictionary:catalog,p_facets:runtimeFacetRegistration(runtime)});
+  if(result.error) throw new CustomerResearchError("customer_catalog_register_failed");
+  const saved=await db.rpc("intelligence_catalog_dictionary_get",{p_version:catalog.version});
+  if(saved.error||customerProofHash(saved.data)!==customerProofHash(catalog)) throw new CustomerResearchError("customer_catalog_readback_uncertain");
+  return {version:catalog.version,criteria:catalog.facets.length,registered:true,selected:false,providerCalls:0};
+}
+export async function selectApprovedCustomerCatalog(version:string,db=serviceClient()) {
+  const loaded=await db.rpc("intelligence_catalog_dictionary_get",{p_version:version});
+  if(loaded.error||!loaded.data) throw new CustomerResearchError("customer_catalog_unavailable");
+  const catalog=normalizeApprovedCustomerCatalog(loaded.data);await verifyCatalogCohort(catalog,db);
+  const result=await db.rpc("intelligence_catalog_select",{p_version:version});
+  if(result.error) throw new CustomerResearchError("customer_catalog_select_failed");
+  const selected=await db.rpc("intelligence_catalog_dictionary_get",{p_version:null});
+  if(selected.error||customerProofHash(selected.data)!==customerProofHash(catalog)) throw new CustomerResearchError("customer_catalog_selection_readback_uncertain");
+  return {version,selected:true,providerCalls:0,paidPolicyChanged:false};
+}
+/** Readback only: never registers, selects, admits work, or contacts a provider.
+ * A missing exact version is an affirmative registered:false result, allowing
+ * uncertain publication to be reconciled without replaying a POST. */
+export async function getApprovedCustomerCatalogStatus(version?: string, db=serviceClient()) {
+  if(version!==undefined && !/^customer-catalog-v1-[a-f0-9]{64}$/.test(version)) throw new CustomerResearchError("invalid_customer_catalog_version",400);
+  const [config,paid]=await Promise.all([
+    db.from("intelligence_config").select("selected_catalog_version,enabled").eq("id",1).maybeSingle(),
+    db.from("intelligence_jev_budget_policy").select("enabled,updated_at").eq("id","jev-rollout-2026-09-24").maybeSingle(),
+  ]);
+  if(config.error || paid.error || !config.data || !paid.data || typeof config.data.enabled!=="boolean"
+    || typeof paid.data.enabled!=="boolean" || (config.data.selected_catalog_version!==null && typeof config.data.selected_catalog_version!=="string")) {
+    throw new CustomerResearchError("customer_catalog_status_unavailable");
+  }
+  const selectedVersion=config.data.selected_catalog_version as string|null;
+  const requestedVersion=version??selectedVersion;
+  let catalog:ApprovedCustomerCatalog|null=null;
+  if(requestedVersion) {
+    const result=await db.rpc("intelligence_catalog_dictionary_get",{p_version:requestedVersion});
+    if(result.error) throw new CustomerResearchError("customer_catalog_status_unavailable");
+    if(result.data!==null) {
+      try {catalog=normalizeApprovedCustomerCatalog(result.data);}
+      catch {throw new CustomerResearchError("customer_catalog_status_invalid");}
+      if(catalog.version!==requestedVersion) throw new CustomerResearchError("customer_catalog_status_invalid");
+    }
+  }
+  if(requestedVersion===selectedVersion && selectedVersion && !catalog) throw new CustomerResearchError("customer_catalog_selection_invalid");
+  return {requestedVersion,version:catalog?.version??null,registered:catalog!==null,
+    dictionarySha256:catalog?customerProofHash(catalog):null,
+    criteria:catalog?.facets.length??0,navigationFamilies:catalog?.navigationFamilies.length??0,
+    evidenceFields:catalog?.evidenceFields.length??0,industryContexts:catalog?.industryContextDefinitions.length??0,
+    cohortCount:catalog?.cohortProof.cohortCount??null,accountedForCount:catalog?.cohortProof.accountedForCount??null,
+    manifestCount:Array.isArray(catalog?.cohortProof.customers)?catalog.cohortProof.customers.length:0,
+    selectedVersion,selected:!!catalog && catalog.version===selectedVersion,
+    paidEnabled:paid.data.enabled,paidPolicyUpdatedAt:paid.data.updated_at??null,processingEnabled:config.data.enabled,
+    providerCalls:0,readOnly:true};
 }
 export async function loadCustomerResearchSummary(db = serviceClient()): Promise<
   { available: true; progress: CustomerResearchProgress } | { available: false; reason: "customer_research_unavailable" }

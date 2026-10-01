@@ -16,7 +16,7 @@ import { logEvent } from "@/lib/db/events";
 import { readAtsHiringContext } from "./atsLifecycle";
 import { businessServicesResearchContext, operatingTopicPriority, researchSourcePriority, BUSINESS_SERVICES_RESEARCH_VERSION } from "./businessServices";
 import { runOperatingCoverage, type CatalogCapacityFeedback } from "./operatingCoverage";
-import { catalogResearchQueries } from "./operatingCatalog";
+import { loadRuntimeCatalog } from "./customerCatalogRuntime";
 import { readJevBudgetPolicy } from "./budget";
 
 export const DIRECTED_RESEARCH_MINIMUM_MS = 40_000;
@@ -176,7 +176,7 @@ export type ResearchRefreshResult = { sources: number; outcomes: ResearchOutcome
   remainingSources: number; nextAttemptAt: string; sweep?: ResearchSweepState; unresolvedInterpretations?: number };
 
 export async function refreshAccountResearch(companyId: string, options: {
-  deadlineMs: number; automatic?: boolean; profile?: ResearchProfile; catalogGap?: { facetIds: string[] };
+  deadlineMs: number; automatic?: boolean; profile?: ResearchProfile; catalogGap?: { facetIds: string[]; catalogVersion: string };
 }): Promise<ResearchRefreshResult> {
   return withServiceDeadline(options.deadlineMs, async () => {
     const empty = (outcome: ResearchRefreshResult["outcome"], nextAttemptAt = new Date(Date.now() + 600_000).toISOString()): ResearchRefreshResult =>
@@ -195,8 +195,10 @@ export async function refreshAccountResearch(companyId: string, options: {
     // External discovery has its own durable per-query cadence. It can follow a
     // newly observed event even when the account's stable operating topics are known.
     if (Date.now() < options.deadlineMs - 55_000) {
+      const catalog = options.catalogGap ? await loadRuntimeCatalog(options.catalogGap.catalogVersion) : null;
+      if (options.catalogGap && !catalog) throw new Error("catalog_dictionary_unavailable");
       const external = options.catalogGap ? await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs,
-        catalogResearchQueries(options.catalogGap.facetIds)) :
+        catalog!.researchQueries(options.catalogGap.facetIds)) :
         await discoverExternalResearch(loaded.company, loaded.missingTopics, loaded.eventTitles ?? [], options.deadlineMs);
       if (external.sources) loaded = await loadResearchProfile(companyId, options.deadlineMs, profileOptions);
       if (external.nextAttemptAt && Date.parse(external.nextAttemptAt) < Date.parse(loaded.nextAttemptAt))
@@ -412,7 +414,7 @@ export async function runDirectedResearchWorker(limit: number | DirectedResearch
           outcome = coverage.outcome;
           if (coverage.outcome === "catalog_needs_research") {
             const research = await refreshAccountResearch(job.company_id, { deadlineMs: accountDeadlineMs, automatic: true,
-              catalogGap: { facetIds: coverage.researchFacets ?? [] } });
+              catalogGap: { facetIds: coverage.researchFacets ?? [], catalogVersion: job.catalog_requested_version } });
             const saved = await serviceClient().rpc("intelligence_catalog_research_finish", { p_company: job.company_id,
               p_lease: job.lease_token, p_outcome: research.outcome, p_next_at: research.nextAttemptAt });
             if (saved.error) throw new Error("catalog_research_finish_failed");

@@ -5,12 +5,18 @@ import { buildTopicSearchResult, operatingTopicFilter, type TopicSearchRaw } fro
 import { OPERATING_CATALOG_VERSION, OPERATING_FACETS } from "@/lib/intelligence/operatingCatalog";
 import { operatingRecipe } from "@/lib/intelligence/operatingSearchCatalog";
 import { catalogFacetVersion } from "@/lib/intelligence/operatingCoverage";
+import { loadApprovedCustomerCriteria } from "@/lib/intelligence/customerCriteriaServer";
+import { runtimeFacetVersions } from "@/lib/intelligence/customerCatalogRuntime";
+import { buildApprovedTopicSearchResult } from "@/lib/intelligence/topicSearch";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 export async function GET(req: NextRequest) {
   if (!intelligenceUiAuthorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const library = req.nextUrl.searchParams.get("library") ?? "legacy";
+  if (library === "approved") return approvedTopics(req);
+  if (library !== "legacy") return NextResponse.json({ error: "invalid_topic_library" }, { status: 400 });
   const recipeId = req.nextUrl.searchParams.get("recipe");
   const recipe = recipeId ? operatingRecipe(recipeId) : null;
   const topics = operatingTopicFilter(recipe ? recipe.topics : req.nextUrl.searchParams.getAll("topic"));
@@ -42,4 +48,26 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json({ error: "topic_search_unavailable" }, { status: 503 });
   }
+}
+
+async function approvedTopics(req: NextRequest) {
+  const topics = [...new Set(req.nextUrl.searchParams.getAll("topic"))], after = req.nextUrl.searchParams.get("after");
+  const version = req.nextUrl.searchParams.get("version"), mode = req.nextUrl.searchParams.get("mode") ?? "all";
+  const limit = Number(req.nextUrl.searchParams.get("limit") ?? 8), hidden = req.nextUrl.searchParams.get("showHidden") ?? "false";
+  if (!version || version.length > 120 || topics.length > 8 || !["any", "all"].includes(mode) || !["true", "false"].includes(hidden)
+    || (after && !isUuid(after)) || !Number.isInteger(limit) || limit < 1 || limit > 12 || req.nextUrl.searchParams.has("recipe")
+    || ![null, "supported"].includes(req.nextUrl.searchParams.get("visibility"))) return NextResponse.json({ error: "invalid_approved_topic_filter" }, { status: 400 });
+  try {
+    const result = await withServiceDeadline(Date.now() + 24_000, async () => {
+      const db = serviceClient(), bundle = await loadApprovedCustomerCriteria(db);
+      if (!bundle || bundle.catalog.version !== version) throw new Error("approved_catalog_unavailable");
+      if (topics.some(id => !bundle.catalog.facets.some(f => f.id === id))) return null;
+      const versions = runtimeFacetVersions(bundle.runtime);
+      const { data, error } = await db.rpc("intelligence_catalog_topic_search", { p_topics: topics, p_catalog_version: version,
+        p_facet_versions: versions, p_after: after, p_limit: limit, p_mode: mode, p_show_hidden: hidden === "true", p_visibility: "supported", p_combinations: null });
+      if (error || !data) throw new Error("approved_topic_search_unavailable");
+      return buildApprovedTopicSearchResult(data, bundle.catalog, versions);
+    });
+    return result ? NextResponse.json(result, { headers: { "Cache-Control": "no-store" } }) : NextResponse.json({ error: "invalid_approved_topic_filter" }, { status: 400 });
+  } catch { return NextResponse.json({ error: "approved_topic_search_unavailable" }, { status: 503 }); }
 }

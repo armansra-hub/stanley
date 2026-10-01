@@ -11,6 +11,7 @@ import { hiddenIntelligenceLead } from "./intelligenceLeadStatus";
 import CustomerReferenceProgress, { customerReferenceHoldDescription, type ReferenceProgress } from "./CustomerReferenceProgress";
 import type { CustomerCohortSummary, CustomerCohortSlice } from "@/lib/intelligence/customerCohortSummary";
 import { OPERATING_FACETS } from "@/lib/intelligence/operatingCatalog";
+import CustomerCriteriaBrowser from "./CustomerCriteriaBrowser";
 
 type CustomerMatch = CustomerMatchesResult["accounts"][number];
 type ReferenceReadingCounts = Pick<ReferenceProgress, "total" | "complete" | "pending" | "running" | "blocked">;
@@ -30,10 +31,10 @@ export function CustomerReferenceCoverage({ coverage, progress, research }: {
     <p className="mt-1 text-[var(--text-muted)]">Slack establishes that these companies are customers. This snapshot uses {coverage.verified.toLocaleString()} complete{partial ? ` and ${partial.toLocaleString()} partial` : ""} legacy question sets. These counts do not mean every website page was researched. Missing names or websites are source gaps, not questions about customer status.</p>
     {partial > 0 && <p className="mt-1 text-[var(--text-muted)]">Partial readings contribute only saved answers. Every required characteristic must be supported for a match; unanswered characteristics stay unanswered. The {partial.toLocaleString()} partial readings are not included in the completed question-set count.</p>}
     {complete < total && <p className="mt-1 text-[var(--text-muted)]">This is a partial customer cohort. Existing matches remain available while research continues; they do not establish how common a characteristic is across all customers.</p>}
-    {research?.available ? <p className="mt-2 text-[var(--text-muted)]">New Codex website research: {research.progress.complete.toLocaleString()} complete · {research.progress.completeWithGaps.toLocaleString()} reviewed with source gaps · {research.progress.unresolved.toLocaleString()} unresolved · {research.progress.inProgress.toLocaleString()} in progress · {research.progress.notStarted.toLocaleString()} not started, across {research.progress.total.toLocaleString()} customer records. {research.progress.readPages.toLocaleString()} pages read. Unresolved records do not count as researched examples. This research uses no Jev calls; the revised categories are not active yet.</p>
+    {research?.available ? <p className="mt-2 text-[var(--text-muted)]">Website research snapshot: {research.progress.complete.toLocaleString()} complete · {research.progress.completeWithGaps.toLocaleString()} reviewed with source gaps · {research.progress.unresolved.toLocaleString()} unresolved · {research.progress.inProgress.toLocaleString()} in progress · {research.progress.notStarted.toLocaleString()} not started, across {research.progress.total.toLocaleString()} customer records. {research.progress.readPages.toLocaleString()} pages read. Unresolved records do not count as researched examples. Approved criteria and their current reference coverage are shown in the separate customer criteria view.</p>
       : <p className="mt-2 text-[var(--text-muted)]">New Codex website research is separate. Its live coverage is not available in this snapshot; legacy Jev completion is not substituted for it.</p>}
     <details className="mt-2 text-[var(--text-muted)]"><summary className="cursor-pointer">Where the characteristics came from</summary>
-      <p className="mt-2">The existing 47 definitions are the legacy library. Codex is reviewing the full customer cohort to develop universal and industry-specific characteristics. Saved comparisons remain available under their original definitions until the new library is reviewed.</p>
+      <p className="mt-2">The existing 47 definitions are the legacy library. These historical saved comparisons retain their original definitions. The approved customer criteria view uses its own definitions, evidence and coverage.</p>
       <p className="mt-1">Announcement coverage through {dated(coverage.asOf)}; this date does not mean all registered customers have been researched.</p>
     </details>
   </div>;
@@ -205,7 +206,19 @@ export function CustomerMatchCard({ account, selected, statusBusy, onSelect, onS
   </article>;
 }
 
-export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccount, showHidden = false, statusBusy = false, statusOverrides = {}, onStatus }: OperatingMatchesProps) {
+export default function RecentCustomerMatches(props: OperatingMatchesProps) {
+  const [view, setView] = useState<"approved" | "legacy">("approved");
+  return <div className="mb-4">
+    <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Customer comparison library">
+      <button type="button" aria-pressed={view === "approved"} onClick={() => setView("approved")} className={`rounded border px-3 py-2 text-sm ${view === "approved" ? "border-[var(--gold)] text-[var(--gold)]" : ""}`}>Customer research criteria</button>
+      <button type="button" aria-pressed={view === "legacy"} onClick={() => setView("legacy")} className={`rounded border px-3 py-2 text-sm ${view === "legacy" ? "border-[var(--gold)] text-[var(--gold)]" : ""}`}>Legacy saved matches</button>
+    </div>
+    <div hidden={view !== "approved"}><CustomerCriteriaBrowser {...props} enabled={props.enabled && view === "approved"} /></div>
+    {view === "legacy" && <LegacyCustomerMatches {...props} />}
+  </div>;
+}
+
+export function LegacyCustomerMatches({ enabled, refreshKey, onOpenAccount, showHidden = false, statusBusy = false, statusOverrides = {}, onStatus }: OperatingMatchesProps) {
   const [pattern, setPattern] = useState("all");
   const [industry, setIndustry] = useState("all");
   const [page, setPage] = useState(1);
@@ -238,7 +251,7 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
     const timeout = setTimeout(() => request.abort(), 20_000);
     const requestedStatus = statusSignatureRef.current;
     setBusy(true); setError(null);
-    const params = new URLSearchParams({ pattern, industry, page: String(page), showHidden: String(showHidden) });
+    const params = new URLSearchParams({ library: "legacy", pattern, industry, page: String(page), showHidden: String(showHidden) });
     try {
       const response = await fetch(`/api/headhunter/intelligence/customer-matches?${params}`, { cache: "no-store", signal: request.signal });
       if (!response.ok) throw new Error("customer_matches_unavailable");
@@ -302,15 +315,12 @@ export default function RecentCustomerMatches({ enabled, refreshKey, onOpenAccou
   return <section className="mb-4 rounded-lg border bg-[var(--surface)] p-4 sm:p-5" aria-labelledby="recent-customer-matches-heading">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 id="recent-customer-matches-heading" className="western text-2xl">Similar to recent customers</h2>
-        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[var(--text-muted)]">Find prospects that share distinctive operating characteristics with ring-ring customers. Compare the sources, then look for a reason to act now.</p>
+        <h2 id="recent-customer-matches-heading" className="western text-2xl">Legacy saved customer matches</h2>
+        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[var(--text-muted)]">These comparisons retain the original 47 definitions and saved Jev answers. They are separate from the newly published customer research criteria.</p>
       </div>
       <button type="button" disabled={!enabled || busy || statusBusy} onClick={() => void load()} className="rounded-md border px-3 py-2 text-xs disabled:opacity-50">{busy ? "Refreshing…" : "Refresh matches"}</button>
     </div>
 
-    {summary && <CustomerReferenceCoverage coverage={summary.referenceCoverage} progress={referenceProgress} research={summary.research} />}
-    <CustomerReferenceProgress enabled={enabled} onComplete={onReferenceProgress} />
-    {result?.customerCohort && <CustomerCohortCounts cohort={result.customerCohort} />}
 
     {summary && <>
       <div className="mt-4 flex flex-wrap items-center gap-3">

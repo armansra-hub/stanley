@@ -1,3 +1,4 @@
+import { OPERATING_CATALOG_VERSION } from "./operatingCatalog";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn(), sourceState: vi.fn(), external: vi.fn(), rank: vi.fn(), fetch: vi.fn(), enqueue: vi.fn(), coverage: vi.fn(), budget: vi.fn() }));
 vi.mock("./operatingCoverage", () => ({ runOperatingCoverage: mocks.coverage }));
@@ -79,7 +80,7 @@ describe("catalog account lease integration", () => {
   function catalogJob(overrides: { attempts?: number; last_error?: string | null } = {}) {
     let claimed = false;
     const job = { company_id: "company", desired_hash: "hash", lease_token: "lease", attempts: 1,
-      lease_until: new Date(Date.now() + 180000).toISOString(), catalog_requested_version: "catalog", ...overrides };
+      lease_until: new Date(Date.now() + 180000).toISOString(), catalog_requested_version: OPERATING_CATALOG_VERSION, ...overrides };
     mocks.rpc.mockImplementation(async name => ({ data: name === "intelligence_directed_claim" ? (claimed ? [] : (claimed = true, [job])) : true, error: null }));
     return job;
   }
@@ -100,7 +101,7 @@ describe("catalog account lease integration", () => {
   it("passes the exact unresolved facets into full-context catalog ranking", async () => {
     mocks.rank.mockResolvedValueOnce({ candidates, providerUsed: false, scores: [], outcome: "busy", rankingVersion: "current" });
     await refreshAccountResearch("company", { deadlineMs: Date.now() + 90000, automatic: true, profile,
-      catalogGap: { facetIds: ["rr_c09", "rr_c02"] } });
+      catalogGap: { catalogVersion: OPERATING_CATALOG_VERSION, facetIds: ["rr_c09", "rr_c02"] } });
     expect(mocks.rank).toHaveBeenCalledWith(expect.objectContaining({ catalogOwned: true, catalogFacetIds: ["rr_c09", "rr_c02"] }));
     expect(mocks.rank.mock.calls[0][0].researchContext).toBeUndefined();
   });
@@ -116,7 +117,7 @@ describe("catalog account lease integration", () => {
     // Exercise the profile reload after external discovery as well as its initial load.
     mocks.external.mockResolvedValue({ sources: 1 });
     const result = await refreshAccountResearch("company", { deadlineMs: Date.now() + 90_000, automatic: true,
-      catalogGap: { facetIds: ["rr_c02"] } });
+      catalogGap: { catalogVersion: OPERATING_CATALOG_VERSION, facetIds: ["rr_c02"] } });
     expect(result).toMatchObject({ outcome: "sources_leased", sources: 0, unresolvedInterpretations: 0,
       sweep: { knownSources: 1, dueSources: 0, leasedSources: 1, retrySources: 1 } });
     expect(mocks.from.mock.calls.filter(([table]) => table === "intelligence_research_attempts")).toHaveLength(2);
@@ -130,7 +131,7 @@ describe("catalog account lease integration", () => {
     mocks.sourceState.mockResolvedValue({ cursor: { knownUrls: ["https://example.com/services"] } });
     tableErrors.intelligence_research_attempts = { code: "42P01", message: "Sensitive database query detail" };
     await expect(refreshAccountResearch("company", { deadlineMs: Date.now() + 90_000, automatic: true,
-      catalogGap: { facetIds: ["rr_c02"] } })).rejects.toThrow("research_source_attempts_unavailable:42P01");
+      catalogGap: { catalogVersion: OPERATING_CATALOG_VERSION, facetIds: ["rr_c02"] } })).rejects.toThrow("research_source_attempts_unavailable:42P01");
     tableErrors.intelligence_research_attempts.code = "malformed:private-query-data";
     await expect(loadResearchProfile("company", Infinity, { catalogGap: true })).rejects.toThrow(/^research_source_attempts_unavailable$/);
     expect(mocks.external).not.toHaveBeenCalled();

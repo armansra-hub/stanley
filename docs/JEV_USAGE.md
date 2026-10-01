@@ -1,5 +1,7 @@
 # Where Stanley uses Jev
 
+**Customer criteria update:** The [criteria publication guide](CUSTOMER_CRITERIA_RELEASE.md) is authoritative for the authored customer reference package, dynamic prospect classification and current purpose restrictions. Customer research is performed outside Jev. Paid Jev is limited to approved prospect operating classification and useful public trigger classification; TAM grading, paid customer analysis, research ranking and arbitrary saved-question calls are excluded. Dictionary registration/selection does not resume paid processing.
+
 **September 24 policy update:** the [operating-catalog runbook](JEV_OPERATING_CATALOG_RUNBOOK.md) supersedes the historical monthly-budget and optional private-TAM descriptions below. The new classifier adds 47 public categories across 35 research guides, reuses exact requests and source evidence, and shares one funded budget across all Jev callers. O06 renewal/expansion was removed at the user's request. Private TAM annotations and private connector calls are disabled; Jev does not grade TAM accounts.
 
 Reviewed September 19, 2026 (Pacific), against the checked-in implementation. This page maps actual call sites and consumers; configuration, deployed activation, and successful live outcomes remain separate facts.
