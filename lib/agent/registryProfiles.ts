@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { STATE_NAMES } from "@/lib/publicGrowth/identity";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 
 export type RegistryFact = { field: string; label: string; value: string | number | boolean; unit?: string };
@@ -353,6 +354,15 @@ export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryS
     || (left.state?.trim().toUpperCase() === right.state?.trim().toUpperCase()
       && canadianParkSuffix(left) !== null && canadianParkSuffix(left) === canadianParkSuffix(right));
 }
+const usStateCodes = new Map(STATE_NAMES.toUpperCase().split("|").map(entry => entry.split(":") as [string, string]));
+function sameRegistryState(left: RegistryStreetAddress, right: RegistryStreetAddress) {
+  if (normalized(left.state ?? "") === normalized(right.state ?? "")) return true;
+  // Expand only complete known state names when both sources explicitly say US.
+  // This comparison never rewrites stored identity fields or address tokens.
+  if (left.countryCode !== "US" || right.countryCode !== "US") return false;
+  const a = (left.state ?? "").trim().toUpperCase(), b = (right.state ?? "").trim().toUpperCase();
+  return Boolean(a && b && (usStateCodes.get(a) ?? a) === (usStateCodes.get(b) ?? b));
+}
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 // Keep every substantive word, including non-ASCII letters, in the whole DBA.
 export const normalizedDba = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
@@ -383,7 +393,7 @@ export function verifyRegistryIdentity(profile: RegistryProfile, company: { name
   // state and compatible country agree with an independently sourced address.
   const address = context.addresses.find(a => names.some(name => sameRegistryLegalName(name, p.legalName)
       || (a.countryCode === "US" && p.countryCode === "US" && sameTerminalCompanyWord(name, p.legalName))) && sameRegistryStreet(a, p)
-    && normalized(a.state ?? "") === normalized(p.state)
+    && sameRegistryState(a, p)
     && (!a.countryCode || a.countryCode === (p.countryCode ?? "US"))
     && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));
   if (address) return { method: "exact_legal_name_address", verifiedAt: now.toISOString(), sourceIds: [address.sourceId] };
@@ -394,7 +404,7 @@ export function verifyRegistryIdentity(profile: RegistryProfile, company: { name
   const compatibleAliases = dba && context.aliases.every(alias => normalizedDba(alias) === normalizedDba(dba)
     || normalizedDba(alias) === normalizedDba(p.legalName));
   const dbaAddress = dba && compatibleAliases && normalizedDba(dba) === normalizedDba(company.name) && context.addresses.find(a => a.sourceId.trim() && sameRegistryStreet(a, p)
-    && normalized(a.state ?? "") === normalized(p.state)
+    && sameRegistryState(a, p)
     && (!a.countryCode || a.countryCode === p.countryCode)
     && postal(a.postalCode ?? "", p.countryCode) === postal(p.postalCode, p.countryCode));
   if (dbaAddress) return { method: "exact_registry_dba_address", verifiedAt: now.toISOString(), sourceIds: [dbaAddress.sourceId] };
