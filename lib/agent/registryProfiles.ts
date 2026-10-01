@@ -189,7 +189,7 @@ export function registryStreet(address: { addressLine1: string; addressLine2?: s
     // Collapse only the identical unit token; different units/floors survive.
     .replace(/\bunit ([a-z0-9]+)(?: unit \1)+$/, "unit $1");
 }
-type RegistryStreetAddress = { addressLine1: string; addressLine2?: string; state?: string; countryCode?: string };
+type RegistryStreetAddress = { addressLine1: string; addressLine2?: string; city?: string; state?: string; countryCode?: string };
 function albertaRangeRoad(address: RegistryStreetAddress) {
   // Alberta's rural-address notation abbreviates Range Road as RGE RD.
   // Require explicit geography and retain every civic, road and unit token.
@@ -278,6 +278,64 @@ function sameExplicitUsPoBox(left: RegistryStreetAddress, right: RegistryStreetA
     && registryStreet({ addressLine1: left.addressLine2 ?? "" })
       === registryStreet({ addressLine1: right.addressLine2 ?? "" }));
 }
+function sameUsAddressFormat(left: RegistryStreetAddress, right: RegistryStreetAddress) {
+  // Comparison only. Keep registryStreet, original fields and content hashes
+  // unchanged. Omitted registry country follows the existing US default, but
+  // require explicit US on one side, matching city and two-letter state.
+  if ((left.countryCode ?? "US") !== "US" || (right.countryCode ?? "US") !== "US"
+    || (left.countryCode !== "US" && right.countryCode !== "US")
+    || !normalized(left.city ?? "") || normalized(left.city ?? "") !== normalized(right.city ?? "")
+    || !/^[A-Z]{2}$/.test(left.state?.trim().toUpperCase() ?? "")
+    || left.state!.trim().toUpperCase() !== right.state?.trim().toUpperCase()) return false;
+  const bareStreet = (line: string) => {
+    const street = registryStreet({ addressLine1: line });
+    return /^\d+[a-z]? .+/.test(street)
+      && !/\b(?:unit|stuite|pmb|mailbox|building|bldg|floor)\b/.test(street) ? street : null;
+  };
+  const labelledSecondLine = (address: RegistryStreetAddress) => !address.addressLine2?.trim()
+    || /^unit [a-z0-9]+$/.test(registryStreet({ addressLine1: address.addressLine2 }));
+  const alley = (address: RegistryStreetAddress) => {
+    if (!labelledSecondLine(address)) return null;
+    const match = registryStreet(address).match(/^(\d+[a-z]? .+) (?:alley|aly)((?: (?:n|s|e|w|ne|nw|se|sw))?(?: unit [a-z0-9]+)?)$/);
+    return match && bareStreet(match[1]) ? match[1] + " aly" + match[2] : null;
+  };
+  const ordinalStreet = (address: RegistryStreetAddress) => {
+    if (!labelledSecondLine(address)) return null;
+    // Only a numeric street name between civic/direction and a street type.
+    // Civic numbers, unit digits, spelled names and number ranges stay literal.
+    if (!/^\d+[a-z]? (?:(?:north|south|east|west|northeast|northwest|southeast|southwest|n|s|e|w|ne|nw|se|sw) )?[1-9]\d*(?:st|nd|rd|th)? /.test(normalized(address.addressLine1))) return null;
+    const match = registryStreet(address).match(/^(\d+[a-z]? (?:(?:n|s|e|w|ne|nw|se|sw) )?)([1-9]\d*)(st|nd|rd|th)? (st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter)((?: (?:n|s|e|w|ne|nw|se|sw))?(?: unit [a-z0-9]+)?)$/);
+    if (!match) return null;
+    const lastTwo = Number(match[2].slice(-2)), last = Number(match[2].slice(-1));
+    const expected = lastTwo >= 11 && lastTwo <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[last] ?? "th";
+    return match[3] && match[3] !== expected ? null : match[1] + match[2] + " " + match[4] + match[5];
+  };
+  const hashUnit = (address: RegistryStreetAddress, bare: boolean) => {
+    const line2 = (address.addressLine2 ?? "").trim();
+    const match = bare ? line2.match(/^([a-z]\d+)$/i)
+      : !line2 ? address.addressLine1.trim().match(/^(.+?)\s*#\s*([a-z]\d+)$/i) : null;
+    if (!match) return null;
+    const base = bareStreet(bare ? address.addressLine1 : match[1]);
+    return base ? base + " #" + match[bare ? 1 : 2].toLowerCase() : null;
+  };
+  const suite = (address: RegistryStreetAddress) => {
+    const line2 = (address.addressLine2 ?? "").trim();
+    const match = line2 ? line2.match(/^(stuite|suite|ste\.?)\s+([0-9]+)$/i)
+      : address.addressLine1.trim().match(/^(.+?)[,\s]+(stuite|suite|ste\.?)\s+([0-9]+)$/i);
+    if (!match) return null;
+    const index = line2 ? 1 : 2, base = bareStreet(line2 ? address.addressLine1 : match[1]);
+    return base ? { base, label: match[index].toLowerCase(), digits: match[index + 1] } : null;
+  };
+  const a = suite(left), b = suite(right);
+  return (alley(left) !== null && alley(left) === alley(right))
+    || (ordinalStreet(left) !== null && ordinalStreet(left) === ordinalStreet(right))
+    || (hashUnit(left, true) !== null && hashUnit(left, true) === hashUnit(right, false))
+    || (hashUnit(right, true) !== null && hashUnit(right, true) === hashUnit(left, false))
+    // Admit only this terminal designator typo against explicit Suite/Ste,
+    // with an identical numeric unit; never a street word or another unit role.
+    || Boolean(a && b && a.base === b.base && a.digits === b.digits
+      && (a.label === "stuite") !== (b.label === "stuite"));
+}
 export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryStreetAddress) {
   // Keep all legacy line-split matches and fingerprints. The extra comparison
   // preserves every address token through narrowly scoped formatting rules.
@@ -289,6 +347,7 @@ export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryS
     || (explicitUsBuilding(left) !== null && explicitUsBuilding(left) === explicitUsBuilding(right))
     || sameExplicitUsPoBox(left, right)
     || sameExplicitUsSuite(left, right)
+    || sameUsAddressFormat(left, right)
     || (left.state?.trim().toUpperCase() === right.state?.trim().toUpperCase()
       && usPlazaSuffix(left) !== null && usPlazaSuffix(left) === usPlazaSuffix(right))
     || (left.state?.trim().toUpperCase() === right.state?.trim().toUpperCase()
