@@ -294,8 +294,8 @@ export function sameRegistryStreet(left: RegistryStreetAddress, right: RegistryS
 }
 const postal = (v: string, country?: string) => country === "CA" ? v.toUpperCase().replace(/\s/g, "") : v.slice(0, 5);
 // Keep every substantive word, including non-ASCII letters, in the whole DBA.
-const normalizedDba = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
-function retainedFmcsaDba(profile: RegistryProfile): string | null {
+export const normalizedDba = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim();
+export function retainedFmcsaDba(profile: RegistryProfile): string | null {
   if (profile.dataset !== "fmcsa" || !/^[1-9]\d*$/.test(profile.recordId)
     || profile.provenance.sourceRow.usdot_number !== profile.recordId
     || profile.facts.find(fact => fact.field === "usdot_number")?.value !== profile.recordId) return null;

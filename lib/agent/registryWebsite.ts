@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { STATE_NAMES } from "@/lib/publicGrowth/identity";
-import { htmlToVisibleText, sameCompanySite } from "@/lib/sources/siteDiscovery";
+import { sameCompanySite } from "@/lib/sources/siteDiscovery";
 import { extractCompanyIdentity } from "@/lib/sources/siteContent";
 import { fetchPublicHttpText, validatePublicHttpUrl, type PublicHttpTextResponse } from "@/lib/triggers/urlSafety";
-import { registryContentHash, registryStreet, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
+import { registryContentHash, retainedFmcsaDba, normalizedDba, registryStreet, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
+
+import { registryWebsiteText, type RegistryWebsiteNormalization } from "./registryWebsiteText";
 
 type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string };
 export type RegistryWebsiteCorroboration = {
-  mode?: "registry_identifier";
+  normalization?: RegistryWebsiteNormalization;
+  mode?: "registry_identifier" | "registry_dba_address";
   identifier?: { kind: "usdot" | "ein" | "cslb_license"; value: string };
   sourceUrl: string; normalizedVisibleTextSha256: string; quote: string; quoteSha256: string; subject: string;
   // Omission is accepted only for an exact ca_contractors / cslb_license proof.
@@ -34,26 +37,28 @@ export function registryWebsiteEvidenceHash(row: Pick<RegistryFinding, "companyI
   proof: Omit<RegistryWebsiteCorroboration, "reader" | "reviewer">): string {
   const legacy = { companyId: row.companyId, internalId: row.internalId, dataset: row.profile.dataset,
     recordId: row.profile.recordId, rowSha256: row.profile.provenance.rowSha256, ...proof };
-  if (proof.mode !== "registry_identifier") return sha(stableRegistryJson(legacy));
-  // Existing address-mode callers may pass a narrow row. Identifier mode must
+  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address") return sha(stableRegistryJson(legacy));
+  // Existing address-mode callers may pass a narrow row. Explicit new modes must
   // bind the entire parsed publication content, not trust an unchanged row ID/hash.
   if (typeof row.sourceUrl !== "string" || !row.sourceUrl || typeof row.evidence !== "string" || !row.evidence
     || row.detail !== null && typeof row.detail !== "string"
     || typeof row.profile.observedAt !== "string" || !Number.isFinite(Date.parse(row.profile.observedAt)))
     throw new Error("registry identifier evidence requires complete parsed publication content");
-  return sha(stableRegistryJson({ ...legacy, identifierContent: {
+  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : "dbaContent"]: {
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail),
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt,
   } }));
 }
 
 export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistryWebsiteCorroboration {
-  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier"].includes(k))
+  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization"].includes(k))
     || !text(raw.sourceUrl, 2000) || !text(raw.quote, 1800) || raw.quote.length < 20 || !text(raw.subject, 200)
     || !hash(raw.normalizedVisibleTextSha256) || !hash(raw.quoteSha256) || sha(raw.quote) !== raw.quoteSha256)
     throw new Error("invalid registry website evidence");
-  if (raw.mode !== undefined && raw.mode !== "registry_identifier" || raw.mode === undefined && raw.identifier !== undefined)
+  if (raw.mode !== undefined && raw.mode !== "registry_identifier" && raw.mode !== "registry_dba_address" || raw.mode !== "registry_identifier" && raw.identifier !== undefined)
     throw new Error("invalid registry website mode");
+  if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1")
+    throw new Error("invalid registry website normalization");
   const identifier = raw.mode === "registry_identifier" ? identifierRule(row, raw.identifier) : undefined;
   const a = raw.address;
   if (!(a === undefined && identifier?.kind === "cslb_license") && (!object(a)
@@ -100,7 +105,7 @@ function identifierRule(row: RegistryFinding, identifier: unknown): Identifier {
 function labelledIdentifiers(value: string, kind: Identifier["kind"]) {
   // Closed public labels. A generic number, phone, MC number or tax deduction is not an ID.
   const re = kind === "usdot"
-    ? /\b(?:USDOT|US\s+DOT|U\.S\.\s*DOT|DOT)\s*(?:(?:number|no\.?)\s*)?[:#]?\s*([1-9]\d{3,8})(?![a-z0-9])/gi
+    ? /\b(?:USDOT|US\s+DOT|U\.S\.\s*DOT|DOT)\s*(?:(?:number|no\.?)\s*)?(?::\s*#?|#)?\s*([1-9]\d{3,8})(?![a-z0-9])/gi
     : kind === "cslb_license"
       ? /\b(?:CSLB(?:\s+(?:contractor(?:'s)?\s+)?license)?|(?:California|CA)\s+(?:contractor(?:'s)?\s+)?license|Licenses?\s*:\s*CA\s*-)\s*(?:(?:number|no\.?)\s*)?[:#]?\s*(\d+[a-z0-9_/-]*(?:\.\d+)*)/gi
       : /\b(?:EIN|Employer Identification Number|Federal Tax (?:ID|Identification Number))\s*(?:(?:number|no\.?)\s*)?[:#]?\s*(\d{2}-?\d{7})(?![a-z0-9])/gi;
@@ -122,7 +127,7 @@ function sameLimitedCompanySubject(left: string, right: string): boolean {
   const x = a.core.match(/^(.+) (company|co)$/), y = b.core.match(/^(.+) (company|co)$/);
   return Boolean(x && y && x[1] === y[1] && x[2] !== y[2]);
 }
-function exactSubjectPositions(value: string, subject: string, cslbAreaHeading = false): number[] {
+function exactSubjectPositions(value: string, subject: string, cslbAreaHeading = false, dbaNavigation = false): number[] {
   const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matches = [...value.matchAll(new RegExp(escaped, "giu"))];
   if (!matches.length) throw new Error("registry identifier full legal subject is missing");
@@ -143,7 +148,8 @@ function exactSubjectPositions(value: string, subject: string, cslbAreaHeading =
     // This allowance belongs only to the CSLB mode; 'Served' alone, embedded
     // heading words, negated names and other occurrences still fail the guards.
     const neutralAreaHeading = cslbAreaHeading && /(?:^|[^\p{L}\p{N}_'’&-])Additional Areas Served\s+$/u.test(before);
-    if (prefix && !neutralAreaHeading && !/^(?:about|contact|copyright|name|legal|company|to|by|is|are|of)$/i.test(prefix))
+    const neutralDbaNavigation = dbaNavigation && /(?:^|[^\p{L}\p{N}_])Skip to content\s+$/u.test(before);
+    if (prefix && !neutralAreaHeading && !neutralDbaNavigation && !/^(?:about|contact|copyright|name|legal|company|to|by|is|are|of)$/i.test(prefix))
       throw new Error("registry identifier legal subject has an ambiguous name prefix");
   }
   return matches.map(match => match.index!);
@@ -184,6 +190,39 @@ function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorro
   }
 }
 
+/** Only the original, hash-verified FMCSA DBA can name this website subject.
+ * This is a separate address proof, not a new canonical alias/address. */
+function dbaSubject(row: RegistryFinding, proof: RegistryWebsiteCorroboration, companyName: string, aliases: string[]): string {
+  const dba = retainedFmcsaDba(row.profile), legal = row.profile.identity.legalName;
+  if (!dba || normalizedDba(dba) !== normalizedDba(proof.subject)
+    || !(normalizedDba(companyName) === normalizedDba(dba) || sameRegistryLegalName(companyName, legal))
+    || !aliases.every(alias => normalizedDba(alias) === normalizedDba(dba) || normalizedDba(alias) === normalizedDba(legal)))
+    throw new Error("registry website DBA does not bind original operator and whole canonical name");
+  return dba;
+}
+function dbaAttribution(proof: RegistryWebsiteCorroboration, visibleText: string) {
+  // Both readers still assess the whole source. These are conservative ambiguity
+  // guards, not a free-prose relationship parser or authority to clip a DBA.
+  if (/\b(customer|client|partner|affiliate|subsidiar(?:y|ies)|parent company|third[ -]party|on behalf of|formerly|previously|former|previous)\b/i.test(proof.quote))
+    throw new Error("registry website DBA attribution is ambiguous");
+  exactSubjectPositions(proof.quote, proof.subject);
+  exactSubjectPositions(visibleText, proof.subject, false, true);
+  const escaped = proof.subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matches = [...visibleText.matchAll(new RegExp(escaped, "giu"))];
+  for (const match of matches) {
+    const at = match.index!, end = at + match[0].length;
+    const before = visibleText.slice(Math.max(0, at - 120), at), after = visibleText.slice(end, end + 120);
+    // Punctuation does not separate an added legal form or operator statement
+    // from this subject. This comparison leaves source text/hash/offsets intact.
+    const following = after.replace(/^[^\p{L}\p{N}]+/u, "");
+    if (/[\p{L}\p{N}_'’&-]/u.test(visibleText[at - 1] ?? "") || /[\p{L}\p{N}_'’&-]/u.test(visibleText[end] ?? "")
+      || /^[\p{L}]/u.test(following) && !/^(?:Menu|Home|Contact|Headquarters)\b|^Skip to content\b|^ALL RIGHTS RESERVED\b/u.test(following)
+      || /\b(customer|client|partner|affiliate|subsidiar(?:y|ies)|parent company|third[ -]party|on behalf of|formerly|previously|former|previous)\b/i.test(before)
+      || /\b(?:not|never|unrelated|belongs to|operated by|owned by)\b/i.test(following))
+      throw new Error("registry website DBA subject is partial, conflicting or unrelated");
+  }
+}
+
 function ownUrl(value: string, domain: string): string {
   const url = validatePublicHttpUrl(value);
   // Exact stored host (with optional www), not a caller-selected subsidiary host.
@@ -199,9 +238,9 @@ export function registryWebsiteVerifier() {
   const pages = new Map<string, Promise<PublicHttpTextResponse>>();
   return async (row: RegistryFinding, proof: RegistryWebsiteCorroboration, company: { name: string; domain?: string | null; website_raw?: string | null },
     context: CompanyIdentityContext, now = new Date()): Promise<NonNullable<RegistryProfile["verification"]>> => {
-    const identifierMode = proof.mode === "registry_identifier";
+    const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address";
     // This new mode always revalidates its fresh, separately bound attestations.
-    if (identifierMode) proof = parseRegistryWebsiteCorroboration(proof, row, now);
+    if (identifierMode || dbaMode) proof = parseRegistryWebsiteCorroboration(proof, row, now);
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
     const url = ownUrl(proof.sourceUrl, domain), p = row.profile.identity, a = proof.address;
@@ -209,8 +248,9 @@ export function registryWebsiteVerifier() {
     if (!a && !cslbMode) throw new Error("registry website complete address is required");
     const sameSubject = (left: string, right: string) => sameRegistryLegalName(left, right)
       || (!identifierMode && a?.countryCode === "US" && p.countryCode === "US" && sameLimitedCompanySubject(left, right));
-    if (![company.name, ...context.aliases].some(name => sameSubject(name, proof.subject))
-      || !sameSubject(proof.subject, p.legalName) || !proof.quote.includes(proof.subject)) throw new Error("registry website subject does not match canonical legal entity");
+    const originalDba = dbaMode ? dbaSubject(row, proof, company.name, context.aliases) : null;
+    if (!dbaMode && (![company.name, ...context.aliases].some(name => sameSubject(name, proof.subject))
+      || !sameSubject(proof.subject, p.legalName) || !proof.quote.includes(proof.subject))) throw new Error("registry website subject does not match canonical legal entity");
     // Relationship/location ambiguities stay held even on the account's own site.
     if (/\b(subsidiar(?:y|ies)|parent company|registered agent|customer(?:'s|’s)? (?:address|office|headquarters)|client(?:'s|’s)? (?:address|office)|former (?:address|office)|previous (?:address|office)|old (?:address|office))\b/i.test(proof.quote))
       throw new Error("registry website address attribution is ambiguous");
@@ -227,7 +267,10 @@ export function registryWebsiteVerifier() {
       throw new Error("registry website complete address is not corroborated");
     if (identifierMode && a && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
       throw new Error("registry identifier requires an explicit complete US website address");
+    if (dbaMode && (!a || !p.countryCode || !p.city || words(a.city) !== words(p.city)))
+      throw new Error("registry website DBA complete source city and country are required");
     if (identifierMode) identifierAttribution(row, proof, proof.quote);
+    if (dbaMode) dbaAttribution(proof, proof.quote);
     const exactStreet = a ? sameRegistryStreet(a, p) : false;
     // FMCSA's verified USDOT binds this narrow highway-format discrepancy. No
     // unit, house number, road number, country or postal evidence is discarded.
@@ -235,7 +278,7 @@ export function registryWebsiteVerifier() {
       && String(row.profile.provenance.sourceRow.usdot_number) === row.profile.recordId
       && new RegExp(`\\b(?:US\\s*)?DOT\\s*#?\\s*${row.profile.recordId}\\b`, "i").test(proof.quote);
     const highwayEquivalent = dot && Boolean(a) && registryStreet(a!).replace(/\bus hwy\b/g, "hwy") === registryStreet(p).replace(/\bus hwy\b/g, "hwy");
-    if (!identifierMode && !exactStreet && !highwayEquivalent) throw new Error("registry website street or unit differs from source record");
+    if (!identifierMode && !exactStreet && (dbaMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
     if (!pages.has(url)) {
       if (pages.size >= 3) throw new Error("registry website request exceeds three source pages");
       pages.set(url, fetchPublicHttpText(url, { timeoutMs: 8000, maxBytes: 2_000_000, maxRedirects: 2, accept: "text/html,application/xhtml+xml" }));
@@ -244,14 +287,20 @@ export function registryWebsiteVerifier() {
     try { page = await pages.get(url)!; } catch { throw new Error("registry website source unavailable"); }
     ownUrl(page.finalUrl, domain);
     if (page.status !== 200 || !/(?:text\/html|application\/xhtml\+xml)/i.test(page.contentType ?? "")) throw new Error("registry website full HTML unavailable");
-    const visibleText = htmlToVisibleText(page.body), start = visibleText.indexOf(proof.quote);
+    const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
     if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0) throw new Error("registry website changed or exact reviewed quote missing");
     if (identifierMode) identifierAttribution(row, proof, visibleText);
+    if (dbaMode) {
+      dbaAttribution(proof, visibleText);
+      if (labelledIdentifiers(visibleText, "usdot").some(id => id.value !== row.profile.recordId))
+        throw new Error("registry website DBA has a conflicting labelled USDOT");
+    }
     const sourceId = `website:sha256:${proof.normalizedVisibleTextSha256}`;
     return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [sourceId], website: {
       ...proof, finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
-      binding: identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
+      binding: dbaMode ? "exact_original_registry_dba_full_address" : identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
       ...(identifierMode ? { websiteAddress: a ?? null, addressRelationship: a ? "separate_observations_not_address_equivalence" : "website_address_unknown_registry_address_retained" } : {}),
+      ...(dbaMode ? { originalDba, originalLegalOperator: p.legalName, websiteAddress: a } : {}),
       priorAddresses: context.addresses, structuredIdentity: extractCompanyIdentity(page.body, page.finalUrl, candidate => sameCompanySite(candidate, page.finalUrl)) ?? null,
     } };
   };
