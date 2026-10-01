@@ -28,6 +28,52 @@ export type RegistryWebsiteCorroboration = {
 };
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === "object" && !Array.isArray(v));
+
+const MAX_WEBSITE_SOURCE_BYTES = 2_000_000;
+export type RegistryWebsiteMismatchDiagnostic = {
+  schema: "registry_website_mismatch_v1";
+  sourceUrl: string; finalUrl: string; fetchedAt: string; deploymentCommit: string | null;
+  normalization: RegistryWebsiteNormalization | "legacy_html_to_visible_text";
+  expectedNormalizedVisibleTextSha256: string; observedNormalizedVisibleTextSha256: string;
+  htmlSha256: string; htmlUtf8Bytes: number; normalizedCharacters: number; normalizedUtf8Bytes: number;
+  expectedQuoteSha256: string; quotePresent: boolean; quoteStart: number;
+  status: number; contentType: string | null;
+  snapshot: { complete: true; rawHtml: string; normalizedText: string }
+    | { complete: false; omittedReason: "serialized_diagnostic_exceeds_byte_cap" };
+  diagnosticByteCap: number;
+};
+
+/** Public fetched evidence only; never request headers, credentials or CRM context.
+ * A rejected fetch remains rejected. The authenticated route retains this exact
+ * response in its ordinary local receipt, without a speculative second fetch.
+ */
+export class RegistryWebsiteMismatchError extends Error {
+  readonly diagnostic: RegistryWebsiteMismatchDiagnostic;
+  constructor(page: PublicHttpTextResponse, proof: RegistryWebsiteCorroboration, visibleText: string, fetchedAt: string) {
+    super("registry website changed or exact reviewed quote missing");
+    this.name = "RegistryWebsiteMismatchError";
+    const commit = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
+    const quoteStart = visibleText.indexOf(proof.quote);
+    const metadata = {
+      schema: "registry_website_mismatch_v1" as const,
+      sourceUrl: proof.sourceUrl, finalUrl: page.finalUrl, fetchedAt,
+      deploymentCommit: /^[a-f0-9]{40}$/.test(commit) ? commit : null,
+      normalization: proof.normalization ?? "legacy_html_to_visible_text" as const,
+      expectedNormalizedVisibleTextSha256: proof.normalizedVisibleTextSha256,
+      observedNormalizedVisibleTextSha256: sha(visibleText), htmlSha256: sha(page.body),
+      htmlUtf8Bytes: Buffer.byteLength(page.body, "utf8"), normalizedCharacters: visibleText.length,
+      normalizedUtf8Bytes: Buffer.byteLength(visibleText, "utf8"), expectedQuoteSha256: proof.quoteSha256,
+      quotePresent: quoteStart >= 0, quoteStart, status: page.status, contentType: page.contentType,
+      diagnosticByteCap: MAX_WEBSITE_SOURCE_BYTES,
+    };
+    const complete = { ...metadata, snapshot: { complete: true as const, rawHtml: page.body, normalizedText: visibleText } };
+    // The cap is on actual serialized UTF-8 bytes (including JSON escapes), not
+    // character count. Omit both bodies together; never label a prefix complete.
+    this.diagnostic = Buffer.byteLength(JSON.stringify(complete), "utf8") <= MAX_WEBSITE_SOURCE_BYTES ? complete
+      : { ...metadata, snapshot: { complete: false, omittedReason: "serialized_diagnostic_exceeds_byte_cap" } };
+  }
+}
+
 const text = (v: unknown, max: number): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= max && !/[\u0000-\u001f]/.test(v);
 const hash = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
 const words = (v: string) => v.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -319,7 +365,7 @@ export function registryWebsiteVerifier() {
   async function readPage(url: string): Promise<PublicHttpTextResponse> {
     if (!pages.has(url)) {
       if (pages.size >= 3) throw new Error("registry website request exceeds three source pages");
-      pages.set(url, fetchPublicHttpText(url, { timeoutMs: 8000, maxBytes: 2_000_000, maxRedirects: 2, accept: "text/html,application/xhtml+xml" }));
+      pages.set(url, fetchPublicHttpText(url, { timeoutMs: 8000, maxBytes: MAX_WEBSITE_SOURCE_BYTES, maxRedirects: 2, accept: "text/html,application/xhtml+xml" }));
     }
     let page: PublicHttpTextResponse;
     try { page = await pages.get(url)!; } catch { throw new Error("registry website source unavailable"); }
@@ -385,7 +431,8 @@ export function registryWebsiteVerifier() {
     const page = await readPage(url);
     ownUrl(page.finalUrl, redirect?.finalUrl ?? domain);
     const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
-    if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0) throw new Error("registry website changed or exact reviewed quote missing");
+    if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0)
+      throw new RegistryWebsiteMismatchError(page, proof, visibleText, new Date().toISOString());
     // A longer address proof is the entire page, never joined or clipped passages.
     if (redirect && !proof.mode && proof.quote.length > 1800 && proof.quote !== visibleText)
       throw new Error("registry website extended redirect quote must be the full visible page");

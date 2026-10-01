@@ -8,7 +8,8 @@ import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
 import { parseRegistryFinding, registryContentHash, verifyRegistryIdentity, type RegistryProfile } from "@/lib/agent/registryProfiles";
 import { verifyRegistrySam } from "@/lib/agent/registrySam";
 import { verifyRegistryOfficialHistory } from "@/lib/agent/registryOfficialHistory";
-import { parseRegistryWebsiteCorroboration, registryWebsiteVerifier } from "@/lib/agent/registryWebsite";
+import { parseRegistryIrsFilingCorroboration, registryIrsFilingVerifier } from "@/lib/agent/registryIrsFiling";
+import { parseRegistryWebsiteCorroboration, registryWebsiteVerifier, RegistryWebsiteMismatchError } from "@/lib/agent/registryWebsite";
 
 /**
  * Findings from the LinkedIn/website FULL-TEXT reading pass (2026-07-30).
@@ -63,14 +64,21 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
   catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid registry profile" }, { status: 422 }); }
   const keys = parsed.map(row => `${row.companyId}:${row.label}`);
   if (new Set(keys).size !== keys.length) return NextResponse.json({ error: "duplicate registry profile keys in batch" }, { status: 422 });
-  if (parsed.some(row => [row.samCorroboration, row.officialWebsiteCorroboration, row.officialRegistrationHistoryCorroboration].filter(proof => proof !== undefined).length > 1))
+  if (parsed.some(row => [row.samCorroboration, row.officialWebsiteCorroboration, row.officialRegistrationHistoryCorroboration, row.officialIrsFilingCorroboration].filter(proof => proof !== undefined).length > 1))
     return NextResponse.json({ error: "registry corroboration methods cannot be mixed on one finding" }, { status: 422 });
   let websiteProofs;
   try { websiteProofs = parsed.map(row => row.officialWebsiteCorroboration === undefined ? null : parseRegistryWebsiteCorroboration(row.officialWebsiteCorroboration, row)); }
   catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid registry website evidence" }, { status: 422 }); }
-  if (new Set(websiteProofs.filter(proof => proof !== null).map(proof => proof.sourceUrl)).size > 3)
+  let irsProofs;
+  try { irsProofs = parsed.map(row => row.officialIrsFilingCorroboration === undefined ? null : parseRegistryIrsFilingCorroboration(row.officialIrsFilingCorroboration, row)); }
+  catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid IRS filing evidence" }, { status: 422 }); }
+  // Sum independent request-local caches conservatively, including website root delegation.
+  const websiteUrls = new Set(websiteProofs.flatMap(proof => proof ? [proof.sourceUrl, ...(proof.canonicalRedirect ? [proof.canonicalRedirect.requestedUrl] : [])] : []));
+  const irsUrls = new Set(irsProofs.flatMap(proof => proof?.redirect ? [proof.redirect.requestedUrl] : []));
+  if (websiteUrls.size + irsUrls.size > 3)
     return NextResponse.json({ error: "registry website requests capped at three distinct pages" }, { status: 422 });
   const verifyWebsite = registryWebsiteVerifier();
+  const verifyIrsFiling = registryIrsFilingVerifier();
   const db = serviceClient();
   const ids = [...new Set(parsed.map(row => row.internalId))];
   const { data: companies, error } = await db.from("companies").select(COMPANY_FIELDS).in("netsuite_internal_id", ids);
@@ -93,7 +101,8 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
     const proof = websiteProofs[index];
     if (proof) {
       try { verification = await verifyWebsite(row, proof, company, context); }
-      catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry website corroboration unavailable", internalId: row.internalId }, { status: 422 }); }
+      catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry website corroboration unavailable", internalId: row.internalId,
+        ...(e instanceof RegistryWebsiteMismatchError ? { profileKey: row.label, websiteMismatch: e.diagnostic } : {}) }, { status: 422 }); }
     }
     if (row.samCorroboration !== undefined) {
       try { verification = verifyRegistrySam(row, row.samCorroboration, company, context); }
@@ -102,6 +111,10 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
     if (row.officialRegistrationHistoryCorroboration !== undefined) {
       try { verification = verifyRegistryOfficialHistory(row, row.officialRegistrationHistoryCorroboration, company, context); }
       catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry official history corroboration unavailable", internalId: row.internalId }, { status: 422 }); }
+    }
+    if (irsProofs[index]) {
+      try { verification = await verifyIrsFiling(row, irsProofs[index], company, context); }
+      catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry IRS filing corroboration unavailable", internalId: row.internalId }, { status: 422 }); }
     }
     if (!verification) return NextResponse.json({ error: "registry identity requires corroborated legal name and full street/postal/state, or an unchanged verified binding", internalId: row.internalId }, { status: 422 });
     row.profile.verification = verification;
