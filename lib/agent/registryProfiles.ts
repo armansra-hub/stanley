@@ -143,7 +143,8 @@ export function parseRegistryFinding(input: unknown, now = new Date()): Registry
 // identifiers survive normalization. A missing legal suffix is not a new entity.
 const normalized = (v: string) => v.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 function legalName(v: string) {
-  const name = normalized(v).replace(/\b(l l c|l l p|p l l c|l p|p c)$/, suffix => suffix.replace(/ /g, ""));
+  // Preserve the explicit conjunction in legal-name comparisons only.
+  const name = normalized(v.normalize("NFKC").replace(/&/g, " and ")).replace(/\b(l l c|l l p|p l l c|l p|p c)$/, suffix => suffix.replace(/ /g, ""));
   const suffix = name.match(/\s+(incorporated|inc|corporation|corp|limited|ltd|llc|llp|pllc|lp|pc)$/);
   const equivalences: Record<string, string> = { incorporated: "inc", corporation: "corp", limited: "ltd" };
   return { core: suffix ? name.slice(0, suffix.index) : name, suffix: suffix ? equivalences[suffix[1]] ?? suffix[1] : null };
