@@ -7,6 +7,7 @@ import { TRIGGER_SPEC } from "@/lib/triggers/config";
 import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
 import { parseRegistryFinding, registryContentHash, verifyRegistryIdentity, type RegistryProfile } from "@/lib/agent/registryProfiles";
 import { verifyRegistrySam } from "@/lib/agent/registrySam";
+import { verifyRegistryOfficialHistory } from "@/lib/agent/registryOfficialHistory";
 import { parseRegistryWebsiteCorroboration, registryWebsiteVerifier } from "@/lib/agent/registryWebsite";
 
 /**
@@ -62,7 +63,7 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
   catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid registry profile" }, { status: 422 }); }
   const keys = parsed.map(row => `${row.companyId}:${row.label}`);
   if (new Set(keys).size !== keys.length) return NextResponse.json({ error: "duplicate registry profile keys in batch" }, { status: 422 });
-  if (parsed.some(row => row.samCorroboration !== undefined && row.officialWebsiteCorroboration !== undefined))
+  if (parsed.some(row => [row.samCorroboration, row.officialWebsiteCorroboration, row.officialRegistrationHistoryCorroboration].filter(proof => proof !== undefined).length > 1))
     return NextResponse.json({ error: "registry corroboration methods cannot be mixed on one finding" }, { status: 422 });
   let websiteProofs;
   try { websiteProofs = parsed.map(row => row.officialWebsiteCorroboration === undefined ? null : parseRegistryWebsiteCorroboration(row.officialWebsiteCorroboration, row)); }
@@ -97,6 +98,10 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
     if (row.samCorroboration !== undefined) {
       try { verification = verifyRegistrySam(row, row.samCorroboration, company, context); }
       catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry SAM corroboration unavailable", internalId: row.internalId }, { status: 422 }); }
+    }
+    if (row.officialRegistrationHistoryCorroboration !== undefined) {
+      try { verification = verifyRegistryOfficialHistory(row, row.officialRegistrationHistoryCorroboration, company, context); }
+      catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry official history corroboration unavailable", internalId: row.internalId }, { status: 422 }); }
     }
     if (!verification) return NextResponse.json({ error: "registry identity requires corroborated legal name and full street/postal/state, or an unchanged verified binding", internalId: row.internalId }, { status: 422 });
     row.profile.verification = verification;

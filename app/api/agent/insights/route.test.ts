@@ -9,6 +9,9 @@ vi.mock("@/lib/db/triggers", () => ({ recordTrigger: mocks.trigger, recomputePri
 vi.mock("@/lib/agent/registryWebsite", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/agent/registryWebsite")>(), registryWebsiteVerifier: () => mocks.website }));
 import { parseRegistryFinding } from "@/lib/agent/registryProfiles";
 import { registryWebsiteEvidenceHash } from "@/lib/agent/registryWebsite";
+import { registryOfficialHistoryBundle, registryOfficialHistoryCanonicalHash, registryOfficialHistoryEvidenceHash } from "@/lib/agent/registryOfficialHistory";
+import historyFixture from "../../../../test/fixtures/registry-official-history.json";
+import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { POST, GET } from "./route";
 
 type Row = Record<string, any>; // DB fixture rows deliberately model the external boundary.
@@ -55,6 +58,38 @@ beforeEach(() => {
   });
 });
 describe("registry insight publication", () => {
+  it("publishes reviewed official history through the existing RPC and exact event readback", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-01T04:00:00Z"));
+    try {
+      tables.companies = [{ ...historyFixture.company, lists: ["netsuite_tam"] }];
+      const context = historyFixture.context as CompanyIdentityContext;
+      mocks.identity.mockResolvedValue(context);
+      const input = structuredClone(historyFixture.findings[0]), row = parseRegistryFinding(input), bundle = registryOfficialHistoryBundle();
+      const p = { schema: "colorado_sos_history_v1" as const, bundleId: bundle.id, bundleSha256: bundle.sha256,
+        canonicalIdentitySha256: registryOfficialHistoryCanonicalHash(historyFixture.company, context), addressEntryKey: "university_mailing_2006" as const };
+      const evidenceSha256 = registryOfficialHistoryEvidenceHash(row, p), reviewedAt = new Date().toISOString();
+      const proof = { ...p, reader: { taskId: "/unit-test/reader", reviewedAt, evidenceSha256 }, reviewer: { taskId: "/unit-test/reviewer", reviewedAt, evidenceSha256 } };
+      const finding = { ...input, officialRegistrationHistoryCorroboration: proof };
+      expect((await post({ findings: [finding], dryRun: true })).status).toBe(200);
+      expect(mocks.rpc).not.toHaveBeenCalled();
+      const response = await post({ findings: [finding] });
+      expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ state: "published", receipts: [{ eventVerified: true }] });
+      expect(tables.lead_insights[0].registry_profile.verification.method).toBe("reviewed_official_registration_history");
+      expect(tables.lead_insights[0].evidence).toBe(input.evidence);
+      expect(tables.lead_insights[0].registry_profile.identity).toEqual(input.registryProfile.identity);
+      expect(mocks.rpc).toHaveBeenCalledTimes(1); expect(mocks.website).not.toHaveBeenCalled();
+      expect(mocks.trigger).not.toHaveBeenCalled(); expect(mocks.priority).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("rejects mixed history/SAM/website proofs and invalid history before any write", async () => {
+    for (const extra of [{ samCorroboration: {} }, { officialWebsiteCorroboration: {} }, { samCorroboration: {}, officialWebsiteCorroboration: {} }]) {
+      const response = await post({ findings: [{ ...finding(), officialRegistrationHistoryCorroboration: {}, ...extra }] });
+      expect(response.status).toBe(422); expect(await response.json()).toMatchObject({ error: "registry corroboration methods cannot be mixed on one finding" });
+    }
+    // A passing direct identity never overrides an invalid supplied history proof.
+    expect((await post({ findings: [{ ...finding(), officialRegistrationHistoryCorroboration: {} }] })).status).toBe(422);
+    expect(mocks.rpc).not.toHaveBeenCalled(); expect(writes).not.toHaveBeenCalled(); expect(mocks.website).not.toHaveBeenCalled();
+  });
   it("uses fresh website verification for held identities through the same exact publisher and readback", async () => {
     mocks.identity.mockResolvedValue({ aliases: [], addresses: [], context: "" });
     mocks.website.mockResolvedValue({ method: "official_website_corroboration", verifiedAt: new Date().toISOString(), sourceIds: ["website:sha256:proof"], website: { quote: "exact reviewed passage" } });

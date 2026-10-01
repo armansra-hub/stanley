@@ -7,7 +7,7 @@ export type RegistryProfile = {
   sourceAsOf: string | null; observedAt: string; facts: RegistryFact[];
   identity: { legalName: string; addressLine1: string; addressLine2?: string; city?: string; state: string; postalCode: string; countryCode?: "US" | "CA" };
   provenance: { rowSha256: string; quote: string; sourceRow: Record<string, string | number | boolean | null>; localFile?: string };
-  verification?: { method: "exact_legal_name_address" | "exact_registry_dba_address" | "prior_registry_binding" | "official_website_corroboration" | "reviewed_sam_domain_legal_address"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown>; sam?: Record<string, unknown> };
+  verification?: { method: "exact_legal_name_address" | "exact_registry_dba_address" | "prior_registry_binding" | "official_website_corroboration" | "reviewed_sam_domain_legal_address" | "reviewed_official_registration_history"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown>; sam?: Record<string, unknown>; officialHistory?: Record<string, unknown> };
   publication?: { contentHash: string; eventId: string; publishedAt: string };
 };
 
@@ -82,7 +82,7 @@ export function registryContentHash(profile: RegistryProfile, sourceUrl: string,
 export function registryProfileKey(profile: Pick<RegistryProfile, "dataset" | "recordId">): string {
   return `registry:${profile.dataset}:${profile.recordId}`;
 }
-export type RegistryFinding = { internalId: string; companyId: string; label: string; detail: string | null; evidence: string; sourceUrl: string; profile: RegistryProfile; officialWebsiteCorroboration?: unknown; samCorroboration?: unknown };
+export type RegistryFinding = { internalId: string; companyId: string; label: string; detail: string | null; evidence: string; sourceUrl: string; profile: RegistryProfile; officialWebsiteCorroboration?: unknown; samCorroboration?: unknown; officialRegistrationHistoryCorroboration?: unknown };
 
 /** Closed public-field catalog. The caller supplies evidence, never a trusted identity decision. */
 export function parseRegistryFinding(input: unknown, now = new Date()): RegistryFinding {
@@ -135,7 +135,8 @@ export function parseRegistryFinding(input: unknown, now = new Date()): Registry
     facts, identity: identity as RegistryProfile["identity"], provenance: { rowSha256: provenance.rowSha256, quote: input.evidence, sourceRow: sourceRow as RegistryProfile["provenance"]["sourceRow"], ...(provenance.localFile ? { localFile: String(provenance.localFile) } : {}) } };
   return { internalId: input.internalId, companyId: input.companyId, label: registryProfileKey(profile), detail: input.detail ? String(input.detail) : null, evidence: input.evidence, sourceUrl: url.toString(), profile,
     ...(input.officialWebsiteCorroboration !== undefined ? { officialWebsiteCorroboration: input.officialWebsiteCorroboration } : {}),
-    ...(input.samCorroboration !== undefined ? { samCorroboration: input.samCorroboration } : {}) };
+    ...(input.samCorroboration !== undefined ? { samCorroboration: input.samCorroboration } : {}),
+    ...(input.officialRegistrationHistoryCorroboration !== undefined ? { officialRegistrationHistoryCorroboration: input.officialRegistrationHistoryCorroboration } : {}) };
 }
 
 // Formatting equivalents only: substantive name words, street numbers and unit
