@@ -9,7 +9,7 @@ import { parseRegistryFinding, registryContentHash, verifyRegistryIdentity, type
 import { verifyRegistrySam } from "@/lib/agent/registrySam";
 import { verifyRegistryOfficialHistory } from "@/lib/agent/registryOfficialHistory";
 import { parseRegistryIrsFilingCorroboration, registryIrsFilingVerifier } from "@/lib/agent/registryIrsFiling";
-import { parseRegistryWebsiteCorroboration, registryWebsiteVerifier, RegistryWebsiteMismatchError } from "@/lib/agent/registryWebsite";
+import { parseRegistryWebsiteCorroboration, registryWebsiteVerifier, RegistryWebsiteMismatchError, RegistryWebsiteAvailabilityError } from "@/lib/agent/registryWebsite";
 
 /**
  * Findings from the LinkedIn/website FULL-TEXT reading pass (2026-07-30).
@@ -102,7 +102,8 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
     if (proof) {
       try { verification = await verifyWebsite(row, proof, company, context); }
       catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "registry website corroboration unavailable", internalId: row.internalId,
-        ...(e instanceof RegistryWebsiteMismatchError ? { profileKey: row.label, websiteMismatch: e.diagnostic } : {}) }, { status: 422 }); }
+        ...(e instanceof RegistryWebsiteMismatchError ? { profileKey: row.label, websiteMismatch: e.diagnostic } : {}),
+        ...(e instanceof RegistryWebsiteAvailabilityError ? { profileKey: row.label, websiteAvailability: e.diagnostic } : {}) }, { status: 422 }); }
     }
     if (row.samCorroboration !== undefined) {
       try { verification = verifyRegistrySam(row, row.samCorroboration, company, context); }

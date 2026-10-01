@@ -1,0 +1,181 @@
+{
+  "scope": "Exact retained original findings and canonical contexts, for verifier tests only. Test witnesses are synthetic and confer no source or publication approval.",
+  "cases": [
+    {
+      "internalId": "146565168",
+      "entryId": "co_sos_summary_20061350490_20261001",
+      "company": {
+        "id": "cb24bcbf-3d9f-456a-a447-859a67835711",
+        "netsuite_internal_id": "146565168",
+        "name": "Forte Advertising",
+        "domain": "forteadvertising.com",
+        "website_raw": "http://www.forteadvertising.com"
+      },
+      "context": {
+        "aliases": [],
+        "addresses": [
+          {
+            "addressLine1": "1422 Delgany Street Ste. LL4",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80202",
+            "countryCode": "US",
+            "sourceKind": "netsuite_record",
+            "sourceId": "b81c040d-79e7-4ec8-9bdf-88e84e57b61f",
+            "capturedAt": "2026-07-28T00:00:00+00:00"
+          }
+        ],
+        "context": ""
+      },
+      "finding": {
+        "source": "registry",
+        "kind": "ops_profile",
+        "companyId": "cb24bcbf-3d9f-456a-a447-859a67835711",
+        "internalId": "146565168",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20061350490",
+        "evidence": "{\"entityid\":\"20061350490\",\"entityname\":\"Forte Advertising, LLC\",\"principaladdress1\":\"1422 Delgany St Ste LL3\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80202\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2006-08-25T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+        "registryProfile": {
+          "version": 1,
+          "dataset": "co_sos",
+          "recordId": "20061350490",
+          "displayLabel": "Colorado business registration",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:31:45.100246Z",
+          "facts": [
+            {
+              "field": "registration_number",
+              "value": "20061350490"
+            },
+            {
+              "field": "entity_status",
+              "value": "Good Standing"
+            },
+            {
+              "field": "legal_structure",
+              "value": "DLLC"
+            },
+            {
+              "field": "formation_date",
+              "value": "2006-08-25"
+            }
+          ],
+          "identity": {
+            "legalName": "Forte Advertising, LLC",
+            "addressLine1": "1422 Delgany St Ste LL3",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80202",
+            "countryCode": "US"
+          },
+          "provenance": {
+            "rowSha256": "d27c8aa13690901f9eaf7873c4957dececb4a04c0113f4eb43ec302469711e54",
+            "quote": "{\"entityid\":\"20061350490\",\"entityname\":\"Forte Advertising, LLC\",\"principaladdress1\":\"1422 Delgany St Ste LL3\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80202\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2006-08-25T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+            "sourceRow": {
+              "legalName": "Forte Advertising, LLC",
+              "addressLine1": "1422 Delgany St Ste LL3",
+              "city": "Denver",
+              "state": "CO",
+              "postalCode": "80202",
+              "countryCode": "US",
+              "registration_number": "20061350490",
+              "entity_status": "Good Standing",
+              "legal_structure": "DLLC",
+              "formation_date": "2006-08-25"
+            },
+            "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_sos-d27c8aa13690901f9eaf7873c4957dececb4a04c0113f4eb43ec302469711e54.json"
+          }
+        },
+        "detail": "Colorado20061350490 Forte Advertising, LLC is Good Standing, DLLC, formed2006-08-25 at1422 Delgany St SteLL3 Denver CO80202. Website supports legal name but not street/unit; CRM hasLL4. Hold exact address attribution without deleting either suite. Agency-costing is a hypothesis, not confirmed ERP need."
+      },
+      "fixtureOnly": true
+    },
+    {
+      "internalId": "39221296",
+      "entryId": "co_sos_summary_20081550266_20261001",
+      "company": {
+        "id": "b0075eda-89ed-4cb3-b81b-8ed67224fb81",
+        "netsuite_internal_id": "39221296",
+        "name": "Urge Media",
+        "domain": "urgemedia.com",
+        "website_raw": "http://www.urgemedia.com"
+      },
+      "context": {
+        "aliases": [],
+        "addresses": [
+          {
+            "addressLine1": "215 Broadway PO Box 5830",
+            "city": "Eagle",
+            "state": "CO",
+            "postalCode": "81631",
+            "countryCode": "US",
+            "sourceKind": "netsuite_record",
+            "sourceId": "b1cc88d6-5ab1-4aa5-b06e-b8e9ae8d3841",
+            "capturedAt": "2026-07-28T00:00:00+00:00"
+          }
+        ],
+        "context": ""
+      },
+      "finding": {
+        "source": "registry",
+        "kind": "ops_profile",
+        "companyId": "b0075eda-89ed-4cb3-b81b-8ed67224fb81",
+        "internalId": "39221296",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20081550266",
+        "evidence": "{\"entityid\":\"20081550266\",\"entityname\":\"URGE MEDIA, INC.\",\"principaladdress1\":\"215 Broadway\",\"principalcity\":\"Eagle\",\"principalstate\":\"CO\",\"principalzipcode\":\"81631\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"FPC\",\"entityformdate\":\"2008-10-16T00:00:00.000\",\"jurisdictonofformation\":\"DE\"}",
+        "registryProfile": {
+          "version": 1,
+          "dataset": "co_sos",
+          "recordId": "20081550266",
+          "displayLabel": "Colorado business registration",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:35:26.469643Z",
+          "facts": [
+            {
+              "field": "registration_number",
+              "value": "20081550266"
+            },
+            {
+              "field": "entity_status",
+              "value": "Good Standing"
+            },
+            {
+              "field": "legal_structure",
+              "value": "FPC"
+            },
+            {
+              "field": "formation_date",
+              "value": "2008-10-16"
+            }
+          ],
+          "identity": {
+            "legalName": "URGE MEDIA, INC.",
+            "addressLine1": "215 Broadway",
+            "city": "Eagle",
+            "state": "CO",
+            "postalCode": "81631",
+            "countryCode": "US"
+          },
+          "provenance": {
+            "rowSha256": "f1cac3bb11d60fc32296eab8e36e2d7b779d8043b924485d3117606a858b595e",
+            "quote": "{\"entityid\":\"20081550266\",\"entityname\":\"URGE MEDIA, INC.\",\"principaladdress1\":\"215 Broadway\",\"principalcity\":\"Eagle\",\"principalstate\":\"CO\",\"principalzipcode\":\"81631\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"FPC\",\"entityformdate\":\"2008-10-16T00:00:00.000\",\"jurisdictonofformation\":\"DE\"}",
+            "sourceRow": {
+              "legalName": "URGE MEDIA, INC.",
+              "addressLine1": "215 Broadway",
+              "city": "Eagle",
+              "state": "CO",
+              "postalCode": "81631",
+              "countryCode": "US",
+              "registration_number": "20081550266",
+              "entity_status": "Good Standing",
+              "legal_structure": "FPC",
+              "formation_date": "2008-10-16"
+            },
+            "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_sos-f1cac3bb11d60fc32296eab8e36e2d7b779d8043b924485d3117606a858b595e.json"
+          }
+        },
+        "detail": "Colorado 20081550266 records URGE MEDIA, INC. at 215 Broadway, Eagle CO 81631, foreign corporation from Delaware, registered October 16, 2008, Good Standing as of September 29, 2026. Canonical 215 Broadway PO Box 5830 shares the street but mixes address roles; no retained website body resolves them after a 404. Preserve this precise identity/admission hold, not a different-entity conclusion."
+      },
+      "fixtureOnly": true
+    }
+  ]
+}

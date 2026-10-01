@@ -328,26 +328,35 @@ function sameUsAddressFormat(left: RegistryStreetAddress, right: RegistryStreetA
     const index = line2 ? 1 : 2, base = bareStreet(line2 ? address.addressLine1 : match[1]);
     return base ? { base, label: match[index].toLowerCase(), digits: match[index + 1] } : null;
   };
-  const terminalBareSuite = (address: RegistryStreetAddress, bare: boolean) => {
-    const line2 = (address.addressLine2 ?? "").trim();
-    // A bare single-letter/hyphen/number must terminate a complete civic street.
-    // Its counterpart supplies the explicit Suite/Ste role; no numeric-only,
-    // compound, building/floor, mailbox, range or leading-zero inference.
-    const match = bare ? !line2 && address.addressLine1.trim().match(/^(.+?)[,\s]+([a-z])-([1-9]\d*)$/i)
-      : line2 ? line2.match(/^(?:suite|ste\.?)\s+([a-z])-?([1-9]\d*)$/i)
-      : address.addressLine1.trim().match(/^(.+?)[,\s]+(?:suite|ste\.?)\s+([a-z])-?([1-9]\d*)$/i);
-    if (!match) return null;
-    const split = !bare && Boolean(line2), base = bareStreet(split ? address.addressLine1 : match[1]);
-    if (!base || !/^\d+[a-z]? .+ (?:st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter|trl|plz)$/.test(base)) return null;
-    return base + " suite " + match[split ? 1 : 2].toLowerCase() + match[split ? 2 : 3];
+  const terminalBareUnit = (bareAddress: RegistryStreetAddress, labelledAddress: RegistryStreetAddress) => {
+    // A complete civic street plus one terminal unit can be compared with its
+    // explicitly labelled counterpart. Never infer an absent unit or discard
+    // a direction, mailbox, building, floor, range or compound identifier.
+    if (bareAddress.addressLine2?.trim()) return false;
+    const bare = bareAddress.addressLine1.trim().match(/^(.+?)[,\s]+([a-z]-[1-9]\d*|[1-9]\d*|[a-z])$/i);
+    if (!bare) return false;
+    const line2 = (labelledAddress.addressLine2 ?? "").trim();
+    const labelled = line2
+      ? line2.match(/^((?:suite|ste\.?|apt|apartment|unit)\s+|#\s*)([a-z]-?[1-9]\d*|[1-9]\d*|[a-z])$/i)
+      : labelledAddress.addressLine1.trim().match(/^(.+?)[,\s]+((?:suite|ste\.?|apt|apartment|unit)\s+|#\s*)([a-z]-?[1-9]\d*|[1-9]\d*|[a-z])$/i);
+    if (!labelled) return false;
+    const offset = line2 ? 1 : 2, label = labelled[offset].trim().toLowerCase();
+    const token = bare[2].toLowerCase(), other = labelled[offset + 1].toLowerCase();
+    // Preserve the earlier B-223/B223 rule only for explicit Suite/Ste. The
+    // new atomic numeric/single-letter case must retain the exact unit token.
+    if (token.includes("-")) {
+      if (!/^(?:suite|ste\.?)$/.test(label) || token.replace("-", "") !== other.replace("-", "")) return false;
+    } else if (/^[nsew]$/.test(token) || token !== other) return false;
+    const a = bareStreet(bare[1]), b = bareStreet(line2 ? labelledAddress.addressLine1 : labelled[1]);
+    return Boolean(a && b && a === b && /^\d+[a-z]? .+ (?:st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter|trl|plz)$/.test(a));
   };
   const a = suite(left), b = suite(right);
   return (alley(left) !== null && alley(left) === alley(right))
     || (ordinalStreet(left) !== null && ordinalStreet(left) === ordinalStreet(right))
     || (hashUnit(left, true) !== null && hashUnit(left, true) === hashUnit(right, false))
     || (hashUnit(right, true) !== null && hashUnit(right, true) === hashUnit(left, false))
-    || (terminalBareSuite(left, true) !== null && terminalBareSuite(left, true) === terminalBareSuite(right, false))
-    || (terminalBareSuite(right, true) !== null && terminalBareSuite(right, true) === terminalBareSuite(left, false))
+    || terminalBareUnit(left, right)
+    || terminalBareUnit(right, left)
     // Admit only this terminal designator typo against explicit Suite/Ste,
     // with an identical numeric unit; never a street word or another unit role.
     || Boolean(a && b && a.base === b.base && a.digits === b.digits

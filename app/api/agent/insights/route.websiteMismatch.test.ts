@@ -50,11 +50,29 @@ describe("authenticated website mismatch response without publication", () => {
   it("ignores caller-supplied diagnostics and does not serialize generic transport error properties", async () => {
     m.fetch.mockRejectedValueOnce(Object.assign(new Error("private transport message"), { diagnostic: { rawHtml: "FORGED" } }));
     const response = await post({ findings: [finding()], websiteMismatch: { rawHtml: "FORGED" } }), body = await response.json();
-    expect(response.status).toBe(422); expect(body).toEqual({ error: "registry website source unavailable", internalId: "123" }); expect(m.rpc).not.toHaveBeenCalled();
+    expect(response.status).toBe(422); expect(body).toMatchObject({ error: "registry website source unavailable", internalId: "123", profileKey: "registry:fmcsa:777", websiteAvailability: { errorClass: "transport_error", finalUrl: null, status: null, contentType: null } }); expect(JSON.stringify(body)).not.toMatch(/FORGED|private transport message|SECRET_REQUEST_HEADER|PRIVATE CRM CONTEXT/); expect(m.rpc).not.toHaveBeenCalled();
   });
   it("leaves a matching dryrun response unchanged", async () => {
     m.fetch.mockResolvedValueOnce({ status: 200, finalUrl: "https://acme.com/", body: html, contentType: "text/html" });
     const response = await post({ findings: [finding()], dryRun: true }), body = await response.json();
     expect(response.status).toBe(200); expect(body.wouldWriteInsights).toBe(1); expect(body).not.toHaveProperty("websiteMismatch"); expect(m.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("authenticated availability rejection metadata", () => {
+  it.each([true, false])("returns sanitized HTTP metadata and never writes with dryRun=%s", async dryRun => {
+    m.fetch.mockResolvedValueOnce({ status: 403, finalUrl: "https://acme.com/access?token=SECRET", contentType: "text/html; private=SECRET", body: "PRIVATE body" });
+    const response = await post({ findings: [finding()], dryRun }), body = await response.json();
+    expect(response.status).toBe(422);
+    expect(body).toEqual({ error: "registry website full HTML unavailable", internalId: "123", profileKey: "registry:fmcsa:777", websiteAvailability: { schema: "registry_website_availability_v1", sourceUrl: "https://acme.com/", finalUrl: "https://acme.com/access", status: 403, contentType: "text/html", errorClass: "http_status" } });
+    expect(m.rpc).not.toHaveBeenCalled(); expect(m.log).not.toHaveBeenCalled(); expect(m.trigger).not.toHaveBeenCalled(); expect(m.priority).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toMatch(/PRIVATE|SECRET|snapshot/); expect(m.fetch).toHaveBeenCalledTimes(1);
+  });
+  it("rejects the whole batch if the second exact page is unavailable", async () => {
+    m.fetch.mockResolvedValueOnce({ status: 200, finalUrl: "https://acme.com/one", body: html, contentType: "text/html" });
+    m.fetch.mockResolvedValueOnce({ status: 200, finalUrl: "https://acme.com/two", body: "PRIVATE JSON", contentType: "application/json" });
+    const response = await post({ findings: [finding("777", "https://acme.com/one"), finding("778", "https://acme.com/two")] });
+    expect(response.status).toBe(422); expect(await response.json()).toMatchObject({ profileKey: "registry:fmcsa:778", websiteAvailability: { status: 200, errorClass: "content_type", contentType: "application/json" } });
+    expect(m.fetch).toHaveBeenCalledTimes(2); expect(m.rpc).not.toHaveBeenCalled();
   });
 });

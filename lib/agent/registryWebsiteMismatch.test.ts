@@ -4,7 +4,7 @@ const fetch = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/triggers/urlSafety", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/triggers/urlSafety")>(), fetchPublicHttpText: fetch }));
 import { parseRegistryFinding } from "./registryProfiles";
 import { registryWebsiteText } from "./registryWebsiteText";
-import { RegistryWebsiteMismatchError, registryWebsiteEvidenceHash, registryWebsiteVerifier, type RegistryWebsiteCorroboration } from "./registryWebsite";
+import { RegistryWebsiteMismatchError, RegistryWebsiteAvailabilityError, registryWebsiteEvidenceHash, registryWebsiteVerifier, type RegistryWebsiteCorroboration } from "./registryWebsite";
 
 const sha = (x: string) => createHash("sha256").update(x).digest("hex");
 const now = new Date("2026-10-01T00:00:00Z");
@@ -80,6 +80,59 @@ describe("exact failed website response evidence", () => {
     expect(wrongHost).not.toBeInstanceOf(RegistryWebsiteMismatchError);
     fetch.mockRejectedValueOnce(new Error("transport private error"));
     const unavailable = await registryWebsiteVerifier()(item(), proof(), company, context, now).catch(x => x);
-    expect(unavailable.message).toBe("registry website source unavailable"); expect(unavailable).not.toHaveProperty("diagnostic");
+    expect(unavailable.message).toBe("registry website source unavailable"); expect(unavailable).toBeInstanceOf(RegistryWebsiteAvailabilityError); expect(unavailable.diagnostic).not.toHaveProperty("snapshot");
+  });
+});
+
+describe("bounded public fetch availability diagnostics", () => {
+  it.each([
+    [403, "text/html; charset=utf-8", "http_status", "text/html"],
+    [503, null, "http_status", null],
+    [302, "text/html", "http_status", "text/html"],
+    [200, "application/json; private=SECRET", "content_type", "application/json"],
+    [200, "arbitrary PRIVATE value\r\nCookie: SECRET", "content_type", null],
+    [200, "text/plain private=SECRET", "content_type", null],
+    [200, "text/plain=SECRET", "content_type", null],
+    [200, "text plain/json", "content_type", null],
+  ])("records response metadata and still rejects status %s with MIME %s", async (status, contentType, errorClass, mime) => {
+    fetch.mockResolvedValueOnce({ status, contentType, finalUrl: "https://acme.com/blocked?token=SECRET#PRIVATE", body: "PRIVATE response body" });
+    const error = await registryWebsiteVerifier()(item(), proof(), company, context, now).catch(x => x);
+    expect(error).toBeInstanceOf(RegistryWebsiteAvailabilityError);
+    expect(error.message).toBe("registry website full HTML unavailable");
+    expect(error.diagnostic).toEqual({ schema: "registry_website_availability_v1", sourceUrl: "https://acme.com/", finalUrl: "https://acme.com/blocked", status, contentType: mime, errorClass });
+    expect(JSON.stringify(error.diagnostic)).not.toMatch(/SECRET|PRIVATE|snapshot|headers|body/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith("https://acme.com/", { timeoutMs: 8000, maxBytes: 2_000_000, maxRedirects: 2, accept: "text/html,application/xhtml+xml" });
+  });
+  it.each([
+    [new Error("HTTP fetch timed out"), "timeout"],
+    [new Error("HTTP response exceeded size limit"), "size_limit"],
+    [new Error("HTTP decoded response exceeded size limit"), "size_limit"],
+    [new Error("Unsupported HTTP content encoding"), "content_decoding"],
+    [Object.assign(new Error("PRIVATE DNS hostname 10.0.0.1"), { code: "EAI_AGAIN" }), "dns_error"],
+    [Object.assign(new Error("PRIVATE certificate"), { code: "ERR_TLS_CERT_ALTNAME_INVALID" }), "tls_error"],
+    [Object.assign(new Error("PRIVATE socket address"), { code: "ECONNRESET" }), "connection_error"],
+    [Object.assign(new Error("PRIVATE unsafe host"), { name: "UnsafeHttpTargetError" }), "unsafe_target"],
+    [Object.assign(new Error("PRIVATE unknown failure"), { code: "SECRET", diagnostic: { body: "FORGED" } }), "transport_error"],
+    ["PRIVATE non-error rejection", "transport_error"],
+  ])("classifies a rejected transport without reflecting the error: %s", async (cause, errorClass) => {
+    fetch.mockRejectedValueOnce(cause);
+    const error = await registryWebsiteVerifier()(item(), proof(), company, context, now).catch(x => x);
+    expect(error).toBeInstanceOf(RegistryWebsiteAvailabilityError);
+    expect(error.message).toBe("registry website source unavailable");
+    expect(error.diagnostic).toEqual({ schema: "registry_website_availability_v1", sourceUrl: "https://acme.com/", finalUrl: null, status: null, contentType: null, errorClass });
+    expect(JSON.stringify(error)).not.toMatch(/PRIVATE|SECRET|FORGED|10\.0\.0\.1/);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each(["https://user:SECRET@acme.com/", "http://127.0.0.1/private", "file:///private", "https://acme.com/" + "x".repeat(2001)])("omits unsafe or overlong diagnostic URLs: %s", url => {
+    const error = new RegistryWebsiteAvailabilityError(url, { page: { ...page("PRIVATE"), status: 403, finalUrl: url } });
+    expect(error.diagnostic.sourceUrl).toBeNull(); expect(error.diagnostic.finalUrl).toBeNull();
+  });
+  it("preserves request-local rejected-page caching without retries", async () => {
+    fetch.mockRejectedValueOnce(new Error("HTTP fetch timed out"));
+    const verify = registryWebsiteVerifier();
+    await expect(verify(item(), proof(), company, context, now)).rejects.toBeInstanceOf(RegistryWebsiteAvailabilityError);
+    await expect(verify(item(), proof(), company, context, now)).rejects.toBeInstanceOf(RegistryWebsiteAvailabilityError);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

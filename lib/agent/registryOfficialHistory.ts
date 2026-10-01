@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { registryContentHash, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 import { registrySamCanonicalHash } from "@/lib/agent/registrySam";
+import officialSummaries from "./registryOfficialSummaries.json";
 
 // Fixed reviewed facts, not caller-authored transcription or arbitrary PDF URLs.
 // Binary hashes bind the visually read documents; they do not OCR/authenticate
@@ -158,7 +159,7 @@ export function registryOfficialHistoryBundle() {
   return { id: BUNDLE.id, sha256: BUNDLE_SHA, addressEntryKeys: Object.keys(BUNDLE.addresses) as (keyof typeof BUNDLE.addresses)[] };
 }
 export const registryOfficialHistoryCanonicalHash = registrySamCanonicalHash;
-export function registryOfficialHistoryEvidenceHash(row: RegistryFinding, proof: Omit<RegistryOfficialHistoryCorroboration, "reader" | "reviewer">): string {
+export function registryOfficialHistoryEvidenceHash(row: RegistryFinding, proof: Omit<RegistryOfficialHistoryCorroboration, "reader" | "reviewer"> | Omit<RegistryOfficialSummaryCorroboration, "reader" | "reviewer">): string {
   return sha(stableRegistryJson({ companyId: row.companyId, internalId: row.internalId,
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail),
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt, proof }));
@@ -214,6 +215,7 @@ function originalUccCountry(row: RegistryFinding): "US" {
   return "US";
 }
 export function verifyRegistryOfficialHistory(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date()): NonNullable<RegistryProfile["verification"]> {
+  if (object(raw) && raw.schema === "colorado_sos_summary_roles_v1") return verifyOfficialSummary(row, raw, company, context, now);
   const proof = parseProof(raw, row, now);
   const countryCode = originalUccCountry(row);
   let domain: string | null = null;
@@ -244,4 +246,121 @@ export function verifyRegistryOfficialHistory(row: RegistryFinding, raw: unknown
     officialHistory: { ...evidence, reader, reviewer, evidenceSha256: registryOfficialHistoryEvidenceHash(row, evidence),
       bundle: JSON.parse(JSON.stringify(BUNDLE)), addressEntry: JSON.parse(JSON.stringify(entry)), canonicalAnchor: { ...anchor },
       scope: "Dated official legal/trade-name and address evidence only. Historical mailing is not physical occupancy; no current registration, debt or company-address mutation is asserted." } };
+}
+
+type SummaryRole = "principal_street" | "principal_mailing" | "registered_agent_street";
+type SummaryEntry = {
+  id: string; companyId: string; internalId: string; canonicalDomain: string; canonicalIdentitySha256: string;
+  entityId: string; legalName: string;
+  source: { requestedUrl: string; finalUrl: string; status: number; observedAt: string; bodySha256: string; textSha256: string; receiptSha256: string };
+  sourceReader: { taskId: string; reviewedAt: string; receiptSha256: string };
+  sourceReviewer: { taskId: string; reviewedAt: string; receiptSha256: string };
+  target: { dataset: string; recordId: string; sourceUrl: string; rowSha256: string; evidenceSha256: string;
+    identitySha256: string; sourceRowSha256: string; factsSha256: string; sourceAsOf: string | null; observedAt: string; role: "principal_street" };
+  addresses: Record<SummaryRole, Address>; registeredAgentName: string;
+  anchor: { mode: "single_explicit_role" | "principal_street_plus_mailing"; role?: SummaryRole; sourceId: string };
+};
+export type RegistryOfficialSummaryCorroboration = {
+  schema: "colorado_sos_summary_roles_v1"; entryId: string; entrySha256: string;
+  canonicalIdentitySha256: string; targetAddressRole: "principal_street";
+  reader: Attestation; reviewer: Attestation;
+};
+const summaries = officialSummaries.entries as SummaryEntry[];
+// Data is reviewed with the deployed code. The caller cannot provide a new
+// transcription/URL or change an address role. Return copies, never live state.
+export function registryOfficialSummaryEntry(id: string) {
+  const matches = summaries.filter(e => e.id === id);
+  if (officialSummaries.version !== 1 || summaries.length > 128 || matches.length !== 1) throw new Error("unknown reviewed official summary");
+  return { entry: JSON.parse(JSON.stringify(matches[0])) as SummaryEntry, sha256: sha(stableRegistryJson(matches[0])) };
+}
+function officialSummaryUrl(value: string, entityId: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "www.coloradosos.gov" && !url.username && !url.password && !url.port && !url.hash
+      && url.pathname === "/biz/BusinessEntityDetail.do"
+      && ["masterFileId", "entityId2", "fileId"].every(k => url.searchParams.getAll(k).length === 1 && url.searchParams.get(k) === entityId);
+  } catch { return false; }
+}
+function verifyOfficialSummary(row: RegistryFinding, raw: Record<string, unknown>, company: Company, context: CompanyIdentityContext, now: Date): NonNullable<RegistryProfile["verification"]> {
+  const keys = ["schema", "entryId", "entrySha256", "canonicalIdentitySha256", "targetAddressRole", "reader", "reviewer"];
+  if (Object.keys(raw).some(k => !keys.includes(k)) || keys.some(k => !Object.hasOwn(raw, k)) || typeof raw.entryId !== "string")
+    throw new Error("invalid official summary proof");
+  const { entry, sha256 } = registryOfficialSummaryEntry(raw.entryId);
+  if (raw.entrySha256 !== sha256 || raw.targetAddressRole !== "principal_street" || entry.target.role !== "principal_street")
+    throw new Error("official summary entry or target role differs");
+  const source = entry.source, roles: SummaryRole[] = ["principal_street", "principal_mailing", "registered_agent_street"];
+  if (!/^\d{11}$/.test(entry.entityId) || source.status !== 200 || !iso(source.observedAt)
+    || !officialSummaryUrl(source.requestedUrl, entry.entityId) || !officialSummaryUrl(source.finalUrl, entry.entityId)
+    || ![source.bodySha256, source.textSha256, source.receiptSha256].every(hash)
+    || entry.sourceReader.taskId === entry.sourceReviewer.taskId
+    || [entry.sourceReader, entry.sourceReviewer].some(a => !a.taskId || !iso(a.reviewedAt) || Date.parse(a.reviewedAt) < Date.parse(source.observedAt) || !hash(a.receiptSha256))
+    || roles.some(role => !entry.addresses[role] || !fullAddress(entry.addresses[role], entry.addresses[role])))
+    throw new Error("official summary source or typed roles invalid");
+  let domain: string | null = null;
+  try {
+    const value = company.domain || company.website_raw || "", url = new URL(value.includes("://") ? value : `https://${value}`);
+    if (/^https?:$/.test(url.protocol) && !url.username && !url.password && !url.port) domain = url.hostname.toLowerCase().replace(/^www\./, "");
+  } catch { /* Fail closed below. */ }
+  if (company.id !== entry.companyId || row.companyId !== entry.companyId || company.netsuite_internal_id !== entry.internalId
+    || row.internalId !== entry.internalId || domain !== entry.canonicalDomain
+    || raw.canonicalIdentitySha256 !== entry.canonicalIdentitySha256
+    || raw.canonicalIdentitySha256 !== registryOfficialHistoryCanonicalHash(company, context)
+    || !sameRegistryLegalName(company.name, entry.legalName) || context.aliases.some(n => !sameRegistryLegalName(n, entry.legalName)))
+    throw new Error("official summary canonical identity or legal operator changed");
+  const target = row.profile, t = target.identity, pin = entry.target;
+  let original: unknown;
+  try { original = JSON.parse(row.evidence); } catch { throw new Error("official summary requires original Colorado entity JSON"); }
+  // Restrict this method to exact retained entity records. Full original source
+  // fields and dates are pinned; a matching name or agent address cannot create
+  // a new target. This never admits carrier physical-address or UCC claims.
+  if (!object(original) || target.dataset !== "co_sos" || pin.dataset !== "co_sos" || target.recordId !== entry.entityId || pin.recordId !== entry.entityId
+    || row.sourceUrl !== pin.sourceUrl || target.sourceAsOf !== pin.sourceAsOf || target.observedAt !== pin.observedAt
+    || target.provenance.rowSha256 !== pin.rowSha256 || sha(row.evidence) !== pin.rowSha256 || sha(row.evidence) !== pin.evidenceSha256
+    || target.provenance.quote !== row.evidence || sha(stableRegistryJson(t)) !== pin.identitySha256
+    || sha(stableRegistryJson(target.provenance.sourceRow)) !== pin.sourceRowSha256
+    || sha(stableRegistryJson(target.facts.map(({ field, value }) => ({ field, value })))) !== pin.factsSha256
+    || original.entityid !== entry.entityId || original.entityname !== t.legalName || words(t.legalName) !== words(entry.legalName)
+    || original.principaladdress1 !== t.addressLine1 || (original.principaladdress2 || "") !== (t.addressLine2 || "")
+    || original.principalcity !== t.city || original.principalstate !== t.state || original.principalzipcode !== t.postalCode
+    || original.principalcountry !== "US" || t.countryCode !== "US"
+    || !fullAddress(t, entry.addresses.principal_street)) throw new Error("official summary original entity or principal address differs");
+  const targetUrl = new URL(row.sourceUrl);
+  if (targetUrl.protocol !== "https:" || targetUrl.hostname !== "data.colorado.gov" || targetUrl.pathname !== "/resource/4ykn-tg5h.json"
+    || targetUrl.username || targetUrl.password || targetUrl.port || targetUrl.hash
+    || targetUrl.searchParams.getAll("entityid").length !== 1 || targetUrl.searchParams.get("entityid") !== entry.entityId)
+    throw new Error("official summary target URL differs");
+  let expectedAnchor: Address;
+  const anchorSpec = entry.anchor;
+  if (anchorSpec.mode === "single_explicit_role" && anchorSpec.role && roles.includes(anchorSpec.role)) {
+    expectedAnchor = entry.addresses[anchorSpec.role];
+  } else if (anchorSpec.mode === "principal_street_plus_mailing" && anchorSpec.role === undefined) {
+    const street = entry.addresses.principal_street, mail = entry.addresses.principal_mailing;
+    // This is comparison to two explicitly labelled full addresses, not a
+    // general split/strip heuristic. No units, street tokens or box digits drop.
+    if (street.addressLine2?.trim() || mail.addressLine2?.trim() || !/^\d/.test(street.addressLine1)
+      || !/^po box [0-9]+$/i.test(mail.addressLine1) || street.countryCode !== mail.countryCode || street.state !== mail.state
+      || words(street.city ?? "") !== words(mail.city ?? "") || street.postalCode !== mail.postalCode)
+      throw new Error("official summary composed address roles differ");
+    expectedAnchor = { ...street, addressLine1: `${street.addressLine1} ${mail.addressLine1}` };
+  } else throw new Error("official summary anchor role invalid");
+  const anchors = context.addresses.filter(a => a.sourceId === anchorSpec.sourceId && ["netsuite_record", "company_website"].includes(a.sourceKind)
+    && iso(a.capturedAt) && fullAddress(a, expectedAnchor));
+  if (anchors.length !== 1) throw new Error("official summary complete canonical role anchor missing or ambiguous");
+  const { reader, reviewer, ...evidence } = raw;
+  const bound = registryOfficialHistoryEvidenceHash(row, evidence as Omit<RegistryOfficialSummaryCorroboration, "reader" | "reviewer">);
+  const earliest = Math.max(Date.parse(target.observedAt), Date.parse(source.observedAt), Date.parse(entry.sourceReader.reviewedAt),
+    Date.parse(entry.sourceReviewer.reviewedAt), Date.parse(anchors[0].capturedAt));
+  for (const a of [reader, reviewer]) {
+    if (!object(a) || Object.keys(a).some(k => !["taskId", "reviewedAt", "evidenceSha256"].includes(k))
+      || typeof a.taskId !== "string" || a.taskId.length > 160 || !/^\/?[a-zA-Z0-9][a-zA-Z0-9_./:-]*$/.test(a.taskId)
+      || !iso(a.reviewedAt) || Date.parse(a.reviewedAt) < earliest || Date.parse(a.reviewedAt) > now.getTime() + 60000
+      || now.getTime() - Date.parse(a.reviewedAt) > 7 * 86400000 || a.evidenceSha256 !== bound)
+      throw new Error("official summary review does not bind exact publication evidence");
+  }
+  if ((reader as Attestation).taskId === (reviewer as Attestation).taskId) throw new Error("official summary requires independent review");
+  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(),
+    sourceIds: [`co_sos:${entry.entityId}:${sha256}`, anchors[0].sourceId],
+    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: { ...anchors[0] },
+      targetAddress: { role: "principal_street", ...entry.addresses.principal_street }, canonicalAnchorRoles: anchorSpec,
+      scope: "Observed official entity/address-role association. Mailing and registered-agent addresses are not operating-location claims. Original source dates and address roles remain distinct." } };
 }

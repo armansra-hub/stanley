@@ -29,6 +29,58 @@ export type RegistryWebsiteCorroboration = {
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v && typeof v === "object" && !Array.isArray(v));
 
+export type RegistryWebsiteAvailabilityDiagnostic = {
+  schema: "registry_website_availability_v1";
+  sourceUrl: string | null; finalUrl: string | null;
+  status: number | null; contentType: string | null;
+  errorClass: "http_status" | "content_type" | "unsafe_target" | "timeout" | "size_limit"
+    | "content_decoding" | "dns_error" | "tls_error" | "connection_error" | "transport_error";
+};
+
+function diagnosticPublicUrl(raw: string): string | null {
+  try {
+    const url = validatePublicHttpUrl(raw);
+    url.search = ""; url.hash = "";
+    return url.href.length <= 2000 ? url.href : null;
+  } catch { return null; }
+}
+
+function transportErrorClass(error: unknown): RegistryWebsiteAvailabilityDiagnostic["errorClass"] {
+  if (!(error instanceof Error)) return "transport_error";
+  // Fixed categories only: never reflect arbitrary Node error messages, causes,
+  // host/IP details, headers, or properties supplied by a remote server.
+  if (error.name === "UnsafeHttpTargetError") return "unsafe_target";
+  if (["HTTP fetch timed out", "HTTP verification timed out"].includes(error.message)) return "timeout";
+  if (["HTTP response exceeded size limit", "HTTP decoded response exceeded size limit"].includes(error.message)) return "size_limit";
+  if (["Unsupported HTTP content encoding", "HTTP response content decoding failed"].includes(error.message)) return "content_decoding";
+  const code = "code" in error ? error.code : null;
+  if (["ENOTFOUND", "EAI_AGAIN", "ENODATA", "ESERVFAIL"].includes(String(code))) return "dns_error";
+  if (["CERT_HAS_EXPIRED", "ERR_TLS_CERT_ALTNAME_INVALID", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN"].includes(String(code))) return "tls_error";
+  if (code === "ETIMEDOUT") return "timeout";
+  if (["ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EPIPE"].includes(String(code))) return "connection_error";
+  return "transport_error";
+}
+
+/** Metadata from the failed public fetch only. Missing response metadata stays
+ * unknown; no second request, response body, private context, or acceptance change. */
+export class RegistryWebsiteAvailabilityError extends Error {
+  readonly diagnostic: RegistryWebsiteAvailabilityDiagnostic;
+  constructor(sourceUrl: string, failure: { page: PublicHttpTextResponse } | { error: unknown }) {
+    super("page" in failure ? "registry website full HTML unavailable" : "registry website source unavailable");
+    this.name = "RegistryWebsiteAvailabilityError";
+    const page = "page" in failure ? failure.page : null;
+    const mime = page?.contentType?.split(";", 1)[0].trim().toLowerCase() ?? "";
+    this.diagnostic = {
+      schema: "registry_website_availability_v1", sourceUrl: diagnosticPublicUrl(sourceUrl),
+      finalUrl: page ? diagnosticPublicUrl(page.finalUrl) : null,
+      status: page && Number.isInteger(page.status) && page.status >= 100 && page.status <= 599 ? page.status : null,
+      contentType: mime.length <= 127 && /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mime) ? mime : null,
+      errorClass: page ? page.status !== 200 ? "http_status" : "content_type" : transportErrorClass("error" in failure ? failure.error : null),
+    };
+  }
+}
+
+
 const MAX_WEBSITE_SOURCE_BYTES = 2_000_000;
 export type RegistryWebsiteMismatchDiagnostic = {
   schema: "registry_website_mismatch_v1";
@@ -368,8 +420,8 @@ export function registryWebsiteVerifier() {
       pages.set(url, fetchPublicHttpText(url, { timeoutMs: 8000, maxBytes: MAX_WEBSITE_SOURCE_BYTES, maxRedirects: 2, accept: "text/html,application/xhtml+xml" }));
     }
     let page: PublicHttpTextResponse;
-    try { page = await pages.get(url)!; } catch { throw new Error("registry website source unavailable"); }
-    if (page.status !== 200 || !/(?:text\/html|application\/xhtml\+xml)/i.test(page.contentType ?? "")) throw new Error("registry website full HTML unavailable");
+    try { page = await pages.get(url)!; } catch (error) { throw new RegistryWebsiteAvailabilityError(url, { error }); }
+    if (page.status !== 200 || !/(?:text\/html|application\/xhtml\+xml)/i.test(page.contentType ?? "")) throw new RegistryWebsiteAvailabilityError(url, { page });
     return page;
   }
   return async (row: RegistryFinding, proof: RegistryWebsiteCorroboration, company: { name: string; domain?: string | null; website_raw?: string | null },

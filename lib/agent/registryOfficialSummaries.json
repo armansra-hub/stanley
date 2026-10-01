@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "co_sos_summary_20061350490_20261001",
+      "companyId": "cb24bcbf-3d9f-456a-a447-859a67835711",
+      "internalId": "146565168",
+      "canonicalDomain": "forteadvertising.com",
+      "canonicalIdentitySha256": "bd637bd908fba37789a360dc8287380bb59f348b2c2c438bf78ef27e5aceeff2",
+      "entityId": "20061350490",
+      "legalName": "Forte Advertising, LLC",
+      "source": {
+        "requestedUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20061350490&entityId2=20061350490&fileId=20061350490&srchTyp=ENTITY",
+        "finalUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20061350490&entityId2=20061350490&fileId=20061350490&srchTyp=ENTITY",
+        "status": 200,
+        "observedAt": "2026-10-01T08:21:19.925Z",
+        "bodySha256": "181717221ef1cda50b12e12da4bfb0dfa8e781413b7243a065e571c13eaac8da",
+        "textSha256": "c791100d00f3b540af58ac6b55a4dbcc402fac8246862c8f3217bf4a468bb7af",
+        "receiptSha256": "1ccdf9a498b788613e275afabfa7346d09957faaaa97b64add83ae534ae2aaf7"
+      },
+      "sourceReader": {
+        "taskId": "/root/sweep_reporting_fix",
+        "reviewedAt": "2026-10-01T08:23:04.369Z",
+        "receiptSha256": "9937b15c73985921ffe90c7a51f6a32960b3e92ef7dc2b42f464cb82f9aa77b0"
+      },
+      "sourceReviewer": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-01T08:24:29.9849506Z",
+        "receiptSha256": "37388c108ec5ed2486b0e039a7e259d55d406fa535c56378df709a3864485e3a"
+      },
+      "originalReviews": {
+        "primary": {
+          "receiptSha256": "46d04f70db3be666e7a7edcfb4d07a7704e0ab8f549a1f80a7171a4e39911db3",
+          "companySha256": "3cb1bec70ab5313eeb0c4f897c98600861077f1e62dd570080b51284912bc721",
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T03:13:25.698332+00:00"
+        },
+        "independent": {
+          "receiptSha256": "a9d0536a01899c6edd14126c4ea463e122e5959938e7458236c4ad291b047b4f",
+          "companySha256": "fff3011994916503236564fdda02bb13a355959389d763d35761197cfe77ca28",
+          "taskId": "/root/sweep_reporting_fix",
+          "reviewedAt": "2026-09-30T03:17:08.287Z"
+        },
+        "packetSha256": "da7c02da13effae931278e1fa441e7467074138a0697fb946c606c4eb3d8dca1"
+      },
+      "target": {
+        "dataset": "co_sos",
+        "recordId": "20061350490",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20061350490",
+        "rowSha256": "d27c8aa13690901f9eaf7873c4957dececb4a04c0113f4eb43ec302469711e54",
+        "evidenceSha256": "d27c8aa13690901f9eaf7873c4957dececb4a04c0113f4eb43ec302469711e54",
+        "identitySha256": "e99fec34f560522e4d0fe987d978bc9ae88e73ec0314ec2a619e3cb8278ae090",
+        "sourceRowSha256": "df08e800ba519dda8bd3b1d77461294b6410cc7f44b2e2e8ae26227c153bbd49",
+        "factsSha256": "5419ecb5a6fb229500b53ce5e1e61132751ed2ed2b99284ab744bef39e721fbd",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:31:45.100246Z",
+        "role": "principal_street"
+      },
+      "addresses": {
+        "principal_street": {
+          "addressLine1": "1422 Delgany St Ste LL3",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80202",
+          "countryCode": "US"
+        },
+        "principal_mailing": {
+          "addressLine1": "1422 Delgany St Ste LL3",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80202",
+          "countryCode": "US"
+        },
+        "registered_agent_street": {
+          "addressLine1": "1422 Delgany St Ste LL4",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80202",
+          "countryCode": "US"
+        }
+      },
+      "registeredAgentName": "NANCY ANN ODORISIO-HARRIS",
+      "anchor": {
+        "mode": "single_explicit_role",
+        "role": "registered_agent_street",
+        "sourceId": "b81c040d-79e7-4ec8-9bdf-88e84e57b61f"
+      }
+    },
+    {
+      "id": "co_sos_summary_20081550266_20261001",
+      "companyId": "b0075eda-89ed-4cb3-b81b-8ed67224fb81",
+      "internalId": "39221296",
+      "canonicalDomain": "urgemedia.com",
+      "canonicalIdentitySha256": "0bfc1c3080e2d1c9fbe5e599db9def92bcd56d1924d5a68c4719c6bcde99ec72",
+      "entityId": "20081550266",
+      "legalName": "URGE MEDIA, INC.",
+      "source": {
+        "requestedUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20081550266&entityId2=20081550266&fileId=20081550266&srchTyp=ENTITY",
+        "finalUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20081550266&entityId2=20081550266&fileId=20081550266&srchTyp=ENTITY",
+        "status": 200,
+        "observedAt": "2026-10-01T08:47:24.213Z",
+        "bodySha256": "8646dfbe2ff45acd031f279efd7a210f5c76c501a056a47ee569adce21e1252a",
+        "textSha256": "1c8e176e064a5f1bcf370f4957703056ba8fff76daf36ff88b8dad609b457407",
+        "receiptSha256": "55b3e725fe482dc5891b58dfa0862ac6ca2abd40e2c6122c7c20f4a178dc4424"
+      },
+      "sourceReader": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-01T08:48:51.887Z",
+        "receiptSha256": "da7875e6042d3bb989fb9bdb3fac4c1954e1f14d0df6b64bd115504b81ef5820"
+      },
+      "sourceReviewer": {
+        "taskId": "/root/source_outcome_reporting",
+        "reviewedAt": "2026-10-01T08:50:21.168Z",
+        "receiptSha256": "94948c199d8d9d8245e80bfcc18fd08bcfead29451ff4d7e8f533dd7112ec980"
+      },
+      "originalReviews": {
+        "primary": {
+          "receiptSha256": "3fb62d2428affbbf0312c24b759730eef7c82d38836b635ff55d795b666362c8",
+          "companySha256": "1499fd7d0d5721417ac6501275ed5452d7ad5ae576b2e498242d9d88b1f91331",
+          "taskId": "/root/source_outcome_reporting",
+          "reviewedAt": "2026-09-30T21:54:27.774Z"
+        },
+        "independent": {
+          "receiptSha256": "fea63b0383446dce5e485301566e7aeded44d076b7c14bb614f21abaa09baf65",
+          "companySha256": "56e0f6274399671fcad8372e744f70eef0087140dadadd6bf775357a0527c9bf",
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T21:55:36.852Z"
+        },
+        "packetSha256": "4ae26d1d249f4b4eaf197eb23e2a10aed4b3b8b5b75ef8c7baf83c6a3484e553"
+      },
+      "target": {
+        "dataset": "co_sos",
+        "recordId": "20081550266",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20081550266",
+        "rowSha256": "f1cac3bb11d60fc32296eab8e36e2d7b779d8043b924485d3117606a858b595e",
+        "evidenceSha256": "f1cac3bb11d60fc32296eab8e36e2d7b779d8043b924485d3117606a858b595e",
+        "identitySha256": "ce76ec2c581150c7ae4aec507ae55162fb6e1113994ba0c11f26a052ce2728e4",
+        "sourceRowSha256": "5993d5704d977acb74aa08d2bf9b9ad99468a015eb45c19fba0d2377223fea12",
+        "factsSha256": "c3da379ff8a2728a53bc88dd3caf42d76e01cbe72b5f5f41f05e9c63a343cb5d",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:35:26.469643Z",
+        "role": "principal_street"
+      },
+      "addresses": {
+        "principal_street": {
+          "addressLine1": "215 Broadway",
+          "city": "Eagle",
+          "state": "CO",
+          "postalCode": "81631",
+          "countryCode": "US"
+        },
+        "principal_mailing": {
+          "addressLine1": "PO Box 5830",
+          "city": "Eagle",
+          "state": "CO",
+          "postalCode": "81631",
+          "countryCode": "US"
+        },
+        "registered_agent_street": {
+          "addressLine1": "215 Broadway Street, US",
+          "city": "Eagle",
+          "state": "CO",
+          "postalCode": "81631",
+          "countryCode": "US"
+        }
+      },
+      "registeredAgentName": "JUSTIN LLOYD ROACH",
+      "anchor": {
+        "mode": "principal_street_plus_mailing",
+        "sourceId": "b1cc88d6-5ab1-4aa5-b06e-b8e9ae8d3841"
+      }
+    }
+  ]
+}
