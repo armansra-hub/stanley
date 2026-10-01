@@ -69,7 +69,7 @@ export default function RegistryProfiles({ insights, loaded = true }: { insights
               : profile.verification?.method === "exact_legal_name_address" ? "Matched by legal name and business address."
                 : profile.verification?.method === "exact_registry_dba_address" ? "Matched by the FMCSA-reported DBA and business address."
                 : profile.verification?.method === "reviewed_sam_domain_legal_address" ? "Matched using the retained SAM official domain, legal operator and physical address."
-                : profile.verification?.method === "reviewed_official_registration_history" ? "Matched using reviewed official registration and dated address roles; mailing and registered-agent addresses are not operating-location claims."
+                : profile.verification?.method === "reviewed_official_registration_history" ? (profile.verification.officialHistory?.schema === "official_api_roles_v1" ? "Matched using official registry business contact or address evidence. Mailing and registered-agent addresses may differ from operating locations." : "Matched using reviewed official registration and dated address roles; mailing and registered-agent addresses are not operating-location claims.")
                 : profile.verification?.method === "official_website_corroboration" ? "Matched using the company's official website and public registry record." : "Identity verification details unavailable."}</p>
             {samEvidence && <div className="mt-1 text-[var(--text-muted)]">
               <p>SAM source as of: {date(typeof samEvidence.sourceAsOf === "string" ? samEvidence.sourceAsOf : null)}. Registration status and addresses are snapshot observations.</p>

@@ -3,6 +3,7 @@ import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { registryContentHash, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 import { registrySamCanonicalHash } from "@/lib/agent/registrySam";
 import officialSummaries from "./registryOfficialSummaries.json";
+import { verifyRegistryOfficialApi, type RegistryOfficialApiCorroboration } from "./registryOfficialApi";
 
 // Fixed reviewed facts, not caller-authored transcription or arbitrary PDF URLs.
 // Binary hashes bind the visually read documents; they do not OCR/authenticate
@@ -159,7 +160,7 @@ export function registryOfficialHistoryBundle() {
   return { id: BUNDLE.id, sha256: BUNDLE_SHA, addressEntryKeys: Object.keys(BUNDLE.addresses) as (keyof typeof BUNDLE.addresses)[] };
 }
 export const registryOfficialHistoryCanonicalHash = registrySamCanonicalHash;
-export function registryOfficialHistoryEvidenceHash(row: RegistryFinding, proof: Omit<RegistryOfficialHistoryCorroboration, "reader" | "reviewer"> | Omit<RegistryOfficialSummaryCorroboration, "reader" | "reviewer">): string {
+export function registryOfficialHistoryEvidenceHash(row: RegistryFinding, proof: Omit<RegistryOfficialHistoryCorroboration, "reader" | "reviewer"> | Omit<RegistryOfficialSummaryCorroboration, "reader" | "reviewer"> | Omit<RegistryOfficialApiCorroboration, "reader" | "reviewer">): string {
   return sha(stableRegistryJson({ companyId: row.companyId, internalId: row.internalId,
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail),
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt, proof }));
@@ -215,6 +216,7 @@ function originalUccCountry(row: RegistryFinding): "US" {
   return "US";
 }
 export function verifyRegistryOfficialHistory(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date()): NonNullable<RegistryProfile["verification"]> {
+  if (object(raw) && raw.schema === "official_api_roles_v1") return verifyRegistryOfficialApi(row, raw, company, context, now);
   if (object(raw) && raw.schema === "colorado_sos_summary_roles_v1") return verifyOfficialSummary(row, raw, company, context, now);
   const proof = parseProof(raw, row, now);
   const countryCode = originalUccCountry(row);
