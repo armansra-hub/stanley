@@ -11,6 +11,8 @@ import { registryWebsiteText, type RegistryWebsiteNormalization } from "./regist
 type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string };
 export type RegistryWebsiteCorroboration = {
   normalization?: RegistryWebsiteNormalization;
+  // Reviewed canonical-root delegation; it never substitutes for entity/address evidence.
+  canonicalRedirect?: { requestedUrl: string; finalUrl: string; normalizedVisibleTextSha256: string };
   mode?: "registry_identifier" | "registry_dba_address";
   identifier?: { kind: "usdot" | "ein" | "cslb_license"; value: string };
   sourceUrl: string; normalizedVisibleTextSha256: string; quote: string; quoteSha256: string; subject: string;
@@ -37,28 +39,36 @@ export function registryWebsiteEvidenceHash(row: Pick<RegistryFinding, "companyI
   proof: Omit<RegistryWebsiteCorroboration, "reader" | "reviewer">): string {
   const legacy = { companyId: row.companyId, internalId: row.internalId, dataset: row.profile.dataset,
     recordId: row.profile.recordId, rowSha256: row.profile.provenance.rowSha256, ...proof };
-  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address") return sha(stableRegistryJson(legacy));
+  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address" && !proof.canonicalRedirect) return sha(stableRegistryJson(legacy));
   // Existing address-mode callers may pass a narrow row. Explicit new modes must
   // bind the entire parsed publication content, not trust an unchanged row ID/hash.
   if (typeof row.sourceUrl !== "string" || !row.sourceUrl || typeof row.evidence !== "string" || !row.evidence
     || row.detail !== null && typeof row.detail !== "string"
     || typeof row.profile.observedAt !== "string" || !Number.isFinite(Date.parse(row.profile.observedAt)))
-    throw new Error("registry identifier evidence requires complete parsed publication content");
-  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : "dbaContent"]: {
+    throw new Error("registry website bound evidence requires complete parsed publication content");
+  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : proof.mode === "registry_dba_address" ? "dbaContent" : "redirectContent"]: {
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail),
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt,
   } }));
 }
 
 export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistryWebsiteCorroboration {
-  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization"].includes(k))
-    || !text(raw.sourceUrl, 2000) || !text(raw.quote, 1800) || raw.quote.length < 20 || !text(raw.subject, 200)
+  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization", "canonicalRedirect"].includes(k))
+    || !text(raw.sourceUrl, 2000) || !text(raw.quote, raw.canonicalRedirect !== undefined && raw.mode === undefined ? 6000 : 1800) || raw.quote.length < 20 || !text(raw.subject, 200)
     || !hash(raw.normalizedVisibleTextSha256) || !hash(raw.quoteSha256) || sha(raw.quote) !== raw.quoteSha256)
     throw new Error("invalid registry website evidence");
   if (raw.mode !== undefined && raw.mode !== "registry_identifier" && raw.mode !== "registry_dba_address" || raw.mode !== "registry_identifier" && raw.identifier !== undefined)
     throw new Error("invalid registry website mode");
   if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1")
     throw new Error("invalid registry website normalization");
+  if (raw.canonicalRedirect !== undefined) {
+    const redirect = raw.canonicalRedirect;
+    if (!object(redirect) || Object.keys(redirect).some(k => !["requestedUrl", "finalUrl", "normalizedVisibleTextSha256"].includes(k))
+      || !text(redirect.requestedUrl, 2000) || !text(redirect.finalUrl, 2000) || !hash(redirect.normalizedVisibleTextSha256))
+      throw new Error("invalid registry website canonical redirect");
+    const requested = publicRootUrl(redirect.requestedUrl), final = publicRootUrl(redirect.finalUrl);
+    if (requested === final) throw new Error("registry website canonical redirect must change its root URL");
+  }
   const identifier = raw.mode === "registry_identifier" ? identifierRule(row, raw.identifier) : undefined;
   const a = raw.address;
   if (!(a === undefined && identifier?.kind === "cslb_license") && (!object(a)
@@ -232,18 +242,40 @@ function ownUrl(value: string, domain: string): string {
   return url.toString();
 }
 
+function publicRootUrl(value: string): string {
+  const url = validatePublicHttpUrl(value);
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.pathname !== "/" || url.search || url.hash
+    || url.toString() !== value) throw new Error("registry website redirect requires an exact public HTTPS root");
+  return url.toString();
+}
+
 /** Request-local cache only. Three bounded public fetches fit the route's 60s
  * envelope; a changed page fails closed and needs a new independent review. */
 export function registryWebsiteVerifier() {
   const pages = new Map<string, Promise<PublicHttpTextResponse>>();
+  async function readPage(url: string): Promise<PublicHttpTextResponse> {
+    if (!pages.has(url)) {
+      if (pages.size >= 3) throw new Error("registry website request exceeds three source pages");
+      pages.set(url, fetchPublicHttpText(url, { timeoutMs: 8000, maxBytes: 2_000_000, maxRedirects: 2, accept: "text/html,application/xhtml+xml" }));
+    }
+    let page: PublicHttpTextResponse;
+    try { page = await pages.get(url)!; } catch { throw new Error("registry website source unavailable"); }
+    if (page.status !== 200 || !/(?:text\/html|application\/xhtml\+xml)/i.test(page.contentType ?? "")) throw new Error("registry website full HTML unavailable");
+    return page;
+  }
   return async (row: RegistryFinding, proof: RegistryWebsiteCorroboration, company: { name: string; domain?: string | null; website_raw?: string | null },
     context: CompanyIdentityContext, now = new Date()): Promise<NonNullable<RegistryProfile["verification"]>> => {
     const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address";
     // This new mode always revalidates its fresh, separately bound attestations.
-    if (identifierMode || dbaMode) proof = parseRegistryWebsiteCorroboration(proof, row, now);
+    if (identifierMode || dbaMode || proof.canonicalRedirect !== undefined) proof = parseRegistryWebsiteCorroboration(proof, row, now);
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
-    const url = ownUrl(proof.sourceUrl, domain), p = row.profile.identity, a = proof.address;
+    const redirect = proof.canonicalRedirect;
+    // Only the stored canonical host can delegate. No caller-selected path or query.
+    if (redirect) ownUrl(redirect.requestedUrl, domain);
+    const url = redirect && proof.sourceUrl === redirect.requestedUrl ? redirect.requestedUrl : ownUrl(proof.sourceUrl, redirect?.finalUrl ?? domain);
+    if (redirect && (new URL(url).search || new URL(url).hash)) throw new Error("registry website redirect source cannot have a query or fragment");
+    const p = row.profile.identity, a = proof.address;
     const cslbMode = identifierMode && proof.identifier?.kind === "cslb_license";
     if (!a && !cslbMode) throw new Error("registry website complete address is required");
     const sameSubject = (left: string, right: string) => sameRegistryLegalName(left, right)
@@ -279,16 +311,20 @@ export function registryWebsiteVerifier() {
       && new RegExp(`\\b(?:US\\s*)?DOT\\s*#?\\s*${row.profile.recordId}\\b`, "i").test(proof.quote);
     const highwayEquivalent = dot && Boolean(a) && registryStreet(a!).replace(/\bus hwy\b/g, "hwy") === registryStreet(p).replace(/\bus hwy\b/g, "hwy");
     if (!identifierMode && !exactStreet && (dbaMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
-    if (!pages.has(url)) {
-      if (pages.size >= 3) throw new Error("registry website request exceeds three source pages");
-      pages.set(url, fetchPublicHttpText(url, { timeoutMs: 8000, maxBytes: 2_000_000, maxRedirects: 2, accept: "text/html,application/xhtml+xml" }));
+    let canonicalRedirectVerification: Record<string, unknown> | undefined;
+    if (redirect) {
+      const root = await readPage(redirect.requestedUrl);
+      if (root.finalUrl !== redirect.finalUrl || sha(registryWebsiteText(root.body)) !== redirect.normalizedVisibleTextSha256)
+        throw new Error("registry website canonical redirect changed");
+      canonicalRedirectVerification = { ...redirect, fetchedAt: now.toISOString(), htmlSha256: sha(root.body) };
     }
-    let page: PublicHttpTextResponse;
-    try { page = await pages.get(url)!; } catch { throw new Error("registry website source unavailable"); }
-    ownUrl(page.finalUrl, domain);
-    if (page.status !== 200 || !/(?:text\/html|application\/xhtml\+xml)/i.test(page.contentType ?? "")) throw new Error("registry website full HTML unavailable");
+    const page = await readPage(url);
+    ownUrl(page.finalUrl, redirect?.finalUrl ?? domain);
     const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
     if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0) throw new Error("registry website changed or exact reviewed quote missing");
+    // A longer address proof is the entire page, never joined or clipped passages.
+    if (redirect && !proof.mode && proof.quote.length > 1800 && proof.quote !== visibleText)
+      throw new Error("registry website extended redirect quote must be the full visible page");
     if (identifierMode) identifierAttribution(row, proof, visibleText);
     if (dbaMode) {
       dbaAttribution(proof, visibleText);
@@ -296,8 +332,8 @@ export function registryWebsiteVerifier() {
         throw new Error("registry website DBA has a conflicting labelled USDOT");
     }
     const sourceId = `website:sha256:${proof.normalizedVisibleTextSha256}`;
-    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [sourceId], website: {
-      ...proof, finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
+    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [...new Set([sourceId, ...(redirect ? [`website:sha256:${redirect.normalizedVisibleTextSha256}`] : [])])], website: {
+      ...proof, ...(canonicalRedirectVerification ? { canonicalRedirectVerification } : {}), finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
       binding: dbaMode ? "exact_original_registry_dba_full_address" : identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
       ...(identifierMode ? { websiteAddress: a ?? null, addressRelationship: a ? "separate_observations_not_address_equivalence" : "website_address_unknown_registry_address_retained" } : {}),
       ...(dbaMode ? { originalDba, originalLegalOperator: p.legalName, websiteAddress: a } : {}),
