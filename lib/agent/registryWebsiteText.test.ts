@@ -98,3 +98,72 @@ describe("explicit versioned Gravity Forms anti-spam normalization", () => {
     await expect(registryWebsiteVerifier()(row(), proof(false), { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now)).rejects.toThrow("changed");
   });
 });
+
+describe("opt-in v2 declared social-label and above-description variants", () => {
+  const version2 = "gravity_forms_honeypot_v2" as const;
+  const v2 = (s: string) => registryWebsiteText(s, version2);
+  const above = (label: string) => trap(label)
+    .replaceAll("field_sublabel_below", "field_sublabel_above")
+    .replaceAll("field_description_below", "field_description_above")
+    .replace(/(<div class="ginput_container">.*?<\/div>)(<div class="gfield_description".*?<\/div>)/, "$2$1");
+  const page = (field: string) => `<footer>${quote}</footer>${form(field)}`;
+  it.each(["Facebook", "LinkedIn", "Comments"])("recognizes only closed layouts for %s", label => {
+    for (const field of [trap(label), above(label)]) expect(v2(page(field))).toBe(`${quote} Phone number for service`);
+  });
+  it("leaves legacy and v1 outputs unchanged for new labels and layout", () => {
+    for (const field of [trap("Facebook"), trap("LinkedIn"), above("Comments"), above("LinkedIn")]) {
+      expect(normal(page(field))).toBe(htmlToVisibleText(page(field)));
+      expect(registryWebsiteText(page(field))).toBe(htmlToVisibleText(page(field)));
+      expect(v2(page(field))).not.toBe(normal(page(field)));
+    }
+  });
+  it.each([
+    ["business-bearing label", (s: string) => s.replace(">LinkedIn<", ">Acme Inc Headquarters<")],
+    ["unrecognized social label", (s: string) => s.replace(">LinkedIn<", ">Instagram<")],
+    ["missing trap marker", (s: string) => s.replace("gfield--type-honeypot", "gfield--type-text")],
+    ["missing validation marker", (s: string) => s.replace("gform_validation_container", "ordinary")],
+    ["visible override", (s: string) => s.replace('id="field_1_8"', 'id="field_1_8" style="display:block"')],
+    ["nonempty input", (s: string) => s.replace('value=""', 'value="123 Main Street"')],
+    ["meaningful description", (s: string) => s.replace("This field is for validation purposes and should be left unchanged.", "Acme Inc 123 Main Street")],
+    ["extra identity passage", (s: string) => s.replace("</label>", "</label><p>Acme Inc 123 Main Street</p>")],
+    ["wrong field relationship", (s: string) => s.replace('name="input_8"', 'name="input_9"')],
+  ])("retains both layouts with %s", (_label, change) => {
+    for (const field of [trap("LinkedIn"), above("LinkedIn")]) {
+      const candidate = page(change(field));
+      expect(v2(candidate)).toBe(htmlToVisibleText(candidate));
+    }
+  });
+  it.each([
+    ["missing above declaration", (s: string) => s.replace("field_description_above", "")],
+    ["contradictory placement", (s: string) => s.replace("field_description_above", "field_description_above field_description_below")],
+    ["below classes on above layout", (s: string) => s.replaceAll("_above", "_below")],
+  ])("retains above-description field with %s", (_label, change) => {
+    const candidate = page(change(above("LinkedIn")));
+    expect(v2(candidate)).toBe(htmlToVisibleText(candidate));
+  });
+  it("keeps ordinary social fields, hidden identity and visible changes", () => {
+    const candidate = page(above("LinkedIn"));
+    for (const changed of [candidate.replace("123 Main Street", "124 Main Street"),
+      candidate.replace("Phone number for service", "Phone number for billing"),
+      candidate + '<div hidden>Different Operator LLC 99 New Street</div>',
+      candidate + '<label>Facebook</label><input value="Acme Inc"/>']) expect(v2(changed)).not.toBe(v2(candidate));
+  });
+  it("requires newly bound v2 witnesses even when v1 and v2 text happen to agree", () => {
+    const p = proof();
+    expect(() => parseRegistryWebsiteCorroboration({ ...p, normalization: version2 }, row(), now)).toThrow("bind");
+  });
+  it("verifies independently bound v2 while retaining raw HTML hashes", async () => {
+    const item = row(), { reader: _r, reviewer: _v, ...old } = proof();
+    const body = page(above("LinkedIn"));
+    const evidence = { ...old, normalization: version2, normalizedVisibleTextSha256: sha(v2(body)) };
+    const evidenceSha256 = registryWebsiteEvidenceHash(item, evidence);
+    const p = { ...evidence, reader: { ...proof().reader, evidenceSha256 }, reviewer: { ...proof().reviewer, evidenceSha256 } };
+    fetch.mockResolvedValue({ status: 200, finalUrl: p.sourceUrl, contentType: "text/html", body });
+    const result = await registryWebsiteVerifier()(item, parseRegistryWebsiteCorroboration(p, item, now),
+      { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now);
+    expect(result.website).toMatchObject({ normalization: version2, htmlSha256: sha(body), normalizedVisibleTextSha256: evidence.normalizedVisibleTextSha256 });
+    const { normalization: _n, ...downgraded } = p;
+    expect(() => parseRegistryWebsiteCorroboration(downgraded, item, now)).toThrow("bind");
+    expect(() => parseRegistryWebsiteCorroboration({ ...p, normalization: version }, item, now)).toThrow("bind");
+  });
+});
