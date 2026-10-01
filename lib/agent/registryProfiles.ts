@@ -328,11 +328,26 @@ function sameUsAddressFormat(left: RegistryStreetAddress, right: RegistryStreetA
     const index = line2 ? 1 : 2, base = bareStreet(line2 ? address.addressLine1 : match[1]);
     return base ? { base, label: match[index].toLowerCase(), digits: match[index + 1] } : null;
   };
+  const terminalBareSuite = (address: RegistryStreetAddress, bare: boolean) => {
+    const line2 = (address.addressLine2 ?? "").trim();
+    // A bare single-letter/hyphen/number must terminate a complete civic street.
+    // Its counterpart supplies the explicit Suite/Ste role; no numeric-only,
+    // compound, building/floor, mailbox, range or leading-zero inference.
+    const match = bare ? !line2 && address.addressLine1.trim().match(/^(.+?)[,\s]+([a-z])-([1-9]\d*)$/i)
+      : line2 ? line2.match(/^(?:suite|ste\.?)\s+([a-z])-?([1-9]\d*)$/i)
+      : address.addressLine1.trim().match(/^(.+?)[,\s]+(?:suite|ste\.?)\s+([a-z])-?([1-9]\d*)$/i);
+    if (!match) return null;
+    const split = !bare && Boolean(line2), base = bareStreet(split ? address.addressLine1 : match[1]);
+    if (!base || !/^\d+[a-z]? .+ (?:st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter|trl|plz)$/.test(base)) return null;
+    return base + " suite " + match[split ? 1 : 2].toLowerCase() + match[split ? 2 : 3];
+  };
   const a = suite(left), b = suite(right);
   return (alley(left) !== null && alley(left) === alley(right))
     || (ordinalStreet(left) !== null && ordinalStreet(left) === ordinalStreet(right))
     || (hashUnit(left, true) !== null && hashUnit(left, true) === hashUnit(right, false))
     || (hashUnit(right, true) !== null && hashUnit(right, true) === hashUnit(left, false))
+    || (terminalBareSuite(left, true) !== null && terminalBareSuite(left, true) === terminalBareSuite(right, false))
+    || (terminalBareSuite(right, true) !== null && terminalBareSuite(right, true) === terminalBareSuite(left, false))
     // Admit only this terminal designator typo against explicit Suite/Ste,
     // with an identical numeric unit; never a street word or another unit role.
     || Boolean(a && b && a.base === b.base && a.digits === b.digits
