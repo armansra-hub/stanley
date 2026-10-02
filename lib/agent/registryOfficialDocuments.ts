@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseCsv } from "@/lib/csv";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { registryContentHash, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 import { registryOfficialApiCanonicalHash } from "./registryOfficialApi";
@@ -33,7 +34,15 @@ type IrsEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "official_irs_e
   historicalDate: string; laterDate: string; currentPhysicalAddressClaim: false;
   assignedDomainConflict: { disposition: "retain_assigned_domain_as_distinct_entity"; domain: string; legalName: string; ein: string;
     url: string; observedAt: string; text: string; textSha256: string; htmlSha256: string; packetSha256: string; identityQuote: string } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry;
+type MunicipalCslbEntry = Omit<BaseEntry, "target"> & { chain: "official_municipal_dba_cslb_header";
+  target: Omit<Target, "dataset" | "role"> & { dataset: "ca_contractors"; role: "contractor_mailing_address" };
+  csvHeader: { text: string; sha256: string; inspectionReceiptSha256: string };
+  secondName: { column: "BUS-NAME-2"; value: string; typeColumn: "NAME-TP-2"; typeValue: "Current Name" };
+  municipal: { recordId: "CLR21-0269"; role: "legal_company_name_and_dba"; legalCompanyName: string; dba: string;
+    companyEmail: string; address: Address; identityQuote: string; headerStatus: "Active"; headerExpiry: "03/31/2024";
+    detailExpiry: "2024-10-01"; currentLicenseClaim: false };
+  ownSiteRole: "company_headquarters"; ownSiteContactQuote: string; sourceStatus: "QUAL Bond SUSP" };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -55,7 +64,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -65,6 +74,7 @@ export function registryOfficialDocumentEvidenceHash(row: RegistryFinding, proof
 }
 function sourceChecks(e: RegistryOfficialDocumentEntry) {
   if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
+  else if (e.chain === "official_municipal_dba_cslb_header") municipalCslbSourceChecks(e);
   else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
@@ -117,6 +127,25 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
       && raw.NAME===p.identity.legalName && raw.STREET===p.identity.addressLine1 && raw.CITY===p.identity.city
       && raw.STATE===p.identity.state && raw.ZIP===p.identity.postalCode && raw.TAX_PERIOD===p.provenance.sourceRow.tax_period
       && u.hostname==="www.irs.gov" && /^\/pub\/irs-soi\/eo[1-4]\.csv$/.test(u.pathname) && !u.search,"original IRS BMF identity differs");
+  } else if (e.chain === "official_municipal_dba_cslb_header") {
+    need(p.dataset === "ca_contractors" && t.role === "contractor_mailing_address" && p.recordId === "789382"
+      && u.href === "https://web.cslb.ca.gov/Onlineservices/DataPortal/ContractorList" && sha(row.evidence) === t.rowSha256,
+      "original CSLB target differs");
+    const headers=parseCsv(e.csvHeader.text),values=parseCsv(row.evidence);
+    need(sha(e.csvHeader.text)===e.csvHeader.sha256 && hash(e.csvHeader.inspectionReceiptSha256)
+      && headers.length===1 && values.length===1 && headers[0].length===52 && values[0].length===52
+      && new Set(headers[0]).size===52,"CSLB header/row shape differs");
+    raw=Object.fromEntries(headers[0].map((h,i)=>[h,values[0][i]]));
+    need(raw.LicenseNo===p.recordId && raw.BusinessName===p.identity.legalName && raw.MailingAddress===p.identity.addressLine1
+      && raw.City===p.identity.city && raw.State===p.identity.state && raw.ZIPCode===p.identity.postalCode
+      && raw.country==="" && raw.FullBusinessName==="" && e.secondName.column==="BUS-NAME-2"
+      && e.secondName.typeColumn==="NAME-TP-2" && e.secondName.typeValue==="Current Name"
+      && raw[e.secondName.column]===e.secondName.value && raw[e.secondName.typeColumn]===e.secondName.typeValue,
+      "typed CSLB business names or mailing address differ");
+    const fields={license_number:"LicenseNo",license_status:"PrimaryStatus",license_type:"Classifications(s)",legal_structure:"BusinessType",license_issue_date:"IssueDate",license_expiry_date:"ExpirationDate"};
+    need(Object.entries(fields).every(([field,column])=>p.facts.filter(f=>f.field===field && f.value===raw[column]).length===1
+      && p.provenance.sourceRow[field]===raw[column]) && raw.PrimaryStatus===e.sourceStatus && e.sourceStatus==="QUAL Bond SUSP",
+      "CSLB status or dated facts differ");
   } else {
     const parts = row.evidence.split("\nOriginal public source row: ");
     need(p.dataset === "sba_7a" && t.role === "borrower_business" && parts.length === 2, "target borrower role invalid");
@@ -204,6 +233,7 @@ function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
 }
 function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentityContext) {
   if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
+  if (e.chain === "official_municipal_dba_cslb_header") { municipalCslbIdentityChain(e); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -233,6 +263,40 @@ function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentit
     need(q.includes(a.addressLine1) && (!a.addressLine2 || q.includes(a.addressLine2)) && q.includes(a.city) && q.includes(a.state) && q.includes(a.postalCode)
       && words(a.city)===words(e.locality.city) && a.state===e.locality.state && a.postalCode===e.locality.postalCode, "own-site full address/locality differs");
   }
+}
+// A finite reviewed municipal record; this does not authorize arbitrary municipal
+// hosts, records, caller aliases, or an unlabelled second CSV name.
+function municipalCslbSourceChecks(e: MunicipalCslbEntry) {
+  need(e.companyId==="253e14e5-7273-49af-9874-fb64efeb16d0" && e.internalId==="940173"
+    && e.canonicalDomain==="siggins.com" && e.target.recordId==="789382" && e.sources.length===2,"municipal CSLB scope differs");
+  const [official,own]=e.sources;
+  for(const s of e.sources) need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin) && s.completeRead===true
+    && s.text.length>20 && s.text.length<=150000 && sha(s.text)===s.textSha256 && s.sourceDate===null && s.sourceDateText===null,
+    "municipal complete source or date pin differs");
+  need(official.kind==="official_rendered_record" && publicUrl(official.url).href==="https://blaine.ims16.com/ims/Base/Details?EncrID=713445394"
+    && official.status===null && official.bodySha256===null && official.contentType===null && official.requestedUrl===null && official.hops===null,
+    "municipal DOM capture provenance differs");
+  need(own.kind==="own_website" && publicUrl(own.url).href==="https://siggins.com/locations/" && own.requestedUrl===own.url
+    && own.status===200 && hash(own.bodySha256) && /^text\/html(?:;|$)/.test(own.contentType??"")
+    && own.hops?.length===1 && own.hops[0].url===own.url && own.hops[0].status===200,"retained headquarters capture differs");
+}
+function municipalCslbIdentityChain(e: MunicipalCslbEntry) {
+  const [official,own]=e.sources,m=e.municipal,a=m.address;
+  need(m.recordId==="CLR21-0269" && m.role==="legal_company_name_and_dba" && e.ownSiteRole==="company_headquarters"
+    && m.currentLicenseClaim===false && m.headerStatus==="Active" && m.headerExpiry==="03/31/2024" && m.detailExpiry==="2024-10-01",
+    "municipal roles or conflicting historical dates differ");
+  const names=m.legalCompanyName.split(" / ");
+  need(names.length===2 && sameRegistryLegalName(names[0],e.secondName.value) && sameRegistryLegalName(names[1],m.dba)
+    && words(m.dba)==="siggins company" && words(e.legalName)==="siggins co"
+    && /^[^\s@]+@siggins\.com$/.test(m.companyEmail),"municipal legal DBA/domain chain differs");
+  const quote=`DBA\n${m.dba}\nLegal/Company Name\n${m.legalCompanyName}\nAddress\n${a.addressLine1}\n${a.city}, ${a.state} ${a.postalCode}\nCompany Email\n${m.companyEmail}\nBusiness Phone\n`;
+  need(m.identityQuote===quote && official.text.split(quote).length===2 && official.text.includes(` ${m.recordId}\n`)
+    && official.text.includes(`Active\u00a0\u00a0\u00a0Expiration\u00a0Date:\u00a0${m.headerExpiry}`)
+    && official.text.includes(`License Information\nExpiration Date\n${m.detailExpiry}\n`),"municipal typed record block differs");
+  need(fullAddress(a,e.targetAddress) && e.ownSiteContactQuote===`Headquarters Kansas City, MO 512 E 12th Ave, North Kansas City, MO 64116`
+    && own.text.split(e.ownSiteContactQuote).length===2 && own.text.includes("Siggins")
+    && fullAddress({addressLine1:"512 E 12th Ave",city:"North Kansas City",state:"MO",postalCode:"64116",countryCode:"US"},e.targetAddress)
+    && /^\d{10}$/.test(e.phone) && own.text.replace(/\D/g,"").includes(e.phone),"shared full headquarters or own-site subject differs");
 }
 /** A retained dated association only; never a canonical-field update or a claim
  * that an old address, license status, debt or financial value is current. */

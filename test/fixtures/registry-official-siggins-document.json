@@ -1,0 +1,218 @@
+{
+  "entry": {
+    "id": "siggins-cslb-789382-blaine-clr21-0269",
+    "companyId": "253e14e5-7273-49af-9874-fb64efeb16d0",
+    "internalId": "940173",
+    "canonicalDomain": "siggins.com",
+    "canonicalIdentitySha256": "c5c61089136b0a4a01b53bfe1710bf999cbf5e6e802200e0d0eb65417679fe31",
+    "chain": "official_municipal_dba_cslb_header",
+    "target": {
+      "dataset": "ca_contractors",
+      "recordId": "789382",
+      "sourceUrl": "https://web.cslb.ca.gov/Onlineservices/DataPortal/ContractorList",
+      "rowSha256": "8757a9c3779df6bb908d7f991588e695fa90f7a42e3f8c4e3a5ec3acfb4343ed",
+      "evidenceSha256": "8757a9c3779df6bb908d7f991588e695fa90f7a42e3f8c4e3a5ec3acfb4343ed",
+      "profileSha256": "fbf7379d58038de4a56814998f26d72bca52dc0ab488b028343959423aa895b8",
+      "sourceAsOf": "2026-09-29",
+      "observedAt": "2026-09-29T23:17:44.798106+00:00",
+      "role": "contractor_mailing_address"
+    },
+    "sources": [
+      {
+        "kind": "official_rendered_record",
+        "url": "https://blaine.ims16.com/ims/Base/Details?EncrID=713445394",
+        "requestedUrl": null,
+        "hops": null,
+        "observedAt": "2026-10-02T05:38:56Z",
+        "receiptSha256": "d98b344a2a3e46ea8a71e5421e5557dd546d37a73c6227184cd63fa24378e34c",
+        "bodySha256": null,
+        "text": "Skip to main content\nEnable accessibility for low vision\nOpen the accessibility menu\nGuest \n Siggins Company \nCity License/Registration\n Active   Expiration Date: 03/31/2024\n CLR21-0269\nDBA\nSiggins Company\nLegal/Company Name\nHigman Equipment Company, Inc / Siggins Company\nAddress\n512 E 12TH AVE\nNorth Kansas City, MO 64116\nCompany Email\nlbrown@siggins.com\nBusiness Phone\n(816) 548-3172\n Linked Records\n  SIGGINS COMPANY (18-020)\nNOT ACTIVE\n  B22-04091\nFinaled\n  B21-01132\nFinaled\n Charges\nTotal Charges\n$215.25\nPayments\n($215.25)\nBalance Due\n$0.00\n Contact Information\nApplicant\nLaura A Brown\n Files\nContractor Lice...\n03/31/2021\n License Information\nExpiration Date\n2024-10-01\nFederal Tax Number\n********\nGeneral Liability Insurance\n2024-10-01\nLicense Types\nCommercial/General\nMinnesota Tax Number\nYes\nMinnesota Tax Number\n********\nNumber of Years\n3 years $210.00\nState License\n More\n Accepted Disclaimers\n Indemnification Agreement & Tennessen Warning\n03/31/2021\n Home\nSelect Language\nAbkhaz\nAcehnese\nAcholi\nAfar\nAfrikaans\nAlbanian\nAlur\nAmharic\nArabic\nArmenian\nAssamese\nAvar\nAwadhi\nAymara\nAzerbaijani\nBalinese\nBaluchi\nBambara\nBaoulé\nBashkir\nBasque\nBatak Karo\nBatak Simalungun\nBatak Toba\nBelarusian\nBemba\nBengali\nBetawi\nBhojpuri\nBikol\nBosnian\nBreton\nBulgarian\nBuryat\nCantonese\nCatalan\nCebuano\nChamorro\nChechen\nChichewa\nChinese (Simplified)\nChinese (Traditional)\nChuukese\nChuvash\nCorsican\nCrimean Tatar (Cyrillic)\nCrimean Tatar (Latin)\nCroatian\nCzech\nDanish\nDari\nDhivehi\nDinka\nDogri\nDombe\nDutch\nDyula\nDzongkha\nEsperanto\nEstonian\nEwe\nFaroese\nFijian\nFilipino\nFinnish\nFon\nFrench\nFrench (Canada)\nFrisian\nFriulian\nFulani\nGa\nGalician\nGeorgian\nGerman\nGreek\nGuarani\nGujarati\nHaitian Creole\nHakha Chin\nHausa\nHawaiian\nHebrew\nHiligaynon\nHindi\nHmong\nHungarian\nHunsrik\nIban\nIcelandic\nIgbo\nIlocano\nIndonesian\nInuktut (Latin)\nInuktut (Syllabics)\nIrish\nItalian\nJamaican Patois\nJapanese\nJavanese\nJingpo\nKalaallisut\nKannada\nKanuri\nKapampangan\nKazakh\nKhasi\nKhmer\nKiga\nKikongo\nKinyarwanda\nKituba\nKokborok\nKomi\nKonkani\nKorean\nKrio\nKurdish (Kurmanji)\nKurdish (Sorani)\nKyrgyz\nLao\nLatgalian\nLatin\nLatvian\nLigurian\nLimburgish\nLingala\nLithuanian\nLombard\nLuganda\nLuo\nLuxembourgish\nMacedonian\nMadurese\nMaithili\nMakassar\nMalagasy\nMalay\nMalay (Jawi)\nMalayalam\nMaltese\nMam\nManx\nMaori\nMarathi\nMarshallese\nMarwadi\nMauritian Creole\nMeadow Mari\nMeiteilon (Manipuri)\nMinang\nMizo\nMongolian\nMyanmar (Burmese)\nNahuatl (Eastern Huasteca)\nNdau\nNdebele (South)\nNepalbhasa (Newari)\nNepali\nNKo\nNorwegian\nNuer\nOccitan\nOdia (Oriya)\nOromo\nOssetian\nPangasinan\nPapiamento\nPashto\nPersian\nPolish\nPortuguese (Brazil)\nPortuguese (Portugal)\nPunjabi (Gurmukhi)\nPunjabi (Shahmukhi)\nQuechua\nQʼeqchiʼ\nRomani\nRomanian\nRundi\nRussian\nSami (North)\nSamoan\nSango\nSanskrit\nSantali (Latin)\nSantali (Ol Chiki)\nScots Gaelic\nSepedi\nSerbian\nSesotho\nSeychellois Creole\nShan\nShona\nSicilian\nSilesian\nSindhi\nSinhala\nSlovak\nSlovenian\nSomali\nSpanish\nSundanese\nSusu\nSwahili\nSwati\nSwedish\nTahitian\nTajik\nTamazight\nTamazight (Tifinagh)\nTamil\nTatar\nTelugu\nTetum\nThai\nTibetan\nTigrinya\nTiv\nTok Pisin\nTongan\nTshiluba\nTsonga\nTswana\nTulu\nTumbuka\nTurkish\nTurkmen\nTuvan\nTwi\nUdmurt\nUkrainian\nUrdu\nUyghur\nUzbek\nVenda\nVenetian\nVietnamese\nWaray\nWelsh\nWolof\nXhosa\nYakut\nYiddish\nYoruba\nYucatec Maya\nZapotec\nZulu\nPowered by Translate\n Home  |   City of Blaine  |   iMS Help Videos\n© 2026 - Intuitive Municipal Solutions, LLC\n\n",
+        "textSha256": "d17017d27a450100d3f8cfdcfd5de9580979f2adfbfff6781fc9cbda01a16144",
+        "completeRead": true,
+        "status": null,
+        "contentType": null,
+        "originalSourcePin": "e220502804e9d9df91e7852762440ca5266aec0ea498ef34af86371e83eae41c",
+        "sourceDate": null,
+        "sourceDateText": null
+      },
+      {
+        "kind": "own_website",
+        "url": "https://siggins.com/locations/",
+        "requestedUrl": "https://siggins.com/locations/",
+        "hops": [
+          {
+            "url": "https://siggins.com/locations/",
+            "status": 200
+          }
+        ],
+        "observedAt": "2026-09-30T00:02:10.704Z",
+        "receiptSha256": "0f2cd97b472b7ab9a39567b52a0c2ca093b358a6ec600bc77ed090ef96f5ea28",
+        "bodySha256": "8704a6ccb16d070446e21f3a40ddd2dae48954bfe687a58f51fbcd484c1e240b",
+        "text": "Material Handling Systems Across North America | Siggins How We Work What We Solve Our Capabilities About Locations SOLVE Analysis Select Page Material Handling Systems Across North America We design and deliver material handling systems for warehouse and distribution operations across the country. From our North Kansas City headquarters to sales teams coast to coast, Siggins supports projects wherever your operation runs. Headquarters Kansas City, MO 512 E 12th Ave, North Kansas City, MO 64116 Sales Offices St. Louis, MO Minneapolis, MN Dallas, TX Nashville, TN Phoenix, AZ Salt Lake City, UT Miami, FL Hartford, CT No matter the market, you get the same Siggins team and the same process. Our engineers work on-site to learn how your facility actually runs, model the system before anything is built, and stay involved through installation and long-term support. Every engagement starts the same way, by understanding your operation first. Start with a SOLVE Analysis Understand what your operation needs before committing to equipment or automation decisions. Start A Solve Analysis Warehousing and Distribution Solutions Get in Touch sigginsinfo@siggins.com  (800) 383-3218  Follow Privacy Policy Copyright 2026 Siggins",
+        "textSha256": "0ec698a9e24729d08d692bcbb57fbf4cbc433a28a70656d6989f6602d17a63ec",
+        "completeRead": true,
+        "status": 200,
+        "contentType": "text/html; charset=UTF-8",
+        "originalSourcePin": "5f0104f93d0fd88cb3f611d942cea1aa937c5b52cf20f55fc26c190026d4403a",
+        "sourceDate": null,
+        "sourceDateText": null
+      }
+    ],
+    "originalReviews": {
+      "primary": {
+        "taskId": "/root/kerr_registry_research",
+        "reviewedAt": "2026-09-30T03:31:46.557680+00:00",
+        "receiptSha256": "e9a75e937e5b6d86af4f17d8707a5e67cb95495b0f9cceaf616798826c8d8908",
+        "receiptActorField": "readerTaskId"
+      },
+      "independent": {
+        "taskId": "/root/source_outcome_reporting",
+        "reviewedAt": "2026-09-30T03:38:00.512Z",
+        "receiptSha256": "877104331eebea88d018cb559845501717c0cc758a1a2abbef020601f5f38722",
+        "receiptActorField": "reviewerTaskId"
+      },
+      "packetSha256": "5f0104f93d0fd88cb3f611d942cea1aa937c5b52cf20f55fc26c190026d4403a"
+    },
+    "sourceReader": {
+      "taskId": "/root",
+      "reviewedAt": "2026-10-02T05:40:52.300Z",
+      "receiptSha256": "d98b344a2a3e46ea8a71e5421e5557dd546d37a73c6227184cd63fa24378e34c",
+      "receiptActorField": "readBy"
+    },
+    "sourceReviewer": {
+      "taskId": "/root/cottonwood_review",
+      "reviewedAt": "2026-10-02T05:42:22.466Z",
+      "receiptSha256": "98886007b64bc65ee1cbc34266799444de86c8d0534c734f7e60e567d7cd6376",
+      "receiptActorField": "reviewerTaskId"
+    },
+    "legalName": "SIGGINS CO",
+    "phone": "8003833218",
+    "targetAddress": {
+      "legalName": "SIGGINS CO",
+      "addressLine1": "512 E 12TH AVENUE",
+      "city": "NORTH KANSAS CITY",
+      "state": "MO",
+      "postalCode": "64116",
+      "countryCode": "US"
+    },
+    "csvHeader": {
+      "text": "LicenseNo,LastUpdate,BusinessName,BUS-NAME-2,FullBusinessName,MailingAddress,City,State,County,ZIPCode,country,BusinessPhone,BusinessType,IssueDate,ReissueDate,ExpirationDate,InactivationDate,ReactivationDate,PendingSuspension,PendingClassRemoval,PendingClassReplace,PrimaryStatus,SecondaryStatus,Classifications(s),AsbestosReg,WorkersCompCoverageType,WCInsuranceCompany,WCPolicyNumber,WCEffectiveDate,WCExpirationDate,WCCancellationDate,WCSuspendDate,CBSuretyCompany,CBNumber,CBEffectiveDate,CBCancellationDate,CBAmount,WBSuretyCompany,WBNumber,WBEffectiveDate,WBCancellationDate,WBAmount,DBSuretyCompany,DBNumber,DBEffectiveDate,DBCancellationDate,DBAmount,DateRequired,DiscpCaseRegion,DBBondReason,DBCaseNo,NAME-TP-2",
+      "sha256": "99f2e300a1c0f0c76ee202f81a334d264b91dd46dd97ec352bd13fdb14895369",
+      "inspectionReceiptSha256": "f2fb674b373477e88255145423237b457f562310f7fc812a725917398e9ee380"
+    },
+    "secondName": {
+      "column": "BUS-NAME-2",
+      "value": "HIGMAN EQUIPMENT COMPANY INC",
+      "typeColumn": "NAME-TP-2",
+      "typeValue": "Current Name"
+    },
+    "municipal": {
+      "recordId": "CLR21-0269",
+      "role": "legal_company_name_and_dba",
+      "legalCompanyName": "Higman Equipment Company, Inc / Siggins Company",
+      "dba": "Siggins Company",
+      "companyEmail": "lbrown@siggins.com",
+      "address": {
+        "addressLine1": "512 E 12TH AVE",
+        "city": "North Kansas City",
+        "state": "MO",
+        "postalCode": "64116",
+        "countryCode": "US"
+      },
+      "identityQuote": "DBA\nSiggins Company\nLegal/Company Name\nHigman Equipment Company, Inc / Siggins Company\nAddress\n512 E 12TH AVE\nNorth Kansas City, MO 64116\nCompany Email\nlbrown@siggins.com\nBusiness Phone\n",
+      "headerStatus": "Active",
+      "headerExpiry": "03/31/2024",
+      "detailExpiry": "2024-10-01",
+      "currentLicenseClaim": false
+    },
+    "ownSiteRole": "company_headquarters",
+    "ownSiteContactQuote": "Headquarters Kansas City, MO 512 E 12th Ave, North Kansas City, MO 64116",
+    "sourceStatus": "QUAL Bond SUSP",
+    "limitations": [
+      "Original CSLB MailingAddress is a mailing role; own-site identical headquarters is corroboration, not a canonical address update.",
+      "BUS-NAME-2 and NAME-TP-2=Current Name preserve the CSV labels; only the municipal Legal/Company Name and DBA fields establish the bounded displayed association. No ownership/history inferred.",
+      "CSLB QUAL Bond SUSP remains unchanged despite expiry01/31/2027. D21|D24 and issue01/04/2001 are dated literal source facts.",
+      "Municipal Active header with03/31/2024 expiry conflicts with detailed2024-10-01 expiry; neither is asserted current.03/31/2021 attachment/disclaimer dates are not capture dates.",
+      "Guest DOM observation has no captured HTTP status/content type/body; null fields are intentional.",
+      "No revenue, staffing, financial health, budget, active licence or current occupancy conclusion. Municipal fee balance is not company cash."
+    ]
+  },
+  "company": {
+    "id": "253e14e5-7273-49af-9874-fb64efeb16d0",
+    "netsuite_internal_id": "940173",
+    "name": "Siggins Co",
+    "domain": "siggins.com"
+  },
+  "context": {
+    "aliases": [],
+    "addresses": [],
+    "context": ""
+  },
+  "finding": {
+    "internalId": "940173",
+    "companyId": "253e14e5-7273-49af-9874-fb64efeb16d0",
+    "kind": "ops_profile",
+    "source": "registry",
+    "sourceUrl": "https://web.cslb.ca.gov/Onlineservices/DataPortal/ContractorList",
+    "evidence": "789382,05/08/2026,SIGGINS CO,HIGMAN EQUIPMENT COMPANY INC,,512 E 12TH AVENUE,NORTH KANSAS CITY,MO,,64116,,(816) 421 7670,Corporation,01/04/2001,,01/31/2027,,,,,,QUAL Bond SUSP,,D21| D24,,Workers' Compensation Insurance,TWIN CITY FIRE INSURANCE COMPANY, 37WBAN4PE4, 10/01/2022, 10/01/2026,,,FIDELITY AND DEPOSIT COMPANY OF MARYLAND,08519083,01/01/2023,,25000,,,,,,,,,,,,,,,Current Name\r\n",
+    "registryProfile": {
+      "version": 1,
+      "dataset": "ca_contractors",
+      "recordId": "789382",
+      "sourceAsOf": "2026-09-29",
+      "observedAt": "2026-09-29T23:17:44.798106+00:00",
+      "facts": [
+        {
+          "field": "license_number",
+          "value": "789382"
+        },
+        {
+          "field": "license_status",
+          "value": "QUAL Bond SUSP"
+        },
+        {
+          "field": "license_type",
+          "value": "D21| D24"
+        },
+        {
+          "field": "legal_structure",
+          "value": "Corporation"
+        },
+        {
+          "field": "license_issue_date",
+          "value": "01/04/2001"
+        },
+        {
+          "field": "license_expiry_date",
+          "value": "01/31/2027"
+        }
+      ],
+      "identity": {
+        "legalName": "SIGGINS CO",
+        "addressLine1": "512 E 12TH AVENUE",
+        "city": "NORTH KANSAS CITY",
+        "state": "MO",
+        "postalCode": "64116"
+      },
+      "provenance": {
+        "rowSha256": "8757a9c3779df6bb908d7f991588e695fa90f7a42e3f8c4e3a5ec3acfb4343ed",
+        "quote": "789382,05/08/2026,SIGGINS CO,HIGMAN EQUIPMENT COMPANY INC,,512 E 12TH AVENUE,NORTH KANSAS CITY,MO,,64116,,(816) 421 7670,Corporation,01/04/2001,,01/31/2027,,,,,,QUAL Bond SUSP,,D21| D24,,Workers' Compensation Insurance,TWIN CITY FIRE INSURANCE COMPANY, 37WBAN4PE4, 10/01/2022, 10/01/2026,,,FIDELITY AND DEPOSIT COMPANY OF MARYLAND,08519083,01/01/2023,,25000,,,,,,,,,,,,,,,Current Name\r\n",
+        "sourceRow": {
+          "legalName": "SIGGINS CO",
+          "addressLine1": "512 E 12TH AVENUE",
+          "city": "NORTH KANSAS CITY",
+          "state": "MO",
+          "postalCode": "64116",
+          "license_number": "789382",
+          "license_status": "QUAL Bond SUSP",
+          "license_type": "D21| D24",
+          "legal_structure": "Corporation",
+          "license_issue_date": "01/04/2001",
+          "license_expiry_date": "01/31/2027"
+        },
+        "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\ca-contractors-master.csv"
+      }
+    }
+  },
+  "syntheticFinalWitnessesOnly": true
+}
