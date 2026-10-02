@@ -1,0 +1,89 @@
+{
+  "company": {
+    "id": "5bf28dfd-6e3d-4372-8544-caaa2ae3c91d",
+    "netsuite_internal_id": "2618967",
+    "name": "Springboard Social Enterprises",
+    "domain": "sb.co"
+  },
+  "context": {
+    "aliases": [],
+    "addresses": [
+      {
+        "addressLine1": "555 Corporate Drive, Suite 110",
+        "city": "Ladera Ranch",
+        "state": "CA",
+        "postalCode": "92694",
+        "countryCode": "US",
+        "sourceKind": "netsuite_record",
+        "sourceId": "7184b95c-ccc2-4da9-843e-89fe11a1b34f",
+        "capturedAt": "2026-07-28T00:00:00+00:00"
+      }
+    ],
+    "context": ""
+  },
+  "finding": {
+    "companyId": "5bf28dfd-6e3d-4372-8544-caaa2ae3c91d",
+    "internalId": "2618967",
+    "source": "registry",
+    "kind": "ops_profile",
+    "label": "registry:irs_exempt:812228271",
+    "sourceUrl": "https://www.irs.gov/pub/irs-soi/eo3.csv",
+    "detail": "IRS EIN 812228271 (Springboard Social Enterprises) reports calendar-2025 revenue of $911,833, expenses of $909,496, seven employees and $252,335 in assets. The original 2019 IRS filing explicitly associates the same legal name/EIN with 555 Corporate Drive, Suite 110 in its books-and-records address; the filer header itself omits the suite. The 2025 original filing and BMF place that EIN at 27762 Antonio Parkway, Ladera Ranch. These are dated address roles, not proof of current occupancy. The assigned sb.co site identifies a different New York nonprofit, EIN 52-2266068; its identity and alumnae metrics remain excluded. The filings declare springboardse.org and describe nonprofit management, accounting, HR and staffing services. Year-end 2025 cash of $15,734 and net assets of $57,394 are historical, not available ERP budget; no growth or evaluation-timing claim is supported. Unverified hypothesis: client-level staffing and service allocations may create reconciliation work. Current systems, actual pain, unrestricted funds, purchasing authority and timing remain unknown.",
+    "evidence": "{\"addressLine1\":\"27762 ANTONIO PKWY L1299\",\"city\":\"LADERA RANCH\",\"ein\":\"812228271\",\"legalName\":\"SPRINGBOARD SOCIAL ENTERPRISES\",\"postalCode\":\"92694-1140\",\"state\":\"CA\",\"tax_period\":\"202512\",\"tax_status\":\"IRS EO BMF status code 01\",\"total_assets\":252335,\"total_revenue\":911833}\nOriginal public source row: {\"ACCT_PD\":\"12\",\"ACTIVITY\":\"000000000\",\"AFFILIATION\":\"3\",\"ASSET_AMT\":\"252335\",\"ASSET_CD\":\"4\",\"CITY\":\"LADERA RANCH\",\"CLASSIFICATION\":\"1000\",\"DEDUCTIBILITY\":\"1\",\"EIN\":\"812228271\",\"FILING_REQ_CD\":\"01\",\"FOUNDATION\":\"15\",\"GROUP\":\"0000\",\"ICO\":\"% TODD EMERSON\",\"INCOME_AMT\":\"911833\",\"INCOME_CD\":\"5\",\"NAME\":\"SPRINGBOARD SOCIAL ENTERPRISES\",\"NTEE_CD\":\"T50\",\"ORGANIZATION\":\"1\",\"PF_FILING_REQ_CD\":\"0\",\"REVENUE_AMT\":\"911833\",\"RULING\":\"201705\",\"SORT_NAME\":\"\",\"STATE\":\"CA\",\"STATUS\":\"01\",\"STREET\":\"27762 ANTONIO PKWY L1299\",\"SUBSECTION\":\"03\",\"TAX_PERIOD\":\"202512\",\"ZIP\":\"92694-1140\"}",
+    "registryProfile": {
+      "version": 1,
+      "dataset": "irs_exempt",
+      "recordId": "812228271",
+      "sourceAsOf": "2026-09-08",
+      "observedAt": "2026-09-29T23:13:10.143098+00:00",
+      "facts": [
+        {
+          "field": "ein",
+          "value": "812228271"
+        },
+        {
+          "field": "tax_status",
+          "value": "IRS EO BMF status code 01"
+        },
+        {
+          "field": "tax_period",
+          "value": "202512"
+        },
+        {
+          "field": "total_assets",
+          "value": 252335
+        },
+        {
+          "field": "total_revenue",
+          "value": 911833
+        }
+      ],
+      "identity": {
+        "legalName": "SPRINGBOARD SOCIAL ENTERPRISES",
+        "addressLine1": "27762 ANTONIO PKWY L1299",
+        "city": "LADERA RANCH",
+        "state": "CA",
+        "postalCode": "92694-1140"
+      },
+      "provenance": {
+        "rowSha256": "621d094f6dd63a48dead9786ed203746adc296d42bb51981bf722d0a1881cb8a",
+        "quote": "{\"addressLine1\":\"27762 ANTONIO PKWY L1299\",\"city\":\"LADERA RANCH\",\"ein\":\"812228271\",\"legalName\":\"SPRINGBOARD SOCIAL ENTERPRISES\",\"postalCode\":\"92694-1140\",\"state\":\"CA\",\"tax_period\":\"202512\",\"tax_status\":\"IRS EO BMF status code 01\",\"total_assets\":252335,\"total_revenue\":911833}\nOriginal public source row: {\"ACCT_PD\":\"12\",\"ACTIVITY\":\"000000000\",\"AFFILIATION\":\"3\",\"ASSET_AMT\":\"252335\",\"ASSET_CD\":\"4\",\"CITY\":\"LADERA RANCH\",\"CLASSIFICATION\":\"1000\",\"DEDUCTIBILITY\":\"1\",\"EIN\":\"812228271\",\"FILING_REQ_CD\":\"01\",\"FOUNDATION\":\"15\",\"GROUP\":\"0000\",\"ICO\":\"% TODD EMERSON\",\"INCOME_AMT\":\"911833\",\"INCOME_CD\":\"5\",\"NAME\":\"SPRINGBOARD SOCIAL ENTERPRISES\",\"NTEE_CD\":\"T50\",\"ORGANIZATION\":\"1\",\"PF_FILING_REQ_CD\":\"0\",\"REVENUE_AMT\":\"911833\",\"RULING\":\"201705\",\"SORT_NAME\":\"\",\"STATE\":\"CA\",\"STATUS\":\"01\",\"STREET\":\"27762 ANTONIO PKWY L1299\",\"SUBSECTION\":\"03\",\"TAX_PERIOD\":\"202512\",\"ZIP\":\"92694-1140\"}",
+        "sourceRow": {
+          "legalName": "SPRINGBOARD SOCIAL ENTERPRISES",
+          "addressLine1": "27762 ANTONIO PKWY L1299",
+          "city": "LADERA RANCH",
+          "state": "CA",
+          "postalCode": "92694-1140",
+          "ein": "812228271",
+          "tax_status": "IRS EO BMF status code 01",
+          "tax_period": "202512",
+          "total_assets": 252335,
+          "total_revenue": 911833
+        },
+        "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\irs-eo3.csv"
+      }
+    }
+  },
+  "entryId": "springboard-irs-ein-books-address-2019",
+  "scope": "Real retained public sources and exact original raw target for offline tests. Final witnesses in tests are synthetic/test only."
+}

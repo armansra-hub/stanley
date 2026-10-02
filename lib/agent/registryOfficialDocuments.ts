@@ -23,7 +23,17 @@ type DbaEntry = BaseEntry & { chain: "official_dba_own_site_address"; officialRo
   ownSiteRole: "company_contact_address"; dba: string; identifier: { kind: "arizona_roc"; value: string };
   officialIdentityQuote: string; ownSiteContactQuote: string; locality: { city: string; state: string; postalCode: string };
   sourceStatus: string; sourceSubStatus: string };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry;
+type IrsSource = Omit<Source, "kind" | "status"> & { kind: "official_irs_xml_archive_member"; status: 200 | 206;
+  archive: { member: string; memberBytes: number; xmlSha256: string; extractionReceiptSha256: string;
+    archiveSha256: string | null; range: { start: number; end: number; total: number; sha256: string; etag: string; crc32: number } | null } };
+type IrsEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "official_irs_ein_historical_books_address";
+  sources: [IrsSource, IrsSource]; target: Omit<Target, "dataset" | "role"> & { dataset: "irs_exempt"; role: "exempt_organization" };
+  ein: string; declaredDomain: string; historicalAddress: Address; historicalRole: "books_in_care_of_address";
+  historicalLocator: "Return/ReturnData/IRS990/BooksInCareOfDetail/USAddress"; targetContinuityRole: "books_in_care_of_address";
+  historicalDate: string; laterDate: string; currentPhysicalAddressClaim: false;
+  assignedDomainConflict: { disposition: "retain_assigned_domain_as_distinct_entity"; domain: string; legalName: string; ein: string;
+    url: string; observedAt: string; text: string; textSha256: string; htmlSha256: string; packetSha256: string; identityQuote: string } };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -45,7 +55,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && entries.length === 2 && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -54,6 +64,8 @@ export function registryOfficialDocumentEvidenceHash(row: RegistryFinding, proof
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt, proof }));
 }
 function sourceChecks(e: RegistryOfficialDocumentEntry) {
+  if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
+  else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
     need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin) && s.completeRead === true
@@ -71,6 +83,7 @@ function sourceChecks(e: RegistryOfficialDocumentEntry) {
     if (s.sourceDate !== null) need(/^\d{4}-\d{2}-\d{2}$/.test(s.sourceDate) && Number.isFinite(Date.parse(s.sourceDate))
       && Date.parse(s.sourceDate) <= Date.parse(s.observedAt) && s.sourceDateText && s.text.includes(s.sourceDateText), "document date invalid");
     else need(s.sourceDateText === null, "undated source has asserted date");
+  }
   }
   const reviews = [e.sourceReader, e.sourceReviewer], originals = [e.originalReviews.primary, e.originalReviews.independent];
   need(hash(e.originalReviews.packetSha256) && reviews[0].taskId !== reviews[1].taskId && originals[0].taskId !== originals[1].taskId
@@ -94,6 +107,16 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
       && raw.city === p.identity.city && raw.state === p.identity.state && raw.zipcode === p.identity.postalCode
       && u.hostname === "data.colorado.gov" && u.pathname === "/resource/8upq-58vz.json" && [...u.searchParams.keys()].join() === "debtorid"
       && u.searchParams.get("debtorid") === raw.debtorid, "original UCC record differs");
+  } else if (e.chain === "official_irs_ein_historical_books_address") {
+    const parts=row.evidence.split("\nOriginal public source row: ");
+    need(p.dataset==="irs_exempt" && t.role==="exempt_organization" && /^\d{9}$/.test(p.recordId) && parts.length===2,"target IRS role invalid");
+    raw=JSON.parse(parts[1]); const normalized=JSON.parse(parts[0]);
+    need(sha(parts[1])===t.rowSha256 && stableRegistryJson(normalized)===stableRegistryJson(p.provenance.sourceRow)
+      && raw.EIN===p.recordId && p.recordId===e.ein && p.provenance.sourceRow.ein===e.ein
+      && p.facts.filter(f=>f.field==="ein" && f.value===e.ein).length===1
+      && raw.NAME===p.identity.legalName && raw.STREET===p.identity.addressLine1 && raw.CITY===p.identity.city
+      && raw.STATE===p.identity.state && raw.ZIP===p.identity.postalCode && raw.TAX_PERIOD===p.provenance.sourceRow.tax_period
+      && u.hostname==="www.irs.gov" && /^\/pub\/irs-soi\/eo[1-4]\.csv$/.test(u.pathname) && !u.search,"original IRS BMF identity differs");
   } else {
     const parts = row.evidence.split("\nOriginal public source row: ");
     need(p.dataset === "sba_7a" && t.role === "borrower_business" && parts.length === 2, "target borrower role invalid");
@@ -107,7 +130,80 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
   need(!p.identity.countryCode || p.identity.countryCode === "US", "target country differs");
   need(sameRegistryLegalName(p.identity.legalName,e.legalName) && fullAddress({ ...p.identity, countryCode:"US" } as Address,e.targetAddress), "target full legal address differs");
 }
-function identityChain(e: RegistryOfficialDocumentEntry) {
+// These locators inspect immutable, fully read catalog XML, never caller XML.
+// Reject declarations/comments/CDATA that could spoof the closed element paths.
+function xmlPart(text: string, tag: string) {
+  const matches=[...text.matchAll(new RegExp(`<${tag}(?:\\s[^<>]*?)?>([\\s\\S]*?)<\\/${tag}>`,"g"))];
+  need(matches.length===1,`IRS XML ${tag} missing or ambiguous`); return matches[0][1];
+}
+function xmlValue(text: string, tag: string) {
+  const value=xmlPart(text,tag); need(!/[<>]|&(?!(?:amp|lt|gt|quot|apos);)/.test(value),"IRS scalar differs");
+  return value.replace(/&(amp|lt|gt|quot|apos);/g,(_,x:string)=>({amp:"&",lt:"<",gt:">",quot:'"',apos:"'"}[x]!)).trim();
+}
+function xmlAddress(parent: string): Address {
+  const a=xmlPart(parent,"USAddress");
+  need(!/<AddressLine2Txt(?:\s|>)/.test(a),"IRS additional address line is not represented");
+  return {addressLine1:xmlValue(a,"AddressLine1Txt"),city:xmlValue(a,"CityNm"),state:xmlValue(a,"StateAbbreviationCd"),postalCode:xmlValue(a,"ZIPCd"),countryCode:"US"};
+}
+function datedUsAddress(a: Address,b: Address) {
+  // A five-digit ZIP may be compared to its stated ZIP+4; two supplied ZIP+4s
+  // must agree. Street, unit, city, state and country remain required.
+  const az=a.postalCode.replace(/-/g,""),bz=b.postalCode.replace(/-/g,"");
+  return /^\d{5}(?:-?\d{4})?$/.test(a.postalCode) && /^\d{5}(?:-?\d{4})?$/.test(b.postalCode)
+    && (az.length===5 || bz.length===5 || az===bz) && fullAddress({...a,postalCode:az.slice(0,5)},{...b,postalCode:bz.slice(0,5)});
+}
+function irsSourceChecks(e: IrsEntry) {
+  need(e.sources.length===2,"IRS source count differs");
+  for (const s of e.sources) {
+    const u=publicUrl(s.url),a=s.archive;
+    need(s.kind==="official_irs_xml_archive_member" && u.hostname==="apps.irs.gov" && /^\/pub\/epostcard\/990\/xml\/\d{4}\/[A-Za-z0-9_]+\.zip$/.test(u.pathname)
+      && !u.search && s.requestedUrl===s.url && s.hops===null && s.contentType==="application/zip"
+      && hash(s.receiptSha256) && hash(s.originalSourcePin) && hash(s.bodySha256) && iso(s.observedAt)
+      && s.completeRead===true && s.text.length>100 && s.text.length<=150000 && sha(s.text)===s.textSha256
+      && a && /^\d{18}_public\.xml$/.test(a.member) && Buffer.byteLength(s.text,"utf8")===a.memberBytes
+      && a.xmlSha256===s.textSha256 && hash(a.extractionReceiptSha256) && a.extractionReceiptSha256===s.originalSourcePin,"original IRS archive source differs");
+    need(s.text.replace(/^\uFEFF/,"").startsWith('<?xml version="1.0" encoding="utf-8"?>') && !/<!|<\?(?!xml )/.test(s.text)
+      && /<Return\s[^>]*xmlns="http:\/\/www.irs.gov\/efile"/.test(s.text) && s.text.trimEnd().endsWith("</Return>"),"IRS XML envelope differs");
+    if(s.status===206) {
+      const r=a.range;
+      need(a.archiveSha256===null && r && [r.start,r.end,r.total,r.crc32].every(Number.isSafeInteger)
+        && r.start>=0 && r.end>r.start && r.end<r.total && r.crc32>=0 && r.crc32<=0xffffffff
+        && /^"[^"\r\n]+"$/.test(r.etag) && r.sha256===s.bodySha256,"IRS range provenance differs");
+    } else need(s.status===200 && a.range===null && a.archiveSha256===s.bodySha256,"IRS whole archive provenance differs");
+    need(s.sourceDate && /^\d{4}-\d{2}-\d{2}$/.test(s.sourceDate) && Number.isFinite(Date.parse(s.sourceDate))
+      && Date.parse(s.sourceDate)<=Date.parse(s.observedAt) && s.sourceDateText===`<TaxPeriodEndDt>${s.sourceDate}</TaxPeriodEndDt>`
+      && s.text.includes(s.sourceDateText),"IRS filing date differs");
+  }
+  const c=e.assignedDomainConflict;
+  need(c && c.disposition==="retain_assigned_domain_as_distinct_entity" && c.domain===e.canonicalDomain
+    && host(c.url)===e.canonicalDomain && iso(c.observedAt) && hash(c.packetSha256) && c.packetSha256===e.originalReviews.packetSha256
+    && hash(c.htmlSha256) && sha(c.text)===c.textSha256 && c.text.length>20 && c.text.length<=150000
+    && /^\d{9}$/.test(c.ein) && c.ein!==e.ein && !sameRegistryLegalName(c.legalName,e.legalName)
+    && c.text.includes(c.identityQuote) && c.identityQuote.includes(c.legalName)
+    && c.identityQuote.includes(c.ein.slice(0,2)+"-"+c.ein.slice(2)),"assigned-domain conflict missing or changed");
+  need([e.sourceReader,e.sourceReviewer].every(r=>Date.parse(r.reviewedAt)>=Date.parse(c.observedAt)),"domain conflict source chronology differs");
+}
+function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
+  need(/^\d{9}$/.test(e.ein) && e.ein===e.target.recordId && e.historicalRole==="books_in_care_of_address"
+    && e.historicalLocator==="Return/ReturnData/IRS990/BooksInCareOfDetail/USAddress" && e.targetContinuityRole==="books_in_care_of_address"
+    && e.currentPhysicalAddressClaim===false && e.historicalDate===e.sources[0].sourceDate && e.laterDate===e.sources[1].sourceDate
+    && Date.parse(e.historicalDate)<Date.parse(e.laterDate) && host(e.declaredDomain)!==e.canonicalDomain,"IRS identity roles or dated sequence differ");
+  for (const [index,s] of e.sources.entries()) {
+    const header=xmlPart(s.text,"ReturnHeader"),filer=xmlPart(header,"Filer"),data=xmlPart(s.text,"ReturnData"),form=xmlPart(data,"IRS990"),books=xmlPart(form,"BooksInCareOfDetail");
+    need(xmlValue(filer,"EIN")===e.ein && sameRegistryLegalName(xmlValue(xmlPart(filer,"BusinessName"),"BusinessNameLine1Txt"),e.legalName)
+      && !/<BusinessNameLine2Txt(?:\s|>)/.test(xmlPart(filer,"BusinessName"))
+      && xmlValue(header,"TaxPeriodEndDt")===s.sourceDate && xmlValue(header,"TaxYr")===s.sourceDate!.slice(0,4)
+      && host(xmlValue(form,"WebsiteAddressTxt"))===host(e.declaredDomain),"IRS filer EIN, legal name, date or declared domain differs");
+    const observed=xmlAddress(books),expected=index===0?e.historicalAddress:e.targetAddress;
+    need(datedUsAddress(observed,expected),"IRS books address differs");
+    if(index===0) {
+      need(/^\d{10}$/.test(e.phone) && xmlValue(books,"PhoneNum")===e.phone,"IRS historical books phone differs");
+      need(context.addresses.filter(a=>a.sourceKind==="netsuite_record" && datedUsAddress(a as Address,e.historicalAddress)).length===1,"exact historical canonical anchor missing or ambiguous");
+    } else need(xmlValue(filer,"PhoneNum")===e.phone,"IRS filer phone continuity differs");
+  }
+}
+function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentityContext) {
+  if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -144,7 +240,7 @@ export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknow
   const keys=["schema","entryId","entrySha256","canonicalIdentitySha256","reader","reviewer"];
   need(object(raw) && Object.keys(raw).every(k=>keys.includes(k)) && keys.every(k=>Object.hasOwn(raw,k)) && raw.schema==="official_document_roles_v1" && typeof raw.entryId==="string", "proof shape invalid");
   const {entry:e,sha256}=registryOfficialDocumentEntry(raw.entryId);
-  need(raw.entrySha256===sha256, "entry changed"); sourceChecks(e); originalTarget(row,e); identityChain(e);
+  need(raw.entrySha256===sha256, "entry changed"); sourceChecks(e); originalTarget(row,e); identityChain(e,context);
   need(company.id===e.companyId && row.companyId===e.companyId && company.netsuite_internal_id===e.internalId && row.internalId===e.internalId
     && host(company.domain||company.website_raw||"")===e.canonicalDomain && sameRegistryLegalName(company.name,e.legalName)
     && context.aliases.every(x=>sameRegistryLegalName(x,e.legalName)) && raw.canonicalIdentitySha256===e.canonicalIdentitySha256
