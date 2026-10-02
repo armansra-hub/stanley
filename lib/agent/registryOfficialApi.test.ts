@@ -106,3 +106,46 @@ describe("reviewed official API role capability", () => {
   });
   it("returns a copy rather than mutable trusted entry", async () => { const f = await setup(); f.api.registryOfficialApiEntry(f.entry.id).entry.source.rawRow = "other"; expect(f.api.registryOfficialApiEntry(f.entry.id).entry.source.rawRow).toBe(f.entry.source.rawRow); });
 });
+
+
+describe("official API canonical identity JSON representation", () => {
+  // Reproduces partial website address metadata like the retained Interstate
+  // context. These are formatter regression inputs, not publication evidence.
+  const company = { id: "test-partial-address-company", netsuite_internal_id: "66670878",
+    name: "Interstate Jay Trucking LLC", domain: "interstatejaytrucking.com" };
+  const partial = { addressLine1: "2002 Timberloch Place Suite 200 The Woodlands",
+    sourceKind: "company_website" as const, sourceUrl: "https://interstatejaytrucking.com/",
+    sourceId: "test-partial-website-1", capturedAt: "2026-09-20T15:37:07.844-07:00" };
+  const context = (): CompanyIdentityContext => ({ aliases: [], context: "", addresses: [
+    { ...partial }, { ...partial, sourceId: "test-partial-website-2", capturedAt: "2026-09-19T21:03:35.914-07:00" },
+  ] });
+  it("hashes omitted and own undefined optional address fields identically without changing inputs or SAM hashing", async () => {
+    const { api, route } = await setup(4), omitted = context(), ownUndefined = context();
+    Object.assign(ownUndefined.addresses[0], { addressLine2: undefined, city: undefined, state: undefined, postalCode: undefined, countryCode: undefined });
+    const before = stableRegistryJson(ownUndefined), expected = api.registryOfficialApiCanonicalHash(company, omitted);
+    expect(api.registryOfficialApiCanonicalHash(company, ownUndefined)).toBe(expected);
+    expect(api.registryOfficialApiCanonicalHash(company, JSON.parse(JSON.stringify(ownUndefined)))).toBe(expected);
+    expect(stableRegistryJson(ownUndefined)).toBe(before);
+    expect(Object.hasOwn(ownUndefined.addresses[0], "city")).toBe(true);
+    expect(registrySamCanonicalHash(company, ownUndefined)).not.toBe(registrySamCanonicalHash(company, omitted));
+    expect(route.registryOfficialHistoryCanonicalHash(company, ownUndefined)).toBe(registrySamCanonicalHash(company, ownUndefined));
+  });
+  it.each([
+    ["explicit null", "city", null], ["empty city", "city", ""], ["supplied city", "city", "The Woodlands"],
+    ["street", "addressLine1", "2004 Timberloch Place"], ["unit", "addressLine2", "Suite 201"],
+    ["postal", "postalCode", "773801171"], ["country", "countryCode", "US"],
+    ["source ID", "sourceId", "test-other-source"], ["source URL", "sourceUrl", "https://interstatejaytrucking.com/contact/"],
+    ["capture date", "capturedAt", "2026-09-20T15:37:08.844-07:00"], ["source kind", "sourceKind", "netsuite_record"],
+  ])("keeps %s bound when optional missing keys are normalized", async (_label, field, value) => {
+    const { api } = await setup(4), original = context(), changed = context();
+    Object.assign(changed.addresses[0], { [String(field)]: value });
+    expect(api.registryOfficialApiCanonicalHash(company, changed)).not.toBe(api.registryOfficialApiCanonicalHash(company, original));
+  });
+  it("keeps address order, address presence, and legal aliases bound", async () => {
+    const { api } = await setup(4), original = context(), expected = api.registryOfficialApiCanonicalHash(company, original);
+    const reversed = context(); reversed.addresses.reverse();
+    const missing = context(); missing.addresses.pop();
+    const alias = context(); alias.aliases.push("Another LLC");
+    for (const changed of [reversed, missing, alias]) expect(api.registryOfficialApiCanonicalHash(company, changed)).not.toBe(expected);
+  });
+});

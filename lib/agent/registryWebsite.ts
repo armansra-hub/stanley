@@ -171,7 +171,7 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
       || !text(relation.quote, 650) || !hash(relation.quoteSha256) || sha(relation.quote) !== relation.quoteSha256)
       throw new Error("invalid registry website operator relationship");
   }
-  if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1" && raw.normalization !== "gravity_forms_honeypot_v2")
+  if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1" && raw.normalization !== "gravity_forms_honeypot_v2" && raw.normalization !== "gravity_forms_honeypot_v3" && raw.normalization !== "everest_forms_honeypot_v1")
     throw new Error("invalid registry website normalization");
   if (raw.canonicalRedirect !== undefined) {
     const redirect = raw.canonicalRedirect;

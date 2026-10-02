@@ -1,6 +1,6 @@
 import { htmlToVisibleText, htmlAttributes, decodeEntities } from "@/lib/sources/siteDiscovery";
 
-export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2";
+export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2" | "gravity_forms_honeypot_v3" | "everest_forms_honeypot_v1";
 
 const attributes = /([\w:-]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/g;
 function exactAttributes(raw: string, allowed: string[]): Record<string, string> | null {
@@ -25,10 +25,12 @@ const outerClasses = ["gfield", "gfield--type-honeypot", "gform_validation_conta
   "gfield--has-description", "field_description_below", "field_validation_below", "gfield_visibility_visible"];
 
 const trapLabelsV2 = new Set([...trapLabels, "Facebook", "LinkedIn"]);
+// v3 adds only the Instagram label observed in the retained NRI failure.
+const trapLabelsV3 = new Set([...trapLabelsV2, "Instagram"]);
 const aboveClasses = outerClasses.map(c => c === "field_sublabel_below" ? "field_sublabel_above"
   : c === "field_description_below" ? "field_description_above" : c);
 
-function withoutDeclaredTraps(html: string, extended = false): string {
+function withoutDeclaredTraps(html: string, extended = false, instagram = false): string {
   // Match only real markup, never field-shaped text inside scripts or comments.
   const source = html.replace(/<!--[^]*?-->/g, " ")
     .replace(/<(script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
@@ -51,7 +53,7 @@ function withoutDeclaredTraps(html: string, extended = false): string {
         || !classes(c.class, ["ginput_container"]) || !classes(d.class, ["gfield_description"])
         || l.for !== `input_${formId}_${fieldId}` || i.id !== l.for || i.name !== `input_${fieldId}`
         || i.type !== "text" || i.value !== "" || i.autocomplete !== "new-password"
-        || d.id !== `gfield_description_${formId}_${fieldId}` || !(extended ? trapLabelsV2 : trapLabels).has(decodeEntities(title).trim())
+        || d.id !== `gfield_description_${formId}_${fieldId}` || !(instagram ? trapLabelsV3 : extended ? trapLabelsV2 : trapLabels).has(decodeEntities(title).trim())
         || decodeEntities(message).trim() !== "This field is for validation purposes and should be left unchanged.") return whole;
       return " ";
     };
@@ -62,13 +64,47 @@ function withoutDeclaredTraps(html: string, extended = false): string {
   });
 }
 
+// Independent opt-in grammar for the retained Everest Forms empty trap. It
+// does not upgrade Gravity Forms modes or omit arbitrary Website/Message text.
+const everestField = new RegExp(`<div\\b${attrs}>\\s*<label\\b${attrs}>(Website|Message)<\\/label>\\s*<input\\b${attrs}\\/?>\\s*<\\/div>`, "g");
+function withoutEverestTrap(html: string): string {
+  const source = html.replace(/<!--[^]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+  return source.replace(/(<form\b((?:[^"'<>]|"[^"]*"|'[^']*')*)>)([\s\S]*?)(<\/form\s*>)/gi, (form, open: string, raw: string, body: string, close: string) => {
+    const f = exactAttributes(raw, ["id", "class", "data-formid", "data-ajax_submission", "data-keyboard_friendly_form", "data-form_state_type", "method", "enctype", "action"]);
+    const id = f?.id?.match(/^evf-form-([1-9]\d*)$/)?.[1];
+    if (!f || !id || f["data-formid"] !== id || !classes(f.class, ["everest-form"])
+      || f.method !== "post" || f.enctype !== "multipart/form-data" || !f.action
+      || f["data-ajax_submission"] !== "0" || f["data-keyboard_friendly_form"] !== "0" || f["data-form_state_type"] !== ""
+      || /<\/?form\b/i.test(body)) return form;
+    // Reject ambiguous duplicates; do not partially clean a malformed trap set.
+    const trapNames = [...body.matchAll(new RegExp(`<input\\b${attrs}\\/?>`, "gi"))]
+      .flatMap(input => [...input[1].matchAll(attributes)]
+        .filter(a => a[1].toLowerCase() === "name" && htmlAttributes(a[0]).name === "everest_forms[hp]"));
+    if (trapNames.length !== 1) return form;
+    const candidates = [...body.matchAll(everestField)];
+    if (candidates.length !== 1) return form;
+    const [whole, outer, label, _title, input] = candidates[0];
+    const o = exactAttributes(outer, ["class"]), l = exactAttributes(label, ["for", "class"]),
+      i = exactAttributes(input, ["type", "name", "id", "class"]);
+    if (!o || !l || !i || !classes(o.class, ["evf-honeypot-container", "evf-field-hp"])
+      || !classes(l.class, ["evf-field-label"]) || l.for !== `evf-${id}-field-hp`
+      || i.id !== l.for || i.name !== "everest_forms[hp]" || i.type !== "text" || !classes(i.class, ["input-text"])) return form;
+    const start = candidates[0].index!;
+    // Retain every byte outside the proven non-content region before the usual
+    // visible-text extraction. The verifier still compares the whole page hash.
+    return open + body.slice(0, start) + " " + body.slice(start + whole.length) + close;
+  });
+}
+
 /** Default is the original complete-text algorithm. The opt-in version omits
- * only declared empty Gravity Forms anti-spam fields with the closed grammar
+ * only declared empty anti-spam fields under its separate closed grammar
  * above. It makes no CSS/rendering claim and never drops general hidden content.
  * The proof version is attestation-bound; raw HTML is retained independently. */
 export function registryWebsiteText(html: string, normalization?: RegistryWebsiteNormalization): string {
   if (normalization === undefined) return htmlToVisibleText(html);
-  if (normalization !== "gravity_forms_honeypot_v1" && normalization !== "gravity_forms_honeypot_v2")
+  if (normalization === "everest_forms_honeypot_v1") return htmlToVisibleText(withoutEverestTrap(html));
+  if (normalization !== "gravity_forms_honeypot_v1" && normalization !== "gravity_forms_honeypot_v2" && normalization !== "gravity_forms_honeypot_v3")
     throw new Error("invalid registry website normalization");
-  return htmlToVisibleText(withoutDeclaredTraps(html, normalization === "gravity_forms_honeypot_v2"));
+  return htmlToVisibleText(withoutDeclaredTraps(html, normalization !== "gravity_forms_honeypot_v1", normalization === "gravity_forms_honeypot_v3"));
 }
