@@ -551,6 +551,394 @@
         "Guest DOM observation has no captured HTTP status/content type/body; null fields are intentional.",
         "No revenue, staffing, financial health, budget, active licence or current occupancy conclusion. Municipal fee balance is not company cash."
       ]
+    },
+    {
+      "id": "enercom-ucc-1737476-1375818-company-pdf-contact",
+      "companyId": "cbad41dd-0767-4d65-adb8-17607d65273c",
+      "internalId": "1748898",
+      "canonicalDomain": "enercominc.com",
+      "canonicalIdentitySha256": "fcd5ee7e21dc6f9382c65ff648819417efa6a15c5cb1e8842d451e43170bb789",
+      "chain": "company_pdf_contact_role",
+      "target": {
+        "dataset": "co_ucc",
+        "recordId": "1737476:1375818",
+        "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1375818",
+        "rowSha256": "23c0dbd8bcea6d862dac7cae7ab381e212f7b0184c985ca6f0d0b0b01ad48145",
+        "evidenceSha256": "1daebed6cd067d4c665ac8c9786d1db9df01c275fc3a3ab761878bfca8b6d66e",
+        "profileSha256": "3c360d92215508a4a7ae49a00f2a965c6f84e9aa2d63a07a7b10df3df3c7f0cb",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:16.746663Z",
+        "role": "debtor_business"
+      },
+      "sources": [
+        {
+          "kind": "company_pdf",
+          "url": "https://www.enercominc.com/wp-content/uploads/2019/12/2020-Sponsorship-Opportunity_Handout-update-FINAL.pdf",
+          "requestedUrl": "https://www.enercominc.com/wp-content/uploads/2019/12/2020-Sponsorship-Opportunity_Handout-update-FINAL.pdf",
+          "hops": [
+            {
+              "url": "https://www.enercominc.com/wp-content/uploads/2019/12/2020-Sponsorship-Opportunity_Handout-update-FINAL.pdf",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-02T06:18:54.505037Z",
+          "receiptSha256": "2995a61e5c44a7a1bbb991f2fb996d74746b4134985e341da2b1ced797c9458a",
+          "bodySha256": "b4484f439cbcc4b1528318e567b76d3d20ba86dfbcf741d36435cd65ade789b9",
+          "text": "--- PAGE 1 ---\nCONFERENCE SPONSORSHIP OPPORTUNITIES\nENERCOMINC.COM\nTHEOILANDGASCONFERENCE.COM  \nENERCOMDALLAS.COM\n303.296.8834\n410 17 TH  ST. SUITE 250\nDENVER, CO 80202\n\n\n--- PAGE 2 ---\nFounded in 1996, The Oil & Gas Conference® is the largest \nindependent energy investment conference in the U.S.\nThe Oil & Gas Conference® offers \ninvestment professionals the \nopportunity to listen to the world’s \nkey senior management teams, \npresent their growth plans, and \nprovides industry professionals a venue to learn about important energy \ntopics effecting the global oil and gas industry. \nEnerCom’s The Oil & Gas Conference® routinely hosts over 2,000 \nregistrants and upwards of 100 company presentations whose operations \nspan more than 40 countries and six continents. \nFounded in 2017, EnerCom Dallas™ is the evolution of EnerCom’s Q1 \nconference held in San Francisco 14 years prior to moving to the Lone \nStar State.   \nThe EnerCom Dallas™ conference offers the \nopportunity for investment professionals to \ncome together in one central location to listen \nto senior management teams update investors \non their operational and financial strategies and learn how the leading energy \ncompanies are building value in 2020. \nTM\nSAVE THE DATE:  FEBRUARY 11 – 12, 2020 \nSAVE THE DATE:  AUGUST 16 – 19, 2020  \n\n--- PAGE 3 ---\nNetwork and connect with key decision makers who year after year make up an overwhelming \nmajority of EnerCom conference registrants. Being an EnerCom Conference Sponsor gives \nyou command of attention throughout the event and reinforces the trust EnerCom has in your \nbrand, which positively influences perception among registrants identified below.   \nUsing EnerCom conference attendee data we’ve broken our audience down into three main \ngroups: Sellside/Banking/Brokerages, Buyside Investors, and Industry Participants. Our \naudience of industry leaders and key decision makers provide you with a unique opportunity \nand venue to connect with potential clients and partners. \nYour sponsorship level will directly impact how Industry Participants engage with your brand. \nWe offer various ways to taylor a sponsorhip to fit your needs and further the connections \nyou are able to make with our audience. Targeted attendees will leave having made a one on \none connection with your company and or digested a valuable determination of your offering; \nmaking them warm leads to approach thereafter. \nSPONSOR\nLOCATION AND INDUSTRY BEHAVIOR \nEnerCom conferences are centralized in prime energy industry focused cities and are heavily \nintegrated in Industry Participant’s yearly calendars. With over 50 energy industry events hosted \nto date, key players know they will be returning to EnerCom conferences each year to meet, \nconnect, and learn from the best in the energy sector.  \nENERCOM AUDIENCE\nBENEFITS\nGeo/Engineer/\nLand\nC-Suite/Executive  \nManagement \nSr. Management\n6%\n26%\n18%\nBuySide Investor\n50%\n25%\nIndustry  \nParticipant \n25%\nSellSide/Banking/\nBrokeage\n\n--- PAGE 4 ---\nPRESS RELEASES \nProminent Logo placement and Company highlight on National Press Releases ahead of \nConference as well as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n10 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay marketing material/handouts/\ngiveaways at a featured table outside \nof the main presentation rooms. \nGLOBAL  \nSPONSORSHIP CONTACT US FOR PRICING\nEXCLUSIVITY:  AS A GLOBAL LEVEL SPONSOR, WE \nEXCLUDE ANY COMPETING COMPANY LOGO AT THIS LEVEL.\nPRESENTING COMPANY \nINTRODUCTIONS \nPriority selection opportunity for \npresenting company introduction \nrequests. Up to 8 for EnerCom Dallas™  \nand up to 12 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nPriority selection opportunity to sponsor, \nmoderate and lead a topical Panel \ndiscussion, as available. Position your \ncompany as a thought leader via this \nexclusive industry exposure opportunity.\nLOGO DISPLAY & SIGNAGE \nPROMINENT PLACEMENT \nABOVE GOLD LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Premium placement advertisement in \nthe digital Conference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGLOBAL LEVEL \nPLACEMENT\nTM\n\n--- PAGE 5 ---\nGOLD  \nSPONSORSHIP\nPRESS RELEASES \n(Placement above SILVER Level)\nLogo placement and Company highlight on National Press Releases ahead of Conference as \nwell as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n7 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay your marketing materials/\nhandouts/giveaways in the Literature \nRoom/assigned tables. \nPRESENTING COMPANY \nINTRODUCTIONS \nSelection opportunity for presenting company \nintroduction requests. Up to 3 for EnerCom \nDallas™ and up to  5 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nOpportunity to sponsor, moderate \nand lead a topical Panel discussion, \nas available. Position your company \nas a thought leader via this exclusive \nindustry exposure opportunity. \n$15,000\n$20,000\nLOGO DISPLAY & SIGNAGE \nPLACEMENT ABOVE SILVER LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Display page advertisement in the digital \nConference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGOLD  \nLEVEL \nPLACEMENT\nTM\n\n--- PAGE 6 ---\nLOGO DISPLAY & \nSIGNAGE\nLogo and signage highlighting \nSponsorship level on:  \n• Conference websites: Corporate \ndescription, website link, and \nlogo displayed on all official \nConference websites\n• Display advertisement in the \ndigital Conference book \n• Conference schedule handouts, \nand \n• All other related Event \nSponsorship marketing \nmaterials/banners\nPRESS RELEASES \nLogo placement and Company  \nhighlight on National Press Releases \nahead of Conference as well \nas EnerCom’s industry leading \npublication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nSILVER\nSPONSORSHIP\n$10,000\nSILVER LEVEL \nPLACEMENT\nEVENT ATTENDANCE \n4 complimentary Conference \nregistrations.\nTM\n$15,000\n\n--- PAGE 7 ---\nTOGC: $7,500\nDallas: $5,000\nMOBILE APP\nSPONSORSHIP\nEXCLUSIVE\nPACKAGES\nAVAILABLE AT BOTH CONFERENCES\n$10,000 - $12,000\nBASEBALL  \nSUITES\nTOTE \nBAG\n$7,500\nCONTACT US  \nFOR PRICING\nPANEL \nMODERATION\n$1,000/Hole \nor $18,000 Total\nGOLF   \nTOURNAMENT\nBREAKFAST\nBAR\nTOGC: $7,500/M\nDallas: $5,000/W\nEVENING  \nRECEPTION\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nCOFFEE / BREAK \nSTATION",
+          "textSha256": "e6b55da62efd67c9a5d52e8d73fa4831f777b68f391965a76ee9fe59634161b4",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "0798337739bf79d232b636751c7300f1715d47228e83bdebc8866a216d30526f",
+          "sourceDate": null,
+          "sourceDateText": null
+        },
+        {
+          "kind": "own_website",
+          "url": "https://www.enercominc.com/",
+          "requestedUrl": "http://www.enercominc.com/",
+          "hops": [
+            {
+              "url": "http://www.enercominc.com/",
+              "status": 301
+            },
+            {
+              "url": "https://www.enercominc.com/",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-09-30T01:19:32.601Z",
+          "receiptSha256": "f732a2abc03412b4846bfbfd8eac22a54002028267b5f89c57c75cfd323a1aa2",
+          "bodySha256": "74fa82f777574465f1a1bbbbdafe564978cd58c953917959e17f6fdd0d90dbcc",
+          "text": "EnerCom, Inc. | Oil & Gas Consulting | Analysis | Marketing | Media ); ga('send', 'pageview'); ABOUT SERVICES CONSULTING Investor Relations Valuation Analytics Public & Media Relations ESG CFO Advisory Support MARKETING Digital Marketing Brand Development ESG/Annual Reports Website Design Presentations Advertising PORTFOLIO PUBLISHING CONFERENCES ENERGY INSIGHT CONTACT CONSULTING FIRM PROVIDING BRANDING, MARKETING, INVESTOR RELATIONS & VALUATION SOLUTIONS see our work be our partner Your browser does not support the video tag. Where investors meet marketing solutions EnerCom, Inc. is an internationally-recognized management consulting firm advising companies on investor relations, corporate strategy/board advisory, Environmental, Social & Governance (ESG), marketing, analysis and valuation, media, branding, and visual communications design. EnerCom is certified minority & women owned business enterprise. We have always been committed to promoting diversity within our firm & in our communities. Consulting learn more marketing learn more publishing learn more conferences learn more Portfolio portfolio some of our clients About Story Vision/Mission Team consulting Investor Relations Valuation Analytics Public & Media Relations ESG CFO Advisory Support marketing Digital Marketing Brand Development ESG/Annual Reports Website Design Presentations Advertising publishing Oil & Gas 360 conferences EnerCom Denver EnerCom Dallas ENERCOM IS CERTIFIED MINORITY & WOMEN OWNED BUSINESS ENTERPRISE. CONTACT US (303) 296.8834 services@enercominc.com follow us &copy; EnerCom, Inc. 2026. All Rights Reserved.",
+          "textSha256": "57e97cf2db894c186705a6007b23ccf7739e9595848ce011b1e4c27e8e361ea8",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "text/html; charset=UTF-8",
+          "originalSourcePin": "d5e30c3c81bf558723160f0e80384ecefcd19cf236eae54903bbed07854a09ba",
+          "sourceDate": null,
+          "sourceDateText": null
+        }
+      ],
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/sweep_reporting_fix",
+          "reviewedAt": "2026-09-30T04:09:14.883Z",
+          "receiptSha256": "9ebdbe44813c5c3b9829d866bf3d26d07fb01a6c367195ec71c99e02e9b6a3e6",
+          "receiptActorField": "readerTaskId"
+        },
+        "independent": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T04:14:10.696Z",
+          "receiptSha256": "02beaf89c67244b1171a6a6133f27a3f9a728e3f2d4567d040643a7aabe28d47",
+          "receiptActorField": "reviewerTaskId"
+        },
+        "packetSha256": "d5e30c3c81bf558723160f0e80384ecefcd19cf236eae54903bbed07854a09ba"
+      },
+      "sourceReader": {
+        "taskId": "/root/enercom_static_source",
+        "reviewedAt": "2026-10-02T06:23:41.825931Z",
+        "receiptSha256": "4461aa541a01909501ef4cd6faa4e3f9db26efe270b543ca779f00dade75b178",
+        "receiptActorField": "readerTaskId"
+      },
+      "sourceReviewer": {
+        "taskId": "/root/cottonwood_review",
+        "reviewedAt": "2026-10-02T06:28:18.712Z",
+        "receiptSha256": "04702ca0222ddf32aaa10f58b5e619d7ffae29a1cb93544b8f555b217e835172",
+        "receiptActorField": "reviewerTaskId"
+      },
+      "legalName": "ENERCOM, INC.",
+      "phone": "3032968834",
+      "targetAddress": {
+        "addressLine1": "410 17th Street, Suite 250",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80202",
+        "countryCode": "US"
+      },
+      "ownSiteRole": "legal_operator_name_and_phone",
+      "ownSiteLegalName": "EnerCom, Inc.",
+      "ownSiteIdentityQuote": "EnerCom, Inc. is an internationally-recognized management consulting firm advising companies on investor relations, corporate strategy/board advisory, Environmental, Social & Governance (ESG), marketing, analysis and valuation, media, branding, and visual communications design.",
+      "pdf": {
+        "role": "historical_company_contact_block",
+        "currentAddressClaim": false,
+        "publicationDateClaim": false,
+        "pageCount": 7,
+        "pages": [
+          {
+            "page": 1,
+            "text": "CONFERENCE SPONSORSHIP OPPORTUNITIES\nENERCOMINC.COM\nTHEOILANDGASCONFERENCE.COM  \nENERCOMDALLAS.COM\n303.296.8834\n410 17 TH  ST. SUITE 250\nDENVER, CO 80202\n",
+            "textSha256": "58087b676e2d9129c34c0be5dea3a6ea0ee497c1ea315362162a39472827591c",
+            "visualSha256": "7f95ed8e19b0fb9471e77b33ed2504ec96899df9ed424b45dda062837d00754f"
+          },
+          {
+            "page": 2,
+            "text": "Founded in 1996, The Oil & Gas Conference® is the largest \nindependent energy investment conference in the U.S.\nThe Oil & Gas Conference® offers \ninvestment professionals the \nopportunity to listen to the world’s \nkey senior management teams, \npresent their growth plans, and \nprovides industry professionals a venue to learn about important energy \ntopics effecting the global oil and gas industry. \nEnerCom’s The Oil & Gas Conference® routinely hosts over 2,000 \nregistrants and upwards of 100 company presentations whose operations \nspan more than 40 countries and six continents. \nFounded in 2017, EnerCom Dallas™ is the evolution of EnerCom’s Q1 \nconference held in San Francisco 14 years prior to moving to the Lone \nStar State.   \nThe EnerCom Dallas™ conference offers the \nopportunity for investment professionals to \ncome together in one central location to listen \nto senior management teams update investors \non their operational and financial strategies and learn how the leading energy \ncompanies are building value in 2020. \nTM\nSAVE THE DATE:  FEBRUARY 11 – 12, 2020 \nSAVE THE DATE:  AUGUST 16 – 19, 2020  ",
+            "textSha256": "94810b445094cc5a88435056857d1919c300da4a92df38854a3ea64b98246e98",
+            "visualSha256": "a5f24904eeb314d50a7ab89a7a1cf2adfc98665a242a2b25d307c533666e28f2"
+          },
+          {
+            "page": 3,
+            "text": "Network and connect with key decision makers who year after year make up an overwhelming \nmajority of EnerCom conference registrants. Being an EnerCom Conference Sponsor gives \nyou command of attention throughout the event and reinforces the trust EnerCom has in your \nbrand, which positively influences perception among registrants identified below.   \nUsing EnerCom conference attendee data we’ve broken our audience down into three main \ngroups: Sellside/Banking/Brokerages, Buyside Investors, and Industry Participants. Our \naudience of industry leaders and key decision makers provide you with a unique opportunity \nand venue to connect with potential clients and partners. \nYour sponsorship level will directly impact how Industry Participants engage with your brand. \nWe offer various ways to taylor a sponsorhip to fit your needs and further the connections \nyou are able to make with our audience. Targeted attendees will leave having made a one on \none connection with your company and or digested a valuable determination of your offering; \nmaking them warm leads to approach thereafter. \nSPONSOR\nLOCATION AND INDUSTRY BEHAVIOR \nEnerCom conferences are centralized in prime energy industry focused cities and are heavily \nintegrated in Industry Participant’s yearly calendars. With over 50 energy industry events hosted \nto date, key players know they will be returning to EnerCom conferences each year to meet, \nconnect, and learn from the best in the energy sector.  \nENERCOM AUDIENCE\nBENEFITS\nGeo/Engineer/\nLand\nC-Suite/Executive  \nManagement \nSr. Management\n6%\n26%\n18%\nBuySide Investor\n50%\n25%\nIndustry  \nParticipant \n25%\nSellSide/Banking/\nBrokeage",
+            "textSha256": "9a311e6aafcc7fd8eaacf4d9cd8853059f72b7e664c7948b2dde2ed7b2e9c5ab",
+            "visualSha256": "8420930bc3c0a88f05ba39a5372a1dd1e09e76f6f86fa679931027a3f3768b47"
+          },
+          {
+            "page": 4,
+            "text": "PRESS RELEASES \nProminent Logo placement and Company highlight on National Press Releases ahead of \nConference as well as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n10 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay marketing material/handouts/\ngiveaways at a featured table outside \nof the main presentation rooms. \nGLOBAL  \nSPONSORSHIP CONTACT US FOR PRICING\nEXCLUSIVITY:  AS A GLOBAL LEVEL SPONSOR, WE \nEXCLUDE ANY COMPETING COMPANY LOGO AT THIS LEVEL.\nPRESENTING COMPANY \nINTRODUCTIONS \nPriority selection opportunity for \npresenting company introduction \nrequests. Up to 8 for EnerCom Dallas™  \nand up to 12 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nPriority selection opportunity to sponsor, \nmoderate and lead a topical Panel \ndiscussion, as available. Position your \ncompany as a thought leader via this \nexclusive industry exposure opportunity.\nLOGO DISPLAY & SIGNAGE \nPROMINENT PLACEMENT \nABOVE GOLD LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Premium placement advertisement in \nthe digital Conference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGLOBAL LEVEL \nPLACEMENT\nTM",
+            "textSha256": "e9400f2250a47641bb2d0dd1edab2231ebf40bb8e766a78c78c409c46d1aa64e",
+            "visualSha256": "f1078a3c068fd53d2183de8940d30fe9e72777925f451a1df9c33dc8a65d2284"
+          },
+          {
+            "page": 5,
+            "text": "GOLD  \nSPONSORSHIP\nPRESS RELEASES \n(Placement above SILVER Level)\nLogo placement and Company highlight on National Press Releases ahead of Conference as \nwell as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n7 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay your marketing materials/\nhandouts/giveaways in the Literature \nRoom/assigned tables. \nPRESENTING COMPANY \nINTRODUCTIONS \nSelection opportunity for presenting company \nintroduction requests. Up to 3 for EnerCom \nDallas™ and up to  5 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nOpportunity to sponsor, moderate \nand lead a topical Panel discussion, \nas available. Position your company \nas a thought leader via this exclusive \nindustry exposure opportunity. \n$15,000\n$20,000\nLOGO DISPLAY & SIGNAGE \nPLACEMENT ABOVE SILVER LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Display page advertisement in the digital \nConference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGOLD  \nLEVEL \nPLACEMENT\nTM",
+            "textSha256": "3cdadafe6e510f502990be63b91b989d53d1a9e0bb26fecef1b5537e4bb353f1",
+            "visualSha256": "d8268744b5dbb5dfe9a45c020ed818289e6dfe36a5a47848e7b67296dc758755"
+          },
+          {
+            "page": 6,
+            "text": "LOGO DISPLAY & \nSIGNAGE\nLogo and signage highlighting \nSponsorship level on:  \n• Conference websites: Corporate \ndescription, website link, and \nlogo displayed on all official \nConference websites\n• Display advertisement in the \ndigital Conference book \n• Conference schedule handouts, \nand \n• All other related Event \nSponsorship marketing \nmaterials/banners\nPRESS RELEASES \nLogo placement and Company  \nhighlight on National Press Releases \nahead of Conference as well \nas EnerCom’s industry leading \npublication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nSILVER\nSPONSORSHIP\n$10,000\nSILVER LEVEL \nPLACEMENT\nEVENT ATTENDANCE \n4 complimentary Conference \nregistrations.\nTM\n$15,000",
+            "textSha256": "70f2188403b3af8293b97988ed67f535bda16b2767caff447c0ad33d28553712",
+            "visualSha256": "4a239c6bdb8c2a009f79adcd919342f033714e54958b366dcb725543a5c8b6ce"
+          },
+          {
+            "page": 7,
+            "text": "TOGC: $7,500\nDallas: $5,000\nMOBILE APP\nSPONSORSHIP\nEXCLUSIVE\nPACKAGES\nAVAILABLE AT BOTH CONFERENCES\n$10,000 - $12,000\nBASEBALL  \nSUITES\nTOTE \nBAG\n$7,500\nCONTACT US  \nFOR PRICING\nPANEL \nMODERATION\n$1,000/Hole \nor $18,000 Total\nGOLF   \nTOURNAMENT\nBREAKFAST\nBAR\nTOGC: $7,500/M\nDallas: $5,000/W\nEVENING  \nRECEPTION\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nCOFFEE / BREAK \nSTATION",
+            "textSha256": "6ce7bee2d1da50e812c394fd0d44d30099b5061a1488e277953e57893c73dea6",
+            "visualSha256": "56203b46d3719dc0a37259fe654c3e9244a0ffdefc701b2b124b3da88fdd92d0"
+          }
+        ],
+        "extractionReceiptSha256": "0798337739bf79d232b636751c7300f1715d47228e83bdebc8866a216d30526f",
+        "identityPage": 1,
+        "contactBlock": "ENERCOMINC.COM\nTHEOILANDGASCONFERENCE.COM  \nENERCOMDALLAS.COM\n303.296.8834\n410 17 TH  ST. SUITE 250\nDENVER, CO 80202\n",
+        "domainLiteral": "ENERCOMINC.COM",
+        "phoneLiteral": "303.296.8834",
+        "addressLineLiteral": "410 17 TH  ST. SUITE 250",
+        "localityLiteral": "DENVER, CO 80202",
+        "address": {
+          "addressLine1": "410 17TH ST. SUITE 250",
+          "city": "DENVER",
+          "state": "CO",
+          "postalCode": "80202",
+          "countryCode": "US"
+        },
+        "period": {
+          "role": "event_brochure_year",
+          "year": "2020",
+          "visibleCoverPage": 1,
+          "eventPage": 2,
+          "eventDateQuotes": [
+            "SAVE THE DATE:  FEBRUARY 11 – 12, 2020",
+            "SAVE THE DATE:  AUGUST 16 – 19, 2020"
+          ]
+        }
+      },
+      "limitations": [
+        "Official-domain hosting and matching phone/domain support the historical company/address association, not a present address update.",
+        "No UCC document number appears inside the brochure; the bridge combines exact name from the retained official site and the registry row with full historical company contact address from the brochure.",
+        "No 2019-12-12 publication date or precise address occupancy date is claimed from a 2020 brochure.",
+        "UCC active/lapse/termination fields are retained source reporting, not a judgment about current enforceability, loan balances, new financing or debt status.",
+        "The claimed minority/women-owned status on the website is not independently certification-verified.",
+        "The 1996 conference origin is not treated as the business legal formation date.",
+        "Seven complete PDF pages and two actual distinct source-reader receipts are retained; incidental small sponsor-logo text in the photograph is not identity evidence.",
+        "The two distinct 2019 UCC files are separate originals; the Greenwood Village SOS and 2017 UCC at 800 18th Street remain unresolved.",
+        "The sole PDF final HTTP response is represented as one terminal captured hop; the original receipt records zero redirects.",
+        "Historical event registrants and sponsorship prices do not establish employees, realized revenue or current purchasing power."
+      ]
+    },
+    {
+      "id": "enercom-ucc-1737470-1375809-company-pdf-contact",
+      "companyId": "cbad41dd-0767-4d65-adb8-17607d65273c",
+      "internalId": "1748898",
+      "canonicalDomain": "enercominc.com",
+      "canonicalIdentitySha256": "fcd5ee7e21dc6f9382c65ff648819417efa6a15c5cb1e8842d451e43170bb789",
+      "chain": "company_pdf_contact_role",
+      "target": {
+        "dataset": "co_ucc",
+        "recordId": "1737470:1375809",
+        "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1375809",
+        "rowSha256": "ca533ad0cfe37462c2e096d0561e4ca89d94600dc733af8a2e5b6db92681799b",
+        "evidenceSha256": "4361b9ed2918bd666a39e59308baa7b6b5bcff17e0cdc33c1db86a00e62730f5",
+        "profileSha256": "7bbf8d83e480ac514cc2f3f3331abe267ecdbdcd07204536dc87e385cc1605a6",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:16.746663Z",
+        "role": "debtor_business"
+      },
+      "sources": [
+        {
+          "kind": "company_pdf",
+          "url": "https://www.enercominc.com/wp-content/uploads/2019/12/2020-Sponsorship-Opportunity_Handout-update-FINAL.pdf",
+          "requestedUrl": "https://www.enercominc.com/wp-content/uploads/2019/12/2020-Sponsorship-Opportunity_Handout-update-FINAL.pdf",
+          "hops": [
+            {
+              "url": "https://www.enercominc.com/wp-content/uploads/2019/12/2020-Sponsorship-Opportunity_Handout-update-FINAL.pdf",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-02T06:18:54.505037Z",
+          "receiptSha256": "2995a61e5c44a7a1bbb991f2fb996d74746b4134985e341da2b1ced797c9458a",
+          "bodySha256": "b4484f439cbcc4b1528318e567b76d3d20ba86dfbcf741d36435cd65ade789b9",
+          "text": "--- PAGE 1 ---\nCONFERENCE SPONSORSHIP OPPORTUNITIES\nENERCOMINC.COM\nTHEOILANDGASCONFERENCE.COM  \nENERCOMDALLAS.COM\n303.296.8834\n410 17 TH  ST. SUITE 250\nDENVER, CO 80202\n\n\n--- PAGE 2 ---\nFounded in 1996, The Oil & Gas Conference® is the largest \nindependent energy investment conference in the U.S.\nThe Oil & Gas Conference® offers \ninvestment professionals the \nopportunity to listen to the world’s \nkey senior management teams, \npresent their growth plans, and \nprovides industry professionals a venue to learn about important energy \ntopics effecting the global oil and gas industry. \nEnerCom’s The Oil & Gas Conference® routinely hosts over 2,000 \nregistrants and upwards of 100 company presentations whose operations \nspan more than 40 countries and six continents. \nFounded in 2017, EnerCom Dallas™ is the evolution of EnerCom’s Q1 \nconference held in San Francisco 14 years prior to moving to the Lone \nStar State.   \nThe EnerCom Dallas™ conference offers the \nopportunity for investment professionals to \ncome together in one central location to listen \nto senior management teams update investors \non their operational and financial strategies and learn how the leading energy \ncompanies are building value in 2020. \nTM\nSAVE THE DATE:  FEBRUARY 11 – 12, 2020 \nSAVE THE DATE:  AUGUST 16 – 19, 2020  \n\n--- PAGE 3 ---\nNetwork and connect with key decision makers who year after year make up an overwhelming \nmajority of EnerCom conference registrants. Being an EnerCom Conference Sponsor gives \nyou command of attention throughout the event and reinforces the trust EnerCom has in your \nbrand, which positively influences perception among registrants identified below.   \nUsing EnerCom conference attendee data we’ve broken our audience down into three main \ngroups: Sellside/Banking/Brokerages, Buyside Investors, and Industry Participants. Our \naudience of industry leaders and key decision makers provide you with a unique opportunity \nand venue to connect with potential clients and partners. \nYour sponsorship level will directly impact how Industry Participants engage with your brand. \nWe offer various ways to taylor a sponsorhip to fit your needs and further the connections \nyou are able to make with our audience. Targeted attendees will leave having made a one on \none connection with your company and or digested a valuable determination of your offering; \nmaking them warm leads to approach thereafter. \nSPONSOR\nLOCATION AND INDUSTRY BEHAVIOR \nEnerCom conferences are centralized in prime energy industry focused cities and are heavily \nintegrated in Industry Participant’s yearly calendars. With over 50 energy industry events hosted \nto date, key players know they will be returning to EnerCom conferences each year to meet, \nconnect, and learn from the best in the energy sector.  \nENERCOM AUDIENCE\nBENEFITS\nGeo/Engineer/\nLand\nC-Suite/Executive  \nManagement \nSr. Management\n6%\n26%\n18%\nBuySide Investor\n50%\n25%\nIndustry  \nParticipant \n25%\nSellSide/Banking/\nBrokeage\n\n--- PAGE 4 ---\nPRESS RELEASES \nProminent Logo placement and Company highlight on National Press Releases ahead of \nConference as well as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n10 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay marketing material/handouts/\ngiveaways at a featured table outside \nof the main presentation rooms. \nGLOBAL  \nSPONSORSHIP CONTACT US FOR PRICING\nEXCLUSIVITY:  AS A GLOBAL LEVEL SPONSOR, WE \nEXCLUDE ANY COMPETING COMPANY LOGO AT THIS LEVEL.\nPRESENTING COMPANY \nINTRODUCTIONS \nPriority selection opportunity for \npresenting company introduction \nrequests. Up to 8 for EnerCom Dallas™  \nand up to 12 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nPriority selection opportunity to sponsor, \nmoderate and lead a topical Panel \ndiscussion, as available. Position your \ncompany as a thought leader via this \nexclusive industry exposure opportunity.\nLOGO DISPLAY & SIGNAGE \nPROMINENT PLACEMENT \nABOVE GOLD LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Premium placement advertisement in \nthe digital Conference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGLOBAL LEVEL \nPLACEMENT\nTM\n\n--- PAGE 5 ---\nGOLD  \nSPONSORSHIP\nPRESS RELEASES \n(Placement above SILVER Level)\nLogo placement and Company highlight on National Press Releases ahead of Conference as \nwell as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n7 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay your marketing materials/\nhandouts/giveaways in the Literature \nRoom/assigned tables. \nPRESENTING COMPANY \nINTRODUCTIONS \nSelection opportunity for presenting company \nintroduction requests. Up to 3 for EnerCom \nDallas™ and up to  5 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nOpportunity to sponsor, moderate \nand lead a topical Panel discussion, \nas available. Position your company \nas a thought leader via this exclusive \nindustry exposure opportunity. \n$15,000\n$20,000\nLOGO DISPLAY & SIGNAGE \nPLACEMENT ABOVE SILVER LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Display page advertisement in the digital \nConference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGOLD  \nLEVEL \nPLACEMENT\nTM\n\n--- PAGE 6 ---\nLOGO DISPLAY & \nSIGNAGE\nLogo and signage highlighting \nSponsorship level on:  \n• Conference websites: Corporate \ndescription, website link, and \nlogo displayed on all official \nConference websites\n• Display advertisement in the \ndigital Conference book \n• Conference schedule handouts, \nand \n• All other related Event \nSponsorship marketing \nmaterials/banners\nPRESS RELEASES \nLogo placement and Company  \nhighlight on National Press Releases \nahead of Conference as well \nas EnerCom’s industry leading \npublication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nSILVER\nSPONSORSHIP\n$10,000\nSILVER LEVEL \nPLACEMENT\nEVENT ATTENDANCE \n4 complimentary Conference \nregistrations.\nTM\n$15,000\n\n--- PAGE 7 ---\nTOGC: $7,500\nDallas: $5,000\nMOBILE APP\nSPONSORSHIP\nEXCLUSIVE\nPACKAGES\nAVAILABLE AT BOTH CONFERENCES\n$10,000 - $12,000\nBASEBALL  \nSUITES\nTOTE \nBAG\n$7,500\nCONTACT US  \nFOR PRICING\nPANEL \nMODERATION\n$1,000/Hole \nor $18,000 Total\nGOLF   \nTOURNAMENT\nBREAKFAST\nBAR\nTOGC: $7,500/M\nDallas: $5,000/W\nEVENING  \nRECEPTION\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nCOFFEE / BREAK \nSTATION",
+          "textSha256": "e6b55da62efd67c9a5d52e8d73fa4831f777b68f391965a76ee9fe59634161b4",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "0798337739bf79d232b636751c7300f1715d47228e83bdebc8866a216d30526f",
+          "sourceDate": null,
+          "sourceDateText": null
+        },
+        {
+          "kind": "own_website",
+          "url": "https://www.enercominc.com/",
+          "requestedUrl": "http://www.enercominc.com/",
+          "hops": [
+            {
+              "url": "http://www.enercominc.com/",
+              "status": 301
+            },
+            {
+              "url": "https://www.enercominc.com/",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-09-30T01:19:32.601Z",
+          "receiptSha256": "f732a2abc03412b4846bfbfd8eac22a54002028267b5f89c57c75cfd323a1aa2",
+          "bodySha256": "74fa82f777574465f1a1bbbbdafe564978cd58c953917959e17f6fdd0d90dbcc",
+          "text": "EnerCom, Inc. | Oil & Gas Consulting | Analysis | Marketing | Media ); ga('send', 'pageview'); ABOUT SERVICES CONSULTING Investor Relations Valuation Analytics Public & Media Relations ESG CFO Advisory Support MARKETING Digital Marketing Brand Development ESG/Annual Reports Website Design Presentations Advertising PORTFOLIO PUBLISHING CONFERENCES ENERGY INSIGHT CONTACT CONSULTING FIRM PROVIDING BRANDING, MARKETING, INVESTOR RELATIONS & VALUATION SOLUTIONS see our work be our partner Your browser does not support the video tag. Where investors meet marketing solutions EnerCom, Inc. is an internationally-recognized management consulting firm advising companies on investor relations, corporate strategy/board advisory, Environmental, Social & Governance (ESG), marketing, analysis and valuation, media, branding, and visual communications design. EnerCom is certified minority & women owned business enterprise. We have always been committed to promoting diversity within our firm & in our communities. Consulting learn more marketing learn more publishing learn more conferences learn more Portfolio portfolio some of our clients About Story Vision/Mission Team consulting Investor Relations Valuation Analytics Public & Media Relations ESG CFO Advisory Support marketing Digital Marketing Brand Development ESG/Annual Reports Website Design Presentations Advertising publishing Oil & Gas 360 conferences EnerCom Denver EnerCom Dallas ENERCOM IS CERTIFIED MINORITY & WOMEN OWNED BUSINESS ENTERPRISE. CONTACT US (303) 296.8834 services@enercominc.com follow us &copy; EnerCom, Inc. 2026. All Rights Reserved.",
+          "textSha256": "57e97cf2db894c186705a6007b23ccf7739e9595848ce011b1e4c27e8e361ea8",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "text/html; charset=UTF-8",
+          "originalSourcePin": "d5e30c3c81bf558723160f0e80384ecefcd19cf236eae54903bbed07854a09ba",
+          "sourceDate": null,
+          "sourceDateText": null
+        }
+      ],
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/sweep_reporting_fix",
+          "reviewedAt": "2026-09-30T04:09:14.883Z",
+          "receiptSha256": "9ebdbe44813c5c3b9829d866bf3d26d07fb01a6c367195ec71c99e02e9b6a3e6",
+          "receiptActorField": "readerTaskId"
+        },
+        "independent": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T04:14:10.696Z",
+          "receiptSha256": "02beaf89c67244b1171a6a6133f27a3f9a728e3f2d4567d040643a7aabe28d47",
+          "receiptActorField": "reviewerTaskId"
+        },
+        "packetSha256": "d5e30c3c81bf558723160f0e80384ecefcd19cf236eae54903bbed07854a09ba"
+      },
+      "sourceReader": {
+        "taskId": "/root/enercom_static_source",
+        "reviewedAt": "2026-10-02T06:23:41.825931Z",
+        "receiptSha256": "4461aa541a01909501ef4cd6faa4e3f9db26efe270b543ca779f00dade75b178",
+        "receiptActorField": "readerTaskId"
+      },
+      "sourceReviewer": {
+        "taskId": "/root/cottonwood_review",
+        "reviewedAt": "2026-10-02T06:28:18.712Z",
+        "receiptSha256": "04702ca0222ddf32aaa10f58b5e619d7ffae29a1cb93544b8f555b217e835172",
+        "receiptActorField": "reviewerTaskId"
+      },
+      "legalName": "ENERCOM, INC.",
+      "phone": "3032968834",
+      "targetAddress": {
+        "addressLine1": "410 17th Street, Suite 250",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80202",
+        "countryCode": "US"
+      },
+      "ownSiteRole": "legal_operator_name_and_phone",
+      "ownSiteLegalName": "EnerCom, Inc.",
+      "ownSiteIdentityQuote": "EnerCom, Inc. is an internationally-recognized management consulting firm advising companies on investor relations, corporate strategy/board advisory, Environmental, Social & Governance (ESG), marketing, analysis and valuation, media, branding, and visual communications design.",
+      "pdf": {
+        "role": "historical_company_contact_block",
+        "currentAddressClaim": false,
+        "publicationDateClaim": false,
+        "pageCount": 7,
+        "pages": [
+          {
+            "page": 1,
+            "text": "CONFERENCE SPONSORSHIP OPPORTUNITIES\nENERCOMINC.COM\nTHEOILANDGASCONFERENCE.COM  \nENERCOMDALLAS.COM\n303.296.8834\n410 17 TH  ST. SUITE 250\nDENVER, CO 80202\n",
+            "textSha256": "58087b676e2d9129c34c0be5dea3a6ea0ee497c1ea315362162a39472827591c",
+            "visualSha256": "7f95ed8e19b0fb9471e77b33ed2504ec96899df9ed424b45dda062837d00754f"
+          },
+          {
+            "page": 2,
+            "text": "Founded in 1996, The Oil & Gas Conference® is the largest \nindependent energy investment conference in the U.S.\nThe Oil & Gas Conference® offers \ninvestment professionals the \nopportunity to listen to the world’s \nkey senior management teams, \npresent their growth plans, and \nprovides industry professionals a venue to learn about important energy \ntopics effecting the global oil and gas industry. \nEnerCom’s The Oil & Gas Conference® routinely hosts over 2,000 \nregistrants and upwards of 100 company presentations whose operations \nspan more than 40 countries and six continents. \nFounded in 2017, EnerCom Dallas™ is the evolution of EnerCom’s Q1 \nconference held in San Francisco 14 years prior to moving to the Lone \nStar State.   \nThe EnerCom Dallas™ conference offers the \nopportunity for investment professionals to \ncome together in one central location to listen \nto senior management teams update investors \non their operational and financial strategies and learn how the leading energy \ncompanies are building value in 2020. \nTM\nSAVE THE DATE:  FEBRUARY 11 – 12, 2020 \nSAVE THE DATE:  AUGUST 16 – 19, 2020  ",
+            "textSha256": "94810b445094cc5a88435056857d1919c300da4a92df38854a3ea64b98246e98",
+            "visualSha256": "a5f24904eeb314d50a7ab89a7a1cf2adfc98665a242a2b25d307c533666e28f2"
+          },
+          {
+            "page": 3,
+            "text": "Network and connect with key decision makers who year after year make up an overwhelming \nmajority of EnerCom conference registrants. Being an EnerCom Conference Sponsor gives \nyou command of attention throughout the event and reinforces the trust EnerCom has in your \nbrand, which positively influences perception among registrants identified below.   \nUsing EnerCom conference attendee data we’ve broken our audience down into three main \ngroups: Sellside/Banking/Brokerages, Buyside Investors, and Industry Participants. Our \naudience of industry leaders and key decision makers provide you with a unique opportunity \nand venue to connect with potential clients and partners. \nYour sponsorship level will directly impact how Industry Participants engage with your brand. \nWe offer various ways to taylor a sponsorhip to fit your needs and further the connections \nyou are able to make with our audience. Targeted attendees will leave having made a one on \none connection with your company and or digested a valuable determination of your offering; \nmaking them warm leads to approach thereafter. \nSPONSOR\nLOCATION AND INDUSTRY BEHAVIOR \nEnerCom conferences are centralized in prime energy industry focused cities and are heavily \nintegrated in Industry Participant’s yearly calendars. With over 50 energy industry events hosted \nto date, key players know they will be returning to EnerCom conferences each year to meet, \nconnect, and learn from the best in the energy sector.  \nENERCOM AUDIENCE\nBENEFITS\nGeo/Engineer/\nLand\nC-Suite/Executive  \nManagement \nSr. Management\n6%\n26%\n18%\nBuySide Investor\n50%\n25%\nIndustry  \nParticipant \n25%\nSellSide/Banking/\nBrokeage",
+            "textSha256": "9a311e6aafcc7fd8eaacf4d9cd8853059f72b7e664c7948b2dde2ed7b2e9c5ab",
+            "visualSha256": "8420930bc3c0a88f05ba39a5372a1dd1e09e76f6f86fa679931027a3f3768b47"
+          },
+          {
+            "page": 4,
+            "text": "PRESS RELEASES \nProminent Logo placement and Company highlight on National Press Releases ahead of \nConference as well as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n10 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay marketing material/handouts/\ngiveaways at a featured table outside \nof the main presentation rooms. \nGLOBAL  \nSPONSORSHIP CONTACT US FOR PRICING\nEXCLUSIVITY:  AS A GLOBAL LEVEL SPONSOR, WE \nEXCLUDE ANY COMPETING COMPANY LOGO AT THIS LEVEL.\nPRESENTING COMPANY \nINTRODUCTIONS \nPriority selection opportunity for \npresenting company introduction \nrequests. Up to 8 for EnerCom Dallas™  \nand up to 12 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nPriority selection opportunity to sponsor, \nmoderate and lead a topical Panel \ndiscussion, as available. Position your \ncompany as a thought leader via this \nexclusive industry exposure opportunity.\nLOGO DISPLAY & SIGNAGE \nPROMINENT PLACEMENT \nABOVE GOLD LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Premium placement advertisement in \nthe digital Conference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGLOBAL LEVEL \nPLACEMENT\nTM",
+            "textSha256": "e9400f2250a47641bb2d0dd1edab2231ebf40bb8e766a78c78c409c46d1aa64e",
+            "visualSha256": "f1078a3c068fd53d2183de8940d30fe9e72777925f451a1df9c33dc8a65d2284"
+          },
+          {
+            "page": 5,
+            "text": "GOLD  \nSPONSORSHIP\nPRESS RELEASES \n(Placement above SILVER Level)\nLogo placement and Company highlight on National Press Releases ahead of Conference as \nwell as EnerCom’s industry leading publication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nEVENT ATTENDANCE \n7 complimentary Conference \nregistrations.\nMARKETING \nCOLLATERAL DISPLAY \nDisplay your marketing materials/\nhandouts/giveaways in the Literature \nRoom/assigned tables. \nPRESENTING COMPANY \nINTRODUCTIONS \nSelection opportunity for presenting company \nintroduction requests. Up to 3 for EnerCom \nDallas™ and up to  5 for The Oil & Gas \nConference®.\nPANEL SPONSORSHIP  \n& MODERATION \nOpportunity to sponsor, moderate \nand lead a topical Panel discussion, \nas available. Position your company \nas a thought leader via this exclusive \nindustry exposure opportunity. \n$15,000\n$20,000\nLOGO DISPLAY & SIGNAGE \nPLACEMENT ABOVE SILVER LEVEL\nLogo and signage highlighting Sponsorship \nlevel on:\n• Conference websites: Corporate \ndescription, website link, and logo \ndisplayed on all official Conference \nwebsites\n• Display page advertisement in the digital \nConference book\n• Conference schedule handouts, and \n• All other related Event Sponsorship \nmarketing materials/banners\nGOLD  \nLEVEL \nPLACEMENT\nTM",
+            "textSha256": "3cdadafe6e510f502990be63b91b989d53d1a9e0bb26fecef1b5537e4bb353f1",
+            "visualSha256": "d8268744b5dbb5dfe9a45c020ed818289e6dfe36a5a47848e7b67296dc758755"
+          },
+          {
+            "page": 6,
+            "text": "LOGO DISPLAY & \nSIGNAGE\nLogo and signage highlighting \nSponsorship level on:  \n• Conference websites: Corporate \ndescription, website link, and \nlogo displayed on all official \nConference websites\n• Display advertisement in the \ndigital Conference book \n• Conference schedule handouts, \nand \n• All other related Event \nSponsorship marketing \nmaterials/banners\nPRESS RELEASES \nLogo placement and Company  \nhighlight on National Press Releases \nahead of Conference as well \nas EnerCom’s industry leading \npublication www.oilandgas360.com.\nCONFERENCE  \nNAME BADGES \nSponsor Company Attendee name \nbadges highlighted as “Sponsor”.\nSILVER\nSPONSORSHIP\n$10,000\nSILVER LEVEL \nPLACEMENT\nEVENT ATTENDANCE \n4 complimentary Conference \nregistrations.\nTM\n$15,000",
+            "textSha256": "70f2188403b3af8293b97988ed67f535bda16b2767caff447c0ad33d28553712",
+            "visualSha256": "4a239c6bdb8c2a009f79adcd919342f033714e54958b366dcb725543a5c8b6ce"
+          },
+          {
+            "page": 7,
+            "text": "TOGC: $7,500\nDallas: $5,000\nMOBILE APP\nSPONSORSHIP\nEXCLUSIVE\nPACKAGES\nAVAILABLE AT BOTH CONFERENCES\n$10,000 - $12,000\nBASEBALL  \nSUITES\nTOTE \nBAG\n$7,500\nCONTACT US  \nFOR PRICING\nPANEL \nMODERATION\n$1,000/Hole \nor $18,000 Total\nGOLF   \nTOURNAMENT\nBREAKFAST\nBAR\nTOGC: $7,500/M\nDallas: $5,000/W\nEVENING  \nRECEPTION\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nTOGC: $3,000 / M-T-W\nDallas: $2,000 / T-W\nCOFFEE / BREAK \nSTATION",
+            "textSha256": "6ce7bee2d1da50e812c394fd0d44d30099b5061a1488e277953e57893c73dea6",
+            "visualSha256": "56203b46d3719dc0a37259fe654c3e9244a0ffdefc701b2b124b3da88fdd92d0"
+          }
+        ],
+        "extractionReceiptSha256": "0798337739bf79d232b636751c7300f1715d47228e83bdebc8866a216d30526f",
+        "identityPage": 1,
+        "contactBlock": "ENERCOMINC.COM\nTHEOILANDGASCONFERENCE.COM  \nENERCOMDALLAS.COM\n303.296.8834\n410 17 TH  ST. SUITE 250\nDENVER, CO 80202\n",
+        "domainLiteral": "ENERCOMINC.COM",
+        "phoneLiteral": "303.296.8834",
+        "addressLineLiteral": "410 17 TH  ST. SUITE 250",
+        "localityLiteral": "DENVER, CO 80202",
+        "address": {
+          "addressLine1": "410 17TH ST. SUITE 250",
+          "city": "DENVER",
+          "state": "CO",
+          "postalCode": "80202",
+          "countryCode": "US"
+        },
+        "period": {
+          "role": "event_brochure_year",
+          "year": "2020",
+          "visibleCoverPage": 1,
+          "eventPage": 2,
+          "eventDateQuotes": [
+            "SAVE THE DATE:  FEBRUARY 11 – 12, 2020",
+            "SAVE THE DATE:  AUGUST 16 – 19, 2020"
+          ]
+        }
+      },
+      "limitations": [
+        "Official-domain hosting and matching phone/domain support the historical company/address association, not a present address update.",
+        "No UCC document number appears inside the brochure; the bridge combines exact name from the retained official site and the registry row with full historical company contact address from the brochure.",
+        "No 2019-12-12 publication date or precise address occupancy date is claimed from a 2020 brochure.",
+        "UCC active/lapse/termination fields are retained source reporting, not a judgment about current enforceability, loan balances, new financing or debt status.",
+        "The claimed minority/women-owned status on the website is not independently certification-verified.",
+        "The 1996 conference origin is not treated as the business legal formation date.",
+        "Seven complete PDF pages and two actual distinct source-reader receipts are retained; incidental small sponsor-logo text in the photograph is not identity evidence.",
+        "The two distinct 2019 UCC files are separate originals; the Greenwood Village SOS and 2017 UCC at 800 18th Street remain unresolved.",
+        "The sole PDF final HTTP response is represented as one terminal captured hop; the original receipt records zero redirects.",
+        "Historical event registrants and sponsorship prices do not establish employees, realized revenue or current purchasing power."
+      ]
     }
   ]
 }

@@ -9,7 +9,7 @@ type Company = { id: string; netsuite_internal_id: string; name: string; domain?
 type Witness = { taskId: string; reviewedAt: string; evidenceSha256: string };
 type Read = { taskId: string; reviewedAt: string; receiptSha256: string; receiptActorField: string };
 type Address = { addressLine1: string; addressLine2?: string; city: string; state: string; postalCode: string; countryCode: "US" };
-type Source = { kind: "municipal_pdf" | "official_rendered_record" | "own_website"; url: string; requestedUrl: string | null; hops: {url:string;status:number}[] | null; observedAt: string;
+type Source = { kind: "municipal_pdf" | "official_rendered_record" | "own_website" | "company_pdf"; url: string; requestedUrl: string | null; hops: {url:string;status:number}[] | null; observedAt: string;
   receiptSha256: string; bodySha256: string | null; text: string; textSha256: string; completeRead: true;
   status: 200 | null; contentType: string | null; originalSourcePin: string; sourceDate: string | null; sourceDateText: string | null };
 type Target = { dataset: "co_ucc" | "sba_7a"; recordId: string; sourceUrl: string; rowSha256: string; evidenceSha256: string;
@@ -42,7 +42,14 @@ type MunicipalCslbEntry = Omit<BaseEntry, "target"> & { chain: "official_municip
     companyEmail: string; address: Address; identityQuote: string; headerStatus: "Active"; headerExpiry: "03/31/2024";
     detailExpiry: "2024-10-01"; currentLicenseClaim: false };
   ownSiteRole: "company_headquarters"; ownSiteContactQuote: string; sourceStatus: "QUAL Bond SUSP" };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry;
+type CompanyPdfEntry = BaseEntry & { chain: "company_pdf_contact_role";
+  ownSiteRole: "legal_operator_name_and_phone"; ownSiteLegalName: string; ownSiteIdentityQuote: string;
+  pdf: { role: "historical_company_contact_block"; currentAddressClaim: false; publicationDateClaim: false;
+    pageCount: number; pages: { page: number; text: string; textSha256: string; visualSha256: string }[];
+    extractionReceiptSha256: string; identityPage: number; contactBlock: string; domainLiteral: string;
+    phoneLiteral: string; addressLineLiteral: string; localityLiteral: string; address: Address;
+    period: { role: "event_brochure_year"; year: string; visibleCoverPage: number; eventPage: number; eventDateQuotes: string[] } } };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -64,7 +71,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -75,6 +82,7 @@ export function registryOfficialDocumentEvidenceHash(row: RegistryFinding, proof
 function sourceChecks(e: RegistryOfficialDocumentEntry) {
   if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
   else if (e.chain === "official_municipal_dba_cslb_header") municipalCslbSourceChecks(e);
+  else if (e.chain === "company_pdf_contact_role") companyPdfSourceChecks(e);
   else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
@@ -109,7 +117,7 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
     && p.provenance.rowSha256 === t.rowSha256 && sha(stableRegistryJson(p)) === t.profileSha256 && p.sourceAsOf === t.sourceAsOf
     && p.observedAt === t.observedAt && row.evidence === p.provenance.quote, "original target pin changed");
   let raw: Record<string, unknown>;
-  if (e.chain === "dated_author_address") {
+  if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role") {
     const lines = row.evidence.split("\n"); need(p.dataset === "co_ucc" && t.role === "debtor_business" && lines.length === 2, "target debtor role invalid");
     raw = JSON.parse(lines[0]); const filing = JSON.parse(lines[1]);
     need(sha(lines[0]) === t.rowSha256 && raw.country === "United States" && p.recordId === `${raw.fileid}:${raw.debtorid}` && filing.fileid === raw.fileid
@@ -234,6 +242,7 @@ function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
 function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentityContext) {
   if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
   if (e.chain === "official_municipal_dba_cslb_header") { municipalCslbIdentityChain(e); return; }
+  if (e.chain === "company_pdf_contact_role") { companyPdfIdentityChain(e); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -297,6 +306,51 @@ function municipalCslbIdentityChain(e: MunicipalCslbEntry) {
     && own.text.split(e.ownSiteContactQuote).length===2 && own.text.includes("Siggins")
     && fullAddress({addressLine1:"512 E 12th Ave",city:"North Kansas City",state:"MO",postalCode:"64116",countryCode:"US"},e.targetAddress)
     && /^\d{10}$/.test(e.phone) && own.text.replace(/\D/g,"").includes(e.phone),"shared full headquarters or own-site subject differs");
+}
+// This reusable contact-role check operates only on finite, build-reviewed catalog
+// entries. It neither fetches PDFs nor accepts caller-authored page/role evidence.
+function companyPdfSourceChecks(e: CompanyPdfEntry) {
+  const [pdf,own]=e.sources,p=e.pdf;
+  need(e.sources.length===2 && pdf.kind==="company_pdf" && own.kind==="own_website"
+    && e.target.dataset==="co_ucc" && e.target.role==="debtor_business","company PDF source classes differ");
+  for(const s of e.sources) need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin)
+    && hash(s.bodySha256) && s.completeRead===true && s.status===200 && s.text.length>20 && s.text.length<=150000
+    && sha(s.text)===s.textSha256 && s.sourceDate===null && s.sourceDateText===null,"company PDF complete source/date differs");
+  const u=publicUrl(pdf.url),w=publicUrl(own.url);
+  need(u.hostname.replace(/^www\./,"")===e.canonicalDomain && u.pathname.endsWith(".pdf") && !u.search
+    && pdf.requestedUrl===pdf.url && pdf.contentType==="application/pdf" && pdf.hops?.length===1
+    && pdf.hops[0].url===pdf.url && pdf.hops[0].status===200,"company PDF capture authority differs");
+  need(w.hostname.replace(/^www\./,"")===e.canonicalDomain && w.pathname==="/" && !w.search
+    && /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/.test(own.contentType??"")
+    && own.hops && own.hops.length>0 && own.hops.length<=5 && own.hops[0].url===own.requestedUrl
+    && own.hops.at(-1)?.url===own.url && own.hops.at(-1)?.status===200
+    && own.hops.every((h,i)=>host(h.url)===e.canonicalDomain && (i===own.hops!.length-1?h.status===200:[301,302,303,307,308].includes(h.status))),"company website capture provenance differs");
+  need(p && Number.isSafeInteger(p.pageCount) && p.pageCount>=1 && p.pageCount<=100 && p.pages.length===p.pageCount
+    && hash(p.extractionReceiptSha256) && p.extractionReceiptSha256===pdf.originalSourcePin
+    && p.pages.every((page,i)=>page.page===i+1 && page.text.length>0 && sha(page.text)===page.textSha256 && hash(page.visualSha256))
+    && pdf.text===p.pages.map(page=>`--- PAGE ${page.page} ---\n${page.text}`).join("\n\n"),"company PDF full-page extraction differs");
+}
+function companyPdfIdentityChain(e: CompanyPdfEntry) {
+  const [pdf,own]=e.sources,p=e.pdf,a=p.address;
+  need(p.role==="historical_company_contact_block" && p.currentAddressClaim===false && p.publicationDateClaim===false
+    && e.ownSiteRole==="legal_operator_name_and_phone" && sameRegistryLegalName(e.ownSiteLegalName,e.legalName)
+    && own.text.split(e.ownSiteIdentityQuote).length===2 && e.ownSiteIdentityQuote.startsWith(`${e.ownSiteLegalName} is `),"company PDF subject or address role differs");
+  need(Number.isSafeInteger(p.identityPage) && p.identityPage>=1 && p.identityPage<=p.pageCount
+    && p.contactBlock.length>30 && p.pages[p.identityPage-1].text.split(p.contactBlock).length===2
+    && pdf.text.split(p.contactBlock).length===2 && host(p.domainLiteral)===e.canonicalDomain
+    && p.contactBlock.split(p.domainLiteral).length===2 && /^\d{10}$/.test(e.phone)
+    && p.phoneLiteral.replace(/\D/g,"")===e.phone && p.contactBlock.split(p.phoneLiteral).length===2
+    && own.text.replace(/\D/g,"").includes(e.phone),"company PDF domain/phone/contact block differs");
+  const compactOrdinal=(s:string)=>compact(s).replace(/(\d)\s+(st|nd|rd|th)\b/gi,"$1$2");
+  need(p.contactBlock.includes(p.addressLineLiteral) && p.contactBlock.includes(p.localityLiteral)
+    && sameRegistryStreet({addressLine1:compactOrdinal(p.addressLineLiteral)},{addressLine1:a.addressLine1,addressLine2:a.addressLine2})
+    && p.localityLiteral===`${a.city}, ${a.state} ${a.postalCode}` && fullAddress(a,e.targetAddress),"company PDF full historical address differs");
+  const period=p.period;
+  need(period.role==="event_brochure_year" && /^\d{4}$/.test(period.year) && Number(period.year)<=new Date(pdf.observedAt).getUTCFullYear()
+    && Number.isSafeInteger(period.visibleCoverPage) && period.visibleCoverPage>=1 && period.visibleCoverPage<=p.pageCount
+    && Number.isSafeInteger(period.eventPage) && period.eventPage>=1 && period.eventPage<=p.pageCount
+    && period.eventDateQuotes.length>0 && period.eventDateQuotes.length<=10 && new Set(period.eventDateQuotes).size===period.eventDateQuotes.length
+    && period.eventDateQuotes.every(q=>q.includes(period.year) && q.length>15 && p.pages[period.eventPage-1].text.split(q).length===2),"company PDF visible event period differs");
 }
 /** A retained dated association only; never a canonical-field update or a claim
  * that an old address, license status, debt or financial value is current. */
