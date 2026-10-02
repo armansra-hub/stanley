@@ -1,3 +1,4 @@
+import { verifyRegistryNppesEndpoint, type RegistryNppesEndpointEntry } from "./registryNppesEndpoint";
 import { createHash } from "node:crypto";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { registryContentHash, retainedFmcsaDba, sameRegistryLegalName, sameRegistryStreet, normalizedDba, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
@@ -68,9 +69,9 @@ export function registryOfficialApiEvidenceHash(row: RegistryFinding, proof: Omi
 // Reviewed deployment data is the trust boundary; callers supply only its exact
 // ID/hash and actual final witnesses. No caller-authored source transcription.
 export function registryOfficialApiEntry(id: string) {
-  const entries = catalog.entries as RegistryOfficialApiEntry[], matches = entries.filter(e => e.id === id);
+  const entries = catalog.entries as (RegistryOfficialApiEntry | RegistryNppesEndpointEntry)[], matches = entries.filter(e => e.id === id);
   need(catalog.version === 1 && entries.length <= 1000 && matches.length === 1, "entry missing or ambiguous");
-  return { entry: JSON.parse(JSON.stringify(matches[0])) as RegistryOfficialApiEntry, sha256: sha(stableRegistryJson(matches[0])) };
+  return { entry: JSON.parse(JSON.stringify(matches[0])) as RegistryOfficialApiEntry | RegistryNppesEndpointEntry, sha256: sha(stableRegistryJson(matches[0])) };
 }
 function host(value: string): string | null {
   // A canonical root/domain may be a URL, but paths, credentials, ports and IPs
@@ -248,7 +249,16 @@ function ownSiteOperatorAssociation(entry: RegistryOfficialApiEntry, company: Co
 export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date(), reviewedTradeBundle?: RegistryOfficialApiTradeBundle): NonNullable<RegistryProfile["verification"]> {
   const keys = ["schema", "entryId", "entrySha256", "canonicalIdentitySha256", "reader", "reviewer"];
   need(object(raw) && Object.keys(raw).every(k => keys.includes(k)) && keys.every(k => Object.hasOwn(raw, k)) && raw.schema === "official_api_roles_v1" && typeof raw.entryId === "string", "proof shape invalid");
-  const { entry, sha256 } = registryOfficialApiEntry(raw.entryId), source = entry.source;
+  const { entry, sha256 } = registryOfficialApiEntry(raw.entryId);
+  if (entry.sourceKind === "nppes_organization_endpoint") {
+    const { reader, reviewer, ...evidence } = raw;
+    return verifyRegistryNppesEndpoint(row, raw as RegistryOfficialApiCorroboration, entry, company, context, now, {
+      entrySha256: sha256, canonicalIdentitySha256: registryOfficialApiCanonicalHash(company, context),
+      evidenceSha256: registryOfficialApiEvidenceHash(row, evidence as Omit<RegistryOfficialApiCorroboration, "reader" | "reviewer">),
+      canonicalDomain: host(company.domain || company.website_raw || ""), endpointDomain: emailDomain,
+    });
+  }
+  const source = entry.source;
   need(raw.entrySha256 === sha256 && ["colorado_business_entity", "fmcsa_census"].includes(entry.sourceKind), "entry pin or source kind invalid");
   need(source.status === 200 && source.contentType.toLowerCase().startsWith("application/json") && iso(source.observedAt)
     && source.requestedUrl === source.finalUrl && sourceUrl(source.requestedUrl, entry.sourceKind, entry.target.recordId)
