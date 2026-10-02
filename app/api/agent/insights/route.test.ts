@@ -7,7 +7,7 @@ vi.mock("@/lib/companyIdentity", () => ({ loadCompanyIdentityContext: mocks.iden
 vi.mock("@/lib/db/events", () => ({ logEvent: mocks.log }));
 vi.mock("@/lib/db/triggers", () => ({ recordTrigger: mocks.trigger, recomputePriority: mocks.priority }));
 vi.mock("@/lib/agent/registryWebsite", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/agent/registryWebsite")>(), registryWebsiteVerifier: () => mocks.website }));
-import { parseRegistryFinding } from "@/lib/agent/registryProfiles";
+import { parseRegistryFinding, registryContentHash } from "@/lib/agent/registryProfiles";
 import { registryWebsiteEvidenceHash } from "@/lib/agent/registryWebsite";
 import { registryOfficialHistoryBundle, registryOfficialHistoryCanonicalHash, registryOfficialHistoryEvidenceHash } from "@/lib/agent/registryOfficialHistory";
 import historyFixture from "../../../../test/fixtures/registry-official-history.json";
@@ -228,5 +228,50 @@ describe("IRS filing existing registry route", () => {
       const websites=Array.from({length:3},(_,i)=>{const item=websiteFinding(`https://acme.test/page-${i}`);item.registryProfile.recordId=String(i);const {reader,reviewer,...p}=item.officialWebsiteCorroboration;const evidenceSha256=registryWebsiteEvidenceHash(parseRegistryFinding(item),p);return {...item,officialWebsiteCorroboration:{...p,reader:{...reader,evidenceSha256},reviewer:{...reviewer,evidenceSha256}}};});
       const response=await post({findings:[input,...websites]});expect(response.status).toBe(422);expect(await response.json()).toMatchObject({error:"registry website requests capped at three distinct pages"});expect(mocks.from).not.toHaveBeenCalled();expect(mocks.website).not.toHaveBeenCalled();expect(mocks.rpc).not.toHaveBeenCalled();
     }finally{vi.useRealTimers();}
+  });
+});
+
+describe("server published-profile anchors",()=>{
+  function seedAnchor() {
+    const f=parseRegistryFinding(finding()), publication={eventId:"prior-event",contentHash:registryContentHash(f.profile,f.sourceUrl,f.detail),publishedAt:"2026-09-29T00:00:00Z"};
+    const row={id:"prior-row",company_id:companyId,netsuite_internal_id:"123",source:"registry",kind:"ops_profile",label:f.label,detail:f.detail,evidence:f.evidence,evidence_url:f.sourceUrl,registry_profile:{...f.profile,verification:{method:"reviewed_official_registration_history",verifiedAt:"2026-09-29T00:00:00Z",sourceIds:["official:retained-source"]},publication}};
+    // This synthetic anchor must have a complete city, as must the target.
+    const withCity=(input:ReturnType<typeof finding>)=>{input.registryProfile.identity={...input.registryProfile.identity,city:"Austin"} as any;input.registryProfile.provenance.sourceRow={...input.registryProfile.provenance.sourceRow,city:"Austin"} as any;input.evidence=JSON.stringify(input.registryProfile.provenance.sourceRow);input.registryProfile.provenance.quote=input.evidence;return input;};
+    const source=parseRegistryFinding(withCity(finding()));row.registry_profile={...source.profile,verification:row.registry_profile.verification,publication} as any;row.evidence=source.evidence;publication.contentHash=registryContentHash(source.profile,source.sourceUrl,source.detail);
+    tables.lead_insights=[row];tables.app_events=[{id:"prior-event",kind:"registry.profiles_recorded",meta:{receipts:[{id:row.id,companyId,internalId:"123",profileKey:row.label,contentHash:publication.contentHash}]}}];
+    mocks.identity.mockResolvedValue({aliases:[],addresses:[],context:""});
+    const target=withCity(finding());target.registryProfile.recordId="888";return {row,target};
+  }
+  it("uses saved row/event once for a dry-run batch, without new client proof fields",async()=>{
+    const {target}=seedAnchor(),second=structuredClone(target);second.registryProfile.recordId="999";
+    const res=await post({findings:[target,second],dryRun:true});expect(res.status).toBe(200);
+    const body=await res.json();expect(body.profiles).toHaveLength(2);expect(body.profiles[0].verification).toMatchObject({method:"verified_published_profile_identity",publishedAnchor:{rowId:"prior-row",profileKey:"registry:fmcsa:777",eventId:"prior-event"}});
+    expect(mocks.from.mock.calls.filter(x=>x[0]==="app_events")).toHaveLength(1);expect(mocks.rpc).not.toHaveBeenCalled();expect(mocks.website).not.toHaveBeenCalled();
+  });
+  it.each(["missing event","wrong event company","wrong event kind","changed source","chain","event read failure"])("holds %s before RPC",async reason=>{
+    const {row,target}=seedAnchor();
+    if(reason==="missing event")tables.app_events=[];
+    if(reason==="wrong event company")tables.app_events[0].meta.receipts[0].companyId="wrong";
+    if(reason==="wrong event kind")tables.app_events[0].kind="other.event";
+    if(reason==="changed source")row.registry_profile.sourceAsOf="2025-01-01";
+    if(reason==="chain")row.registry_profile.verification.method="prior_registry_binding";
+    if(reason==="event read failure")eventReadError=true;
+    expect((await post({findings:[target]})).status).toBe(422);expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("does not use anchors replaced in the same request or newly admitted target rows",async()=>{
+    const {target}=seedAnchor(),replacement=structuredClone(target);replacement.registryProfile.recordId="777";
+    expect((await post({findings:[target,replacement]})).status).toBe(422);expect(mocks.rpc).not.toHaveBeenCalled();
+    tables.lead_insights=[];tables.app_events=[];const second=structuredClone(target);second.registryProfile.recordId="999";
+    expect((await post({findings:[target,second]})).status).toBe(422);expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("publishes through the unchanged RPC with exact event readback and no signal or grade writes",async()=>{
+    const {target}=seedAnchor(),before=JSON.stringify(target);const res=await post({findings:[target]});expect(res.status).toBe(200);
+    const body=await res.json();expect(body.receipts[0].eventVerified).toBe(true);expect(body.triggersWritten).toBe(0);
+    expect(tables.lead_insights[0].registry_profile.verification.publishedAnchor.rowId).toBe("prior-row");expect(JSON.stringify(target)).toBe(before);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);expect(mocks.trigger).not.toHaveBeenCalled();expect(mocks.priority).not.toHaveBeenCalled();expect(writes).not.toHaveBeenCalled();
+  });
+  it("rejects client-owned verification even when it names a real saved anchor",async()=>{
+    const {target}=seedAnchor();(target.registryProfile as any).verification={method:"verified_published_profile_identity",publishedAnchor:{rowId:"prior-row"}};
+    expect((await post({findings:[target]})).status).toBe(422);expect(mocks.rpc).not.toHaveBeenCalled();
   });
 });

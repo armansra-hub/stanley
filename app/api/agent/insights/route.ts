@@ -5,7 +5,7 @@ import { agentAuthOk, callerAgent, unauthorized } from "@/lib/agent/auth";
 import { recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { TRIGGER_SPEC } from "@/lib/triggers/config";
 import { loadCompanyIdentityContext } from "@/lib/companyIdentity";
-import { parseRegistryFinding, registryContentHash, verifyRegistryIdentity, type RegistryProfile } from "@/lib/agent/registryProfiles";
+import { parseRegistryFinding, registryContentHash, verifyRegistryIdentity, validatePublishedRegistryAnchors, type RegistryProfile } from "@/lib/agent/registryProfiles";
 import { verifyRegistrySam } from "@/lib/agent/registrySam";
 import { verifyRegistryOfficialHistory } from "@/lib/agent/registryOfficialHistory";
 import { parseRegistryIrsFilingCorroboration, registryIrsFilingVerifier } from "@/lib/agent/registryIrsFiling";
@@ -87,6 +87,11 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
   const contexts = new Map<string, Awaited<ReturnType<typeof loadCompanyIdentityContext>>>();
   const { data: existing, error: priorError } = await db.from("lead_insights").select("*").in("company_id", parsed.map(row => row.companyId)).eq("source", "registry");
   if (priorError) return NextResponse.json({ error: "registry prior profiles unavailable" }, { status: 503 });
+  // Resolve all anchor events once per batch. An anchor replaced by this same
+  // request is excluded, and newly admitted rows never become batch anchors.
+  const anchorRows = (existing ?? []).filter(old => !keys.includes(`${old.company_id}:${old.label}`));
+  const anchorReceipts = await registryReceipts(anchorRows);
+  const anchors = validatePublishedRegistryAnchors(anchorRows, anchorReceipts);
   for (const [index, row] of parsed.entries()) {
     const matches = ((companies ?? []) as RegistryCompany[]).filter(c => c.netsuite_internal_id === row.internalId && canonical(c));
     if (matches.length !== 1 || matches[0].id !== row.companyId) return NextResponse.json({ error: "registry exact company identity is missing or ambiguous", internalId: row.internalId }, { status: 422 });
@@ -97,7 +102,7 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
       catch { return NextResponse.json({ error: "registry company identity context unavailable", internalId: row.internalId }, { status: 503 }); }
     }
     const prior = (existing ?? []).filter(old => old.company_id === company.id && old.netsuite_internal_id === row.internalId && old.registry_profile).map(old => old.registry_profile as RegistryProfile);
-    let verification = verifyRegistryIdentity(row.profile, company, context, prior);
+    let verification = verifyRegistryIdentity(row.profile, company, context, prior, new Date(), anchors);
     const proof = websiteProofs[index];
     if (proof) {
       try { verification = await verifyWebsite(row, proof, company, context); }

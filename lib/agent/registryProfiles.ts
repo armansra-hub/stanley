@@ -8,7 +8,7 @@ export type RegistryProfile = {
   sourceAsOf: string | null; observedAt: string; facts: RegistryFact[];
   identity: { legalName: string; addressLine1: string; addressLine2?: string; city?: string; state: string; postalCode: string; countryCode?: "US" | "CA" };
   provenance: { rowSha256: string; quote: string; sourceRow: Record<string, string | number | boolean | null>; localFile?: string };
-  verification?: { method: "exact_legal_name_address" | "exact_registry_dba_address" | "prior_registry_binding" | "official_website_corroboration" | "reviewed_sam_domain_legal_address" | "reviewed_official_registration_history" | "reviewed_irs_filing_ein_domain"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown>; sam?: Record<string, unknown>; officialHistory?: Record<string, unknown>; irsFiling?: Record<string, unknown> };
+  verification?: { method: "exact_legal_name_address" | "exact_registry_dba_address" | "prior_registry_binding" | "official_website_corroboration" | "reviewed_sam_domain_legal_address" | "reviewed_official_registration_history" | "reviewed_irs_filing_ein_domain" | "verified_published_profile_identity"; verifiedAt: string; sourceIds: string[]; website?: Record<string, unknown>; sam?: Record<string, unknown>; officialHistory?: Record<string, unknown>; irsFiling?: Record<string, unknown>; publishedAnchor?: PublishedAnchorBinding };
   publication?: { contentHash: string; eventId: string; publishedAt: string };
 };
 
@@ -470,7 +470,87 @@ export function retainedFmcsaDba(profile: RegistryProfile): string | null {
     || !p.countryCode || row.phy_country !== p.countryCode) return null;
   return row.dba_name;
 }
-export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date()): RegistryProfile["verification"] | null {
+export type RegistryAnchorRow = {
+  id: string; company_id: string; netsuite_internal_id: string; source: string; kind: string;
+  label: string; detail: string | null; evidence: string; evidence_url: string; registry_profile: RegistryProfile;
+};
+export type RegistryAnchorReceipt = {
+  id: string; companyId: string; internalId: string; profileKey: string;
+  contentHash?: string; eventId?: string; publishedAt?: string; eventVerified: boolean;
+};
+type PublishedAnchorBinding = {
+  rowId: string; companyId: string; internalId: string; profileKey: string;
+  eventId: string; contentHash: string; method: string; sourceAsOf: string | null;
+};
+export type VerifiedRegistryAnchor = Readonly<{
+  identity: Readonly<RegistryProfile["identity"]>; binding: Readonly<PublishedAnchorBinding>; sourceIds: readonly string[];
+}>;
+// Only the server's current rows plus exact registryReceipts event readback may
+// enter this set. Neither a JSON request nor an ordinary prior profile is one.
+const verifiedRegistryAnchors = new WeakSet<VerifiedRegistryAnchor>();
+const anchorMethods = new Set<NonNullable<RegistryProfile["verification"]>["method"]>([
+  "exact_legal_name_address", "exact_registry_dba_address", "official_website_corroboration",
+  "reviewed_sam_domain_legal_address", "reviewed_official_registration_history", "reviewed_irs_filing_ein_domain",
+]);
+
+/** Request-local validation of server-loaded rows; never call with client receipts. */
+export function validatePublishedRegistryAnchors(rows: readonly RegistryAnchorRow[], receipts: readonly RegistryAnchorReceipt[], now = new Date()): VerifiedRegistryAnchor[] {
+  const anchors: VerifiedRegistryAnchor[] = [];
+  for (const row of rows) {
+    try {
+      const profile = row.registry_profile, publication = profile?.publication, verification = profile?.verification;
+      if (row.source !== "registry" || row.kind !== "ops_profile" || !text(row.id, 100)
+        || rows.filter(other => other.id === row.id).length !== 1 || !publication || !verification
+        || !anchorMethods.has(verification.method) || verification.publishedAnchor !== undefined
+        || !Array.isArray(verification.sourceIds) || !verification.sourceIds.length || !verification.sourceIds.every(id => text(id, 1000))
+        || !text(publication.eventId, 100) || !/^[a-f0-9]{64}$/.test(publication.contentHash)
+        || !Number.isFinite(Date.parse(publication.publishedAt)) || Date.parse(publication.publishedAt) > now.getTime() + 60_000
+        || !Number.isFinite(Date.parse(verification.verifiedAt)) || Date.parse(verification.verifiedAt) > now.getTime() + 60_000) continue;
+      const exact = receipts.filter(receipt => receipt.id === row.id);
+      if (exact.length !== 1 || !exact[0].eventVerified || exact[0].companyId !== row.company_id
+        || exact[0].internalId !== row.netsuite_internal_id || exact[0].profileKey !== row.label
+        || exact[0].eventId !== publication.eventId || exact[0].contentHash !== publication.contentHash
+        || exact[0].publishedAt !== publication.publishedAt) continue;
+      const { verification: _verification, publication: _publication, ...original } = profile;
+      const parsed = parseRegistryFinding({ internalId: row.netsuite_internal_id, companyId: row.company_id,
+        source: row.source, kind: row.kind, detail: row.detail, evidence: row.evidence, sourceUrl: row.evidence_url, registryProfile: original }, now);
+      if (parsed.label !== row.label || parsed.sourceUrl !== row.evidence_url
+        || stableRegistryJson(parsed.profile) !== stableRegistryJson(original)
+        || registryContentHash(parsed.profile, parsed.sourceUrl, parsed.detail) !== publication.contentHash) continue;
+      const anchor = Object.freeze({ identity: Object.freeze({ ...parsed.profile.identity }),
+        binding: Object.freeze({ rowId: row.id, companyId: row.company_id, internalId: row.netsuite_internal_id, profileKey: row.label,
+          eventId: publication.eventId, contentHash: publication.contentHash, method: verification.method, sourceAsOf: profile.sourceAsOf }),
+        sourceIds: Object.freeze([...verification.sourceIds]) });
+      verifiedRegistryAnchors.add(anchor); anchors.push(anchor);
+    } catch { /* Malformed historical rows cannot authorize a new identity. */ }
+  }
+  return anchors.sort((a, b) => a.binding.rowId.localeCompare(b.binding.rowId));
+}
+
+function publishedAnchorIdentityEqual(left: RegistryProfile["identity"], right: RegistryProfile["identity"]) {
+  // Deliberately narrower than the canonical-address matcher: no legal suffix,
+  // substantive word, street designator, unit, apostrophe or hyphen is removed.
+  const words = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+  const literal = (value: string) => words(value).replace(/([a-z])[.,](?=\s|$)/g, "$1");
+  const fullStreet = (value: RegistryProfile["identity"]) => {
+    let line1 = words(value.addressLine1);
+    // One terminal cardinal direction may have a full stop. Decimal numbers,
+    // opaque units and a separately supplied line 2 retain all punctuation.
+    if (!value.addressLine2?.trim() && !/(?:\b(?:ste|suite|unit|apt|apartment|floor|fl|rm|room|bldg|building)\b|#)/.test(line1))
+      line1 = line1.replace(/\b([nsew])\.$/, "$1");
+    return words(`${line1} ${value.addressLine2 ?? ""}`);
+  };
+  const postalLiteral = (value: RegistryProfile["identity"]) => value.postalCode.replace(/[ -]/g, "").toUpperCase();
+  // Absent country stays absent. The parser permits only US-shaped ZIPs without
+  // an explicit country; a known CA/US conflict or missing CA country fails.
+  const countries = left.countryCode === right.countryCode
+    || (!left.countryCode && right.countryCode === "US") || (!right.countryCode && left.countryCode === "US");
+  return countries && literal(left.legalName) === literal(right.legalName)
+    && Boolean(literal(left.legalName)) && fullStreet(left) === fullStreet(right)
+    && Boolean(left.city && right.city && words(left.city) === words(right.city))
+    && left.state === right.state && postalLiteral(left) === postalLiteral(right);
+}
+export function verifyRegistryIdentity(profile: RegistryProfile, company: { name: string; id?: string; netsuite_internal_id?: string }, context: CompanyIdentityContext, prior: RegistryProfile[], now = new Date(), anchors: readonly VerifiedRegistryAnchor[] = []): RegistryProfile["verification"] | null {
   const p = profile.identity;
   const names = [company.name, ...context.aliases];
   // Postal city aliases are immaterial only after the entire street/unit, ZIP,
@@ -496,6 +576,12 @@ export function verifyRegistryIdentity(profile: RegistryProfile, company: { name
   const binding = prior.find(old => old.dataset === profile.dataset && old.recordId === profile.recordId && old.publication?.contentHash
     && old.verification?.sourceIds.length && ["exact_legal_name_address", "prior_registry_binding", "official_website_corroboration"].includes(old.verification.method)
     && stableRegistryJson(old.identity) === stableRegistryJson(profile.identity));
-  return binding ? { method: "prior_registry_binding", verifiedAt: now.toISOString(), sourceIds: [...binding.verification!.sourceIds],
-    ...(binding.verification!.website ? { website: binding.verification!.website } : {}) } : null;
+  if (binding) return { method: "prior_registry_binding", verifiedAt: now.toISOString(), sourceIds: [...binding.verification!.sourceIds],
+    ...(binding.verification!.website ? { website: binding.verification!.website } : {}) };
+  const anchor = anchors.find(item => verifiedRegistryAnchors.has(item)
+    && item.binding.companyId === company.id && item.binding.internalId === company.netsuite_internal_id
+    && item.binding.profileKey !== registryProfileKey(profile) && publishedAnchorIdentityEqual(p, item.identity));
+  return anchor ? { method: "verified_published_profile_identity", verifiedAt: now.toISOString(),
+    sourceIds: [`registry-profile:${anchor.binding.rowId}:${anchor.binding.contentHash}`, ...anchor.sourceIds],
+    publishedAnchor: { ...anchor.binding } } : null;
 }
