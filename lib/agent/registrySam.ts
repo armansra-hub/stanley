@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
-import { registryContentHash, sameRegistryLegalName, sameRegistryStreet, sameRegistryTerminalFloor, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
+import { normalizedDba, registryContentHash, sameRegistryLegalName, sameRegistryStreet, sameRegistryTerminalFloor, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 
 // One already retained official public extract, not an arbitrary caller URL or
 // a mutable government-match flag. Supporting another extract needs review.
@@ -16,6 +16,7 @@ export type RegistrySamCorroboration = {
   lineNumber: number; sourceAsOf: string; observedAt: string;
   rawRow: string; rawRowSha256: string; canonicalIdentitySha256: string;
   addressComparison?: "explicit_terminal_floor_v1";
+  nameComparison?: "explicit_retained_dba_v1";
   reader: Attestation; reviewer: Attestation;
 };
 type Company = { id: string; netsuite_internal_id: string; name: string; domain?: string | null; website_raw?: string | null };
@@ -53,8 +54,9 @@ export function registrySamEvidenceHash(row: RegistryFinding, proof: Omit<Regist
  * boundary; no caller verified flag or source URL establishes admission. */
 export function parseRegistrySamCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistrySamCorroboration {
   const keys = ["schema", "archiveSha256", "archiveMember", "lineNumber", "sourceAsOf", "observedAt", "rawRow", "rawRowSha256", "canonicalIdentitySha256", "reader", "reviewer"];
-  if (!object(raw) || Object.keys(raw).some(k => !keys.includes(k) && k !== "addressComparison") || keys.some(k => !(k in raw))
+  if (!object(raw) || Object.keys(raw).some(k => !keys.includes(k) && k !== "addressComparison" && k !== "nameComparison") || keys.some(k => !(k in raw))
     || "addressComparison" in raw && raw.addressComparison !== "explicit_terminal_floor_v1"
+    || "nameComparison" in raw && raw.nameComparison !== "explicit_retained_dba_v1"
     || raw.schema !== SAM_SNAPSHOT.schema || raw.archiveSha256 !== SAM_SNAPSHOT.archiveSha256
     || raw.archiveMember !== SAM_SNAPSHOT.archiveMember || raw.sourceAsOf !== SAM_SNAPSHOT.sourceAsOf
     || !Number.isInteger(raw.lineNumber) || Number(raw.lineNumber) < 2 || Number(raw.lineNumber) > SAM_SNAPSHOT.records + 1
@@ -96,9 +98,16 @@ export function verifyRegistrySam(row: RegistryFinding, raw: unknown, company: C
     || proof.canonicalIdentitySha256 !== registrySamCanonicalHash(company, context)) throw new Error("SAM canonical identity changed");
   const canonicalHost = host(company.domain || company.website_raw);
   if (!canonicalHost || canonicalHost !== host(sam.website)) throw new Error("SAM official domain does not exactly match canonical domain");
-  // This initial branch is legal-to-legal only. The literal SAM DBA is retained
-  // as evidence, never used to bridge a different target legal operator.
-  if (!sameRegistryLegalName(sam.legalName, target.legalName)) throw new Error("SAM and target registry legal operators differ");
+  const explicitDba = proof.nameComparison === "explicit_retained_dba_v1";
+  if (explicitDba) {
+    // A UCC debtor may be recorded under the complete explicit SAM DBA. Keep
+    // that role separate from SAM's legal operator; never drop a name token or
+    // legal suffix. The canonical brand, original debtor and DBA must all agree.
+    if (row.profile.dataset !== "co_ucc" || !clean(sam.dbaName) || !normalizedDba(sam.dbaName)
+      || normalizedDba(company.name) !== normalizedDba(sam.dbaName)
+      || normalizedDba(target.legalName) !== normalizedDba(sam.dbaName))
+      throw new Error("SAM explicit DBA requires exact canonical brand and recorded UCC debtor name");
+  } else if (!sameRegistryLegalName(sam.legalName, target.legalName)) throw new Error("SAM and target registry legal operators differ");
   const compatible = (name: string) => sameRegistryLegalName(name, sam.legalName) || Boolean(sam.dbaName && words(name) === words(sam.dbaName));
   if (context.aliases.some(name => !compatible(name))
     || /\b(?:incorporated|inc|corporation|corp|limited|ltd|llc|llp|pllc|lp|pc)\.?$/i.test(company.name.trim()) && !compatible(company.name))
@@ -112,7 +121,11 @@ export function verifyRegistrySam(row: RegistryFinding, raw: unknown, company: C
   const { reader, reviewer, ...evidence } = proof;
   return { method: "reviewed_sam_domain_legal_address", verifiedAt: now.toISOString(), sourceIds: [`sam:${sam.uei}:${proof.rawRowSha256}`],
     sam: { ...evidence, ...sam, sourceUrl: SAM_SNAPSHOT.sourceUrl, reader, reviewer,
-      evidenceSha256: registrySamEvidenceHash(row, evidence), comparison: proof.addressComparison === "explicit_terminal_floor_v1"
-        ? "exact_domain_legal_physical_address_explicit_terminal_floor_v1" : "exact_domain_legal_physical_address",
-      canonicalAddresses: context.addresses, scope: "SAM registration and address as of the extract date; no current registration or company-address mutation." } };
+      evidenceSha256: registrySamEvidenceHash(row, evidence), comparison: explicitDba
+        ? "exact_domain_explicit_dba_physical_address" : proof.addressComparison === "explicit_terminal_floor_v1"
+          ? "exact_domain_legal_physical_address_explicit_terminal_floor_v1" : "exact_domain_legal_physical_address",
+      ...(explicitDba ? { targetNameRole: "sam_dba", targetRecordedName: target.legalName } : {}),
+      canonicalAddresses: context.addresses, scope: explicitDba
+        ? "Exact retained SAM DBA and recorded UCC debtor name association at the full physical address. SAM legal operator and target recorded name remain distinct; no legal-name equivalence, current registration, debt or company-address mutation is asserted."
+        : "SAM registration and address as of the extract date; no current registration or company-address mutation." } };
 }

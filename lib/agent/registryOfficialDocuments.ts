@@ -63,7 +63,15 @@ type CourtEntry = Omit<BaseEntry, "sources"> & { chain: "court_contract_counterp
       city: string; state: string; postalCode: string; email: string; remitEmail: string };
     address: Address; addressEffectiveDate: null; contractDate: null; currentAddressClaim: false;
     counterpartyBankruptcyClaim: false; assignmentCompletedClaim: false; financialInference: false } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry;
+type ConferenceSource = Omit<Source, "kind" | "completeRead"> & { kind: "university_conference_pdf_excerpt"; completeRead: false; selectedExcerptCompleteRead: true };
+type ConferenceEntry = Omit<BaseEntry, "sources"> & { chain: "university_conference_business_contact"; sources: [ConferenceSource];
+  conference: { role: "historical_attendee_business_contact"; publisher: string; title: string; eventYear: string;
+    fullDocumentPages: number; fullDocumentRead: false; selectedPagesCompleteRead: true;
+    pages: {page:number;text:string;textSha256:string;visualSha256:string}[]; excerptReceiptSha256:string; identityPage:number;
+    contactBlock:string; person:string; personTitle:string; companyDisplay:string; email:string; phoneLiteral:string;
+    addressLineLiteral:string; localityLiteral:string; address:Address; publicationDate:null; addressEffectiveDate:null;
+    currentAddressClaim:false; registeredOfficeClaim:false; currentEmploymentClaim:false; continuousOccupancyClaim:false; financialInference:false } };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -85,7 +93,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -98,6 +106,7 @@ function sourceChecks(e: RegistryOfficialDocumentEntry) {
   else if (e.chain === "official_municipal_dba_cslb_header") municipalCslbSourceChecks(e);
   else if (e.chain === "company_pdf_contact_role") companyPdfSourceChecks(e);
   else if (e.chain === "court_contract_counterparty_contact") courtSourceChecks(e);
+  else if (e.chain === "university_conference_business_contact") conferenceSourceChecks(e);
   else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
@@ -132,7 +141,7 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
     && p.provenance.rowSha256 === t.rowSha256 && sha(stableRegistryJson(p)) === t.profileSha256 && p.sourceAsOf === t.sourceAsOf
     && p.observedAt === t.observedAt && row.evidence === p.provenance.quote, "original target pin changed");
   let raw: Record<string, unknown>;
-  if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role" || e.chain === "court_contract_counterparty_contact") {
+  if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role" || e.chain === "court_contract_counterparty_contact" || e.chain === "university_conference_business_contact") {
     const lines = row.evidence.split("\n"); need(p.dataset === "co_ucc" && t.role === "debtor_business" && lines.length === 2, "target debtor role invalid");
     raw = JSON.parse(lines[0]); const filing = JSON.parse(lines[1]);
     if(e.chain === "court_contract_counterparty_contact") {
@@ -268,6 +277,7 @@ function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentit
   if (e.chain === "official_municipal_dba_cslb_header") { municipalCslbIdentityChain(e); return; }
   if (e.chain === "company_pdf_contact_role") { companyPdfIdentityChain(e); return; }
   if (e.chain === "court_contract_counterparty_contact") { courtIdentityChain(e); return; }
+  if (e.chain === "university_conference_business_contact") { conferenceIdentityChain(e); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -437,6 +447,47 @@ function courtIdentityChain(e: CourtEntry) {
     && c.address.addressLine1===r.addressLine1 && !c.address.addressLine2 && c.address.city===r.city && c.address.state==="CO"
     && c.address.postalCode===r.postalCode && c.address.countryCode==="US" && datedUsAddress(c.address,e.targetAddress),
     "court full address or explicit ZIP5 comparison differs");
+}
+
+// One reviewed university attendee block. It is not an office registration,
+// a company-authored document, or a general directory/address matching route.
+function conferenceSourceChecks(e: ConferenceEntry) {
+  const s=e.sources[0],c=e.conference;
+  need(e.sources.length===1 && e.companyId==="46996059-aa45-42c2-accc-ee9c18eb9b7f" && e.internalId==="4115726"
+    && e.canonicalDomain==="gbsm.com" && e.target.dataset==="co_ucc" && e.target.recordId==="1352541:1087948"
+    && e.target.role==="debtor_business","conference finite scope differs");
+  need(s.kind==="university_conference_pdf_excerpt" && s.completeRead===false && s.selectedExcerptCompleteRead===true
+    && s.status===200 && s.contentType==="application/pdf" && iso(s.observedAt) && hash(s.receiptSha256) && hash(s.bodySha256)
+    && hash(s.originalSourcePin) && s.text.length>20 && s.text.length<=150000 && sha(s.text)===s.textSha256
+    && s.sourceDate===null && s.sourceDateText===null,"conference capture or scoped text differs");
+  need(publicUrl(s.url).href==="https://law.du.edu/sites/default/files/2023-11/2013%20Attendee%20List.pdf"
+    && s.requestedUrl==="https://www.law.du.edu/sites/default/files/2023-11/2013%20Attendee%20List.pdf" && s.hops===null,
+    "conference university provenance differs");
+  need(c.fullDocumentPages===27 && c.fullDocumentRead===false && c.selectedPagesCompleteRead===true
+    && c.pages.length===2 && c.pages.every((p,i)=>p.page===[1,7][i] && p.text.length>0 && sha(p.text)===p.textSha256 && hash(p.visualSha256))
+    && hash(c.excerptReceiptSha256) && c.excerptReceiptSha256===s.originalSourcePin
+    && s.text===c.pages.map(p=>`--- PHYSICAL PAGE ${p.page} ---\n${p.text}`).join("\n\n"),"conference complete selected pages differ");
+}
+function conferenceIdentityChain(e: ConferenceEntry) {
+  const c=e.conference,s=e.sources[0],page=c.pages[1].text;
+  need(c.role==="historical_attendee_business_contact" && c.publisher==="University of Denver, Sturm College of Law / Rocky Mountain Land Use Institute"
+    && c.title==="2013 ROCKY MOUNTAIN LAND USE INSTITUTE CONFERENCE ATTENDEE LIST" && c.eventYear==="2013"
+    && compact(c.pages[0].text).includes(c.title) && Number(c.eventYear)<=new Date(s.observedAt).getUTCFullYear()
+    && c.publicationDate===null && c.addressEffectiveDate===null && c.currentAddressClaim===false && c.registeredOfficeClaim===false
+    && c.currentEmploymentClaim===false && c.continuousOccupancyClaim===false && c.financialInference===false,"conference role or date claim differs");
+  need(c.identityPage===7 && c.pages[0].text.startsWith("Speakers bolded and italicized Page 1\r\n")
+    && page.startsWith("Speakers bolded and italicized Page 7\r\n") && c.person==="Davis, Alex" && c.personTitle==="Principal"
+    && c.companyDisplay==="GBSM Consulting" && sameRegistryLegalName(e.legalName,"GBSM Inc.")
+    && c.email==="alexdavis@gbsm.com" && c.email.split("@")[1]===e.canonicalDomain && c.phoneLiteral==="303-825-6100"
+    && e.phone===c.phoneLiteral.replace(/\D/g,""),"conference business identity differs");
+  const block=[c.person,c.personTitle,c.companyDisplay,c.addressLineLiteral,c.localityLiteral,c.phoneLiteral,c.email].join("\r\n");
+  need(c.contactBlock===block && page.split(block).length===2 && s.text.split(block).length===2
+    && page.includes(block+"\r\nDavis, Anna"),"conference exact attendee block differs");
+  need(c.addressLineLiteral==="600 17th Street, Suite \r\n2020 South" && c.localityLiteral==="Denver, CO 80202"
+    && c.address.addressLine1==="600 17th Street, Suite 2020 South" && !c.address.addressLine2 && c.address.city==="Denver"
+    && c.address.state==="CO" && c.address.postalCode==="80202" && c.address.countryCode==="US"
+    && e.targetAddress.addressLine1===c.address.addressLine1 && !e.targetAddress.addressLine2
+    && fullAddress(c.address,e.targetAddress),"conference exact South address differs");
 }
 
 /** A retained dated association only; never a canonical-field update or a claim

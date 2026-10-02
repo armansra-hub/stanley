@@ -2265,6 +2265,139 @@
         "The other nine candidates, including Wyandot suite 317 / ZIP 80212, remain held.",
         "Redirect history was not recorded; requested/final URLs and full HTTP response are retained without asserting zero redirects."
       ]
+    },
+    {
+      "id": "gbsm-ucc-1352541-1087948-university-conference-contact",
+      "chain": "university_conference_business_contact",
+      "companyId": "46996059-aa45-42c2-accc-ee9c18eb9b7f",
+      "internalId": "4115726",
+      "canonicalDomain": "gbsm.com",
+      "canonicalIdentitySha256": "8e3413400804dfd8e7a1396701756270a057d82dcd3b79cde4c2895bf1cbab07",
+      "target": {
+        "dataset": "co_ucc",
+        "recordId": "1352541:1087948",
+        "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1087948",
+        "rowSha256": "13c0cfbad2dbf7ea647fd16d157020f3f6edf7dc893731cbf67ae3f6db2e9681",
+        "evidenceSha256": "3f3ca4d94bbc5f625e563a63b77564109254a4d97ca3153f71fbe61b41c91de3",
+        "profileSha256": "2702b3d6ef59fa80251fc30479a0ddf41a64696a9bd6379519ada44985766bba",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:14.948448Z",
+        "role": "debtor_business"
+      },
+      "sources": [
+        {
+          "kind": "university_conference_pdf_excerpt",
+          "url": "https://law.du.edu/sites/default/files/2023-11/2013%20Attendee%20List.pdf",
+          "requestedUrl": "https://www.law.du.edu/sites/default/files/2023-11/2013%20Attendee%20List.pdf",
+          "hops": null,
+          "observedAt": "2026-10-02T07:43:55.349206+00:00",
+          "receiptSha256": "01be3857ff9864b687ee7029859b3fa6a4f1863b3208f53becfc314dd4b8c37f",
+          "bodySha256": "db23cd7ed6570f7c1b85a65ccb50cae5cb40f59661d4192e95dce842a5bab16a",
+          "text": "--- PHYSICAL PAGE 1 ---\nSpeakers bolded and italicized Page 1\r\n2013 ROCKY MOUNTAIN LAND USE INSTITUTE CONFERENCE\r\nATTENDEE LIST\r\nAangeenbrug, Lise\r\nExecutive Director\r\nGreat Outdoors Colorado \r\nTrust Fund\r\n303 E. 17th Avenue\r\nSuite 1060\r\nDenver, CO 80401\r\n303-226-4520\r\nliseaa@goco.org\r\nAggeler, Heidi\r\nManaging Director\r\nBBC Research & \r\nConsulting\r\n1999 Broadway\r\nSuite 2200\r\nDenver, CO 80202\r\n303-321-2547\r\nhaggeler@bbcresearch.co\r\nm\r\nAllen, Rachel\r\nStaff Attorney\r\nColorado Municipal \r\nLeague\r\n1144 Sherman Street\r\nDenver, CO 80203\r\n303-831-6411\r\nrallen@cml.org\r\nAltamirano, Juan\r\nLand Use Manager\r\nAlamosa County\r\n402 Edison Avenue\r\nAlamosa, CO 81101\r\n714-319-0303\r\njaltamirano@alamosacoun\r\nty.org\r\nAmbrose, Keely\r\nSummit County Attorney's \r\nOffice\r\n208 E. Lincoln Avenue\r\nPO Box 68\r\nBreckenridge, CO 80424-\r\n0068\r\n970-453-3410\r\nlisae@co.summit.co.us\r\nAmundsen, Ole\r\nStrategic Conservation \r\nProgram Manager\r\nThe Conservation Fund\r\n376 Turkey Hill Road\r\nIthaca, NY 14850\r\n607-277-0999\r\noamundsen@conservation\r\nfund.org\r\nAnderson, Norman\r\npart-time admin law judge\r\npart-time admin law judge \r\nfor ND\r\n1240 N Broadway #2\r\nFargo, ND 58102\r\n701-232-4810\r\nnormanganderson@q.com\r\nAngell, Jim\r\nPaul M. Angel Family \r\nFoundation\r\n131 S. Clermont St.\r\nDenver, CO 80246\r\n720 272-1179\r\nangelljim@icloud.com\r\nArtigue, Cameron\r\nGammage & Burnham\r\n2 North Central\r\n15th Floor\r\nPhoenix, AZ 85004\r\n602-256-0566\r\ncartigue@gblaw.com\r\nAshby, Matt\r\nWestern Planner\r\n2101 O'Neil\r\nCheyenne, WY 82001\r\n307-637-6284\r\nkpetersen@cheyennecity.\r\norg\n\n--- PHYSICAL PAGE 7 ---\nSpeakers bolded and italicized Page 7\r\nDaggett, Susan\r\nDirector\r\nRocky Mountain Land Use \r\nInstitute\r\n2255 E. Evans Avenue \r\n#404\r\nSuite 404\r\nDenver, CO 80208\r\n303-871-6970\r\nsdaggett@law.du.edu\r\nDale, Craig\r\nPrincipal\r\nCapital Peak Partners, \r\nLLC\r\n50 Ivanhoe Street\r\nDenver, CO 80220\r\n303-378-8193\r\ncraigdale@capitalpeakpart\r\nners.com\r\nDall, Kimberly\r\nDevelopment Engineer\r\nCity of Brighton\r\n500 S. 4th Avenue\r\nFloor 2\r\nBrighton, CO 80601\r\n303-655-2046\r\nkdall@brightonco.gov\r\nDaly, Christopher\r\nCity Attorney\r\nCity of Arvada\r\n8101 Ralston Road\r\nArvada, CO 80002\r\n720-898-7199\r\nchris-d@arvada.org\r\nDameron, Alex\r\nColorado MMJ Daily\r\n2909 Forest St\r\nDenver, CO 80207\r\n720.933.0737\r\nalex@colommjdaily.com\r\nDaniel, Loretta\r\nCity of Aurora\r\n15151 E. Alameda Pkwy.\r\nAurora, CO 80012\r\n303-739-7250\r\nlldaniel@auroragov.org\r\nDanielson, Brent\r\nAssociate Planner\r\nAda County\r\n200 W. Front Street\r\nBoise, ID 83702\r\n208-287-7913\r\nbdanielson@adaweb.net\r\nDavidson, William\r\nBoulder County Land Use\r\nPO Box 471\r\nBoulder, CO 80306\r\n720-564-2630\r\nwdavidson@bouldercount\r\ny.org\r\nDavis, Alex\r\nPrincipal\r\nGBSM Consulting\r\n600 17th Street, Suite \r\n2020 South\r\nDenver, CO 80202\r\n303-825-6100\r\nalexdavis@gbsm.com\r\nDavis, Anna\r\nTown of Telluride\r\nPO Box 2562\r\nTelluride, CO 81435\r\n601-938-3437\r\nadavis@telluride-co.gov\r\nDawson, Leah\r\nSenior Planner\r\nCity of Thornton\r\n9500 Civic Center Drive\r\nThornton, CO 80229\r\n303-538-7596\r\nleah.dawson@cityofthornt\r\non.net\r\nDay, Marci\r\nPueblo County Attorneys \r\nOffice\r\n215 W 10th Street\r\nPueblo, CO 81003\r\n719-583-4806\r\nbuenos@co.pueblo.co.us\r\nDay, Megan\r\nSenior Project Planner\r\njuwi solar\r\n1805 29th Street\r\nSuite 2054\r\nBoulder, CO 80301\r\n719-685-9396\r\nmday@juwisolar.com\r\nDean, Kristin\r\nPrinciple Planner\r\nSummit County \r\nGovernment\r\nPO Box 5660\r\nFrisco, CO 80443\r\n970-668-4207\r\nkristind@co.summit.co.us\r\nDelogu, Orlando\r\nEmeritus Prof. of Law\r\nUniv. of Maine School of \r\nLaw\r\n246 Deering Avenue\r\nPortland, ME 04102\r\n207-780-4368\r\ndelogu@usm.maine.edu\r\nDeven, Mark\r\nCity Manager\r\nCity of Arvada\r\n8101 Ralston Road\r\nArvada, CO 80002\r\n720-898-7504\r\nshelly@arvada.org",
+          "textSha256": "e9d6140c879c981b4e5742c899a76e1412404bf5eb7084083e918abd87747444",
+          "completeRead": false,
+          "selectedExcerptCompleteRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "52da160389e6638516a70fd01e4441572c669770aa3f6c15d2b166294c8a8708",
+          "sourceDate": null,
+          "sourceDateText": null
+        }
+      ],
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/kerr_registry_research",
+          "reviewedAt": "2026-09-30T20:14:29.533Z",
+          "receiptSha256": "c07863420df16ac073f92bfcc6da003f119c75810720c18e3d0682d8aab2ff46",
+          "receiptActorField": "readerTaskId"
+        },
+        "independent": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T20:15:07.924Z",
+          "receiptSha256": "7509f55d9f02bbe81fd49af6b2c8f833f1b9cf38d61df372585b4fc83793feb1",
+          "receiptActorField": "reviewerTaskId"
+        },
+        "packetSha256": "2e702ed6f32cd6178c4c81bfa4aac76843f8794f9a3f5770aa8f8fbfbbbbb4df"
+      },
+      "sourceReader": {
+        "taskId": "/root/enercom_static_source",
+        "reviewedAt": "2026-10-02T07:47:30.281Z",
+        "receiptSha256": "667e570d089d34f33c1ab1a3f4a3d84a13af8ca3e325ea6ae5e4c9b0ce5675d1",
+        "receiptActorField": "readerTaskId"
+      },
+      "sourceReviewer": {
+        "taskId": "/root/cottonwood_review",
+        "reviewedAt": "2026-10-02T07:54:29.677Z",
+        "receiptSha256": "2e561edd392201910d0387f8391e73678d98817392471e15de7011f99bd9e61e",
+        "receiptActorField": "reviewerTaskId"
+      },
+      "legalName": "GBSM, Inc.",
+      "phone": "3038256100",
+      "targetAddress": {
+        "addressLine1": "600 17th Street, Suite 2020 South",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80202",
+        "countryCode": "US"
+      },
+      "conference": {
+        "role": "historical_attendee_business_contact",
+        "publisher": "University of Denver, Sturm College of Law / Rocky Mountain Land Use Institute",
+        "title": "2013 ROCKY MOUNTAIN LAND USE INSTITUTE CONFERENCE ATTENDEE LIST",
+        "eventYear": "2013",
+        "fullDocumentPages": 27,
+        "fullDocumentRead": false,
+        "selectedPagesCompleteRead": true,
+        "pages": [
+          {
+            "page": 1,
+            "text": "Speakers bolded and italicized Page 1\r\n2013 ROCKY MOUNTAIN LAND USE INSTITUTE CONFERENCE\r\nATTENDEE LIST\r\nAangeenbrug, Lise\r\nExecutive Director\r\nGreat Outdoors Colorado \r\nTrust Fund\r\n303 E. 17th Avenue\r\nSuite 1060\r\nDenver, CO 80401\r\n303-226-4520\r\nliseaa@goco.org\r\nAggeler, Heidi\r\nManaging Director\r\nBBC Research & \r\nConsulting\r\n1999 Broadway\r\nSuite 2200\r\nDenver, CO 80202\r\n303-321-2547\r\nhaggeler@bbcresearch.co\r\nm\r\nAllen, Rachel\r\nStaff Attorney\r\nColorado Municipal \r\nLeague\r\n1144 Sherman Street\r\nDenver, CO 80203\r\n303-831-6411\r\nrallen@cml.org\r\nAltamirano, Juan\r\nLand Use Manager\r\nAlamosa County\r\n402 Edison Avenue\r\nAlamosa, CO 81101\r\n714-319-0303\r\njaltamirano@alamosacoun\r\nty.org\r\nAmbrose, Keely\r\nSummit County Attorney's \r\nOffice\r\n208 E. Lincoln Avenue\r\nPO Box 68\r\nBreckenridge, CO 80424-\r\n0068\r\n970-453-3410\r\nlisae@co.summit.co.us\r\nAmundsen, Ole\r\nStrategic Conservation \r\nProgram Manager\r\nThe Conservation Fund\r\n376 Turkey Hill Road\r\nIthaca, NY 14850\r\n607-277-0999\r\noamundsen@conservation\r\nfund.org\r\nAnderson, Norman\r\npart-time admin law judge\r\npart-time admin law judge \r\nfor ND\r\n1240 N Broadway #2\r\nFargo, ND 58102\r\n701-232-4810\r\nnormanganderson@q.com\r\nAngell, Jim\r\nPaul M. Angel Family \r\nFoundation\r\n131 S. Clermont St.\r\nDenver, CO 80246\r\n720 272-1179\r\nangelljim@icloud.com\r\nArtigue, Cameron\r\nGammage & Burnham\r\n2 North Central\r\n15th Floor\r\nPhoenix, AZ 85004\r\n602-256-0566\r\ncartigue@gblaw.com\r\nAshby, Matt\r\nWestern Planner\r\n2101 O'Neil\r\nCheyenne, WY 82001\r\n307-637-6284\r\nkpetersen@cheyennecity.\r\norg",
+            "textSha256": "83a00975804253934ec28ebe5a295e0b56b377c51c9d13bd00042d0ae86cbeaa",
+            "visualSha256": "d4e5880e0e2fc895409e089c29ac31423315106bfbba3f11e2cb8292ffeab4d0"
+          },
+          {
+            "page": 7,
+            "text": "Speakers bolded and italicized Page 7\r\nDaggett, Susan\r\nDirector\r\nRocky Mountain Land Use \r\nInstitute\r\n2255 E. Evans Avenue \r\n#404\r\nSuite 404\r\nDenver, CO 80208\r\n303-871-6970\r\nsdaggett@law.du.edu\r\nDale, Craig\r\nPrincipal\r\nCapital Peak Partners, \r\nLLC\r\n50 Ivanhoe Street\r\nDenver, CO 80220\r\n303-378-8193\r\ncraigdale@capitalpeakpart\r\nners.com\r\nDall, Kimberly\r\nDevelopment Engineer\r\nCity of Brighton\r\n500 S. 4th Avenue\r\nFloor 2\r\nBrighton, CO 80601\r\n303-655-2046\r\nkdall@brightonco.gov\r\nDaly, Christopher\r\nCity Attorney\r\nCity of Arvada\r\n8101 Ralston Road\r\nArvada, CO 80002\r\n720-898-7199\r\nchris-d@arvada.org\r\nDameron, Alex\r\nColorado MMJ Daily\r\n2909 Forest St\r\nDenver, CO 80207\r\n720.933.0737\r\nalex@colommjdaily.com\r\nDaniel, Loretta\r\nCity of Aurora\r\n15151 E. Alameda Pkwy.\r\nAurora, CO 80012\r\n303-739-7250\r\nlldaniel@auroragov.org\r\nDanielson, Brent\r\nAssociate Planner\r\nAda County\r\n200 W. Front Street\r\nBoise, ID 83702\r\n208-287-7913\r\nbdanielson@adaweb.net\r\nDavidson, William\r\nBoulder County Land Use\r\nPO Box 471\r\nBoulder, CO 80306\r\n720-564-2630\r\nwdavidson@bouldercount\r\ny.org\r\nDavis, Alex\r\nPrincipal\r\nGBSM Consulting\r\n600 17th Street, Suite \r\n2020 South\r\nDenver, CO 80202\r\n303-825-6100\r\nalexdavis@gbsm.com\r\nDavis, Anna\r\nTown of Telluride\r\nPO Box 2562\r\nTelluride, CO 81435\r\n601-938-3437\r\nadavis@telluride-co.gov\r\nDawson, Leah\r\nSenior Planner\r\nCity of Thornton\r\n9500 Civic Center Drive\r\nThornton, CO 80229\r\n303-538-7596\r\nleah.dawson@cityofthornt\r\non.net\r\nDay, Marci\r\nPueblo County Attorneys \r\nOffice\r\n215 W 10th Street\r\nPueblo, CO 81003\r\n719-583-4806\r\nbuenos@co.pueblo.co.us\r\nDay, Megan\r\nSenior Project Planner\r\njuwi solar\r\n1805 29th Street\r\nSuite 2054\r\nBoulder, CO 80301\r\n719-685-9396\r\nmday@juwisolar.com\r\nDean, Kristin\r\nPrinciple Planner\r\nSummit County \r\nGovernment\r\nPO Box 5660\r\nFrisco, CO 80443\r\n970-668-4207\r\nkristind@co.summit.co.us\r\nDelogu, Orlando\r\nEmeritus Prof. of Law\r\nUniv. of Maine School of \r\nLaw\r\n246 Deering Avenue\r\nPortland, ME 04102\r\n207-780-4368\r\ndelogu@usm.maine.edu\r\nDeven, Mark\r\nCity Manager\r\nCity of Arvada\r\n8101 Ralston Road\r\nArvada, CO 80002\r\n720-898-7504\r\nshelly@arvada.org",
+            "textSha256": "ee272ad8c693a4156c9cc099e696c4d71bf43fc16736f64477bd1a3786a6b32c",
+            "visualSha256": "ff26981cbd50745d19b7f9aa8ee21ada58d4acca73b55169100fc257a9424a7b"
+          }
+        ],
+        "excerptReceiptSha256": "52da160389e6638516a70fd01e4441572c669770aa3f6c15d2b166294c8a8708",
+        "identityPage": 7,
+        "contactBlock": "Davis, Alex\r\nPrincipal\r\nGBSM Consulting\r\n600 17th Street, Suite \r\n2020 South\r\nDenver, CO 80202\r\n303-825-6100\r\nalexdavis@gbsm.com",
+        "person": "Davis, Alex",
+        "personTitle": "Principal",
+        "companyDisplay": "GBSM Consulting",
+        "email": "alexdavis@gbsm.com",
+        "phoneLiteral": "303-825-6100",
+        "addressLineLiteral": "600 17th Street, Suite \r\n2020 South",
+        "localityLiteral": "Denver, CO 80202",
+        "address": {
+          "addressLine1": "600 17th Street, Suite 2020 South",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80202",
+          "countryCode": "US"
+        },
+        "publicationDate": null,
+        "addressEffectiveDate": null,
+        "currentAddressClaim": false,
+        "registeredOfficeClaim": false,
+        "currentEmploymentClaim": false,
+        "continuousOccupancyClaim": false,
+        "financialInference": false
+      },
+      "limitations": [
+        "Complete selected physical pages 1 and 7 of a retained 27-page PDF were read; full-document read is not claimed.",
+        "This is a third-party historical conference attendee business-contact record, not a company filing, registered/principal-office declaration, or current occupancy proof.",
+        "GBSM Consulting is the source display, not a replacement legal name. Canonical GBSM Inc. and original GBSM, Inc. remain unchanged; email domain is the direct canonical anchor.",
+        "The event year 2013 is not a precise publication or address-effective date; URL folder and HTTP Last-Modified are not used as publication dates. No uninterrupted occupancy or current employment is inferred.",
+        "Only the exact original Suite 2020 South record is selected. Three literal 2020s records and both 535-address records remain held; three prior accepted mappings are preserved.",
+        "Original raw country United States and absent profile countryCode are retained. Internal US comparison does not add a source or canonical country.",
+        "The elapsed 2021 lapse, active debtor flag and 2016 initial filing are preserved without current debt, payoff, closure or financing inference.",
+        "No Fund financials, grantee nonprofit status, political contributor record, unavailable CDOT snippet or buying-budget inference is used.",
+        "Redirect history is unknown; requested and final URLs are retained without claiming no redirects."
+      ]
     }
   ]
 }
