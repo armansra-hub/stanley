@@ -283,6 +283,20 @@ function sameLimitedCompanySubject(left: string, right: string): boolean {
   const x = a.core.match(/^(.+) (company|co)$/), y = b.core.match(/^(.+) (company|co)$/);
   return Boolean(x && y && x[1] === y[1] && x[2] !== y[2]);
 }
+function samePossessiveWebsiteSubject(left: string, right: string): boolean {
+  // One internal possessive apostrophe is punctuation, not a removed letter or
+  // an alias. The caller requires an existing canonical/legal-name agreement
+  // and the same complete US source address. Never used in ID or DBA modes.
+  const fold = (value: string) => {
+    const name = value.normalize("NFKC");
+    const marks = name.match(/['’]/g) ?? [];
+    if (!marks.length) return name;
+    if (marks.length !== 1 || !/\b[a-z]{2,}['’]s\b/i.test(name)) return null;
+    return name.replace(/(\b[a-z]{2,})['’](s\b)/i, "$1$2");
+  };
+  const a = fold(left), b = fold(right);
+  return a !== null && b !== null && (a !== left || b !== right) && sameRegistryLegalName(a, b);
+}
 type SubjectSpan = { start: number; end: number; definitionEnd: number };
 function separateContactHeadingSubjects(html: string, visibleText: string, subject: string, normalization?: RegistryWebsiteNormalization): Set<number> {
   // Bind the exception to this exact visible occurrence and separate headings.
@@ -499,7 +513,12 @@ export function registryWebsiteVerifier() {
     const p = row.profile.identity, a = proof.address;
     const cslbMode = identifierMode && proof.identifier?.kind === "cslb_license";
     if (!a && !cslbMode) throw new Error("registry website complete address is required");
+    const possessiveAddress = !identifierMode && !dbaMode && a?.countryCode === "US" && (p.countryCode ?? "US") === "US"
+      && typeof p.city === "string" && p.city.length > 0 && words(a.city) === words(p.city) && words(a.state) === words(p.state)
+      && a.postalCode.slice(0, 5) === p.postalCode.slice(0, 5) && sameRegistryStreet(a, p)
+      && [company.name, ...context.aliases].some(name => sameRegistryLegalName(name, p.legalName));
     const sameSubject = (left: string, right: string) => sameRegistryLegalName(left, right)
+      || (possessiveAddress && samePossessiveWebsiteSubject(left, right))
       || (!identifierMode && a?.countryCode === "US" && p.countryCode === "US" && sameLimitedCompanySubject(left, right));
     const originalDba = dbaMode ? dbaSubject(row, proof, company.name, context.aliases) : null;
     if (proof.operatorRelationship) operatorRelationshipSpan(proof, proof.operatorRelationship.quote, redirect?.finalUrl ?? domain);

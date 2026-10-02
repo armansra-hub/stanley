@@ -404,8 +404,22 @@ function sameUsAddressFormat(left: RegistryStreetAddress, right: RegistryStreetA
     return base && /^\d+[a-z]? .+ (?:st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter|trl|pkwy)$/.test(base)
       ? base + " #" + match[bare || line2 ? 1 : 2].toLowerCase() : null;
   };
+  const repeatedLocality = (address: RegistryStreetAddress) => {
+    // Compare only a terminal locality repeated verbatim from structured fields.
+    // Keep every street/unit token and leave the source/fingerprint unchanged.
+    if (left.countryCode !== "US" || right.countryCode !== "US") return null;
+    const comma = address.addressLine1.lastIndexOf(",");
+    if (comma < 0) return null;
+    const spaceCase = (value: string) => value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+    const suffix = address.addressLine1.slice(comma + 1);
+    if (spaceCase(suffix) !== spaceCase(address.city + " " + address.state + " United States (US)")) return null;
+    const street = registryStreet({ ...address, addressLine1: address.addressLine1.slice(0, comma).trim() });
+    return /^\d+[a-z]? .+/.test(street) ? street : null;
+  };
   const a = suite(left), b = suite(right);
-  return (attentionAddress(left) !== null && attentionAddress(left) === registryStreet(right))
+  return (repeatedLocality(left) !== null && repeatedLocality(left) === registryStreet(right))
+    || (repeatedLocality(right) !== null && repeatedLocality(right) === registryStreet(left))
+    || (attentionAddress(left) !== null && attentionAddress(left) === registryStreet(right))
     || (attentionAddress(right) !== null && attentionAddress(right) === registryStreet(left))
     || (pointeSuffix(left) !== null && pointeSuffix(left) === pointeSuffix(right))
     || (opaqueHashUnit(left, true) !== null && opaqueHashUnit(left, true) === opaqueHashUnit(right, false))
