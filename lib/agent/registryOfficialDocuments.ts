@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseCsv } from "@/lib/csv";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { registryContentHash, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 import { registryOfficialApiCanonicalHash } from "./registryOfficialApi";
@@ -8,7 +9,7 @@ type Company = { id: string; netsuite_internal_id: string; name: string; domain?
 type Witness = { taskId: string; reviewedAt: string; evidenceSha256: string };
 type Read = { taskId: string; reviewedAt: string; receiptSha256: string; receiptActorField: string };
 type Address = { addressLine1: string; addressLine2?: string; city: string; state: string; postalCode: string; countryCode: "US" };
-type Source = { kind: "municipal_pdf" | "official_rendered_record" | "own_website"; url: string; requestedUrl: string | null; hops: {url:string;status:number}[] | null; observedAt: string;
+type Source = { kind: "municipal_pdf" | "official_rendered_record" | "own_website" | "company_pdf"; url: string; requestedUrl: string | null; hops: {url:string;status:number}[] | null; observedAt: string;
   receiptSha256: string; bodySha256: string | null; text: string; textSha256: string; completeRead: true;
   status: 200 | null; contentType: string | null; originalSourcePin: string; sourceDate: string | null; sourceDateText: string | null };
 type Target = { dataset: "co_ucc" | "sba_7a"; recordId: string; sourceUrl: string; rowSha256: string; evidenceSha256: string;
@@ -33,7 +34,50 @@ type IrsEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "official_irs_e
   historicalDate: string; laterDate: string; currentPhysicalAddressClaim: false;
   assignedDomainConflict: { disposition: "retain_assigned_domain_as_distinct_entity"; domain: string; legalName: string; ein: string;
     url: string; observedAt: string; text: string; textSha256: string; htmlSha256: string; packetSha256: string; identityQuote: string } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry;
+type MunicipalCslbEntry = Omit<BaseEntry, "target"> & { chain: "official_municipal_dba_cslb_header";
+  target: Omit<Target, "dataset" | "role"> & { dataset: "ca_contractors"; role: "contractor_mailing_address" };
+  csvHeader: { text: string; sha256: string; inspectionReceiptSha256: string };
+  secondName: { column: "BUS-NAME-2"; value: string; typeColumn: "NAME-TP-2"; typeValue: "Current Name" };
+  municipal: { recordId: "CLR21-0269"; role: "legal_company_name_and_dba"; legalCompanyName: string; dba: string;
+    companyEmail: string; address: Address; identityQuote: string; headerStatus: "Active"; headerExpiry: "03/31/2024";
+    detailExpiry: "2024-10-01"; currentLicenseClaim: false };
+  ownSiteRole: "company_headquarters"; ownSiteContactQuote: string; sourceStatus: "QUAL Bond SUSP" };
+type CompanyPdfEntry = BaseEntry & { chain: "company_pdf_contact_role";
+  ownSiteRole: "legal_operator_name_and_phone"; ownSiteLegalName: string; ownSiteIdentityQuote: string;
+  pdf: { role: "historical_company_contact_block"; currentAddressClaim: false; publicationDateClaim: false;
+    pageCount: number; pages: { page: number; text: string; textSha256: string; visualSha256: string }[];
+    extractionReceiptSha256: string; identityPage: number; contactBlock: string; domainLiteral: string;
+    phoneLiteral: string; addressLineLiteral: string; localityLiteral: string; address: Address;
+    period: { role: "event_brochure_year"; year: string; visibleCoverPage: number; eventPage: number; eventDateQuotes: string[] } } };
+type CourtSource = Omit<Source, "kind" | "completeRead"> & { kind: "court_filed_pdf_excerpt";
+  completeRead: false; selectedExcerptCompleteRead: true };
+type CourtEntry = Omit<BaseEntry, "sources"> & { chain: "court_contract_counterparty_contact";
+  sources: [CourtSource, Source]; ownSiteRole: "business_contact_email"; ownSiteContactEmail: string; contactEmailDomain: string;
+  originalCountry: { rawCountry: string | null; profileCountryCode: string | null; missingValuesPreserved: true; jurisdiction: "Colorado public UCC registry" };
+  court: { role: "historical_contract_counterparty_contact"; filingDate: string; filingDateText: string;
+    fullDocumentPages: number; fullDocumentRead: false; selectedPagesCompleteRead: true;
+    pages: { page: number; text: string; textSha256: string; visualSha256: string }[]; excerptReceiptSha256: string;
+    caseNumber: string; noticeDocument: string; scheduleDocument: string; noticeTitle: string;
+    sectionPage: number; rowPage: number; header: string; sectionTitle: string; rowQuote: string;
+    row: { counterparty: string; debtor: string; cure: string; agreement: string; addressLine1: string; addressLine2: string;
+      city: string; state: string; postalCode: string; email: string; remitEmail: string };
+    address: Address; addressEffectiveDate: null; contractDate: null; currentAddressClaim: false;
+    counterpartyBankruptcyClaim: false; assignmentCompletedClaim: false; financialInference: false } };
+type ConferenceSource = Omit<Source, "kind" | "completeRead"> & { kind: "university_conference_pdf_excerpt"; completeRead: false; selectedExcerptCompleteRead: true };
+type ConferenceEntry = Omit<BaseEntry, "sources"> & { chain: "university_conference_business_contact"; sources: [ConferenceSource];
+  conference: { role: "historical_attendee_business_contact"; publisher: string; title: string; eventYear: string;
+    fullDocumentPages: number; fullDocumentRead: false; selectedPagesCompleteRead: true;
+    pages: {page:number;text:string;textSha256:string;visualSha256:string}[]; excerptReceiptSha256:string; identityPage:number;
+    contactBlock:string; person:string; personTitle:string; companyDisplay:string; email:string; phoneLiteral:string;
+    addressLineLiteral:string; localityLiteral:string; address:Address; publicationDate:null; addressEffectiveDate:null;
+    currentAddressClaim:false; registeredOfficeClaim:false; currentEmploymentClaim:false; continuousOccupancyClaim:false; financialInference:false } };
+type BrokerEntry = Omit<BaseEntry, "target" | "sources" | "phone"> & { chain: "own_legal_terms_broker_identifiers";
+  target: Omit<Target, "dataset" | "role"> & { dataset: "fmcsa"; role: "registered_carrier_broker" }; sources: [Source];
+  broker: { ownSiteRole: "contracting_legal_party_and_explicit_broker_identifiers"; termsLegalName: string;
+    contractQuote: string; disclosureQuote: string; usdot: string; mc: string;
+    registrationAddressRole: "original_fmcsa_only"; websiteStreetAddress: null; physicalAddressCorroborated: false;
+    currentAuthorityClaim: false; fullNormalizedTextRead: true; renderedCompletenessClaim: false; termsEffectiveDate: null } };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -55,7 +99,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13,14].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -65,6 +109,11 @@ export function registryOfficialDocumentEvidenceHash(row: RegistryFinding, proof
 }
 function sourceChecks(e: RegistryOfficialDocumentEntry) {
   if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
+  else if (e.chain === "official_municipal_dba_cslb_header") municipalCslbSourceChecks(e);
+  else if (e.chain === "company_pdf_contact_role") companyPdfSourceChecks(e);
+  else if (e.chain === "court_contract_counterparty_contact") courtSourceChecks(e);
+  else if (e.chain === "university_conference_business_contact") conferenceSourceChecks(e);
+  else if (e.chain === "own_legal_terms_broker_identifiers") brokerSourceChecks(e);
   else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
@@ -99,14 +148,34 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
     && p.provenance.rowSha256 === t.rowSha256 && sha(stableRegistryJson(p)) === t.profileSha256 && p.sourceAsOf === t.sourceAsOf
     && p.observedAt === t.observedAt && row.evidence === p.provenance.quote, "original target pin changed");
   let raw: Record<string, unknown>;
-  if (e.chain === "dated_author_address") {
+  if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role" || e.chain === "court_contract_counterparty_contact" || e.chain === "university_conference_business_contact") {
     const lines = row.evidence.split("\n"); need(p.dataset === "co_ucc" && t.role === "debtor_business" && lines.length === 2, "target debtor role invalid");
     raw = JSON.parse(lines[0]); const filing = JSON.parse(lines[1]);
-    need(sha(lines[0]) === t.rowSha256 && raw.country === "United States" && p.recordId === `${raw.fileid}:${raw.debtorid}` && filing.fileid === raw.fileid
+    if(e.chain === "court_contract_counterparty_contact") {
+      const c=e.originalCountry;
+      need(c.missingValuesPreserved===true && c.jurisdiction==="Colorado public UCC registry"
+        && c.rawCountry===(Object.hasOwn(raw,"country")?raw.country:null)
+        && c.profileCountryCode===(Object.hasOwn(p.identity,"countryCode")?p.identity.countryCode:null)
+        && (raw.country==="United States" || !Object.hasOwn(raw,"country"))
+        && (!Object.hasOwn(p.identity,"countryCode") || p.identity.countryCode==="US")
+        && raw.state==="CO" && p.identity.state==="CO","court original country presence differs");
+    }
+    need(sha(lines[0]) === t.rowSha256 && (raw.country === "United States" || e.chain === "court_contract_counterparty_contact") && p.recordId === `${raw.fileid}:${raw.debtorid}` && filing.fileid === raw.fileid
       && raw.organizationname === p.identity.legalName && raw.address1 === p.identity.addressLine1 && (raw.address2 || "") === (p.identity.addressLine2 || "")
       && raw.city === p.identity.city && raw.state === p.identity.state && raw.zipcode === p.identity.postalCode
       && u.hostname === "data.colorado.gov" && u.pathname === "/resource/8upq-58vz.json" && [...u.searchParams.keys()].join() === "debtorid"
       && u.searchParams.get("debtorid") === raw.debtorid, "original UCC record differs");
+  } else if (e.chain === "own_legal_terms_broker_identifiers") {
+    const parts=row.evidence.split("\nOriginal public source row: ");
+    need(p.dataset==="fmcsa" && t.role==="registered_carrier_broker" && parts.length===2 && p.recordId==="2288433", "target broker role differs");
+    const normalized=JSON.parse(parts[0]); raw=JSON.parse(parts[1]);
+    need(sha(parts[1])===t.rowSha256 && stableRegistryJson(normalized)===stableRegistryJson(p.provenance.sourceRow)
+      && raw.dot_number===p.recordId && raw.dot_number===e.broker.usdot && raw.docket1===e.broker.mc && raw.docket1prefix==="MC"
+      && raw.legal_name===p.identity.legalName && raw.phy_street===p.identity.addressLine1 && raw.phy_city===p.identity.city
+      && raw.phy_state===p.identity.state && raw.phy_zip===p.identity.postalCode && raw.phy_country===p.identity.countryCode
+      && p.sourceAsOf===null && p.provenance.sourceRow.usdot_number===raw.dot_number
+      && p.facts.filter(f=>f.field==="usdot_number" && f.value===raw.dot_number).length===1
+      && u.href==="https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2288433", "original broker identity or identifiers differ");
   } else if (e.chain === "official_irs_ein_historical_books_address") {
     const parts=row.evidence.split("\nOriginal public source row: ");
     need(p.dataset==="irs_exempt" && t.role==="exempt_organization" && /^\d{9}$/.test(p.recordId) && parts.length===2,"target IRS role invalid");
@@ -117,6 +186,25 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
       && raw.NAME===p.identity.legalName && raw.STREET===p.identity.addressLine1 && raw.CITY===p.identity.city
       && raw.STATE===p.identity.state && raw.ZIP===p.identity.postalCode && raw.TAX_PERIOD===p.provenance.sourceRow.tax_period
       && u.hostname==="www.irs.gov" && /^\/pub\/irs-soi\/eo[1-4]\.csv$/.test(u.pathname) && !u.search,"original IRS BMF identity differs");
+  } else if (e.chain === "official_municipal_dba_cslb_header") {
+    need(p.dataset === "ca_contractors" && t.role === "contractor_mailing_address" && p.recordId === "789382"
+      && u.href === "https://web.cslb.ca.gov/Onlineservices/DataPortal/ContractorList" && sha(row.evidence) === t.rowSha256,
+      "original CSLB target differs");
+    const headers=parseCsv(e.csvHeader.text),values=parseCsv(row.evidence);
+    need(sha(e.csvHeader.text)===e.csvHeader.sha256 && hash(e.csvHeader.inspectionReceiptSha256)
+      && headers.length===1 && values.length===1 && headers[0].length===52 && values[0].length===52
+      && new Set(headers[0]).size===52,"CSLB header/row shape differs");
+    raw=Object.fromEntries(headers[0].map((h,i)=>[h,values[0][i]]));
+    need(raw.LicenseNo===p.recordId && raw.BusinessName===p.identity.legalName && raw.MailingAddress===p.identity.addressLine1
+      && raw.City===p.identity.city && raw.State===p.identity.state && raw.ZIPCode===p.identity.postalCode
+      && raw.country==="" && raw.FullBusinessName==="" && e.secondName.column==="BUS-NAME-2"
+      && e.secondName.typeColumn==="NAME-TP-2" && e.secondName.typeValue==="Current Name"
+      && raw[e.secondName.column]===e.secondName.value && raw[e.secondName.typeColumn]===e.secondName.typeValue,
+      "typed CSLB business names or mailing address differ");
+    const fields={license_number:"LicenseNo",license_status:"PrimaryStatus",license_type:"Classifications(s)",legal_structure:"BusinessType",license_issue_date:"IssueDate",license_expiry_date:"ExpirationDate"};
+    need(Object.entries(fields).every(([field,column])=>p.facts.filter(f=>f.field===field && f.value===raw[column]).length===1
+      && p.provenance.sourceRow[field]===raw[column]) && raw.PrimaryStatus===e.sourceStatus && e.sourceStatus==="QUAL Bond SUSP",
+      "CSLB status or dated facts differ");
   } else {
     const parts = row.evidence.split("\nOriginal public source row: ");
     need(p.dataset === "sba_7a" && t.role === "borrower_business" && parts.length === 2, "target borrower role invalid");
@@ -204,6 +292,11 @@ function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
 }
 function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentityContext) {
   if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
+  if (e.chain === "official_municipal_dba_cslb_header") { municipalCslbIdentityChain(e); return; }
+  if (e.chain === "company_pdf_contact_role") { companyPdfIdentityChain(e); return; }
+  if (e.chain === "court_contract_counterparty_contact") { courtIdentityChain(e); return; }
+  if (e.chain === "university_conference_business_contact") { conferenceIdentityChain(e); return; }
+  if (e.chain === "own_legal_terms_broker_identifiers") { brokerIdentityChain(e); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -234,6 +327,221 @@ function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentit
       && words(a.city)===words(e.locality.city) && a.state===e.locality.state && a.postalCode===e.locality.postalCode, "own-site full address/locality differs");
   }
 }
+// A finite reviewed municipal record; this does not authorize arbitrary municipal
+// hosts, records, caller aliases, or an unlabelled second CSV name.
+function municipalCslbSourceChecks(e: MunicipalCslbEntry) {
+  need(e.companyId==="253e14e5-7273-49af-9874-fb64efeb16d0" && e.internalId==="940173"
+    && e.canonicalDomain==="siggins.com" && e.target.recordId==="789382" && e.sources.length===2,"municipal CSLB scope differs");
+  const [official,own]=e.sources;
+  for(const s of e.sources) need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin) && s.completeRead===true
+    && s.text.length>20 && s.text.length<=150000 && sha(s.text)===s.textSha256 && s.sourceDate===null && s.sourceDateText===null,
+    "municipal complete source or date pin differs");
+  need(official.kind==="official_rendered_record" && publicUrl(official.url).href==="https://blaine.ims16.com/ims/Base/Details?EncrID=713445394"
+    && official.status===null && official.bodySha256===null && official.contentType===null && official.requestedUrl===null && official.hops===null,
+    "municipal DOM capture provenance differs");
+  need(own.kind==="own_website" && publicUrl(own.url).href==="https://siggins.com/locations/" && own.requestedUrl===own.url
+    && own.status===200 && hash(own.bodySha256) && /^text\/html(?:;|$)/.test(own.contentType??"")
+    && own.hops?.length===1 && own.hops[0].url===own.url && own.hops[0].status===200,"retained headquarters capture differs");
+}
+function municipalCslbIdentityChain(e: MunicipalCslbEntry) {
+  const [official,own]=e.sources,m=e.municipal,a=m.address;
+  need(m.recordId==="CLR21-0269" && m.role==="legal_company_name_and_dba" && e.ownSiteRole==="company_headquarters"
+    && m.currentLicenseClaim===false && m.headerStatus==="Active" && m.headerExpiry==="03/31/2024" && m.detailExpiry==="2024-10-01",
+    "municipal roles or conflicting historical dates differ");
+  const names=m.legalCompanyName.split(" / ");
+  need(names.length===2 && sameRegistryLegalName(names[0],e.secondName.value) && sameRegistryLegalName(names[1],m.dba)
+    && words(m.dba)==="siggins company" && words(e.legalName)==="siggins co"
+    && /^[^\s@]+@siggins\.com$/.test(m.companyEmail),"municipal legal DBA/domain chain differs");
+  const quote=`DBA\n${m.dba}\nLegal/Company Name\n${m.legalCompanyName}\nAddress\n${a.addressLine1}\n${a.city}, ${a.state} ${a.postalCode}\nCompany Email\n${m.companyEmail}\nBusiness Phone\n`;
+  need(m.identityQuote===quote && official.text.split(quote).length===2 && official.text.includes(` ${m.recordId}\n`)
+    && official.text.includes(`Active\u00a0\u00a0\u00a0Expiration\u00a0Date:\u00a0${m.headerExpiry}`)
+    && official.text.includes(`License Information\nExpiration Date\n${m.detailExpiry}\n`),"municipal typed record block differs");
+  need(fullAddress(a,e.targetAddress) && e.ownSiteContactQuote===`Headquarters Kansas City, MO 512 E 12th Ave, North Kansas City, MO 64116`
+    && own.text.split(e.ownSiteContactQuote).length===2 && own.text.includes("Siggins")
+    && fullAddress({addressLine1:"512 E 12th Ave",city:"North Kansas City",state:"MO",postalCode:"64116",countryCode:"US"},e.targetAddress)
+    && /^\d{10}$/.test(e.phone) && own.text.replace(/\D/g,"").includes(e.phone),"shared full headquarters or own-site subject differs");
+}
+// This reusable contact-role check operates only on finite, build-reviewed catalog
+// entries. It neither fetches PDFs nor accepts caller-authored page/role evidence.
+function companyPdfSourceChecks(e: CompanyPdfEntry) {
+  const [pdf,own]=e.sources,p=e.pdf;
+  need(e.sources.length===2 && pdf.kind==="company_pdf" && own.kind==="own_website"
+    && e.target.dataset==="co_ucc" && e.target.role==="debtor_business","company PDF source classes differ");
+  for(const s of e.sources) need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin)
+    && hash(s.bodySha256) && s.completeRead===true && s.status===200 && s.text.length>20 && s.text.length<=150000
+    && sha(s.text)===s.textSha256 && s.sourceDate===null && s.sourceDateText===null,"company PDF complete source/date differs");
+  const u=publicUrl(pdf.url),w=publicUrl(own.url);
+  need(u.hostname.replace(/^www\./,"")===e.canonicalDomain && u.pathname.endsWith(".pdf") && !u.search
+    && pdf.requestedUrl===pdf.url && pdf.contentType==="application/pdf" && pdf.hops?.length===1
+    && pdf.hops[0].url===pdf.url && pdf.hops[0].status===200,"company PDF capture authority differs");
+  need(w.hostname.replace(/^www\./,"")===e.canonicalDomain && w.pathname==="/" && !w.search
+    && /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/.test(own.contentType??"")
+    && own.hops && own.hops.length>0 && own.hops.length<=5 && own.hops[0].url===own.requestedUrl
+    && own.hops.at(-1)?.url===own.url && own.hops.at(-1)?.status===200
+    && own.hops.every((h,i)=>host(h.url)===e.canonicalDomain && (i===own.hops!.length-1?h.status===200:[301,302,303,307,308].includes(h.status))),"company website capture provenance differs");
+  need(p && Number.isSafeInteger(p.pageCount) && p.pageCount>=1 && p.pageCount<=100 && p.pages.length===p.pageCount
+    && hash(p.extractionReceiptSha256) && p.extractionReceiptSha256===pdf.originalSourcePin
+    && p.pages.every((page,i)=>page.page===i+1 && page.text.length>0 && sha(page.text)===page.textSha256 && hash(page.visualSha256))
+    && pdf.text===p.pages.map(page=>`--- PAGE ${page.page} ---\n${page.text}`).join("\n\n"),"company PDF full-page extraction differs");
+}
+function companyPdfIdentityChain(e: CompanyPdfEntry) {
+  const [pdf,own]=e.sources,p=e.pdf,a=p.address;
+  need(p.role==="historical_company_contact_block" && p.currentAddressClaim===false && p.publicationDateClaim===false
+    && e.ownSiteRole==="legal_operator_name_and_phone" && sameRegistryLegalName(e.ownSiteLegalName,e.legalName)
+    && own.text.split(e.ownSiteIdentityQuote).length===2 && e.ownSiteIdentityQuote.startsWith(`${e.ownSiteLegalName} is `),"company PDF subject or address role differs");
+  need(Number.isSafeInteger(p.identityPage) && p.identityPage>=1 && p.identityPage<=p.pageCount
+    && p.contactBlock.length>30 && p.pages[p.identityPage-1].text.split(p.contactBlock).length===2
+    && pdf.text.split(p.contactBlock).length===2 && host(p.domainLiteral)===e.canonicalDomain
+    && p.contactBlock.split(p.domainLiteral).length===2 && /^\d{10}$/.test(e.phone)
+    && p.phoneLiteral.replace(/\D/g,"")===e.phone && p.contactBlock.split(p.phoneLiteral).length===2
+    && own.text.replace(/\D/g,"").includes(e.phone),"company PDF domain/phone/contact block differs");
+  const compactOrdinal=(s:string)=>compact(s).replace(/(\d)\s+(st|nd|rd|th)\b/gi,"$1$2");
+  need(p.contactBlock.includes(p.addressLineLiteral) && p.contactBlock.includes(p.localityLiteral)
+    && sameRegistryStreet({addressLine1:compactOrdinal(p.addressLineLiteral)},{addressLine1:a.addressLine1,addressLine2:a.addressLine2})
+    && p.localityLiteral===`${a.city}, ${a.state} ${a.postalCode}` && fullAddress(a,e.targetAddress),"company PDF full historical address differs");
+  const period=p.period;
+  need(period.role==="event_brochure_year" && /^\d{4}$/.test(period.year) && Number(period.year)<=new Date(pdf.observedAt).getUTCFullYear()
+    && Number.isSafeInteger(period.visibleCoverPage) && period.visibleCoverPage>=1 && period.visibleCoverPage<=p.pageCount
+    && Number.isSafeInteger(period.eventPage) && period.eventPage>=1 && period.eventPage<=p.pageCount
+    && period.eventDateQuotes.length>0 && period.eventDateQuotes.length<=10 && new Set(period.eventDateQuotes).size===period.eventDateQuotes.length
+    && period.eventDateQuotes.every(q=>q.includes(period.year) && q.length>15 && p.pages[period.eventPage-1].text.split(q).length===2),"company PDF visible event period differs");
+}
+// A filed counterparty schedule is third-party evidence. Full bytes are retained,
+// while the actual read claim is limited to the explicitly pinned complete pages.
+function courtSourceChecks(e: CourtEntry) {
+  const [pdf,own]=e.sources,c=e.court;
+  need(e.sources.length===2 && e.companyId==="db1fd9a5-5398-4d5f-8d2a-b90639645309" && e.internalId==="190125582"
+    && e.canonicalDomain==="redskyconsulting.co" && e.target.dataset==="co_ucc" && e.target.role==="debtor_business",
+    "court finite source scope differs");
+  for(const s of e.sources) need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin) && hash(s.bodySha256)
+    && s.status===200 && s.text.length>20 && s.text.length<=150000 && sha(s.text)===s.textSha256,"court source text/capture differs");
+  need(pdf.kind==="court_filed_pdf_excerpt" && pdf.completeRead===false && pdf.selectedExcerptCompleteRead===true
+    && pdf.url==="https://casedocs.omniagentsolutions.com/cmsvol2/pub_47557/fb796d69-4cfe-4d40-884e-a605c7a37800_129.pdf"
+    && publicUrl(pdf.url).hostname==="casedocs.omniagentsolutions.com" && pdf.requestedUrl===pdf.url && pdf.hops===null
+    && pdf.contentType==="application/pdf" && pdf.sourceDate===c.filingDate && pdf.sourceDateText===c.filingDateText
+    && c.filingDate==="2025-07-14" && c.filingDateText==="Filed 07/14/25" && Date.parse(c.filingDate)<=Date.parse(pdf.observedAt),
+    "court PDF authority, limited scope or filing date differs");
+  need(own.kind==="own_website" && own.completeRead===true && own.url==="https://redskyconsulting.co/contact/"
+    && publicUrl(own.url).hostname===e.canonicalDomain && own.requestedUrl===own.url && own.hops?.length===1
+    && own.hops[0].url===own.url && own.hops[0].status===200 && /^text\/html(?:;|$)/.test(own.contentType??"")
+    && own.sourceDate===null && own.sourceDateText===null,"court canonical contact provenance differs");
+  const required=[1,2,3,4,5,6,7,47,639];
+  need(c.fullDocumentPages===1083 && c.fullDocumentRead===false && c.selectedPagesCompleteRead===true
+    && c.pages.length===required.length && c.pages.every((p,i)=>p.page===required[i] && p.text.length>0
+      && sha(p.text)===p.textSha256 && hash(p.visualSha256)) && hash(c.excerptReceiptSha256)
+    && c.excerptReceiptSha256===pdf.originalSourcePin
+    && pdf.text===c.pages.map(p=>`--- PHYSICAL PAGE ${p.page} ---\n${p.text}`).join("\n\n"),"court selected-page coverage differs");
+  for(const p of c.pages) {
+    const document=p.page<=6?c.noticeDocument:c.scheduleDocument,docketPage=p.page<=6?p.page:p.page-6,total=p.page<=6?6:1077;
+    need(p.text.includes(`Case ${c.caseNumber} Doc ${document} ${c.filingDateText} Page ${docketPage} of ${total}`),
+      "court selected-page docket label differs");
+  }
+}
+function courtIdentityChain(e: CourtEntry) {
+  const [pdf,own]=e.sources,c=e.court,r=c.row,page=(n:number)=>c.pages.find(p=>p.page===n)!.text;
+  need(c.role==="historical_contract_counterparty_contact" && e.ownSiteRole==="business_contact_email"
+    && c.caseNumber==="25-11195-JKS" && c.noticeDocument==="129" && c.scheduleDocument==="129-1"
+    && c.addressEffectiveDate===null && c.contractDate===null && c.currentAddressClaim===false
+    && c.counterpartyBankruptcyClaim===false && c.assignmentCompletedClaim===false && c.financialInference===false,
+    "court contact role or claim boundary differs");
+  need(c.noticeTitle==="AMENDED2 SUPPLEMENTAL NOTICE OF POSSIBLE ASSUMPTION AND ASSIGNMENT OF CERTAIN EXECUTORY CONTRACTS AND UNEXPIRED LEASES"
+    && compact(page(1)).includes(c.noticeTitle) && compact(page(2)).includes("Debtors’ claims and noticing agent, Omni Agent Solutions, Inc.")
+    && compact(page(3)).includes("The presence of a contract or lease listed on Exhibit 1 attached hereto does not constitute an admission")
+    && page(6).includes("Dated: July 14, 2025") && page(7).includes("Exhibit 1"),"court notice attribution/context differs");
+  need(c.sectionPage===47 && c.rowPage===639 && c.sectionTitle==="Contracts Related to Job Board Business - Monster Next Customers"
+    && c.header==="Contract Counterparty Debtor Cure Agreement Name / Description Address 1 Address 2 City State / Province Zip Site Email Sup Remit Email"
+    && page(c.sectionPage).startsWith(c.header+"\r\n") && page(c.sectionPage).includes(c.sectionTitle)
+    && r.counterparty==="RED SKY Consulting LLC" && sameRegistryLegalName(r.counterparty,e.legalName)
+    && r.debtor==="Monster Worldwide, LLC" && !sameRegistryLegalName(r.debtor,e.legalName)
+    && r.cure==="$ -" && r.agreement==="Master Services Agreement; Sales Order" && r.addressLine2==="" && r.remitEmail==="",
+    "court counterparty versus debtor table roles differ");
+  const quote=`${r.counterparty} ${r.debtor} ${r.cure} ${r.agreement} ${r.addressLine1} ${r.city} ${r.state} ${r.postalCode} ${r.email}`;
+  need(c.rowQuote===quote && page(c.rowPage).split("\r\n").filter(line=>line===quote).length===1 && pdf.text.split(quote).length===2,
+    "court exact complete row differs");
+  need(e.contactEmailDomain==="redsky-consulting.com" && e.ownSiteContactEmail==="contact@redsky-consulting.com"
+    && own.text.includes(e.ownSiteContactEmail) && own.text.startsWith("Contact – Red Sky Consulting ")
+    && /^[^\s@]+@redsky-consulting\.com$/.test(r.email) && r.email==="stacyw@redsky-consulting.com"
+    && /^\d{10}$/.test(e.phone) && own.text.replace(/\D/g,"").includes(e.phone),"court canonical business-email bridge differs");
+  need(r.addressLine1==="3015 Wyandot St" && r.city==="Denver" && r.state==="Colorado" && r.postalCode==="80211-3822"
+    && c.address.addressLine1===r.addressLine1 && !c.address.addressLine2 && c.address.city===r.city && c.address.state==="CO"
+    && c.address.postalCode===r.postalCode && c.address.countryCode==="US" && datedUsAddress(c.address,e.targetAddress),
+    "court full address or explicit ZIP5 comparison differs");
+}
+
+// One reviewed university attendee block. It is not an office registration,
+// a company-authored document, or a general directory/address matching route.
+function conferenceSourceChecks(e: ConferenceEntry) {
+  const s=e.sources[0],c=e.conference;
+  need(e.sources.length===1 && e.companyId==="46996059-aa45-42c2-accc-ee9c18eb9b7f" && e.internalId==="4115726"
+    && e.canonicalDomain==="gbsm.com" && e.target.dataset==="co_ucc" && e.target.recordId==="1352541:1087948"
+    && e.target.role==="debtor_business","conference finite scope differs");
+  need(s.kind==="university_conference_pdf_excerpt" && s.completeRead===false && s.selectedExcerptCompleteRead===true
+    && s.status===200 && s.contentType==="application/pdf" && iso(s.observedAt) && hash(s.receiptSha256) && hash(s.bodySha256)
+    && hash(s.originalSourcePin) && s.text.length>20 && s.text.length<=150000 && sha(s.text)===s.textSha256
+    && s.sourceDate===null && s.sourceDateText===null,"conference capture or scoped text differs");
+  need(publicUrl(s.url).href==="https://law.du.edu/sites/default/files/2023-11/2013%20Attendee%20List.pdf"
+    && s.requestedUrl==="https://www.law.du.edu/sites/default/files/2023-11/2013%20Attendee%20List.pdf" && s.hops===null,
+    "conference university provenance differs");
+  need(c.fullDocumentPages===27 && c.fullDocumentRead===false && c.selectedPagesCompleteRead===true
+    && c.pages.length===2 && c.pages.every((p,i)=>p.page===[1,7][i] && p.text.length>0 && sha(p.text)===p.textSha256 && hash(p.visualSha256))
+    && hash(c.excerptReceiptSha256) && c.excerptReceiptSha256===s.originalSourcePin
+    && s.text===c.pages.map(p=>`--- PHYSICAL PAGE ${p.page} ---\n${p.text}`).join("\n\n"),"conference complete selected pages differ");
+}
+function conferenceIdentityChain(e: ConferenceEntry) {
+  const c=e.conference,s=e.sources[0],page=c.pages[1].text;
+  need(c.role==="historical_attendee_business_contact" && c.publisher==="University of Denver, Sturm College of Law / Rocky Mountain Land Use Institute"
+    && c.title==="2013 ROCKY MOUNTAIN LAND USE INSTITUTE CONFERENCE ATTENDEE LIST" && c.eventYear==="2013"
+    && compact(c.pages[0].text).includes(c.title) && Number(c.eventYear)<=new Date(s.observedAt).getUTCFullYear()
+    && c.publicationDate===null && c.addressEffectiveDate===null && c.currentAddressClaim===false && c.registeredOfficeClaim===false
+    && c.currentEmploymentClaim===false && c.continuousOccupancyClaim===false && c.financialInference===false,"conference role or date claim differs");
+  need(c.identityPage===7 && c.pages[0].text.startsWith("Speakers bolded and italicized Page 1\r\n")
+    && page.startsWith("Speakers bolded and italicized Page 7\r\n") && c.person==="Davis, Alex" && c.personTitle==="Principal"
+    && c.companyDisplay==="GBSM Consulting" && sameRegistryLegalName(e.legalName,"GBSM Inc.")
+    && c.email==="alexdavis@gbsm.com" && c.email.split("@")[1]===e.canonicalDomain && c.phoneLiteral==="303-825-6100"
+    && e.phone===c.phoneLiteral.replace(/\D/g,""),"conference business identity differs");
+  const block=[c.person,c.personTitle,c.companyDisplay,c.addressLineLiteral,c.localityLiteral,c.phoneLiteral,c.email].join("\r\n");
+  need(c.contactBlock===block && page.split(block).length===2 && s.text.split(block).length===2
+    && page.includes(block+"\r\nDavis, Anna"),"conference exact attendee block differs");
+  need(c.addressLineLiteral==="600 17th Street, Suite \r\n2020 South" && c.localityLiteral==="Denver, CO 80202"
+    && c.address.addressLine1==="600 17th Street, Suite 2020 South" && !c.address.addressLine2 && c.address.city==="Denver"
+    && c.address.state==="CO" && c.address.postalCode==="80202" && c.address.countryCode==="US"
+    && e.targetAddress.addressLine1===c.address.addressLine1 && !e.targetAddress.addressLine2
+    && fullAddress(c.address,e.targetAddress),"conference exact South address differs");
+}
+
+// One fully reviewed own-domain legal contract and explicit DOT/MC disclosure.
+// The registry address remains registry evidence; no website address is invented.
+function brokerSourceChecks(e: BrokerEntry) {
+  const s=e.sources[0];
+  need(e.companyId==="8349a8d8-6261-4f3a-8697-b49e8204448f" && e.internalId==="18302043"
+    && e.canonicalDomain==="dormroommovers.com" && e.target.dataset==="fmcsa" && e.target.recordId==="2288433"
+    && e.target.role==="registered_carrier_broker" && e.sources.length===1, "broker finite scope differs");
+  need(s.kind==="own_website" && publicUrl(s.url).href==="https://www.dormroommovers.com/terms"
+    && s.requestedUrl===s.url && s.status===200 && s.contentType==="text/html; charset=utf-8"
+    && s.hops?.length===1 && s.hops[0].url===s.url && s.hops[0].status===200
+    && iso(s.observedAt) && s.observedAt==="2026-10-02T08:04:01.404Z", "broker own-site capture provenance differs");
+  need(s.completeRead===true && s.text.length===24445 && sha(s.text)===s.textSha256
+    && s.textSha256==="24cff61fe4d974aa93651f03f4c7add9e8bcc5bcbe2220b80d9be38c619df920"
+    && s.bodySha256==="17988bd2324fafc61f82b97436898b084540b8c936626d985a763a42add181d1"
+    && s.receiptSha256==="e421d0814c751bdd895363783115664bf8c9224a62c3cda8f6b5119f320a99f7"
+    && s.originalSourcePin===s.receiptSha256 && s.sourceDate===null && s.sourceDateText===null,
+    "broker complete retained terms or dates differ");
+}
+function brokerIdentityChain(e: BrokerEntry) {
+  const b=e.broker,s=e.sources[0];
+  need(b.ownSiteRole==="contracting_legal_party_and_explicit_broker_identifiers"
+    && b.termsLegalName==="Dorm Room Movers, LLC" && e.legalName==="DORM ROOM MOVERS LLC"
+    && sameRegistryLegalName(b.termsLegalName,e.legalName) && b.usdot==="2288433" && b.mc==="746975",
+    "broker legal operator or identifier chain differs");
+  need(b.contractQuote==='Your registration with Dorm Room Movers, LLC ("DRM") and your purchase of our services is subject to the following Purchase Terms and Conditions ("Purchase Terms")'
+    && b.disclosureQuote==="Dorm Room Movers is a broker of household goods moving & storage services. USDOT 2288433, MC-746975. Fla. Broker Reg. No MB154"
+    && s.text.split(b.contractQuote).length===2 && s.text.split(b.disclosureQuote).length===2,
+    "broker contracting party or disclosure quote differs");
+  need(b.registrationAddressRole==="original_fmcsa_only" && b.websiteStreetAddress===null && b.physicalAddressCorroborated===false
+    && b.currentAuthorityClaim===false && b.fullNormalizedTextRead===true && b.renderedCompletenessClaim===false
+    && b.termsEffectiveDate===null, "broker address, date or authority claim differs");
+}
+
 /** A retained dated association only; never a canonical-field update or a claim
  * that an old address, license status, debt or financial value is current. */
 export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now=new Date()): NonNullable<RegistryProfile["verification"]> {
@@ -253,5 +561,5 @@ export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknow
   need((reader as Witness).taskId!==(reviewer as Witness).taskId && Date.parse((reviewer as Witness).reviewedAt)>=Date.parse((reader as Witness).reviewedAt),"independent ordered final witnesses required");
   return {method:"reviewed_official_registration_history",verifiedAt:now.toISOString(),sourceIds:[`document:${e.id}:${sha256}`],officialHistory:{...bare,reader,reviewer,evidenceSha256:bound,entry:e,
     targetAddress:{role:e.target.role,...row.profile.identity},canonicalAddresses:structuredClone(context.addresses),
-    scope:"Reviewed dated document identity association only. Address roles/dates remain separate; no canonical mutation, current occupancy, debt balance, company revenue, budget or license-wide conclusion is inferred."}};
+    scope:e.chain==="own_legal_terms_broker_identifiers" ? "Reviewed own-domain contracting legal name and explicit broker identifiers associate the exact FMCSA record only. No website street-address corroboration or current authority is claimed. Registry/CRM address roles and dates remain separate; no canonical mutation, owned fleet, employee, revenue, debt or budget inference." : "Reviewed dated document identity association only. Address roles/dates remain separate; no canonical mutation, current occupancy, debt balance, company revenue, budget or license-wide conclusion is inferred."}};
 }

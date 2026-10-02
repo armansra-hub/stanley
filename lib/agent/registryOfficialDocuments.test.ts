@@ -55,7 +55,7 @@ describe("opt-in compiled official document role proofs",()=>{
   expect(()=>f.check()).toThrow();
  });
  it.each(["missing_hops","wrong_origin","wrong_end","unrelated_host","unsuccessful_end","rendered_http_claim","source_actor_field"])("rejects corrupt retained capture/role metadata %s",async kind=>{
-  const f=await setup(1),e=f.entry,s=e.sources[1];
+  const f=await setup(1);if(f.entry.chain!=="official_dba_own_site_address")throw Error("fixture");const e=f.entry,s=e.sources[1];
   if(kind==="missing_hops")s.hops=null;if(kind==="wrong_origin")s.requestedUrl="http://launch-pm.com/changed";
   if(kind==="wrong_end")s.hops![1].url="https://launch-pm.com/other";if(kind==="unrelated_host")s.hops!.unshift({url:"http://evil.test/",status:301});
   if(kind==="unsuccessful_end")s.hops![1].status=404;if(kind==="rendered_http_claim")e.sources[0].requestedUrl=e.sources[0].url;

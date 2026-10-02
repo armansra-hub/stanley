@@ -218,7 +218,7 @@ function originalUccCountry(row: RegistryFinding): "US" {
 }
 export function verifyRegistryOfficialHistory(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date()): NonNullable<RegistryProfile["verification"]> {
   if (object(raw) && raw.schema === "official_document_roles_v1") return verifyRegistryOfficialDocument(row, raw, company, context, now);
-  if (object(raw) && raw.schema === "official_api_roles_v1") return verifyRegistryOfficialApi(row, raw, company, context, now);
+  if (object(raw) && raw.schema === "official_api_roles_v1") return verifyRegistryOfficialApi(row, raw, company, context, now, BUNDLE);
   if (object(raw) && raw.schema === "colorado_sos_summary_roles_v1") return verifyOfficialSummary(row, raw, company, context, now);
   const proof = parseProof(raw, row, now);
   const countryCode = originalUccCountry(row);

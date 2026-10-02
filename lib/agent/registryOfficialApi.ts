@@ -9,6 +9,24 @@ type SourceReview = { taskId: string; reviewedAt: string; receiptSha256: string 
 type Company = { id: string; netsuite_internal_id: string; name: string; domain?: string | null; website_raw?: string | null };
 type Address = { addressLine1: string; addressLine2?: string; city?: string; state?: string; postalCode?: string; countryCode?: string };
 type Role = "entity_mailing" | "registered_agent_street" | "registered_agent_mailing" | "carrier_mailing";
+export type RegistryOfficialApiTradeBundle = {
+  id: string; companyId: string; internalId: string; canonicalDomain: string; entityId: string; legalName: string;
+  tradeNames: readonly { name: string; documentId: string; effectiveDate: string }[];
+  sourceReader: SourceReview; sourceReviewer: SourceReview; sources: readonly { observedAt: string }[];
+  anchor: { role: string; address: Address };
+};
+type RegisteredTradeNameBridge = {
+  schema: "registered_trade_name_alias_v1"; bundleId: string; bundleSha256: string; entityId: string;
+  tradeNameDocumentId: string; tradeName: string; canonicalName: string; canonicalAlias: string;
+};
+type OwnSiteOperatorBridge = {
+  schema: "own_site_full_operator_name_v1"; canonicalName: string; legalOperator: string; siteLegalOperator: string;
+  pages: { role: "operator_definition" | "company_headquarters"; requestedUrl: string; finalUrl: string; status: number;
+    contentType: string; observedAt: string; htmlSha256: string; textSha256: string; receiptSha256: string; text: string;
+    hops: { url: string; status: number }[] }[];
+  operatorQuote: string; contactQuote: string; address: Address; phone: string; phoneAsDisplayed: string;
+  sourceReader: SourceReview; sourceReviewer: SourceReview;
+};
 export type RegistryOfficialApiEntry = {
   id: string; companyId: string; internalId: string; canonicalDomain: string; canonicalIdentitySha256: string;
   sourceKind: "colorado_business_entity" | "fmcsa_census";
@@ -18,6 +36,8 @@ export type RegistryOfficialApiEntry = {
   originalReviews: { primary: SourceReview; independent: SourceReview; packetSha256: string };
   target: { dataset: "co_sos" | "fmcsa"; recordId: string; sourceUrl: string; rowSha256: string; evidenceSha256: string;
     identitySha256: string; sourceRowSha256: string; factsSha256: string; sourceAsOf: string | null; observedAt: string };
+  nameBridge?: RegisteredTradeNameBridge;
+  siteOperatorBridge?: OwnSiteOperatorBridge;
   anchor: { mode: "address_role"; role: Role; sourceId: string } | { mode: "company_email_domain" };
 };
 export type RegistryOfficialApiCorroboration = {
@@ -138,7 +158,94 @@ function verifyOriginal(row: RegistryFinding, entry: RegistryOfficialApiEntry, s
   if (!co) need((original.dba_name ?? "") === (source.dba_name ?? ""), "raw DBA changed or unbridged");
   return currentPhysical;
 }
-export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date()): NonNullable<RegistryProfile["verification"]> {
+// Opt-in deployed catalog association. The dispatcher supplies its already
+// reviewed private history bundle; no proof caller supplies names or documents.
+function registeredTradeAssociation(entry: RegistryOfficialApiEntry, company: Company, context: CompanyIdentityContext,
+  legal: string, dba: string | null, bundle?: RegistryOfficialApiTradeBundle) {
+  if (!Object.hasOwn(entry, "nameBridge")) return null;
+  const b = entry.nameBridge, keys = ["schema", "bundleId", "bundleSha256", "entityId", "tradeNameDocumentId", "tradeName", "canonicalName", "canonicalAlias"];
+  need(b && object(b) && Object.keys(b).length === keys.length && keys.every(k => Object.hasOwn(b, k))
+    && b.schema === "registered_trade_name_alias_v1" && entry.sourceKind === "fmcsa_census" && entry.anchor.mode === "company_email_domain", "registered trade bridge shape or scope invalid");
+  need(bundle && b.bundleId === bundle.id && hash(b.bundleSha256) && b.bundleSha256 === sha(stableRegistryJson(bundle))
+    && b.entityId === bundle.entityId && bundle.companyId === entry.companyId && bundle.internalId === entry.internalId
+    && bundle.canonicalDomain === entry.canonicalDomain && sameRegistryLegalName(legal, bundle.legalName), "registered trade reviewed bundle or operator differs");
+  const trades = bundle.tradeNames.filter(t => t.documentId === b.tradeNameDocumentId && t.name === b.tradeName);
+  need(trades.length === 1 && /^\d{11}$/.test(trades[0].documentId) && /^\d{4}-\d{2}-\d{2}$/.test(trades[0].effectiveDate)
+    && !!dba && normalizedDba(dba) === normalizedDba(trades[0].name)
+    && company.name === b.canonicalName && typeof b.canonicalName === "string" && b.canonicalName.length > 0
+    && context.aliases.filter(n => n === b.canonicalAlias).length === 1
+    && normalizedDba(b.canonicalAlias) === normalizedDba(trades[0].name)
+    && context.aliases.every(n => sameRegistryLegalName(n, bundle.legalName) || normalizedDba(n) === normalizedDba(trades[0].name)), "registered trade canonical alias or complete DBA differs");
+  const reviews = [bundle.sourceReader, bundle.sourceReviewer];
+  need(reviews.every(r => validTask(r.taskId) && iso(r.reviewedAt) && hash(r.receiptSha256)) && reviews[0].taskId !== reviews[1].taskId
+    && Date.parse(reviews[1].reviewedAt) >= Date.parse(reviews[0].reviewedAt) && bundle.sources.length > 0
+    && bundle.sources.every(s => iso(s.observedAt) && Date.parse(reviews[0].reviewedAt) >= Date.parse(s.observedAt)), "registered trade actual source lineage invalid");
+  // This anchors the registered-name relationship to canonical context only.
+  // It does not equate the carrier's literal physical/mailing street to it.
+  const anchors = context.addresses.filter(a => ["netsuite_record", "company_website"].includes(a.sourceKind)
+    && !!a.sourceId && iso(a.capturedAt) && fullAddress(a, bundle.anchor.address));
+  need(bundle.anchor.role === "principal_office" && anchors.length === 1, "registered trade complete canonical relationship anchor missing or ambiguous");
+  return { ...b, legalName: bundle.legalName, tradeNameEffectiveDate: trades[0].effectiveDate,
+    sourceReader: bundle.sourceReader, sourceReviewer: bundle.sourceReviewer, canonicalAnchor: anchors[0] };
+}
+// Opt-in deployment-reviewed full operator/name association. Names, complete
+// source texts and review receipts live in the catalog, never the caller proof.
+function ownSiteOperatorAssociation(entry: RegistryOfficialApiEntry, company: Company, context: CompanyIdentityContext,
+  source: Record<string, unknown>, physical: Address, legal: string, dba: string | null) {
+  if (!Object.hasOwn(entry, "siteOperatorBridge")) return null;
+  const b = entry.siteOperatorBridge;
+  const keys = ["schema", "canonicalName", "legalOperator", "siteLegalOperator", "pages", "operatorQuote", "contactQuote", "address", "phone", "phoneAsDisplayed", "sourceReader", "sourceReviewer"];
+  need(b && object(b) && Object.keys(b).length === keys.length && keys.every(k => Object.hasOwn(b, k))
+    && b.schema === "own_site_full_operator_name_v1" && !Object.hasOwn(entry, "nameBridge")
+    && entry.sourceKind === "fmcsa_census" && entry.anchor.mode === "company_email_domain" && !dba,
+  "own-site operator bridge scope invalid");
+  need(entry.companyId === "11009a6b-2254-4413-8e68-4d068e76966d" && entry.internalId === "156219876"
+    && entry.canonicalDomain === "ratrucking.com" && entry.target.dataset === "fmcsa" && entry.target.recordId === "164773",
+  "own-site operator finite target differs");
+  need(typeof b.canonicalName === "string" && b.canonicalName === company.name && b.canonicalName.length > 0
+    && b.legalOperator === legal && sameRegistryLegalName(b.siteLegalOperator, legal)
+    && context.aliases.every(n => n === company.name || sameRegistryLegalName(n, legal)), "own-site complete operator or canonical name differs");
+  need(Array.isArray(b.pages) && b.pages.length === 2 && b.pages[0].role === "operator_definition" && b.pages[1].role === "company_headquarters",
+    "own-site operator page roles differ");
+  const ownPage = (value: string, final = false) => {
+    try { const u = new URL(value); return (final ? u.protocol === "https:" : ["http:", "https:"].includes(u.protocol))
+      && u.hostname.replace(/^www\./, "") === entry.canonicalDomain && !u.username && !u.password && !u.port && !u.search && !u.hash; } catch { return false; }
+  };
+  for (const page of b.pages) {
+    need(page.status === 200 && /^text\/html(?:;|$)/i.test(page.contentType) && iso(page.observedAt)
+      && ownPage(page.requestedUrl) && ownPage(page.finalUrl, true) && [page.htmlSha256, page.textSha256, page.receiptSha256].every(hash)
+      && typeof page.text === "string" && page.text.length > 0 && page.text.length <= 100000 && sha(page.text) === page.textSha256
+      && Array.isArray(page.hops) && page.hops.length >= 1 && page.hops.length <= 3
+      && page.hops[0].url === page.requestedUrl && page.hops.at(-1)!.url === page.finalUrl
+      && page.hops.every((h, i) => ownPage(h.url, i === page.hops.length - 1)
+        && (i === page.hops.length - 1 ? h.status === 200 : [301, 302, 307, 308].includes(h.status))), "own-site source capture or full text invalid");
+  }
+  const [operatorPage, contactPage] = b.pages;
+  need(operatorPage.finalUrl !== contactPage.finalUrl && b.operatorQuote.length > 0 && b.contactQuote.length > 0
+    && operatorPage.text.split(b.operatorQuote).length === 2 && contactPage.text.split(b.contactQuote).length === 2
+    && b.operatorQuote.startsWith(`ABOUT ${b.canonicalName.toUpperCase()} ${b.siteLegalOperator}, is `)
+    && !/\b(not|never|unrelated|formerly|previously|former|previous|customer|client|partner|affiliate|subsidiary|parent|example|sample|fictional)\b/i.test(b.operatorQuote)
+    && b.contactQuote.includes("HEADQUARTERS COMPANY INFORMATION ") && b.contactQuote.includes(b.siteLegalOperator.toUpperCase())
+    && !/\b(not|never|unrelated|former|previous|customer|client|affiliate|subsidiary|registered agent)\b/i.test(b.contactQuote), "own-site operator definition or contact attribution differs");
+  const a = b.address;
+  need(a.countryCode === "US" && fullAddress(a, physical) && a.city && a.state && a.postalCode
+    && [a.addressLine1, a.addressLine2, `${a.city}, ${a.state} ${a.postalCode}`].filter(Boolean).every(s => b.contactQuote.includes(s!))
+    && /^\d{10}$/.test(b.phone) && source.phone === b.phone && typeof b.phoneAsDisplayed === "string"
+    && /^[0-9.() -]+$/.test(b.phoneAsDisplayed) && b.phoneAsDisplayed.replace(/\D/g, "") === b.phone
+    && b.contactQuote.includes(b.phoneAsDisplayed) && emailDomain(source.email_address) === entry.canonicalDomain,
+  "own-site complete physical address, phone or company email differs");
+  const anchors = context.addresses.filter(a => ["netsuite_record", "company_website"].includes(a.sourceKind)
+    && !!a.sourceId && iso(a.capturedAt) && fullAddress(a, b.address));
+  need(anchors.length === 1, "own-site complete canonical address missing or ambiguous");
+  const reviews = [b.sourceReader, b.sourceReviewer];
+  need(reviews.every(r => validTask(r.taskId) && iso(r.reviewedAt) && hash(r.receiptSha256))
+    && reviews[0].taskId !== reviews[1].taskId && Date.parse(reviews[1].reviewedAt) >= Date.parse(reviews[0].reviewedAt)
+    && reviews.every(r => Date.parse(r.reviewedAt) >= Date.parse(entry.source.observedAt)
+      && b.pages.every(p => Date.parse(r.reviewedAt) >= Date.parse(p.observedAt))), "own-site actual source review lineage invalid");
+  return { ...b, canonicalAnchor: anchors[0] };
+}
+
+export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date(), reviewedTradeBundle?: RegistryOfficialApiTradeBundle): NonNullable<RegistryProfile["verification"]> {
   const keys = ["schema", "entryId", "entrySha256", "canonicalIdentitySha256", "reader", "reviewer"];
   need(object(raw) && Object.keys(raw).every(k => keys.includes(k)) && keys.every(k => Object.hasOwn(raw, k)) && raw.schema === "official_api_roles_v1" && typeof raw.entryId === "string", "proof shape invalid");
   const { entry, sha256 } = registryOfficialApiEntry(raw.entryId), source = entry.source;
@@ -157,11 +264,13 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     && Date.parse(reviews[1].reviewedAt) >= Date.parse(reviews[0].reviewedAt)
     && Date.parse(originals[1].reviewedAt) >= Date.parse(originals[0].reviewedAt), "actual source review lineage invalid");
   const physical = verifyOriginal(row, entry, parsed), legal = row.profile.identity.legalName, dba = entry.sourceKind === "fmcsa_census" ? retainedFmcsaDba(row.profile) : null;
+  const nameBridge = registeredTradeAssociation(entry, company, context, legal, dba, reviewedTradeBundle);
+  const siteBridge = ownSiteOperatorAssociation(entry, company, context, parsed, physical, legal, dba);
   const compatible = (name: string) => sameRegistryLegalName(name, legal) || !!dba && normalizedDba(name) === normalizedDba(dba);
   need(company.id === entry.companyId && row.companyId === entry.companyId && company.netsuite_internal_id === entry.internalId && row.internalId === entry.internalId
     && host(company.domain || company.website_raw || "") === entry.canonicalDomain && hash(entry.canonicalIdentitySha256)
     && raw.canonicalIdentitySha256 === entry.canonicalIdentitySha256 && raw.canonicalIdentitySha256 === registryOfficialApiCanonicalHash(company, context)
-    && compatible(company.name) && context.aliases.every(compatible), "canonical identity or known legal operator conflict");
+    && (nameBridge !== null || siteBridge !== null || compatible(company.name) && context.aliases.every(compatible)), "canonical identity or known legal operator conflict");
   let anchor: CompanyIdentityContext["addresses"][number] | null = null, roleAddress: Address | null = null, email: string | null = null;
   if (entry.anchor.mode === "address_role") {
     const role = entry.anchor;
@@ -174,13 +283,15 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     need(email && email === entry.canonicalDomain, "strict company email domain differs or is shared");
   }
   const { reader, reviewer, ...evidence } = raw, bound = registryOfficialApiEvidenceHash(row, evidence as Omit<RegistryOfficialApiCorroboration, "reader" | "reviewer">);
-  const earliest = Math.max(Date.parse(row.profile.observedAt), Date.parse(source.observedAt), ...[...reviews, ...originals].map(a => Date.parse(a.reviewedAt)), anchor ? Date.parse(anchor.capturedAt) : 0);
+  const earliest = Math.max(Date.parse(row.profile.observedAt), Date.parse(source.observedAt), ...[...reviews, ...originals].map(a => Date.parse(a.reviewedAt)), anchor ? Date.parse(anchor.capturedAt) : 0,
+    ...(nameBridge ? [Date.parse(nameBridge.sourceReader.reviewedAt), Date.parse(nameBridge.sourceReviewer.reviewedAt), Date.parse(nameBridge.canonicalAnchor.capturedAt)] : []),
+    ...(siteBridge ? [Date.parse(siteBridge.sourceReader.reviewedAt), Date.parse(siteBridge.sourceReviewer.reviewedAt), Date.parse(siteBridge.canonicalAnchor.capturedAt)] : []));
   for (const witness of [reader, reviewer]) need(object(witness) && Object.keys(witness).every(k => ["taskId", "reviewedAt", "evidenceSha256"].includes(k)) && validTask(witness.taskId)
     && iso(witness.reviewedAt) && Date.parse(witness.reviewedAt) >= earliest && Date.parse(witness.reviewedAt) <= now.getTime() + 60000
     && now.getTime() - Date.parse(witness.reviewedAt) <= 7 * 86400000 && witness.evidenceSha256 === bound, "final review does not bind exact content");
   need((reader as Witness).taskId !== (reviewer as Witness).taskId && Date.parse((reviewer as Witness).reviewedAt) >= Date.parse((reader as Witness).reviewedAt), "distinct ordered final review required");
-  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : [])],
-    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email,
+  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : []), ...(nameBridge ? [`co_sos:${nameBridge.entityId}:${nameBridge.bundleSha256}`, nameBridge.canonicalAnchor.sourceId] : []), ...(siteBridge ? [siteBridge.canonicalAnchor.sourceId] : [])],
+    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email, ...(nameBridge ? { registeredTradeNameBridge: nameBridge } : {}), ...(siteBridge ? { ownSiteOperatorNameBridge: siteBridge } : {}),
       targetAddress: { role: entry.sourceKind === "fmcsa_census" ? "carrier_physical" : "principal_street", ...physical },
       scope: "Reviewed official API entity/contact role association at the retained observation date. Original physical facts remain unchanged; mailing and registered-agent addresses are not operating locations. A declared company email domain does not establish current website ownership or contact permission." } };
 }
