@@ -86,7 +86,18 @@ type BrokerEntry = Omit<BaseEntry, "target" | "sources" | "phone"> & { chain: "o
     contractQuote: string; disclosureQuote: string; usdot: string; mc: string;
     registrationAddressRole: "original_fmcsa_only"; websiteStreetAddress: null; physicalAddressCorroborated: false;
     currentAuthorityClaim: false; fullNormalizedTextRead: true; renderedCompletenessClaim: false; termsEffectiveDate: null } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | IrsContactEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry;
+type SurveyorEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "municipal_surveyor_firm_identifier";
+  sources: [Source]; target: Omit<Target, "dataset" | "role"> & { dataset: "tx_surveying"; role: "registered_surveying_firm" };
+  surveyor: { role: "municipal_preliminary_surveyor_titleblock"; firmNumber: string; domainLiteral: string;
+    titleblockQuote: string; contactQuote: string; contactAddressRole: "dated_surveyor_business_contact";
+    pageCount: 1; identityPage: 1; visualSha256: string; extractionReceiptSha256: string;
+    annotations: { text: string; sha256: string; count: 6 };
+    titleblockDate: "02/09/2026"; preparationDate: "04/20/2026"; filenameDate: "20260417";
+    annotationDate: "2026-04-28"; agendaPathDate: "20260507"; unifiedSourceDate: null;
+    preliminary: true; approvalAndCertificationUnsigned: true; finalApprovalClaim: false;
+    currentLicenseClaim: false; currentAddressClaim: false; addressEquivalenceClaim: false; financialInference: false;
+    visiblePageLabel: "PAGE 1 OF 1"; metadataTitle: "PLAT PAGE 1 OF 2"; completeProjectPacketClaim: false } };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | IrsContactEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry | SurveyorEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -108,7 +119,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13,14,15].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13,14,15,16].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -124,6 +135,7 @@ function sourceChecks(e: RegistryOfficialDocumentEntry) {
   else if (e.chain === "court_contract_counterparty_contact") courtSourceChecks(e);
   else if (e.chain === "university_conference_business_contact") conferenceSourceChecks(e);
   else if (e.chain === "own_legal_terms_broker_identifiers") brokerSourceChecks(e);
+  else if (e.chain === "municipal_surveyor_firm_identifier") surveyorSourceChecks(e);
   else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
@@ -175,6 +187,21 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
       && raw.city === p.identity.city && raw.state === p.identity.state && raw.zipcode === p.identity.postalCode
       && u.hostname === "data.colorado.gov" && u.pathname === "/resource/8upq-58vz.json" && [...u.searchParams.keys()].join() === "debtorid"
       && u.searchParams.get("debtorid") === raw.debtorid, "original UCC record differs");
+  } else if (e.chain === "municipal_surveyor_firm_identifier") {
+    const records=parseCsv(row.evidence);
+    need(p.dataset==="tx_surveying" && t.role==="registered_surveying_firm" && p.recordId==="10194177"
+      && records.length===1 && records[0].length===11 && sha(row.evidence)===t.rowSha256 && p.sourceAsOf===null
+      && u.href==="https://tbpedownloads.s3-us-west-2.amazonaws.com/sur-firm_roster.csv", "original surveyor roster source differs");
+    const [number,name,status,issued,expires,type,street,line2,city,state,zip]=records[0];
+    raw={license_number:number,legalName:name,license_status:status,license_issue_date:issued,license_expiry_date:expires,
+      license_type:type,addressLine1:street,city,state,postalCode:zip};
+    need(number===p.recordId && number===e.surveyor.firmNumber && name===p.identity.legalName
+      && street===p.identity.addressLine1 && line2==="" && !p.identity.addressLine2
+      && city===p.identity.city && state===p.identity.state && zip===p.identity.postalCode
+      && stableRegistryJson(raw)===stableRegistryJson(p.provenance.sourceRow), "original surveyor roster identity differs");
+    const fields={license_number:number,license_status:status,license_issue_date:issued,license_expiry_date:expires,license_type:type};
+    need(p.facts.length===5 && Object.entries(fields).every(([field,value])=>p.facts.filter(f=>f.field===field && f.value===value).length===1),
+      "original surveyor dated facts differ");
   } else if (e.chain === "own_legal_terms_broker_identifiers") {
     const parts=row.evidence.split("\nOriginal public source row: ");
     need(p.dataset==="fmcsa" && t.role==="registered_carrier_broker" && parts.length===2 && p.recordId==="2288433", "target broker role differs");
@@ -361,6 +388,7 @@ function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentit
   if (e.chain === "court_contract_counterparty_contact") { courtIdentityChain(e); return; }
   if (e.chain === "university_conference_business_contact") { conferenceIdentityChain(e); return; }
   if (e.chain === "own_legal_terms_broker_identifiers") { brokerIdentityChain(e); return; }
+  if (e.chain === "municipal_surveyor_firm_identifier") { surveyorIdentityChain(e); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -604,6 +632,51 @@ function brokerIdentityChain(e: BrokerEntry) {
   need(b.registrationAddressRole==="original_fmcsa_only" && b.websiteStreetAddress===null && b.physicalAddressCorroborated===false
     && b.currentAuthorityClaim===false && b.fullNormalizedTextRead===true && b.renderedCompletenessClaim===false
     && b.termsEffectiveDate===null, "broker address, date or authority claim differs");
+}
+
+// A municipal-hosted preliminary plan identifies its surveyor, not the parcel
+// owner or an approved filing. The roster and CRM addresses stay independent.
+function surveyorSourceChecks(e: SurveyorEntry) {
+  const s=e.sources[0],p=e.surveyor;
+  need(e.companyId==="e4402aa0-a707-428d-9563-122f84cbb9bb" && e.internalId==="142412476"
+    && e.canonicalDomain==="eaglesurveying.com" && e.target.dataset==="tx_surveying" && e.target.recordId==="10194177"
+    && e.target.role==="registered_surveying_firm" && e.sources.length===1, "surveyor finite scope differs");
+  need(s.kind==="municipal_pdf" && publicUrl(s.url).href==="https://public.destinyhosted.com/littldocs/2026/PZ/20260507_989/3257_1905.039_%287th_sub%29_HVA_Little_Elm_20260417_-_MARKUPS.pdf"
+    && s.requestedUrl===s.url && s.status===200 && s.contentType==="application/pdf"
+    && s.hops?.length===1 && s.hops[0].url===s.url && s.hops[0].status===200 && iso(s.observedAt)
+    && hash(s.receiptSha256) && hash(s.originalSourcePin) && s.completeRead===true
+    && s.bodySha256==="a7e73d81aad74945e75e96181f1f9ed1dbf051fd96e8d493a6c577856ae5d079"
+    && s.text.length===17158 && sha(s.text)===s.textSha256
+    && s.textSha256==="fbe2da8889519d92195434ef5258e59bf233c902658c0afb4969a3664af93dc4"
+    && s.sourceDate===null && s.sourceDateText===null, "surveyor complete PDF capture or text differs");
+  need(p.pageCount===1 && p.identityPage===1 && hash(p.visualSha256)
+    && p.extractionReceiptSha256===s.originalSourcePin && hash(p.extractionReceiptSha256)
+    && p.annotations.count===6 && sha(p.annotations.text)===p.annotations.sha256
+    && p.annotations.sha256==="17979276089624d6fcaa3f21ccfa81d7d6f704a2e97c34fdca63a7bf64317159",
+    "surveyor full-page and annotation coverage differs");
+}
+function surveyorIdentityChain(e: SurveyorEntry) {
+  const s=e.sources[0],p=e.surveyor;
+  need(p.role==="municipal_preliminary_surveyor_titleblock" && p.contactAddressRole==="dated_surveyor_business_contact"
+    && p.firmNumber==="10194177" && p.firmNumber===e.target.recordId && p.domainLiteral==="www.eaglesurveying.com"
+    && host(p.domainLiteral)===e.canonicalDomain && e.legalName==="EAGLE SURVEYING, LLC" && e.phone==="9402223009",
+    "surveyor exact name, domain or firm identifier differs");
+  need(p.titleblockQuote==="222 South Elm StreetSuite: 200Denton, TX  76201940.222.3009www.eaglesurveying.comTX Firm # 10194177Eagle Surveying, LLC"
+    && s.text.split(p.titleblockQuote).length===2
+    && p.contactQuote==="SURVEYOREagle Surveying, LLCContact: David Jett222 S. Elm Street, Suite: 200Denton, TX 76201(940) 222-3009david@eaglesurveying.com"
+    && s.text.split(p.contactQuote).length===2 && s.text.includes(p.contactQuote+"ENGINEERClaymoore Engineering, Inc."),
+    "surveyor titleblock or separate contact attribution differs");
+  need(p.titleblockDate==="02/09/2026" && s.text.includes("DJJ-"+p.titleblockDate+"1910.023-10")
+    && p.preparationDate==="04/20/2026" && s.text.includes("DATE OF PREPARATION: "+p.preparationDate)
+    && p.filenameDate==="20260417" && s.url.includes("_"+p.filenameDate+"_-_MARKUPS.pdf")
+    && p.annotationDate==="2026-04-28" && p.agendaPathDate==="20260507" && s.url.includes("/"+p.agendaPathDate+"_989/")
+    && p.unifiedSourceDate===null && Date.parse("2026-04-28")<=Date.parse(s.observedAt), "surveyor distinct date roles differ");
+  need(p.preliminary===true && p.approvalAndCertificationUnsigned===true && p.finalApprovalClaim===false
+    && p.currentLicenseClaim===false && p.currentAddressClaim===false && p.addressEquivalenceClaim===false && p.financialInference===false
+    && s.text.includes("PRELIMINARYthis document shall not be recorded for anypurpose and shall not be used or viewed orrelied upon as a final survey document")
+    && p.visiblePageLabel==="PAGE 1 OF 1" && s.text.includes(p.visiblePageLabel)
+    && p.metadataTitle==="PLAT PAGE 1 OF 2" && p.completeProjectPacketClaim===false,
+    "surveyor preliminary or address/license claim boundary differs");
 }
 
 /** A retained dated association only; never a canonical-field update or a claim

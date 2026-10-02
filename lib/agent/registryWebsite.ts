@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseCsv } from "@/lib/csv";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { STATE_NAMES } from "@/lib/publicGrowth/identity";
 import { sameCompanySite } from "@/lib/sources/siteDiscovery";
@@ -19,7 +20,7 @@ export type RegistryWebsiteCorroboration = {
     schema: "explicit_site_operator_dba_definition_v1";
     legalOperator: string; canonicalSubject: string; quote: string; quoteSha256: string;
   };
-  identifier?: { kind: "usdot" | "ein" | "cslb_license"; value: string };
+  identifier?: { kind: "usdot" | "ein" | "cslb_license" | "cra_charity_registration"; value: string };
   sourceUrl: string; normalizedVisibleTextSha256: string; quote: string; quoteSha256: string; subject: string;
   // Omission is accepted only for an exact ca_contractors / cslb_license proof.
   // It means the website address is unknown, never borrowed from the registry.
@@ -204,9 +205,40 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
 
 
 type Identifier = NonNullable<RegistryWebsiteCorroboration["identifier"]>;
+/** CRA's charity account is the whole BN + RR + account suffix. The fiscal
+ * suffix identifies this exact financial record, not the charity's current status.
+ * Bind the two retained original CSV rows; never borrow the website office address. */
+function craIdentifierRule(row: RegistryFinding, value: string) {
+  const p = row.profile, source = p.provenance.sourceRow, authority = validatePublicHttpUrl(row.sourceUrl);
+  const period = p.recordId.match(/^([0-9]{9}RR[0-9]{4}):([0-9]{4}-[0-9]{2}-[0-9]{2})$/)?.[2];
+  const facts = (field: string, expected: string) => p.facts.filter(f => f.field === field).length === 1
+    && p.facts.some(f => f.field === field && f.value === expected) && source[field] === expected;
+  const original = row.evidence.match(/^([^\r\n]+)(\r?\n)([^\r\n]+)(\r?\n)$/), rows = parseCsv(row.evidence);
+  const identity = rows[0], financial = rows[1];
+  if (p.dataset !== "cra_charities" || !/^[0-9]{9}RR[0-9]{4}$/.test(value)
+    || authority.protocol !== "https:" || authority.hostname !== "open.canada.ca"
+    || authority.username || authority.password || authority.port
+    || !period || p.recordId !== value + ":" + period || !Number.isFinite(Date.parse(period))
+    || new Date(period).toISOString().slice(0, 10) !== period || p.sourceAsOf !== period
+    || !facts("registration_number", value) || !facts("tax_period", period)
+    || p.identity.countryCode !== "CA" || source.countryCode !== "CA"
+    || !/^(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)$/.test(p.identity.state)
+    || !/^[A-Z]\d[A-Z] ?\d[A-Z]\d$/.test(p.identity.postalCode)
+    || !original || sha(original[3] + original[4]) !== p.provenance.rowSha256 || p.provenance.quote !== row.evidence
+    || rows.length !== 2 || identity?.length !== 12 || financial?.length < 3
+    || identity[0] !== value || financial[0] !== value || financial[1] !== period
+    || identity[4] !== p.identity.legalName || identity[6] !== p.identity.addressLine1
+    || identity[7] !== (p.identity.addressLine2 ?? "") || identity[8] !== p.identity.city
+    || identity[9] !== p.identity.state || identity[10] !== p.identity.postalCode || identity[11] !== "CA")
+    throw new Error("registry website CRA identifier does not bind exact Canadian source rows and fiscal record");
+}
 function identifierRule(row: RegistryFinding, identifier: unknown): Identifier {
   if (!object(identifier) || Object.keys(identifier).some(k => !["kind", "value"].includes(k))
-    || !text(identifier.value, 12)) throw new Error("invalid registry website identifier");
+    || !text(identifier.value, identifier.kind === "cra_charity_registration" ? 15 : 12)) throw new Error("invalid registry website identifier");
+  if (identifier.kind === "cra_charity_registration") {
+    craIdentifierRule(row, identifier.value);
+    return identifier as Identifier;
+  }
   const isDot = row.profile.dataset === "fmcsa" && identifier.kind === "usdot";
   const isEin = row.profile.dataset === "irs_exempt" && identifier.kind === "ein";
   const isCslb = row.profile.dataset === "ca_contractors" && identifier.kind === "cslb_license";
@@ -226,14 +258,16 @@ function identifierRule(row: RegistryFinding, identifier: unknown): Identifier {
 }
 function labelledIdentifiers(value: string, kind: Identifier["kind"]) {
   // Closed public labels. A generic number, phone, MC number or tax deduction is not an ID.
-  const re = kind === "usdot"
+  const re = kind === "cra_charity_registration"
+    ? /\b(?:charitable|charity)\s+registration\s+(?:number|no\.?)\s*[:#]?\s*(\d+[ \u00a0]*(?:[a-z]{2}[ \u00a0]*)?\d*[a-z0-9_/-]*(?:\.\d+)*)(?![a-z0-9])/gi
+    : kind === "usdot"
     ? /\b(?:USDOT|US\s+DOT|U\.S\.\s*DOT|DOT)\s*(?:(?:number|no\.?)\s*)?(?::\s*#?|#)?\s*([1-9]\d{3,8})(?![a-z0-9])/gi
     : kind === "cslb_license"
       ? /\b(?:CSLB(?:\s+(?:contractor(?:'s)?\s+)?license)?|(?:California|CA)\s+(?:contractor(?:'s)?\s+)?license|Licenses?\s*:\s*CA\s*-)\s*(?:(?:number|no\.?)\s*)?[:#]?\s*(\d+[a-z0-9_/-]*(?:\.\d+)*)/gi
       : /\b(?:EIN|Employer Identification Number|Federal Tax (?:ID|Identification Number))\s*(?:(?:number|no\.?)\s*)?[:#]?\s*(\d{2}-?\d{7})(?![a-z0-9])/gi;
   // Retain malformed CSLB tokens too: a second labelled 0644768 or 644768-X
   // is conflicting evidence, not an alias that can be silently discarded.
-  return [...value.matchAll(re)].map(m => ({ value: kind === "ein" ? m[1].replace(/-/g, "") : m[1], start: m.index!, end: m.index! + m[0].length }));
+  return [...value.matchAll(re)].map(m => ({ value: kind === "cra_charity_registration" ? m[1].replace(/[ \u00a0]/g, "") : kind === "ein" ? m[1].replace(/-/g, "") : m[1], start: m.index!, end: m.index! + m[0].length }));
 }
 function legalParts(value: string) {
   const normalized = words(value).replace(/\b(l l c|l l p|p l l c|l p|p c)$/, suffix => suffix.replace(/ /g, ""));
@@ -300,6 +334,9 @@ function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorro
   const cslbHistoricalOrNegated = /\b(?:(?:old|former|previous|not (?:our|the))\s+(?:CSLB|California|CA|contractor|licenses?)|(?:not|never)\s+(?:CSLB|California|CA)\b|(?:do|does) not (?:hold|own|use)|no longer (?:hold|own|use))\b/i;
   if (identifier.kind === "cslb_license" && cslbHistoricalOrNegated.test(proof.quote))
     throw new Error("registry website license attribution is historical or negated");
+  const craHistoricalOrNegated = /\b(?:(?:old|former|previous|not (?:our|the))\s+(?:CRA|charitable|charity)|(?:not|never)\s+(?:our\s+)?(?:charitable|charity)\b|(?:do|does) not (?:hold|own|use)|no longer (?:hold|own|use))\b/i;
+  if (identifier.kind === "cra_charity_registration" && craHistoricalOrNegated.test(proof.quote))
+    throw new Error("registry website charity attribution is historical or negated");
   const subjects = exactSubjectPositions(proof.quote, proof.subject, identifier.kind === "cslb_license");
   exactSubjectPositions(visibleText, proof.subject, identifier.kind === "cslb_license");
   if (!subjects.some(subjectAt => quoteIds.some(id => Math.min(Math.abs(id.start - subjectAt), Math.abs(id.end - (subjectAt + proof.subject.length))) <= 650)))
@@ -311,6 +348,8 @@ function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorro
       throw new Error("registry website identifier has an ambiguous surrounding reference");
     if (identifier.kind === "cslb_license" && cslbHistoricalOrNegated.test(vicinity))
       throw new Error("registry website license attribution is historical or negated");
+    if (identifier.kind === "cra_charity_registration" && craHistoricalOrNegated.test(vicinity))
+      throw new Error("registry website charity attribution is historical or negated");
   }
 }
 
@@ -459,7 +498,10 @@ export function registryWebsiteVerifier() {
       || (!identifierMode && (words(a.state) !== words(p.state) || a.countryCode !== (p.countryCode ?? "US")
       || (a.countryCode === "CA" ? words(a.postalCode).replace(/ /g, "") !== words(p.postalCode).replace(/ /g, "") : a.postalCode.slice(0, 5) !== p.postalCode.slice(0, 5))))))
       throw new Error("registry website complete address is not corroborated");
-    if (identifierMode && a && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
+    if (identifierMode && proof.identifier?.kind === "cra_charity_registration" && (!a || a.countryCode !== "CA"
+      || !/^(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)$/.test(a.state) || !/^[A-Z]\d[A-Z] ?\d[A-Z]\d$/.test(a.postalCode)))
+      throw new Error("registry CRA identifier requires an explicit complete Canadian website address");
+    if (identifierMode && proof.identifier?.kind !== "cra_charity_registration" && a && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
       throw new Error("registry identifier requires an explicit complete US website address");
     if (dbaMode && (!a || !p.countryCode || !p.city || words(a.city) !== words(p.city)))
       throw new Error("registry website DBA complete source city and country are required");

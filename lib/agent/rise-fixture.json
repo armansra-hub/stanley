@@ -1,0 +1,220 @@
+{
+  "scope": "Exact retained business evidence for synthetic runtime tests only; no new source or final witness.",
+  "company": {
+    "name": "Rise Women's Legal Centre",
+    "domain": "womenslegalcentre.ca",
+    "website_raw": "http://www.womenslegalcentre.ca",
+    "legalNames": [],
+    "addresses": [
+      {
+        "addressLine1": "PO Box 3761",
+        "city": "Vancouver",
+        "state": "BC",
+        "postalCode": "V6B 3Z1",
+        "countryCode": "CA",
+        "sourceKind": "netsuite_record",
+        "sourceId": "5904a95b-a454-406a-a071-5049f44aa041",
+        "capturedAt": "2026-07-28T00:00:00+00:00"
+      }
+    ]
+  },
+  "originalFinding": {
+    "internalId": "164985510",
+    "companyId": "5f4f8b82-7ed4-40c8-9f31-525375243733",
+    "kind": "ops_profile",
+    "source": "registry",
+    "sourceUrl": "https://open.canada.ca/data/dataset/80c00cdb-1358-415c-bb8b-0de7f12675b8/resource/e545170c-3689-4833-b2a8-e9e83100ab59/download/financial_d_and_schedule_6_2024_updated.csv",
+    "evidence": "763368099RR0001,0160,0009,C,\"RISE WOMEN'S LEGAL CENTRE\",\"Rise Women's Legal Centre\",\"PO BOX 3761 STN TERMINAL\",\"\",\"VANCOUVER\",BC,V6B3Z1,CA\n763368099RR0001,2024-03-31,27,6,A,,2366382,223297,,,,,,419412,,-343728,8204,,2673567,,229616,1170173,,,1399789,,,71761,,,363018,30958,1081890,169598,,,,,77500,68860,,,,,,96348,1121308,\"GRANTS FROM NON-GOVERNMENTAL SOURCE\",3081241,,23848,2803,28179,98831,65422,9685,,2101147,,150580,90811,,257277,\"INSURANCE AND BOARD AND COMMITTEE\",2828583,2369779,369876,88928,,,,2828583,,,,200400,1104816,,757550,1608832,,,,,\n",
+    "registryProfile": {
+      "version": 1,
+      "dataset": "cra_charities",
+      "recordId": "763368099RR0001:2024-03-31",
+      "sourceAsOf": "2024-03-31",
+      "observedAt": "2026-09-29T23:35:15.558549+00:00",
+      "identity": {
+        "legalName": "RISE WOMEN'S LEGAL CENTRE",
+        "addressLine1": "PO BOX 3761 STN TERMINAL",
+        "city": "VANCOUVER",
+        "state": "BC",
+        "postalCode": "V6B3Z1",
+        "countryCode": "CA"
+      },
+      "facts": [
+        {
+          "field": "registration_number",
+          "value": "763368099RR0001"
+        },
+        {
+          "field": "tax_period",
+          "value": "2024-03-31"
+        },
+        {
+          "field": "total_assets_cad",
+          "value": "2673567"
+        },
+        {
+          "field": "total_revenue_cad",
+          "value": "3081241"
+        },
+        {
+          "field": "total_expenses_cad",
+          "value": "2828583"
+        }
+      ],
+      "provenance": {
+        "rowSha256": "110a85a486ef9dfdf05035fe0a21d3a957d8538a6efe46647593ceb880343fca",
+        "quote": "763368099RR0001,0160,0009,C,\"RISE WOMEN'S LEGAL CENTRE\",\"Rise Women's Legal Centre\",\"PO BOX 3761 STN TERMINAL\",\"\",\"VANCOUVER\",BC,V6B3Z1,CA\n763368099RR0001,2024-03-31,27,6,A,,2366382,223297,,,,,,419412,,-343728,8204,,2673567,,229616,1170173,,,1399789,,,71761,,,363018,30958,1081890,169598,,,,,77500,68860,,,,,,96348,1121308,\"GRANTS FROM NON-GOVERNMENTAL SOURCE\",3081241,,23848,2803,28179,98831,65422,9685,,2101147,,150580,90811,,257277,\"INSURANCE AND BOARD AND COMMITTEE\",2828583,2369779,369876,88928,,,,2828583,,,,200400,1104816,,757550,1608832,,,,,\n",
+        "sourceRow": {
+          "legalName": "RISE WOMEN'S LEGAL CENTRE",
+          "addressLine1": "PO BOX 3761 STN TERMINAL",
+          "city": "VANCOUVER",
+          "state": "BC",
+          "postalCode": "V6B3Z1",
+          "countryCode": "CA",
+          "registration_number": "763368099RR0001",
+          "tax_period": "2024-03-31",
+          "total_assets_cad": "2673567",
+          "total_revenue_cad": "3081241",
+          "total_expenses_cad": "2828583"
+        },
+        "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\cra-charity-financial-2024.csv"
+      }
+    },
+    "detail": "Historical Canadian charity financials for the stated fiscal period, in CAD. These figures are not current cash or a current software budget."
+  },
+  "finding": {
+    "internalId": "164985510",
+    "companyId": "5f4f8b82-7ed4-40c8-9f31-525375243733",
+    "kind": "ops_profile",
+    "source": "registry",
+    "sourceUrl": "https://open.canada.ca/data/dataset/80c00cdb-1358-415c-bb8b-0de7f12675b8/resource/e545170c-3689-4833-b2a8-e9e83100ab59/download/financial_d_and_schedule_6_2024_updated.csv",
+    "evidence": "763368099RR0001,0160,0009,C,\"RISE WOMEN'S LEGAL CENTRE\",\"Rise Women's Legal Centre\",\"PO BOX 3761 STN TERMINAL\",\"\",\"VANCOUVER\",BC,V6B3Z1,CA\n763368099RR0001,2024-03-31,27,6,A,,2366382,223297,,,,,,419412,,-343728,8204,,2673567,,229616,1170173,,,1399789,,,71761,,,363018,30958,1081890,169598,,,,,77500,68860,,,,,,96348,1121308,\"GRANTS FROM NON-GOVERNMENTAL SOURCE\",3081241,,23848,2803,28179,98831,65422,9685,,2101147,,150580,90811,,257277,\"INSURANCE AND BOARD AND COMMITTEE\",2828583,2369779,369876,88928,,,,2828583,,,,200400,1104816,,757550,1608832,,,,,\n",
+    "registryProfile": {
+      "version": 1,
+      "dataset": "cra_charities",
+      "recordId": "763368099RR0001:2024-03-31",
+      "sourceAsOf": "2024-03-31",
+      "observedAt": "2026-09-29T23:35:15.558549+00:00",
+      "identity": {
+        "legalName": "RISE WOMEN'S LEGAL CENTRE",
+        "addressLine1": "PO BOX 3761 STN TERMINAL",
+        "city": "VANCOUVER",
+        "state": "BC",
+        "postalCode": "V6B3Z1",
+        "countryCode": "CA"
+      },
+      "facts": [
+        {
+          "field": "registration_number",
+          "value": "763368099RR0001"
+        },
+        {
+          "field": "tax_period",
+          "value": "2024-03-31"
+        },
+        {
+          "field": "total_assets_cad",
+          "value": "2673567"
+        },
+        {
+          "field": "total_revenue_cad",
+          "value": "3081241"
+        },
+        {
+          "field": "total_expenses_cad",
+          "value": "2828583"
+        }
+      ],
+      "provenance": {
+        "rowSha256": "110a85a486ef9dfdf05035fe0a21d3a957d8538a6efe46647593ceb880343fca",
+        "quote": "763368099RR0001,0160,0009,C,\"RISE WOMEN'S LEGAL CENTRE\",\"Rise Women's Legal Centre\",\"PO BOX 3761 STN TERMINAL\",\"\",\"VANCOUVER\",BC,V6B3Z1,CA\n763368099RR0001,2024-03-31,27,6,A,,2366382,223297,,,,,,419412,,-343728,8204,,2673567,,229616,1170173,,,1399789,,,71761,,,363018,30958,1081890,169598,,,,,77500,68860,,,,,,96348,1121308,\"GRANTS FROM NON-GOVERNMENTAL SOURCE\",3081241,,23848,2803,28179,98831,65422,9685,,2101147,,150580,90811,,257277,\"INSURANCE AND BOARD AND COMMITTEE\",2828583,2369779,369876,88928,,,,2828583,,,,200400,1104816,,757550,1608832,,,,,\n",
+        "sourceRow": {
+          "legalName": "RISE WOMEN'S LEGAL CENTRE",
+          "addressLine1": "PO BOX 3761 STN TERMINAL",
+          "city": "VANCOUVER",
+          "state": "BC",
+          "postalCode": "V6B3Z1",
+          "countryCode": "CA",
+          "registration_number": "763368099RR0001",
+          "tax_period": "2024-03-31",
+          "total_assets_cad": "2673567",
+          "total_revenue_cad": "3081241",
+          "total_expenses_cad": "2828583"
+        },
+        "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\cra-charity-financial-2024.csv"
+      }
+    },
+    "detail": "Rise’s own legacy-giving page explicitly names Rise Women’s Legal Centre and charitable registration number 763368099 RR0001, matching the retained CRA registration. The CRA record reports CAD $3,081,241 revenue, CAD $2,828,583 expenses and CAD $2,673,567 assets for the year ended March 31, 2024; revenue less expenses is CAD $252,658. These are historical totals, not current cash, available budget or financial distress. The CRA mailing address retains PO BOX 3761 STN TERMINAL, while the website gives Suite #820, 510 Burrard St., Vancouver BC V6C 3A8; those address roles remain distinct. Rise provides BC family-law legal services, training, research and advocacy. Hypothesis: tracking donor-designated gifts alongside service and education programs may create allocation and reporting work; no current software or process problem is verified. Planned giving options and pledges described on the website do not establish received funds, current endowment balances or buying intent."
+  },
+  "source": {
+    "receipt": {
+      "file": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\source.receipt.json",
+      "sha256": "49c7f7cd783ed04d30bc23a0c77065147dc724ab7c5eb0ae8e3153a1db77b023"
+    },
+    "capture": {
+      "companyId": "5f4f8b82-7ed4-40c8-9f31-525375243733",
+      "internalId": "164985510",
+      "requestedUrl": "https://www.womenslegalcentre.ca/legacy-giving",
+      "startedAt": "2026-10-02T16:23:31.365Z",
+      "actualTask": "/root/cottonwood_review",
+      "authorization": "Root authorized one exact own-site legacy-giving URL for Rise charity-number evidence; append-only evidence, no retries or extra links.",
+      "helper": "C:\\Users\\Arman Sra\\Documents\\Stanley\\stanley-codex-catalog-20260911\\lib\\triggers\\urlSafety.ts",
+      "helperSha256": "0157ffa3d43de4784078d5fc23ef104aeee4289ace26ffeb672f895e2ace586c",
+      "helperExport": "fetchPublicHttpBytes",
+      "timeoutMs": 15000,
+      "maxRedirects": 2,
+      "maxBytes": 3000000,
+      "noRetries": true,
+      "publicationPerformed": false,
+      "canonicalChanges": false,
+      "observedAt": "2026-10-02T16:23:32.537Z",
+      "outcome": "response_retained",
+      "status": 200,
+      "finalUrl": "https://www.womenslegalcentre.ca/legacy-giving",
+      "redirected": false,
+      "contentType": "text/html;charset=utf-8",
+      "etag": "W/\"9e94129aba92e501c0113a086866587c--gzip\"",
+      "lastModified": null,
+      "finalLocation": null,
+      "intermediateHops": null,
+      "redirectLimit": 2,
+      "redirectProvenance": "Unmodified public helper validates and follows every redirect under one deadline; returned finalUrl is observed. The helper does not expose intermediate hop statuses.",
+      "bodyFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\source.body",
+      "bodyBytes": 362006,
+      "bodySha256": "3b6c6a35fa943045b98682db08d3c90412ef706e6690931dedac552ebbc057ca",
+      "htmlFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\source.html",
+      "htmlSha256": "3b6c6a35fa943045b98682db08d3c90412ef706e6690931dedac552ebbc057ca",
+      "textFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\source.canonical-visible.txt",
+      "textSha256": "e5069db9225bbf510e1bf8420dcdac260c7aa8a3d99ac0d284943fec0e3613d3",
+      "characters": 7859,
+      "normalizer": "htmlToVisibleText",
+      "normalizerFileSha256": "05087ed73fc5c4bc709a2b6c77483608ebcba8db9d16129389606d871e86720f",
+      "fullTextRead": false,
+      "rawHtmlFullReadClaimed": false
+    },
+    "originalText": {
+      "file": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\source.canonical-visible.txt",
+      "sha256": "e5069db9225bbf510e1bf8420dcdac260c7aa8a3d99ac0d284943fec0e3613d3"
+    },
+    "text": "Leave a Legacy &mdash; Rise Women’s Legal Centre EXIT SITE X 0 Skip to Content About us Our Story Our Work Our Team Advocacy Annual Reports News Cases Programs & Services for Clients for Support Workers for Students for Lawyers Research Projects Resources Podcast Reports Guides Submissions Get involved Donations and Giving Careers at Rise Volunteer Join our Mailing List RPLE Contact DONATE Open Menu Close Menu Open Menu Close Menu About us Our Story Our Work Our Team Advocacy Annual Reports News Cases Programs & Services for Clients for Support Workers for Students for Lawyers Research Projects Resources Podcast Reports Guides Submissions Get involved Donations and Giving Careers at Rise Volunteer Join our Mailing List RPLE Contact DONATE Folder: About us Back Our Story Our Work Our Team Advocacy Annual Reports News Cases Folder: Programs & Services Back for Clients for Support Workers for Students for Lawyers Research Projects Folder: Resources Back Podcast Reports Guides Submissions Folder: Get involved Back Donations and Giving Careers at Rise Volunteer Join our Mailing List RPLE Contact DONATE LEGACY GIVING Leaving a gift in your will can create a meaningful legacy A gift in your will can help ensure that women and gender-diverse people continue to have access to safety, justice, and legal support for generations to come. By including Rise Women's Legal Centre in your estate plans, you can create a lasting legacy that advances access to justice long into the future. Why leave a legacy? ✓ Create lasting change for future generations ✓ Continue supporting access to justice beyond your lifetime ✓ Retain control of your assets during your lifetime ✓ Potential tax benefits for your estate ✓ Join Rise's Trailblazer Circle Each generation of women and their supporters has paved the way for the next. Thanks to past and present trailblazers, women now have more access to justice than ever before. Though we’ve made a lot of progress, there is still work to do. Legacy giving allows you to become a trailblazer of your generation, creating new pathways for those who come next. Legacy gifts help sustain legal services, public legal education, law reform initiatives, and advocacy efforts that improve access to justice for women and gender-diverse people across British Columbia. Looking back at the rights women have gained in the last 50 years alone, we know how important the fight for our rights, freedoms, and entitlements is. You can continue that fight as part of your legacy. For those looking to make a difference, legacy giving can help ensure that you make a major contribution to a charity of your choice, without using any of the money you need now or may need in the future. After you have provided for your family and loved ones, you can make a contribution of any amount to Rise. Even small gifts make a difference. There are also tax benefits to leaving a legacy gift. A legacy gift does not need to be large to make a meaningful difference. Gifts of all sizes contribute to a future where women and gender-diverse people can access legal information, advice, and representation when they need it most. Types of planned gifts Bequests A bequest is a donation made through your will and is the most common planned gift. You can: Give cash, an asset, or a share of whatever remains after estate expenses and other bequests are paid. This could be a specific dollar amount or percentage of the residue. Set up a trust that pays income to a loved one for life with a gift of the remainder to one of more charities. Make your gift contingent, payable only if your other beneficiaries do not survive you. It is best to discuss the different tax benefits of leaving different types of bequests in your will with a lawyer. Giving securities or registered investments may have significant tax benefits, for example. Endowments Endowments create ongoing support for Rise’s services and work in perpetuity. An endowment is a gift that is invested long-term, with the annual interest from your gift being distributed according to your instructions. Various tax benefits apply depending on how you make the donation. You can feel confident that your gift will be maximized over time and responsibly invested with the guidance and oversight of Rise’s Board of Directors and in accordance with Rise’s policies. Life insurance policies Adding Rise as a designated beneficiary of a life insurance policy ensures a future gift and can mean a tax benefit for your estate. How do I include a gift in my will? We always recommend speaking to a lawyer when creating your will or estate plan to ensure that, no matter the approach you choose, your gift will be used as you intended. When making a legacy gift, please ensure you include the following information in your documents: Our legal name: Rise Women’s Legal Centre Our address: Suite #820, 510 Burrard St., Vancouver, BC V6C 3A8 Our charitable registration number: 763368099 RR 0001 Here is some sample bequest language you can share with your legal advisor: \"I give to Rise Women's Legal Centre (Charitable Registration Number 763368099 RR 0001) the sum of $_____ (or _____% of the residue of my estate) to be used for their own use absolutely.\" Adriane’s legacy giving story… “I have chosen to leave a gift to Rise Women’s Legal Centre in my will because I have seen firsthand the profound difference their work can make in people’s lives. I have witnessed how respectful, helpful, and trauma-informed their lawyers and advocates are, and how they meet people with dignity and understanding during some of the most difficult moments of their lives. Leaving a gift to Rise in my will is my way of supporting this critical work and helping ensure that trauma-informed legal support remains available to women and gender diverse individuals who need it, and that Rise’s voice continues to advocate for systemic change. I am proud to contribute to an organization that makes such a tangible difference in the lives of others, and I strongly feel Rise should continue, even when I am no longer here. I hope others will consider joining me in the Trailblazer Circle by leaving a legacy gift to Rise. Together we can help support access to justice for generations to come.” Adriane King, member of the Trailblazer circle Join Rise’s Trailblazer Circle When you leave a legacy gift to Rise, you join our Trailblazer Circle — a group of philanthropists committed to making a generational impact on access to justice. You will be part of a special community of supporters who have included Rise in their wills or estate plans. If you have left a gift to us, please let us know. Trailblazers receive: Regular, exclusive updates on Rise’s work, including our annual report by mail Invitations to exclusive events Recognition on our website, annual report, and quarterly newsletter Reach out and let us know if you are joining the Trailblazer Circle. Join the Circle: Trailblazer Circle The following donors have pledged their support to Rise by including Rise in their wills or estate plans, committing to making a generational impact on access to justice. Adriane King …and other members of the Trailblazer Circle who wish to remain anonymous. Questions? You can reach us at: development@womenslegalcentre.ca , or at: (604) 757 5002 No results found Donate About Rise OUR STORY OUR WORK OUR TEAM ANNUAL REPORTS NEWS CASES Our Services FOR CLIENTS FOR STUDENTS FOR SUPPORT WORKERS FOR LAWYERS Get involved DONATIONS & GIVING CAREERS AT RISE VOLUNTEER JOIN OUR MAILING LIST Resources PODCAST REPORTS GUIDES SUBMISSIONS Donate DONATIONS AND GIVING Contact CONTACT Rise works on the lands commonly known as British Columbia which includes nearly 200 Indigenous Nations , with diverse traditions and histories. © 2026 Rise Women's Legal Centre. All rights reserved. Disclaimer | Privacy Policy",
+    "identityQuote": "Our legal name: Rise Women’s Legal Centre Our address: Suite #820, 510 Burrard St., Vancouver, BC V6C 3A8 Our charitable registration number: 763368099 RR 0001",
+    "identityQuoteSha256": "ed2dbd63ae73efd4fe58214e03c48170d4f7aecded9a131e0b34d17207b3c4a8",
+    "bequestQuote": "I give to Rise Women's Legal Centre (Charitable Registration Number 763368099 RR 0001)",
+    "sourcePublicationDate": null,
+    "sourceEffectiveDate": null
+  },
+  "input": {
+    "file": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\source-review-input.json",
+    "sha256": "745abe0a847394ae92eed490f76d26c7b574f472d613d7ac027103b31e33cb2b"
+  },
+  "actualSourcePair": {
+    "primary": {
+      "file": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\actual-primary-source-assessment.json",
+      "sha256": "e33cedecceb6697797dd0088183198f8bed6e13bf57cfe4a7e1d552d9559a07e"
+    },
+    "independent": {
+      "file": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-rise-charity-number-supplement-20261002\\actual-root-independent-source-assessment.json",
+      "sha256": "addc646b696b08ea52417ef46f9ad9a19383b5155662f538dd5a105efbe7b60f"
+    }
+  }
+}
