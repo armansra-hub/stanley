@@ -860,6 +860,92 @@
         "file": "goal-irs990-originals-2025-11b-20261002/202533169349101768-extraction.receipt.json",
         "sha256": "67b751f7855596e11a68ee28bcef0a3b39d36ab95d9873d2f786c7afc76b812c"
       }
+    },
+    {
+      "id": "202512599349301701",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_09A.zip",
+      "archiveSha256": null,
+      "archiveMember": "202512599349301701_public.xml",
+      "xmlSha256": "dc58c2c9d9d5275b35c5b6a30a19336d8028d87791a57fd53dab0250e378e222",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"f467949-643f89cab7668\"",
+        "compressedBytes": 8445,
+        "compressedSha256": "3d24f91b3993c5e9ba92b5e42ca2de21661533e6e91860adb9120d70e7f6460b",
+        "uncompressedBytes": 42321,
+        "crc32": 3587382507,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-teos-xml-09a-20261002/exact-members-discovery.json",
+          "sha256": "9a563204da2ac82af83c3fa17afac442093c5be072387ede1aaf26a7e8a8defc"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-teos-xml-09a-20261002/202512599349301701-local-header.receipt.json",
+          "sha256": "37b0faac6a9d9bb31b6841820fb6e03b2f9afc2b8eb669389b0a10011ac1f950"
+        }
+      },
+      "filing": {
+        "ein": "752775052",
+        "legalName": "Fort Worth MedTech Center Inc",
+        "websiteAddressTxt": "www.techfortworth.org",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2025-09-16T17:08:09-07:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "1120 South Freeway",
+          "city": "Fort Worth",
+          "state": "TX",
+          "postalCode": "76104",
+          "countryCode": "US"
+        },
+        "legalNameLine2": "dba TechFW"
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-index-2025-20261002/actual-root-four-primary-source-read.json",
+          "sha256": "3e27acdc864f582f8fe4bba9b9d724b83ff8a1895accdea656f5648abcf32f97"
+        },
+        "independent": {
+          "file": "goal-irs990-four-cottonwood-review-20261002/1854303-actual-independent-source-assessment.json",
+          "sha256": "61271bcae62c2fb82b0b9fac377c8c991f0b27f4d4ac7294aea1d9fb4df12ecd"
+        },
+        "readerTaskId": "/root",
+        "reviewerTaskId": "/root/cottonwood_review",
+        "reviewedAt": "2026-10-02T09:40:56.544Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-teos-xml-09a-20261002/202512599349301701-filing-range.receipt.json",
+        "sha256": "dbc542432f09914423441057887fcd27f9cdc24e4ffea7371612148d5d04499b"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-teos-xml-09a-20261002/202512599349301701-extraction.receipt.json",
+        "sha256": "ba3de6377b90b373edc7f017ecc81a39b6427158a620b597df7c5ca6c31b7ea1"
+      },
+      "subjectRoles": {
+        "schema": "reviewed_bmf_sort_and_filer_dba_v1",
+        "companyId": "55dba5b8-71f6-45ba-9947-1d6429b78e1f",
+        "internalId": "1854303",
+        "canonicalIdentitySha256": "540423e5c41e81cf91a4b1280f508501ed2105b0c7ceb12d12ecd655ca9db2b0",
+        "canonicalName": "Tech Fort Worth",
+        "ein": "752775052",
+        "sourceUrl": "https://www.irs.gov/pub/irs-soi/eo3.csv",
+        "rowSha256": "3f1601593b817fc537760e126870aac377336c84ced362d3fec4578152ea85f1",
+        "evidenceSha256": "02bb550513164cf38e3d4ae93a7c84dc7fb820f17daf86a58a4daa539f0ce289",
+        "profileSha256": "7b0a84da237ad657f0265109ce0f018fa5cbb85963d9c7c7d635e3c61dbfd1d2",
+        "bmfLegalName": "FORTWORTH MEDTECH CENTER INC",
+        "bmfSortName": "TECH FORT WORTH",
+        "filingLegalName": "Fort Worth MedTech Center Inc",
+        "filingDbaLine": "dba TechFW",
+        "filingDbaName": "TechFW",
+        "declaredDomain": "www.techfortworth.org",
+        "filerIdentityXml": "<Filer>\r\n      <EIN>752775052</EIN>\r\n      <BusinessName>\r\n        <BusinessNameLine1Txt>Fort Worth MedTech Center Inc</BusinessNameLine1Txt>\r\n        <BusinessNameLine2Txt>dba TechFW</BusinessNameLine2Txt>\r\n      </BusinessName>\r\n      <BusinessNameControlTxt>FORT</BusinessNameControlTxt>\r\n      <PhoneNum>8173398968</PhoneNum>\r\n      <USAddress>\r\n        <AddressLine1Txt>1120 South Freeway</AddressLine1Txt>\r\n        <CityNm>Fort Worth</CityNm>\r\n        <StateAbbreviationCd>TX</StateAbbreviationCd>\r\n        <ZIPCd>76104</ZIPCd>\r\n      </USAddress>\r\n    </Filer>",
+        "filerIdentityXmlSha256": "13c63673de76d56a6624e8b0ce8465869fffcf7501539dff21eeb1a571a39383"
+      }
     }
   ]
 }

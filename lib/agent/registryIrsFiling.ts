@@ -14,6 +14,7 @@ type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string 
 export type RegistryIrsFilingCorroboration = {
   schema: "irs990_ein_domain_v1"; entryId: string; entrySha256: string; canonicalIdentitySha256: string;
   mode: "declared_domain" | "observed_redirect";
+  nameComparison?: "reviewed_bmf_sort_and_filer_dba_v1";
   redirect?: { requestedUrl: string; finalUrl: string; normalizedVisibleTextSha256: string; observedAt: string };
   reader: Attestation; reviewer: Attestation;
 };
@@ -57,7 +58,10 @@ export function registryIrsFilingEvidenceHash(row: RegistryFinding, proof: Omit<
 }
 export function parseRegistryIrsFilingCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistryIrsFilingCorroboration {
   const keys = ["schema", "entryId", "entrySha256", "canonicalIdentitySha256", "mode", "reader", "reviewer"];
-  if (!object(raw) || !exactKeys(raw, raw.mode === "observed_redirect" ? [...keys, "redirect"] : keys)
+  if (!object(raw)) throw new Error("invalid IRS filing evidence");
+  if ("nameComparison" in raw) keys.push("nameComparison");
+  if (!exactKeys(raw, raw.mode === "observed_redirect" ? [...keys, "redirect"] : keys)
+    || "nameComparison" in raw && (raw.nameComparison !== "reviewed_bmf_sort_and_filer_dba_v1" || raw.mode !== "declared_domain")
     || raw.schema !== "irs990_ein_domain_v1" || typeof raw.entryId !== "string" || !hash(raw.entrySha256) || !hash(raw.canonicalIdentitySha256)
     || !["declared_domain", "observed_redirect"].includes(String(raw.mode))) throw new Error("invalid IRS filing evidence");
   const { entry, sha256 } = registryIrsFilingEntry(raw.entryId);
@@ -97,6 +101,40 @@ function originalEin(row: RegistryFinding): string {
     throw new Error("IRS filing identifier or original identity differs");
   return p.recordId;
 }
+// This compiled opt-in records a reviewed relationship, not a looser name
+// normalizer. The original BMF name, alternate name and both filer lines remain
+// literal and are bound to one exact original profile/company/context.
+function reviewedBmfDbaRoles(entry: Entry, row: RegistryFinding, company: Company, context: CompanyIdentityContext) {
+  const r = "subjectRoles" in entry ? entry.subjectRoles : null, f = entry.filing;
+  if (!r || r.schema !== "reviewed_bmf_sort_and_filer_dba_v1"
+    || r.companyId !== company.id || r.internalId !== company.netsuite_internal_id
+    || r.canonicalIdentitySha256 !== registryIrsFilingCanonicalHash(company, context)
+    || r.canonicalName !== company.name || r.ein !== f.ein || r.ein !== row.profile.recordId
+    || r.sourceUrl !== row.sourceUrl || r.rowSha256 !== row.profile.provenance.rowSha256
+    || r.evidenceSha256 !== sha(row.evidence) || r.profileSha256 !== sha(stableRegistryJson(row.profile)))
+    throw new Error("IRS reviewed subject scope or original profile differs");
+  const raw = JSON.parse(row.evidence.split("\nOriginal public source row: ")[1]) as Record<string, unknown>;
+  const xmlValue = (tag: string) => {
+    const matches = [...r.filerIdentityXml.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, "g"))];
+    if (matches.length !== 1) throw new Error("IRS reviewed filer role missing or duplicated");
+    return matches[0][1];
+  };
+  if (raw.NAME !== r.bmfLegalName || raw.SORT_NAME !== r.bmfSortName || raw.EIN !== r.ein
+    || !sameRegistryLegalName(r.bmfSortName, company.name)
+    || r.filingLegalName !== f.legalName || !("legalNameLine2" in f) || r.filingDbaLine !== f.legalNameLine2
+    || !r.filingDbaName || r.filingDbaLine !== `dba ${r.filingDbaName}`
+    || r.declaredDomain !== f.websiteAddressTxt || domain(r.declaredDomain) !== domain(company.domain || company.website_raw)
+    || sha(r.filerIdentityXml) !== r.filerIdentityXmlSha256 || !r.filerIdentityXml.startsWith("<Filer>")
+    || !r.filerIdentityXml.endsWith("</Filer>") || /<!|<\?/.test(r.filerIdentityXml)
+    || xmlValue("EIN") !== r.ein || xmlValue("BusinessNameLine1Txt") !== r.filingLegalName
+    || xmlValue("BusinessNameLine2Txt") !== r.filingDbaLine)
+    throw new Error("IRS reviewed legal, alternate-name, DBA or declared-domain role differs");
+  return { method: r.schema, registryLegalName: r.bmfLegalName, registryAlternateName: r.bmfSortName,
+    filingLegalName: r.filingLegalName, filingDbaLine: r.filingDbaLine, filingDbaName: r.filingDbaName,
+    canonicalName: r.canonicalName, ein: r.ein,
+    linkage: "Exact original BMF EIN and alternate-name role, complete reviewed filer legal/DBA role and declared canonical domain; no general name equivalence or address equivalence is inferred." };
+}
+
 /** Request-local bounded cache. The route also sums both verifier budgets. */
 export function registryIrsFilingVerifier() {
   const pages = new Map<string, Promise<PublicHttpTextResponse>>();
@@ -106,8 +144,9 @@ export function registryIrsFilingVerifier() {
     if (originalEin(row) !== f.ein || company.id !== row.companyId || company.netsuite_internal_id !== row.internalId
       || proof.canonicalIdentitySha256 !== registryIrsFilingCanonicalHash(company, context)) throw new Error("IRS filing canonical identity or EIN changed");
     const legal = f.legalName + ("legalNameLine2" in f ? ` ${f.legalNameLine2}` : "");
-    if (!sameRegistryLegalName(legal, row.profile.identity.legalName) || !sameRegistryLegalName(legal, company.name)
-      || context.aliases.some(name => !sameRegistryLegalName(legal, name))) throw new Error("IRS filing legal operator conflicts");
+    const nameRoles = proof.nameComparison ? reviewedBmfDbaRoles(entry, row, company, context) : undefined;
+    if (!nameRoles && (!sameRegistryLegalName(legal, row.profile.identity.legalName) || !sameRegistryLegalName(legal, company.name)
+      || context.aliases.some(name => !sameRegistryLegalName(legal, name)))) throw new Error("IRS filing legal operator conflicts");
     const canonicalHost = domain(company.domain || company.website_raw), filingHost = domain(f.websiteAddressTxt);
     let observedRedirect: Record<string, unknown> | undefined;
     if (proof.mode === "declared_domain") {
@@ -126,7 +165,8 @@ export function registryIrsFilingVerifier() {
       observedRedirect = { ...r, status: page.status, verifiedAt: now.toISOString(), htmlSha256: sha(page.body) };
     }
     return { method: "reviewed_irs_filing_ein_domain", verifiedAt: now.toISOString(), sourceIds: [`irs990:${entry.id}:${entry.xmlSha256}`], irsFiling: {
-      ...proof, entry, ...(observedRedirect ? { observedRedirect } : {}), registryAddress: row.profile.identity, canonicalAddresses: context.addresses,
-      scope: "Exact filer EIN/legal name and declared domain; addresses remain separate dated observations. No financial fact, canonical field or historical domain ownership is inferred." } };
+      ...proof, entry, ...(nameRoles ? { nameRoles } : {}), ...(observedRedirect ? { observedRedirect } : {}), registryAddress: row.profile.identity, canonicalAddresses: context.addresses,
+      scope: nameRoles ? "Exact original EIN, reviewed separate BMF legal/alternate-name and filer legal/DBA roles, and declared canonical domain; all literal names and dated addresses are preserved. No generic name or address equivalence, financial fact or canonical mutation is inferred."
+        : "Exact filer EIN/legal name and declared domain; addresses remain separate dated observations. No financial fact, canonical field or historical domain ownership is inferred." } };
   };
 }

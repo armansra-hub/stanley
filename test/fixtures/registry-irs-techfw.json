@@ -1,0 +1,99 @@
+{
+  "company": {
+    "id": "55dba5b8-71f6-45ba-9947-1d6429b78e1f",
+    "netsuite_internal_id": "1854303",
+    "name": "Tech Fort Worth",
+    "domain": "techfortworth.org",
+    "website_raw": "http://www.techfortworth.org"
+  },
+  "context": {
+    "aliases": [],
+    "addresses": [],
+    "context": ""
+  },
+  "finding": {
+    "internalId": "1854303",
+    "companyId": "55dba5b8-71f6-45ba-9947-1d6429b78e1f",
+    "kind": "ops_profile",
+    "source": "registry",
+    "detail": "IRS nonprofit filing figures refer to the financial reporting period shown, not current available budget. Blank source values remain unknown.",
+    "evidence": "{\"addressLine1\":\"1120 SOUTH FWY\",\"city\":\"FORT WORTH\",\"ein\":\"752775052\",\"legalName\":\"FORTWORTH MEDTECH CENTER INC\",\"postalCode\":\"76104-5064\",\"state\":\"TX\",\"tax_period\":\"202412\",\"tax_status\":\"IRS EO BMF status code 01\",\"total_assets\":1539547,\"total_revenue\":599328}\nOriginal public source row: {\"ACCT_PD\":\"12\",\"ACTIVITY\":\"000000000\",\"AFFILIATION\":\"3\",\"ASSET_AMT\":\"1539547\",\"ASSET_CD\":\"6\",\"CITY\":\"FORT WORTH\",\"CLASSIFICATION\":\"1000\",\"DEDUCTIBILITY\":\"1\",\"EIN\":\"752775052\",\"FILING_REQ_CD\":\"01\",\"FOUNDATION\":\"15\",\"GROUP\":\"0000\",\"ICO\":\"\",\"INCOME_AMT\":\"599328\",\"INCOME_CD\":\"5\",\"NAME\":\"FORTWORTH MEDTECH CENTER INC\",\"NTEE_CD\":\"S40\",\"ORGANIZATION\":\"1\",\"PF_FILING_REQ_CD\":\"0\",\"REVENUE_AMT\":\"599328\",\"RULING\":\"200107\",\"SORT_NAME\":\"TECH FORT WORTH\",\"STATE\":\"TX\",\"STATUS\":\"01\",\"STREET\":\"1120 SOUTH FWY\",\"SUBSECTION\":\"03\",\"TAX_PERIOD\":\"202412\",\"ZIP\":\"76104-5064\"}",
+    "sourceUrl": "https://www.irs.gov/pub/irs-soi/eo3.csv",
+    "registryProfile": {
+      "version": 1,
+      "dataset": "irs_exempt",
+      "recordId": "752775052",
+      "sourceAsOf": "2026-09-08",
+      "observedAt": "2026-09-29T23:13:10.143098+00:00",
+      "facts": [
+        {
+          "field": "ein",
+          "value": "752775052"
+        },
+        {
+          "field": "tax_status",
+          "value": "IRS EO BMF status code 01"
+        },
+        {
+          "field": "tax_period",
+          "value": "202412"
+        },
+        {
+          "field": "total_assets",
+          "value": 1539547
+        },
+        {
+          "field": "total_revenue",
+          "value": 599328
+        }
+      ],
+      "identity": {
+        "legalName": "FORTWORTH MEDTECH CENTER INC",
+        "addressLine1": "1120 SOUTH FWY",
+        "city": "FORT WORTH",
+        "state": "TX",
+        "postalCode": "76104-5064"
+      },
+      "provenance": {
+        "rowSha256": "3f1601593b817fc537760e126870aac377336c84ced362d3fec4578152ea85f1",
+        "quote": "{\"addressLine1\":\"1120 SOUTH FWY\",\"city\":\"FORT WORTH\",\"ein\":\"752775052\",\"legalName\":\"FORTWORTH MEDTECH CENTER INC\",\"postalCode\":\"76104-5064\",\"state\":\"TX\",\"tax_period\":\"202412\",\"tax_status\":\"IRS EO BMF status code 01\",\"total_assets\":1539547,\"total_revenue\":599328}\nOriginal public source row: {\"ACCT_PD\":\"12\",\"ACTIVITY\":\"000000000\",\"AFFILIATION\":\"3\",\"ASSET_AMT\":\"1539547\",\"ASSET_CD\":\"6\",\"CITY\":\"FORT WORTH\",\"CLASSIFICATION\":\"1000\",\"DEDUCTIBILITY\":\"1\",\"EIN\":\"752775052\",\"FILING_REQ_CD\":\"01\",\"FOUNDATION\":\"15\",\"GROUP\":\"0000\",\"ICO\":\"\",\"INCOME_AMT\":\"599328\",\"INCOME_CD\":\"5\",\"NAME\":\"FORTWORTH MEDTECH CENTER INC\",\"NTEE_CD\":\"S40\",\"ORGANIZATION\":\"1\",\"PF_FILING_REQ_CD\":\"0\",\"REVENUE_AMT\":\"599328\",\"RULING\":\"200107\",\"SORT_NAME\":\"TECH FORT WORTH\",\"STATE\":\"TX\",\"STATUS\":\"01\",\"STREET\":\"1120 SOUTH FWY\",\"SUBSECTION\":\"03\",\"TAX_PERIOD\":\"202412\",\"ZIP\":\"76104-5064\"}",
+        "sourceRow": {
+          "legalName": "FORTWORTH MEDTECH CENTER INC",
+          "addressLine1": "1120 SOUTH FWY",
+          "city": "FORT WORTH",
+          "state": "TX",
+          "postalCode": "76104-5064",
+          "ein": "752775052",
+          "tax_status": "IRS EO BMF status code 01",
+          "tax_period": "202412",
+          "total_assets": 1539547,
+          "total_revenue": 599328
+        },
+        "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\irs-eo3.csv"
+      }
+    }
+  },
+  "sourceInput": {
+    "file": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-irs990-four-cottonwood-review-20261002\\1854303-source-input.json",
+    "sha256": "b261de9760ce6a8da9daa9f4e1987ebd84f477c8714923a0b34787d0c5dfe4d1"
+  },
+  "freshContext": {
+    "file": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\goal-irs2025-eight-current-context-20261002.json",
+    "sha256": "d92232e13b878db33db5e69de77b49c101aa715a36c19dc5bd67324dab807c35"
+  },
+  "actualSourcePair": {
+    "primary": {
+      "file": "goal-irs990-index-2025-20261002/actual-root-four-primary-source-read.json",
+      "sha256": "3e27acdc864f582f8fe4bba9b9d724b83ff8a1895accdea656f5648abcf32f97"
+    },
+    "independent": {
+      "file": "goal-irs990-four-cottonwood-review-20261002/1854303-actual-independent-source-assessment.json",
+      "sha256": "61271bcae62c2fb82b0b9fac377c8c991f0b27f4d4ac7294aea1d9fb4df12ecd"
+    },
+    "readerTaskId": "/root",
+    "reviewerTaskId": "/root/cottonwood_review",
+    "reviewedAt": "2026-10-02T09:40:56.544Z"
+  },
+  "testsOnly": true,
+  "actualFinalPublicationApproval": false
+}
