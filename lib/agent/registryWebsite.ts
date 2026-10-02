@@ -284,7 +284,23 @@ function sameLimitedCompanySubject(left: string, right: string): boolean {
   return Boolean(x && y && x[1] === y[1] && x[2] !== y[2]);
 }
 type SubjectSpan = { start: number; end: number; definitionEnd: number };
-function exactSubjectPositions(value: string, subject: string, cslbAreaHeading = false, dbaNavigation = false, relationshipDba?: SubjectSpan): number[] {
+function separateContactHeadingSubjects(html: string, visibleText: string, subject: string, normalization?: RegistryWebsiteNormalization): Set<number> {
+  // Bind the exception to this exact visible occurrence and separate headings.
+  // Inline words, another occurrence and unrelated headings grant no exception.
+  const source = html.replace(/<!--[^]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+  const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), positions = new Set<number>();
+  for (const heading of source.matchAll(/<h([1-6])\b[^>]*>\s*Contact\s+Us\s*<\/h\1\s*>/gi)) {
+    const end = heading.index! + heading[0].length;
+    const next = source.slice(end).match(new RegExp("^(?:\\s|<\\/?(?:div|section|article|header)\\b[^>]*>)*<h([1-6])\\b[^>]*>\\s*(" + escaped + ")(?:\\.)?\\s*<\\/h\\1\\s*>", "i"));
+    if (!next) continue;
+    const prefix = registryWebsiteText(source.slice(0, end), normalization), at = prefix.length + (prefix ? 1 : 0);
+    if (visibleText.slice(0, prefix.length) === prefix
+      && visibleText.slice(at, at + subject.length).toLowerCase() === subject.toLowerCase()) positions.add(at);
+  }
+  return positions;
+}
+function exactSubjectPositions(value: string, subject: string, cslbAreaHeading = false, dbaNavigation = false, relationshipDba?: SubjectSpan, contactHeadings?: true | ReadonlySet<number>): number[] {
   const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matches = [...value.matchAll(new RegExp(escaped, "giu"))];
   if (!matches.length) throw new Error("registry identifier full legal subject is missing");
@@ -307,12 +323,14 @@ function exactSubjectPositions(value: string, subject: string, cslbAreaHeading =
     const neutralAreaHeading = cslbAreaHeading && /(?:^|[^\p{L}\p{N}_'’&-])Additional Areas Served\s+$/u.test(before);
     const neutralDbaNavigation = dbaNavigation && /(?:^|[^\p{L}\p{N}_])Skip to content\s+$/u.test(before);
     const definedDba = relationshipDba?.start === at && relationshipDba.end === end;
-    if (prefix && !definedDba && !neutralAreaHeading && !neutralDbaNavigation && !/^(?:about|contact|copyright|name|legal|company|to|by|is|are|of)$/i.test(prefix))
+    const neutralContactHeading = /(?:^|[^\p{L}\p{N}_'’&-])Contact Us\s+$/u.test(before)
+      && (contactHeadings === true || contactHeadings?.has(at));
+    if (prefix && !definedDba && !neutralAreaHeading && !neutralDbaNavigation && !neutralContactHeading && !/^(?:about|contact|copyright|name|legal|company|to|by|is|are|of)$/i.test(prefix))
       throw new Error("registry identifier legal subject has an ambiguous name prefix");
   }
   return matches.map(match => match.index!);
 }
-function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorroboration, visibleText: string) {
+function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorroboration, visibleText: string, contactHeadings?: true | ReadonlySet<number>) {
   const identifier = identifierRule(row, proof.identifier), quoteIds = labelledIdentifiers(proof.quote, identifier.kind);
   const pageIds = labelledIdentifiers(visibleText, identifier.kind);
   if (!quoteIds.length || !pageIds.length || pageIds.some(id => id.value !== identifier.value)
@@ -337,8 +355,11 @@ function identifierAttribution(row: RegistryFinding, proof: RegistryWebsiteCorro
   const craHistoricalOrNegated = /\b(?:(?:old|former|previous|not (?:our|the))\s+(?:CRA|charitable|charity)|(?:not|never)\s+(?:our\s+)?(?:charitable|charity)\b|(?:do|does) not (?:hold|own|use)|no longer (?:hold|own|use))\b/i;
   if (identifier.kind === "cra_charity_registration" && craHistoricalOrNegated.test(proof.quote))
     throw new Error("registry website charity attribution is historical or negated");
-  const subjects = exactSubjectPositions(proof.quote, proof.subject, identifier.kind === "cslb_license");
-  exactSubjectPositions(visibleText, proof.subject, identifier.kind === "cslb_license");
+  const headings = identifier.kind === "usdot" ? contactHeadings : undefined;
+  const quoteStart = visibleText.indexOf(proof.quote);
+  const quoteHeadings = headings === true ? true : headings && new Set([...headings].map(at => at - quoteStart));
+  const subjects = exactSubjectPositions(proof.quote, proof.subject, identifier.kind === "cslb_license", false, undefined, quoteHeadings);
+  exactSubjectPositions(visibleText, proof.subject, identifier.kind === "cslb_license", false, undefined, headings);
   if (!subjects.some(subjectAt => quoteIds.some(id => Math.min(Math.abs(id.start - subjectAt), Math.abs(id.end - (subjectAt + proof.subject.length))) <= 650)))
     throw new Error("registry website identifier is not beside its legal subject");
   // Do not borrow the same number from a customer/carrier reference elsewhere on the page.
@@ -505,7 +526,8 @@ export function registryWebsiteVerifier() {
       throw new Error("registry identifier requires an explicit complete US website address");
     if (dbaMode && (!a || !p.countryCode || !p.city || words(a.city) !== words(p.city)))
       throw new Error("registry website DBA complete source city and country are required");
-    if (identifierMode) identifierAttribution(row, proof, proof.quote);
+    // Structural heading evidence is checked after the unchanged whole-page read.
+    if (identifierMode) identifierAttribution(row, proof, proof.quote, true);
     if (dbaMode) dbaAttribution(proof, proof.quote);
     const exactStreet = a ? sameRegistryStreet(a, p) : false;
     // FMCSA's verified USDOT binds this narrow highway-format discrepancy. No
@@ -530,7 +552,7 @@ export function registryWebsiteVerifier() {
     // A longer address proof is the entire page, never joined or clipped passages.
     if (redirect && !proof.mode && proof.quote.length > 1800 && proof.quote !== visibleText)
       throw new Error("registry website extended redirect quote must be the full visible page");
-    if (identifierMode) identifierAttribution(row, proof, visibleText);
+    if (identifierMode) identifierAttribution(row, proof, visibleText, separateContactHeadingSubjects(page.body, visibleText, proof.subject, proof.normalization));
     if (dbaMode) {
       dbaAttribution(proof, visibleText, operatorRelationshipSpan(proof, visibleText, redirect?.finalUrl ?? domain));
       if (labelledIdentifiers(visibleText, "usdot").some(id => id.value !== row.profile.recordId))

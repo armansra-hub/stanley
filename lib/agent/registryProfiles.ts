@@ -379,8 +379,38 @@ function sameUsAddressFormat(left: RegistryStreetAddress, right: RegistryStreetA
     const a = bareStreet(bare[1]), b = bareStreet(line2 ? labelledAddress.addressLine1 : labelled[1]);
     return Boolean(a && b && a === b && /^\d+[a-z]? .+ (?:st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter|trl|plz)$/.test(a));
   };
+  const attentionAddress = (address: RegistryStreetAddress) => {
+    // A separate legal-department addressee is routing metadata. Never remove
+    // another entity, a civic component or any unit from the retained address.
+    if (!/^(?:attn\.?|attention)\s*:?\s+legal$/i.test(address.addressLine2?.trim() ?? "")) return null;
+    const street = registryStreet({ addressLine1: address.addressLine1 });
+    return /^\d+[a-z]? .+ (?:st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter|trl|pkwy)(?: unit [a-z0-9]+)?$/.test(street)
+      && !/\b(?:attn|attention|care of|pmb|mailbox|building|bldg|floor)\b/.test(street) ? street : null;
+  };
+  const pointeSuffix = (address: RegistryStreetAddress) => {
+    if (!labelledSecondLine(address)) return null;
+    const match = registryStreet(address).match(/^(\d+[a-z]? .+) (?:pt|pointe)( unit [a-z0-9]+)$/);
+    return match && bareStreet(match[1]) ? match[1] + " pt" + match[2] : null;
+  };
+  const opaqueHashUnit = (address: RegistryStreetAddress, bare: boolean) => {
+    // An opaque second-line code is not a range or a decomposed building/mailbox.
+    // Compare its exact bytes (apart from letter case) to an explicit # code.
+    const line2 = address.addressLine2?.trim() ?? "";
+    const match = bare ? line2.match(/^([a-z][0-9]+-[0-9]+)$/i)
+      : line2 ? line2.match(/^#\s*([a-z][0-9]+-[0-9]+)$/i)
+      : address.addressLine1.trim().match(/^(.+?)\s*#\s*([a-z][0-9]+-[0-9]+)$/i);
+    if (!match) return null;
+    const base = bareStreet(bare || line2 ? address.addressLine1 : match[1]);
+    return base && /^\d+[a-z]? .+ (?:st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter|trl|pkwy)$/.test(base)
+      ? base + " #" + match[bare || line2 ? 1 : 2].toLowerCase() : null;
+  };
   const a = suite(left), b = suite(right);
-  return (alley(left) !== null && alley(left) === alley(right))
+  return (attentionAddress(left) !== null && attentionAddress(left) === registryStreet(right))
+    || (attentionAddress(right) !== null && attentionAddress(right) === registryStreet(left))
+    || (pointeSuffix(left) !== null && pointeSuffix(left) === pointeSuffix(right))
+    || (opaqueHashUnit(left, true) !== null && opaqueHashUnit(left, true) === opaqueHashUnit(right, false))
+    || (opaqueHashUnit(right, true) !== null && opaqueHashUnit(right, true) === opaqueHashUnit(left, false))
+    || (alley(left) !== null && alley(left) === alley(right))
     || (ordinalStreet(left) !== null && ordinalStreet(left) === ordinalStreet(right))
     || (hashUnit(left, true) !== null && hashUnit(left, true) === hashUnit(right, false))
     || (hashUnit(right, true) !== null && hashUnit(right, true) === hashUnit(left, false))
