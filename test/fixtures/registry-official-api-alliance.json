@@ -1,0 +1,288 @@
+{
+  "testFixture": true,
+  "actualFinalApproval": false,
+  "company": {
+    "id": "26b28bb0-94ef-464c-8672-45a4d8b2aa3c",
+    "netsuite_internal_id": "67075248",
+    "name": "Alliance Leasing",
+    "domain": "alliance-leasing.com"
+  },
+  "context": {
+    "aliases": [
+      "Alliance Leasing Corp"
+    ],
+    "addresses": [
+      {
+        "addressLine1": "2075 S University Blvd # 289",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "802104300",
+        "countryCode": "US",
+        "sourceKind": "netsuite_record",
+        "sourceId": "fda38cf9-8048-47c6-a33d-f3eea11389ec",
+        "capturedAt": "2026-07-28T00:00:00+00:00"
+      }
+    ],
+    "context": ""
+  },
+  "entry": {
+    "id": "fmcsa-2087259-registered-trade-email-v1",
+    "companyId": "26b28bb0-94ef-464c-8672-45a4d8b2aa3c",
+    "internalId": "67075248",
+    "canonicalDomain": "alliance-leasing.com",
+    "canonicalIdentitySha256": "2077b8989b4c760ef4c4b72ac66aa34a89ce60b32a4c04b2370bdb4932a082dd",
+    "sourceKind": "fmcsa_census",
+    "source": {
+      "requestedUrl": "https://data.transportation.gov/resource/az4n-8mr2.json?%24select=dot_number,legal_name,dba_name,phy_street,phy_city,phy_state,phy_zip,phy_country,carrier_mailing_street,carrier_mailing_city,carrier_mailing_state,carrier_mailing_zip,carrier_mailing_country,carrier_mailing_und_date,phone,email_address,mcs150_date,status_code,carrier_operation&%24where=dot_number+in+%2812136,20180,46293,50164,59119,62119,99419,123022,141883,152138,164297,164773,167669,213372,248121,251230,257384,279741,297703,300027,303958,306413,307918,320124,323447,326696,330477,344201,374762,396967,403387,419698,427313,439705,460885,464138,474853,499219,504844,524555,534464,541134,575868,577015,620142,675110,675824,706523,718484,732271,738785,811491,827403,836858,872786,892149,899531,943293,947049,972316,973952,1014057,1016210,1033158,1049738,1054638,1055521,1056549,1076748,1081026,1083112,1088211,1106469,1112672,1113774,1162540,1195003,1204181,1228075,1239227,1256598,1275782,1281430,1300717,1304691,1342283,1348794,1402943,1422919,1435950,1443369,1496870,1538739,1540176,1545442,1564586,1566371,1603641,1632717,1641171,1651601,1653520,1661584,1673841,1675317,1675451,1714271,1723998,1751187,1775733,1796052,1796924,1803968,1852937,1863598,1885040,1895953,1906440,1910783,1921776,1966973,1974294,2046742,2050969,2060969,2073265,2075346,2087259,2113661,2128819,2146441,2148763,2177596,2181250,2214299,2214963,2222274,2223627,2223848,2225836,2227865,2228900,2230611,2232997,2233622,2233659,2234772,2236387,2237555,2239243,2240534,2240989,2244461,2245461,2246274,2247084,2247541,2253045,2261817,2287259,2288433,2295799,2301080,2312848,2329757,2368415,2375527,2379417,2381883,2386734,2396591,2404984,2408792,2416838,2446333,2459480,2475449,2478913,2488844,2491405,2493285,2494597,2495816,2509739,2512269,2522117,2531056,2538269,2545675,2546287,2549501,2562431,2567178,2573039,2573977,2584758,2587788,2590226,2599065,2604063,2616206,2636759,2636953,2641776,2646699,2672444,2688610,2716992,2739760,2745384,2747485,2766106,2774889,2800902,2804153,2805961,2808722,2811681,2833135,2846307,2846400,2847174,2864408,2865622,2875805,2876662,2890110,2890347,2919698,2927565,2934622,2937668,2955185,2962624,2967754,2972446,2975113,2976172,2976220,2984220,2988238,3011883,3031081,3031677,3040851,3044296,3046402,3059814,3064565,3068362,3078234,3082143,3088244,3097552,3113799,3121642,3126762,3130748,3137209,3160112,3166578,3167866,3172255,3173685,3180090,3185790,3190111,3210349,3211614,3212876,3215363,3226027,3233105,3235217,3235513,3239737,3246804,3251194,3286721,3296230,3296995,3300933,3302922,3311421,3316718,3348916,3358287,3359853,3365916,3367785,3370963,3377184,3382960,3383507,3405044,3412818,3416762,3418982,3425171,3437407,3438413,3439696,3475691,3475948,3477060,3478763,3481111,3492285,3495366,3515224,3528434,3535349,3542999,3566469,3582185,3586387,3588020,3594276,3600418,3623597,3633237,3633804,3673646,3690953,3691877,3712866,3714680,3723369,3723992,3724096,3737598,3737600,3748710,3777640,3780179,3784193,3793412,3800734,3851383,3864201,3877854,3891526,3897170,3908202,3961202,3962003,3962818,3981811,3995333,4009268,4030341,4031835,4058103,4118923,4145102,4150297,4154837,4157784,4162194,4166466,4168718,4171076,4176145,4211565,4217917,4221989,4225643,4251352,4278300,4278331,4292013,4293248,4301342,4321122,4323791,4331888,4341466,4348083,4348659,4357921,4371750,4374907,4375426,4392989,4397021,4401906,4410583,4418174,4423729,4433015,4434400,4435442,4458383,4489140,4511173,4540234,4544704,4551899,4571246,5411597,5601905,5894353,5966046,8683717%29&%24order=dot_number&%24limit=1000",
+      "finalUrl": "https://data.transportation.gov/resource/az4n-8mr2.json?%24select=dot_number,legal_name,dba_name,phy_street,phy_city,phy_state,phy_zip,phy_country,carrier_mailing_street,carrier_mailing_city,carrier_mailing_state,carrier_mailing_zip,carrier_mailing_country,carrier_mailing_und_date,phone,email_address,mcs150_date,status_code,carrier_operation&%24where=dot_number+in+%2812136,20180,46293,50164,59119,62119,99419,123022,141883,152138,164297,164773,167669,213372,248121,251230,257384,279741,297703,300027,303958,306413,307918,320124,323447,326696,330477,344201,374762,396967,403387,419698,427313,439705,460885,464138,474853,499219,504844,524555,534464,541134,575868,577015,620142,675110,675824,706523,718484,732271,738785,811491,827403,836858,872786,892149,899531,943293,947049,972316,973952,1014057,1016210,1033158,1049738,1054638,1055521,1056549,1076748,1081026,1083112,1088211,1106469,1112672,1113774,1162540,1195003,1204181,1228075,1239227,1256598,1275782,1281430,1300717,1304691,1342283,1348794,1402943,1422919,1435950,1443369,1496870,1538739,1540176,1545442,1564586,1566371,1603641,1632717,1641171,1651601,1653520,1661584,1673841,1675317,1675451,1714271,1723998,1751187,1775733,1796052,1796924,1803968,1852937,1863598,1885040,1895953,1906440,1910783,1921776,1966973,1974294,2046742,2050969,2060969,2073265,2075346,2087259,2113661,2128819,2146441,2148763,2177596,2181250,2214299,2214963,2222274,2223627,2223848,2225836,2227865,2228900,2230611,2232997,2233622,2233659,2234772,2236387,2237555,2239243,2240534,2240989,2244461,2245461,2246274,2247084,2247541,2253045,2261817,2287259,2288433,2295799,2301080,2312848,2329757,2368415,2375527,2379417,2381883,2386734,2396591,2404984,2408792,2416838,2446333,2459480,2475449,2478913,2488844,2491405,2493285,2494597,2495816,2509739,2512269,2522117,2531056,2538269,2545675,2546287,2549501,2562431,2567178,2573039,2573977,2584758,2587788,2590226,2599065,2604063,2616206,2636759,2636953,2641776,2646699,2672444,2688610,2716992,2739760,2745384,2747485,2766106,2774889,2800902,2804153,2805961,2808722,2811681,2833135,2846307,2846400,2847174,2864408,2865622,2875805,2876662,2890110,2890347,2919698,2927565,2934622,2937668,2955185,2962624,2967754,2972446,2975113,2976172,2976220,2984220,2988238,3011883,3031081,3031677,3040851,3044296,3046402,3059814,3064565,3068362,3078234,3082143,3088244,3097552,3113799,3121642,3126762,3130748,3137209,3160112,3166578,3167866,3172255,3173685,3180090,3185790,3190111,3210349,3211614,3212876,3215363,3226027,3233105,3235217,3235513,3239737,3246804,3251194,3286721,3296230,3296995,3300933,3302922,3311421,3316718,3348916,3358287,3359853,3365916,3367785,3370963,3377184,3382960,3383507,3405044,3412818,3416762,3418982,3425171,3437407,3438413,3439696,3475691,3475948,3477060,3478763,3481111,3492285,3495366,3515224,3528434,3535349,3542999,3566469,3582185,3586387,3588020,3594276,3600418,3623597,3633237,3633804,3673646,3690953,3691877,3712866,3714680,3723369,3723992,3724096,3737598,3737600,3748710,3777640,3780179,3784193,3793412,3800734,3851383,3864201,3877854,3891526,3897170,3908202,3961202,3962003,3962818,3981811,3995333,4009268,4030341,4031835,4058103,4118923,4145102,4150297,4154837,4157784,4162194,4166466,4168718,4171076,4176145,4211565,4217917,4221989,4225643,4251352,4278300,4278331,4292013,4293248,4301342,4321122,4323791,4331888,4341466,4348083,4348659,4357921,4371750,4374907,4375426,4392989,4397021,4401906,4410583,4418174,4423729,4433015,4434400,4435442,4458383,4489140,4511173,4540234,4544704,4551899,4571246,5411597,5601905,5894353,5966046,8683717%29&%24order=dot_number&%24limit=1000",
+      "status": 200,
+      "contentType": "application/json;charset=utf-8",
+      "observedAt": "2026-10-01T09:56:45.994Z",
+      "responseSha256": "decc66736d1dab2d43e7f539868c0903fd2f0ab7c20c424589b9d2a42e1159c5",
+      "receiptSha256": "ddf5006429fc7b4a00c0eae394475cec3c5fdd844b9ecb5c1d2b3e9849f9d0bb",
+      "rawRow": "{\"dot_number\":\"2087259\",\"legal_name\":\"SPITZ FINANCIAL SERVICES INC\",\"dba_name\":\"ALLIANCE LEASING CORP\",\"phy_street\":\"2075 S UNIVERSITY\",\"phy_city\":\"DENVER\",\"phy_state\":\"CO\",\"phy_zip\":\"80210\",\"phy_country\":\"US\",\"carrier_mailing_street\":\"2075 S UNIVERSITY\",\"carrier_mailing_city\":\"DENVER\",\"carrier_mailing_state\":\"CO\",\"carrier_mailing_zip\":\"80210\",\"carrier_mailing_country\":\"US\",\"phone\":\"3037654919\",\"email_address\":\"LEE@ALLIANCE-LEASING.COM\",\"mcs150_date\":\"20101019\",\"status_code\":\"I\"}",
+      "rawRowSha256": "06fb8de45ec96836a52aafdbb5f3d835b89476c993f9daacf738b2acb9e97d8d",
+      "arrayIndex": 127,
+      "byteOffset": 60759,
+      "byteLength": 484
+    },
+    "sourceReader": {
+      "taskId": "/root/kerr_registry_research",
+      "reviewedAt": "2026-10-01T11:25:36.520Z",
+      "receiptSha256": "c8b404d885ad37756f1910cec2829f745e61fd5ac88b86909d9558621e0d097d"
+    },
+    "sourceReviewer": {
+      "taskId": "/root/sweep_reporting_fix",
+      "reviewedAt": "2026-10-01T11:29:36.025Z",
+      "receiptSha256": "962bf49abcdbadd60f49e5f565d62a86aef30fd1cb431e31c99404cc979be9b7"
+    },
+    "originalReviews": {
+      "primary": {
+        "taskId": "/root/kerr_registry_research",
+        "reviewedAt": "2026-10-01T08:19:42.282Z",
+        "receiptSha256": "1c87b40b3fd93eefe01645dde4c6c561c5a53af66c5eb218c58ed5af8c59f352"
+      },
+      "independent": {
+        "taskId": "/root/sweep_reporting_fix",
+        "reviewedAt": "2026-10-01T08:26:19.473Z",
+        "receiptSha256": "c7db6a6ceeabc7e81bc2e1bb5afad1c765d70ff2323793519379186486f9e294"
+      },
+      "packetSha256": "62e2de8eefe76aac473a10545643b0c8384644eaf28a3454ee662b886e9ead37"
+    },
+    "target": {
+      "dataset": "fmcsa",
+      "recordId": "2087259",
+      "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2087259",
+      "rowSha256": "19356dd01531054d9888cfe52278ec3a257202ce64844a97cb5cb48acd4c048f",
+      "evidenceSha256": "eef0480f98993e3714ab9d6878706b050ef6161cc4020ca065a7c8591bb5c72f",
+      "identitySha256": "e736e79562e87efeefe12e2d20f9a81b3400cb9e36f6858d2bf151644108a2c1",
+      "sourceRowSha256": "67aad887dfcd2fc9559f51b85bcd3e967ab1a75afc3b668a574fbeef046ca58b",
+      "factsSha256": "ed941faec71e9300c6ea2a66db217f8f9df3bf60674faab9ebf08bf792b1f5b8",
+      "sourceAsOf": "2010-10-19",
+      "observedAt": "2026-09-29T23:13:43.476041+00:00"
+    },
+    "anchor": {
+      "mode": "company_email_domain"
+    },
+    "nameBridge": {
+      "schema": "registered_trade_name_alias_v1",
+      "bundleId": "co_sos_19961162961_reviewed_20261001",
+      "bundleSha256": "ab65e4c724b523d8b9caad94c35535469997ceda625337cd1e3c07dd109d4b87",
+      "entityId": "19961162961",
+      "tradeNameDocumentId": "19971008601",
+      "tradeName": "ALLIANCE LEASING CORP.",
+      "canonicalName": "Alliance Leasing",
+      "canonicalAlias": "Alliance Leasing Corp"
+    }
+  },
+  "finding": {
+    "companyId": "26b28bb0-94ef-464c-8672-45a4d8b2aa3c",
+    "internalId": "67075248",
+    "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2087259",
+    "evidence": "{\"legalName\":\"SPITZ FINANCIAL SERVICES INC\",\"addressLine1\":\"2075 S UNIVERSITY\",\"city\":\"DENVER\",\"state\":\"CO\",\"postalCode\":\"80210\",\"usdot_number\":\"2087259\",\"power_units\":0,\"drivers\":0,\"operating_status\":\"I\",\"countryCode\":\"US\"}\nOriginal public source row: {\"dba_name\":\"ALLIANCE LEASING CORP\",\"dot_number\":\"2087259\",\"legal_name\":\"SPITZ FINANCIAL SERVICES INC\",\"mcs150_date\":\"20101019\",\"phy_city\":\"DENVER\",\"phy_country\":\"US\",\"phy_state\":\"CO\",\"phy_street\":\"2075 S UNIVERSITY\",\"phy_zip\":\"80210\",\"power_units\":\"0\",\"status_code\":\"I\",\"total_drivers\":\"0\"}",
+    "detail": "USDOT 2087259 reports SPITZ FINANCIAL SERVICES INC with raw DBA ALLIANCE LEASING CORP at 2075 S UNIVERSITY, DENVER CO 80210. MCS-150 date is 2010-10-19; reported zero power units/zero drivers and status I are historical source values, not current employee size or proof of closure. The DBA supports a relationship, but the physical address omits BLVD and #289 versus the canonical address. Operator/address continuity remains unverified.",
+    "profile": {
+      "version": 1,
+      "dataset": "fmcsa",
+      "recordId": "2087259",
+      "sourceAsOf": "2010-10-19",
+      "observedAt": "2026-09-29T23:13:43.476041+00:00",
+      "facts": [
+        {
+          "field": "usdot_number",
+          "value": "2087259"
+        },
+        {
+          "field": "power_units",
+          "value": 0
+        },
+        {
+          "field": "drivers",
+          "value": 0
+        },
+        {
+          "field": "operating_status",
+          "value": "I"
+        }
+      ],
+      "identity": {
+        "legalName": "SPITZ FINANCIAL SERVICES INC",
+        "addressLine1": "2075 S UNIVERSITY",
+        "city": "DENVER",
+        "state": "CO",
+        "postalCode": "80210",
+        "countryCode": "US"
+      },
+      "provenance": {
+        "rowSha256": "19356dd01531054d9888cfe52278ec3a257202ce64844a97cb5cb48acd4c048f",
+        "quote": "{\"legalName\":\"SPITZ FINANCIAL SERVICES INC\",\"addressLine1\":\"2075 S UNIVERSITY\",\"city\":\"DENVER\",\"state\":\"CO\",\"postalCode\":\"80210\",\"usdot_number\":\"2087259\",\"power_units\":0,\"drivers\":0,\"operating_status\":\"I\",\"countryCode\":\"US\"}\nOriginal public source row: {\"dba_name\":\"ALLIANCE LEASING CORP\",\"dot_number\":\"2087259\",\"legal_name\":\"SPITZ FINANCIAL SERVICES INC\",\"mcs150_date\":\"20101019\",\"phy_city\":\"DENVER\",\"phy_country\":\"US\",\"phy_state\":\"CO\",\"phy_street\":\"2075 S UNIVERSITY\",\"phy_zip\":\"80210\",\"power_units\":\"0\",\"status_code\":\"I\",\"total_drivers\":\"0\"}",
+        "sourceRow": {
+          "legalName": "SPITZ FINANCIAL SERVICES INC",
+          "addressLine1": "2075 S UNIVERSITY",
+          "city": "DENVER",
+          "state": "CO",
+          "postalCode": "80210",
+          "usdot_number": "2087259",
+          "power_units": 0,
+          "drivers": 0,
+          "operating_status": "I",
+          "countryCode": "US"
+        },
+        "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\fmcsa-candidates-00325.json"
+      }
+    }
+  },
+  "bundle": {
+    "id": "co_sos_19961162961_reviewed_20261001",
+    "companyId": "26b28bb0-94ef-464c-8672-45a4d8b2aa3c",
+    "internalId": "67075248",
+    "canonicalDomain": "alliance-leasing.com",
+    "entityId": "19961162961",
+    "legalName": "SPITZ FINANCIAL SERVICES, INC.",
+    "tradeNames": [
+      {
+        "name": "ALLIANCE LEASING CORP.",
+        "documentId": "19971008601",
+        "effectiveDate": "1997-01-21"
+      },
+      {
+        "name": "Alliance Commercial Leasing and Finance",
+        "documentId": "20101079937",
+        "effectiveDate": "2010-02-06"
+      },
+      {
+        "name": "Alliance Fleet Solutions",
+        "documentId": "20191557427",
+        "effectiveDate": "2019-07-10"
+      }
+    ],
+    "manifestSha256": "ec8d7ea558e30c1cf1813c0646c6084e54392923f71f5dfd73278d598a8759a9",
+    "sourceReader": {
+      "taskId": "/root/source_outcome_reporting",
+      "reviewedAt": "2026-10-01T02:01:31.224Z",
+      "receiptSha256": "1c1e62d031ea15be1125b3251bbff2a4853b67cb62aeca177ba685670aba78b6"
+    },
+    "sourceReviewer": {
+      "taskId": "/root/sweep_reporting_fix",
+      "reviewedAt": "2026-10-01T02:04:42.066Z",
+      "receiptSha256": "9f011428a1e8458300fd0ecfcfc08daff7d92503509c777827af02b3cc15ff9c"
+    },
+    "sources": [
+      {
+        "id": "co-1997-tradename-filing",
+        "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=19971008601&fileId=19971008601",
+        "observedAt": "2026-10-01T01:58:57.445Z",
+        "bodySha256": "ec45d2ebed48a5e5c43df7fc013ed7dac422a382270b3bcd848eee5e215cae53",
+        "receiptSha256": "730023bc131160f0c25bb793a72f5e9a74465e601f9765b62621d290370c7983",
+        "visuallyReviewedPages": [
+          {
+            "page": 1,
+            "renderSha256": "c58286d1c906b35df3739b0dd7a3ed6c4ebdbf7ad8e51232aa8b418f2817c4ea"
+          }
+        ]
+      },
+      {
+        "id": "co-2006-periodic-report",
+        "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=19961162961&fileId=20061003057",
+        "observedAt": "2026-10-01T01:57:06.298Z",
+        "bodySha256": "cfbbf962d0704de489ac6dc2047b11c08f83314e1c1229cfa48579224e4b67fe",
+        "receiptSha256": "6e5cdeaebd70c3276913d821005d0b56774ac6ea4d9efbf6a85b9c33c9976829",
+        "visuallyReviewedPages": [
+          {
+            "page": 1,
+            "renderSha256": "b86d3d44c57abe1209b53a154b1a2e04abb6643f7ba642a8548d774c0f03c038"
+          },
+          {
+            "page": 2,
+            "renderSha256": "e5ae878b0d0275cd2a987d6f7ba9d8d212f7bc825c9fd24749bf5f52a5a90c69"
+          }
+        ]
+      },
+      {
+        "id": "co-entity-detail",
+        "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=19961162961&entityId2=19961162961&fileId=19961162961&srchTyp=ENTITY",
+        "observedAt": "2026-10-01T01:54:04.636Z",
+        "bodySha256": "33937f6e68cace3c669d5b05b78e3e0e85b5d067c100ed59dd2dc3362ff11ef5",
+        "receiptSha256": "0db4af4fb3d0de08692a8bd42776a1e731beeb2b62ea9125e36af1caf9aac808",
+        "textSha256": "db415e2cc9917eab7ac5aff019ee30c5318ff1a6c491ec632764836c1f85ed94"
+      },
+      {
+        "id": "co-entity-tradenames-session",
+        "url": "https://www.coloradosos.gov/biz/TradenameOwnerResults.do?quitButtonDestination=BusinessEntityDetail&masterFileId=19961162961&nameTyp=ENT",
+        "observedAt": "2026-10-01T01:56:08.450Z",
+        "bodySha256": "3be9c0993414793e327b552e96dd684f32d0255b10bfc57b664264203c67d34d",
+        "receiptSha256": "85a26b9e2c018c251a22381c546a562d6097525776a569b74d507a5179566d0a",
+        "textSha256": "8a1413f5f04eed35064c03b53a382fbeafcd8f43bf750a5d78743b554032fe58"
+      },
+      {
+        "id": "co-exact-legal-entity",
+        "url": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24where=upper%28entityname%29+in%28%27ALLIANCE+LEASING+CORP.%27%2C%27ALLIANCE+LEASING+CORP%27%2C%27ALLIANCE+LEASING+CORPORATION%27%2C%27SPITZ+FINANCIAL+SERVICES+INC%27%2C%27SPITZ+FINANCIAL+SERVICES%2C+INC.%27%2C%27SPITZ+FINANCIAL+SERVICES%2C+INC%27%29&%24limit=20",
+        "observedAt": "2026-10-01T01:52:51.186Z",
+        "bodySha256": "0b3e66726f74f7eb444fba29a7814c330d194a6d79c5a3f3b8b5f67064c94cb5",
+        "receiptSha256": "da95db67bb73f480f4c2bad666e28cb47d5b168cc879940887a9c2a22d6b6fb6",
+        "textSha256": "0b3e66726f74f7eb444fba29a7814c330d194a6d79c5a3f3b8b5f67064c94cb5"
+      }
+    ],
+    "anchor": {
+      "role": "principal_office",
+      "sourceId": "co-1997-tradename-filing",
+      "documentId": "19971008601",
+      "sourceAsOf": "1997-01-21",
+      "address": {
+        "addressLine1": "2075 S. University Blvd. #289",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80210",
+        "countryCode": "US"
+      }
+    },
+    "addresses": {
+      "university_mailing_2006": {
+        "role": "principal_mailing",
+        "sourceId": "co-2006-periodic-report",
+        "documentId": "20061003057",
+        "sourceAsOf": "2006-01-03",
+        "address": {
+          "addressLine1": "2075 S. University, #289",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80210",
+          "countryCode": "US"
+        }
+      },
+      "girard_principal_observed_20261001": {
+        "role": "principal_street",
+        "sourceId": "co-exact-legal-entity",
+        "documentId": "19961162961",
+        "sourceAsOf": "2026-10-01",
+        "address": {
+          "addressLine1": "10200 E Girard Ave Ste B223",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80231",
+          "countryCode": "US"
+        }
+      }
+    }
+  }
+}

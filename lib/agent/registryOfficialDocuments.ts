@@ -49,7 +49,21 @@ type CompanyPdfEntry = BaseEntry & { chain: "company_pdf_contact_role";
     extractionReceiptSha256: string; identityPage: number; contactBlock: string; domainLiteral: string;
     phoneLiteral: string; addressLineLiteral: string; localityLiteral: string; address: Address;
     period: { role: "event_brochure_year"; year: string; visibleCoverPage: number; eventPage: number; eventDateQuotes: string[] } } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry;
+type CourtSource = Omit<Source, "kind" | "completeRead"> & { kind: "court_filed_pdf_excerpt";
+  completeRead: false; selectedExcerptCompleteRead: true };
+type CourtEntry = Omit<BaseEntry, "sources"> & { chain: "court_contract_counterparty_contact";
+  sources: [CourtSource, Source]; ownSiteRole: "business_contact_email"; ownSiteContactEmail: string; contactEmailDomain: string;
+  originalCountry: { rawCountry: string | null; profileCountryCode: string | null; missingValuesPreserved: true; jurisdiction: "Colorado public UCC registry" };
+  court: { role: "historical_contract_counterparty_contact"; filingDate: string; filingDateText: string;
+    fullDocumentPages: number; fullDocumentRead: false; selectedPagesCompleteRead: true;
+    pages: { page: number; text: string; textSha256: string; visualSha256: string }[]; excerptReceiptSha256: string;
+    caseNumber: string; noticeDocument: string; scheduleDocument: string; noticeTitle: string;
+    sectionPage: number; rowPage: number; header: string; sectionTitle: string; rowQuote: string;
+    row: { counterparty: string; debtor: string; cure: string; agreement: string; addressLine1: string; addressLine2: string;
+      city: string; state: string; postalCode: string; email: string; remitEmail: string };
+    address: Address; addressEffectiveDate: null; contractDate: null; currentAddressClaim: false;
+    counterpartyBankruptcyClaim: false; assignmentCompletedClaim: false; financialInference: false } };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -71,7 +85,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -83,6 +97,7 @@ function sourceChecks(e: RegistryOfficialDocumentEntry) {
   if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
   else if (e.chain === "official_municipal_dba_cslb_header") municipalCslbSourceChecks(e);
   else if (e.chain === "company_pdf_contact_role") companyPdfSourceChecks(e);
+  else if (e.chain === "court_contract_counterparty_contact") courtSourceChecks(e);
   else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
@@ -117,10 +132,19 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
     && p.provenance.rowSha256 === t.rowSha256 && sha(stableRegistryJson(p)) === t.profileSha256 && p.sourceAsOf === t.sourceAsOf
     && p.observedAt === t.observedAt && row.evidence === p.provenance.quote, "original target pin changed");
   let raw: Record<string, unknown>;
-  if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role") {
+  if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role" || e.chain === "court_contract_counterparty_contact") {
     const lines = row.evidence.split("\n"); need(p.dataset === "co_ucc" && t.role === "debtor_business" && lines.length === 2, "target debtor role invalid");
     raw = JSON.parse(lines[0]); const filing = JSON.parse(lines[1]);
-    need(sha(lines[0]) === t.rowSha256 && raw.country === "United States" && p.recordId === `${raw.fileid}:${raw.debtorid}` && filing.fileid === raw.fileid
+    if(e.chain === "court_contract_counterparty_contact") {
+      const c=e.originalCountry;
+      need(c.missingValuesPreserved===true && c.jurisdiction==="Colorado public UCC registry"
+        && c.rawCountry===(Object.hasOwn(raw,"country")?raw.country:null)
+        && c.profileCountryCode===(Object.hasOwn(p.identity,"countryCode")?p.identity.countryCode:null)
+        && (raw.country==="United States" || !Object.hasOwn(raw,"country"))
+        && (!Object.hasOwn(p.identity,"countryCode") || p.identity.countryCode==="US")
+        && raw.state==="CO" && p.identity.state==="CO","court original country presence differs");
+    }
+    need(sha(lines[0]) === t.rowSha256 && (raw.country === "United States" || e.chain === "court_contract_counterparty_contact") && p.recordId === `${raw.fileid}:${raw.debtorid}` && filing.fileid === raw.fileid
       && raw.organizationname === p.identity.legalName && raw.address1 === p.identity.addressLine1 && (raw.address2 || "") === (p.identity.addressLine2 || "")
       && raw.city === p.identity.city && raw.state === p.identity.state && raw.zipcode === p.identity.postalCode
       && u.hostname === "data.colorado.gov" && u.pathname === "/resource/8upq-58vz.json" && [...u.searchParams.keys()].join() === "debtorid"
@@ -243,6 +267,7 @@ function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentit
   if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
   if (e.chain === "official_municipal_dba_cslb_header") { municipalCslbIdentityChain(e); return; }
   if (e.chain === "company_pdf_contact_role") { companyPdfIdentityChain(e); return; }
+  if (e.chain === "court_contract_counterparty_contact") { courtIdentityChain(e); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -352,6 +377,68 @@ function companyPdfIdentityChain(e: CompanyPdfEntry) {
     && period.eventDateQuotes.length>0 && period.eventDateQuotes.length<=10 && new Set(period.eventDateQuotes).size===period.eventDateQuotes.length
     && period.eventDateQuotes.every(q=>q.includes(period.year) && q.length>15 && p.pages[period.eventPage-1].text.split(q).length===2),"company PDF visible event period differs");
 }
+// A filed counterparty schedule is third-party evidence. Full bytes are retained,
+// while the actual read claim is limited to the explicitly pinned complete pages.
+function courtSourceChecks(e: CourtEntry) {
+  const [pdf,own]=e.sources,c=e.court;
+  need(e.sources.length===2 && e.companyId==="db1fd9a5-5398-4d5f-8d2a-b90639645309" && e.internalId==="190125582"
+    && e.canonicalDomain==="redskyconsulting.co" && e.target.dataset==="co_ucc" && e.target.role==="debtor_business",
+    "court finite source scope differs");
+  for(const s of e.sources) need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin) && hash(s.bodySha256)
+    && s.status===200 && s.text.length>20 && s.text.length<=150000 && sha(s.text)===s.textSha256,"court source text/capture differs");
+  need(pdf.kind==="court_filed_pdf_excerpt" && pdf.completeRead===false && pdf.selectedExcerptCompleteRead===true
+    && pdf.url==="https://casedocs.omniagentsolutions.com/cmsvol2/pub_47557/fb796d69-4cfe-4d40-884e-a605c7a37800_129.pdf"
+    && publicUrl(pdf.url).hostname==="casedocs.omniagentsolutions.com" && pdf.requestedUrl===pdf.url && pdf.hops===null
+    && pdf.contentType==="application/pdf" && pdf.sourceDate===c.filingDate && pdf.sourceDateText===c.filingDateText
+    && c.filingDate==="2025-07-14" && c.filingDateText==="Filed 07/14/25" && Date.parse(c.filingDate)<=Date.parse(pdf.observedAt),
+    "court PDF authority, limited scope or filing date differs");
+  need(own.kind==="own_website" && own.completeRead===true && own.url==="https://redskyconsulting.co/contact/"
+    && publicUrl(own.url).hostname===e.canonicalDomain && own.requestedUrl===own.url && own.hops?.length===1
+    && own.hops[0].url===own.url && own.hops[0].status===200 && /^text\/html(?:;|$)/.test(own.contentType??"")
+    && own.sourceDate===null && own.sourceDateText===null,"court canonical contact provenance differs");
+  const required=[1,2,3,4,5,6,7,47,639];
+  need(c.fullDocumentPages===1083 && c.fullDocumentRead===false && c.selectedPagesCompleteRead===true
+    && c.pages.length===required.length && c.pages.every((p,i)=>p.page===required[i] && p.text.length>0
+      && sha(p.text)===p.textSha256 && hash(p.visualSha256)) && hash(c.excerptReceiptSha256)
+    && c.excerptReceiptSha256===pdf.originalSourcePin
+    && pdf.text===c.pages.map(p=>`--- PHYSICAL PAGE ${p.page} ---\n${p.text}`).join("\n\n"),"court selected-page coverage differs");
+  for(const p of c.pages) {
+    const document=p.page<=6?c.noticeDocument:c.scheduleDocument,docketPage=p.page<=6?p.page:p.page-6,total=p.page<=6?6:1077;
+    need(p.text.includes(`Case ${c.caseNumber} Doc ${document} ${c.filingDateText} Page ${docketPage} of ${total}`),
+      "court selected-page docket label differs");
+  }
+}
+function courtIdentityChain(e: CourtEntry) {
+  const [pdf,own]=e.sources,c=e.court,r=c.row,page=(n:number)=>c.pages.find(p=>p.page===n)!.text;
+  need(c.role==="historical_contract_counterparty_contact" && e.ownSiteRole==="business_contact_email"
+    && c.caseNumber==="25-11195-JKS" && c.noticeDocument==="129" && c.scheduleDocument==="129-1"
+    && c.addressEffectiveDate===null && c.contractDate===null && c.currentAddressClaim===false
+    && c.counterpartyBankruptcyClaim===false && c.assignmentCompletedClaim===false && c.financialInference===false,
+    "court contact role or claim boundary differs");
+  need(c.noticeTitle==="AMENDED2 SUPPLEMENTAL NOTICE OF POSSIBLE ASSUMPTION AND ASSIGNMENT OF CERTAIN EXECUTORY CONTRACTS AND UNEXPIRED LEASES"
+    && compact(page(1)).includes(c.noticeTitle) && compact(page(2)).includes("Debtors’ claims and noticing agent, Omni Agent Solutions, Inc.")
+    && compact(page(3)).includes("The presence of a contract or lease listed on Exhibit 1 attached hereto does not constitute an admission")
+    && page(6).includes("Dated: July 14, 2025") && page(7).includes("Exhibit 1"),"court notice attribution/context differs");
+  need(c.sectionPage===47 && c.rowPage===639 && c.sectionTitle==="Contracts Related to Job Board Business - Monster Next Customers"
+    && c.header==="Contract Counterparty Debtor Cure Agreement Name / Description Address 1 Address 2 City State / Province Zip Site Email Sup Remit Email"
+    && page(c.sectionPage).startsWith(c.header+"\r\n") && page(c.sectionPage).includes(c.sectionTitle)
+    && r.counterparty==="RED SKY Consulting LLC" && sameRegistryLegalName(r.counterparty,e.legalName)
+    && r.debtor==="Monster Worldwide, LLC" && !sameRegistryLegalName(r.debtor,e.legalName)
+    && r.cure==="$ -" && r.agreement==="Master Services Agreement; Sales Order" && r.addressLine2==="" && r.remitEmail==="",
+    "court counterparty versus debtor table roles differ");
+  const quote=`${r.counterparty} ${r.debtor} ${r.cure} ${r.agreement} ${r.addressLine1} ${r.city} ${r.state} ${r.postalCode} ${r.email}`;
+  need(c.rowQuote===quote && page(c.rowPage).split("\r\n").filter(line=>line===quote).length===1 && pdf.text.split(quote).length===2,
+    "court exact complete row differs");
+  need(e.contactEmailDomain==="redsky-consulting.com" && e.ownSiteContactEmail==="contact@redsky-consulting.com"
+    && own.text.includes(e.ownSiteContactEmail) && own.text.startsWith("Contact – Red Sky Consulting ")
+    && /^[^\s@]+@redsky-consulting\.com$/.test(r.email) && r.email==="stacyw@redsky-consulting.com"
+    && /^\d{10}$/.test(e.phone) && own.text.replace(/\D/g,"").includes(e.phone),"court canonical business-email bridge differs");
+  need(r.addressLine1==="3015 Wyandot St" && r.city==="Denver" && r.state==="Colorado" && r.postalCode==="80211-3822"
+    && c.address.addressLine1===r.addressLine1 && !c.address.addressLine2 && c.address.city===r.city && c.address.state==="CO"
+    && c.address.postalCode===r.postalCode && c.address.countryCode==="US" && datedUsAddress(c.address,e.targetAddress),
+    "court full address or explicit ZIP5 comparison differs");
+}
+
 /** A retained dated association only; never a canonical-field update or a claim
  * that an old address, license status, debt or financial value is current. */
 export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now=new Date()): NonNullable<RegistryProfile["verification"]> {

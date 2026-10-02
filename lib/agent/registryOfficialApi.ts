@@ -9,6 +9,16 @@ type SourceReview = { taskId: string; reviewedAt: string; receiptSha256: string 
 type Company = { id: string; netsuite_internal_id: string; name: string; domain?: string | null; website_raw?: string | null };
 type Address = { addressLine1: string; addressLine2?: string; city?: string; state?: string; postalCode?: string; countryCode?: string };
 type Role = "entity_mailing" | "registered_agent_street" | "registered_agent_mailing" | "carrier_mailing";
+export type RegistryOfficialApiTradeBundle = {
+  id: string; companyId: string; internalId: string; canonicalDomain: string; entityId: string; legalName: string;
+  tradeNames: readonly { name: string; documentId: string; effectiveDate: string }[];
+  sourceReader: SourceReview; sourceReviewer: SourceReview; sources: readonly { observedAt: string }[];
+  anchor: { role: string; address: Address };
+};
+type RegisteredTradeNameBridge = {
+  schema: "registered_trade_name_alias_v1"; bundleId: string; bundleSha256: string; entityId: string;
+  tradeNameDocumentId: string; tradeName: string; canonicalName: string; canonicalAlias: string;
+};
 export type RegistryOfficialApiEntry = {
   id: string; companyId: string; internalId: string; canonicalDomain: string; canonicalIdentitySha256: string;
   sourceKind: "colorado_business_entity" | "fmcsa_census";
@@ -18,6 +28,7 @@ export type RegistryOfficialApiEntry = {
   originalReviews: { primary: SourceReview; independent: SourceReview; packetSha256: string };
   target: { dataset: "co_sos" | "fmcsa"; recordId: string; sourceUrl: string; rowSha256: string; evidenceSha256: string;
     identitySha256: string; sourceRowSha256: string; factsSha256: string; sourceAsOf: string | null; observedAt: string };
+  nameBridge?: RegisteredTradeNameBridge;
   anchor: { mode: "address_role"; role: Role; sourceId: string } | { mode: "company_email_domain" };
 };
 export type RegistryOfficialApiCorroboration = {
@@ -138,7 +149,37 @@ function verifyOriginal(row: RegistryFinding, entry: RegistryOfficialApiEntry, s
   if (!co) need((original.dba_name ?? "") === (source.dba_name ?? ""), "raw DBA changed or unbridged");
   return currentPhysical;
 }
-export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date()): NonNullable<RegistryProfile["verification"]> {
+// Opt-in deployed catalog association. The dispatcher supplies its already
+// reviewed private history bundle; no proof caller supplies names or documents.
+function registeredTradeAssociation(entry: RegistryOfficialApiEntry, company: Company, context: CompanyIdentityContext,
+  legal: string, dba: string | null, bundle?: RegistryOfficialApiTradeBundle) {
+  if (!Object.hasOwn(entry, "nameBridge")) return null;
+  const b = entry.nameBridge, keys = ["schema", "bundleId", "bundleSha256", "entityId", "tradeNameDocumentId", "tradeName", "canonicalName", "canonicalAlias"];
+  need(b && object(b) && Object.keys(b).length === keys.length && keys.every(k => Object.hasOwn(b, k))
+    && b.schema === "registered_trade_name_alias_v1" && entry.sourceKind === "fmcsa_census" && entry.anchor.mode === "company_email_domain", "registered trade bridge shape or scope invalid");
+  need(bundle && b.bundleId === bundle.id && hash(b.bundleSha256) && b.bundleSha256 === sha(stableRegistryJson(bundle))
+    && b.entityId === bundle.entityId && bundle.companyId === entry.companyId && bundle.internalId === entry.internalId
+    && bundle.canonicalDomain === entry.canonicalDomain && sameRegistryLegalName(legal, bundle.legalName), "registered trade reviewed bundle or operator differs");
+  const trades = bundle.tradeNames.filter(t => t.documentId === b.tradeNameDocumentId && t.name === b.tradeName);
+  need(trades.length === 1 && /^\d{11}$/.test(trades[0].documentId) && /^\d{4}-\d{2}-\d{2}$/.test(trades[0].effectiveDate)
+    && !!dba && normalizedDba(dba) === normalizedDba(trades[0].name)
+    && company.name === b.canonicalName && typeof b.canonicalName === "string" && b.canonicalName.length > 0
+    && context.aliases.filter(n => n === b.canonicalAlias).length === 1
+    && normalizedDba(b.canonicalAlias) === normalizedDba(trades[0].name)
+    && context.aliases.every(n => sameRegistryLegalName(n, bundle.legalName) || normalizedDba(n) === normalizedDba(trades[0].name)), "registered trade canonical alias or complete DBA differs");
+  const reviews = [bundle.sourceReader, bundle.sourceReviewer];
+  need(reviews.every(r => validTask(r.taskId) && iso(r.reviewedAt) && hash(r.receiptSha256)) && reviews[0].taskId !== reviews[1].taskId
+    && Date.parse(reviews[1].reviewedAt) >= Date.parse(reviews[0].reviewedAt) && bundle.sources.length > 0
+    && bundle.sources.every(s => iso(s.observedAt) && Date.parse(reviews[0].reviewedAt) >= Date.parse(s.observedAt)), "registered trade actual source lineage invalid");
+  // This anchors the registered-name relationship to canonical context only.
+  // It does not equate the carrier's literal physical/mailing street to it.
+  const anchors = context.addresses.filter(a => ["netsuite_record", "company_website"].includes(a.sourceKind)
+    && !!a.sourceId && iso(a.capturedAt) && fullAddress(a, bundle.anchor.address));
+  need(bundle.anchor.role === "principal_office" && anchors.length === 1, "registered trade complete canonical relationship anchor missing or ambiguous");
+  return { ...b, legalName: bundle.legalName, tradeNameEffectiveDate: trades[0].effectiveDate,
+    sourceReader: bundle.sourceReader, sourceReviewer: bundle.sourceReviewer, canonicalAnchor: anchors[0] };
+}
+export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now = new Date(), reviewedTradeBundle?: RegistryOfficialApiTradeBundle): NonNullable<RegistryProfile["verification"]> {
   const keys = ["schema", "entryId", "entrySha256", "canonicalIdentitySha256", "reader", "reviewer"];
   need(object(raw) && Object.keys(raw).every(k => keys.includes(k)) && keys.every(k => Object.hasOwn(raw, k)) && raw.schema === "official_api_roles_v1" && typeof raw.entryId === "string", "proof shape invalid");
   const { entry, sha256 } = registryOfficialApiEntry(raw.entryId), source = entry.source;
@@ -157,11 +198,12 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     && Date.parse(reviews[1].reviewedAt) >= Date.parse(reviews[0].reviewedAt)
     && Date.parse(originals[1].reviewedAt) >= Date.parse(originals[0].reviewedAt), "actual source review lineage invalid");
   const physical = verifyOriginal(row, entry, parsed), legal = row.profile.identity.legalName, dba = entry.sourceKind === "fmcsa_census" ? retainedFmcsaDba(row.profile) : null;
+  const nameBridge = registeredTradeAssociation(entry, company, context, legal, dba, reviewedTradeBundle);
   const compatible = (name: string) => sameRegistryLegalName(name, legal) || !!dba && normalizedDba(name) === normalizedDba(dba);
   need(company.id === entry.companyId && row.companyId === entry.companyId && company.netsuite_internal_id === entry.internalId && row.internalId === entry.internalId
     && host(company.domain || company.website_raw || "") === entry.canonicalDomain && hash(entry.canonicalIdentitySha256)
     && raw.canonicalIdentitySha256 === entry.canonicalIdentitySha256 && raw.canonicalIdentitySha256 === registryOfficialApiCanonicalHash(company, context)
-    && compatible(company.name) && context.aliases.every(compatible), "canonical identity or known legal operator conflict");
+    && (nameBridge !== null || compatible(company.name) && context.aliases.every(compatible)), "canonical identity or known legal operator conflict");
   let anchor: CompanyIdentityContext["addresses"][number] | null = null, roleAddress: Address | null = null, email: string | null = null;
   if (entry.anchor.mode === "address_role") {
     const role = entry.anchor;
@@ -174,13 +216,14 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     need(email && email === entry.canonicalDomain, "strict company email domain differs or is shared");
   }
   const { reader, reviewer, ...evidence } = raw, bound = registryOfficialApiEvidenceHash(row, evidence as Omit<RegistryOfficialApiCorroboration, "reader" | "reviewer">);
-  const earliest = Math.max(Date.parse(row.profile.observedAt), Date.parse(source.observedAt), ...[...reviews, ...originals].map(a => Date.parse(a.reviewedAt)), anchor ? Date.parse(anchor.capturedAt) : 0);
+  const earliest = Math.max(Date.parse(row.profile.observedAt), Date.parse(source.observedAt), ...[...reviews, ...originals].map(a => Date.parse(a.reviewedAt)), anchor ? Date.parse(anchor.capturedAt) : 0,
+    ...(nameBridge ? [Date.parse(nameBridge.sourceReader.reviewedAt), Date.parse(nameBridge.sourceReviewer.reviewedAt), Date.parse(nameBridge.canonicalAnchor.capturedAt)] : []));
   for (const witness of [reader, reviewer]) need(object(witness) && Object.keys(witness).every(k => ["taskId", "reviewedAt", "evidenceSha256"].includes(k)) && validTask(witness.taskId)
     && iso(witness.reviewedAt) && Date.parse(witness.reviewedAt) >= earliest && Date.parse(witness.reviewedAt) <= now.getTime() + 60000
     && now.getTime() - Date.parse(witness.reviewedAt) <= 7 * 86400000 && witness.evidenceSha256 === bound, "final review does not bind exact content");
   need((reader as Witness).taskId !== (reviewer as Witness).taskId && Date.parse((reviewer as Witness).reviewedAt) >= Date.parse((reader as Witness).reviewedAt), "distinct ordered final review required");
-  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : [])],
-    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email,
+  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : []), ...(nameBridge ? [`co_sos:${nameBridge.entityId}:${nameBridge.bundleSha256}`, nameBridge.canonicalAnchor.sourceId] : [])],
+    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email, ...(nameBridge ? { registeredTradeNameBridge: nameBridge } : {}),
       targetAddress: { role: entry.sourceKind === "fmcsa_census" ? "carrier_physical" : "principal_street", ...physical },
       scope: "Reviewed official API entity/contact role association at the retained observation date. Original physical facts remain unchanged; mailing and registered-agent addresses are not operating locations. A declared company email domain does not establish current website ownership or contact permission." } };
 }
