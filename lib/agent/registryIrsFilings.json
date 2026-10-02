@@ -405,6 +405,461 @@
         "file": "goal-irs990-remaining-archives-20261001/streamed-extraction.receipt.json",
         "sha256": "33a96fdadd66ef31f59080e6ea06446502b41c768e34c95e1e4c95faeed159ea"
       }
+    },
+    {
+      "id": "202513189349306486",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11D.zip",
+      "archiveSha256": null,
+      "archiveMember": "202513189349306486_public.xml",
+      "xmlSha256": "d00173d34af7dc283c1e478bafb01a5797be0f01aec0fa606f46e2859a68bc3a",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"13d5bed1-64628ea385b30\"",
+        "compressedBytes": 8430,
+        "compressedSha256": "d43df4d3913aaa030cfb526e1f6661498d96bffb4f4ee805cfe94af48afe4848",
+        "uncompressedBytes": 40553,
+        "crc32": 3214099751,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-teos-xml-11d-20261002/exact-members-discovery.json",
+          "sha256": "84597fbe714daea6f8f1203152ce0e45ceb8a1cfbfc4784e6259ceae92d3d910"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-teos-xml-11d-20261002/202513189349306486-local-header.receipt.json",
+          "sha256": "e3f9b7eca210c5833591f7581e76ec602fd38c8a1403b08a6072536ae6c48f94"
+        }
+      },
+      "filing": {
+        "ein": "510192526",
+        "legalName": "WASHINGTON VOCATIONAL SERVICES",
+        "websiteAddressTxt": "WWW.WVS.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2025-11-14T11:31:18-06:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "111 SE EVERETT MALL WAY BUILDING C",
+          "city": "EVERETT",
+          "state": "WA",
+          "postalCode": "98208",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-index-2025-20261002/actual-root-four-primary-source-read.json",
+          "sha256": "3e27acdc864f582f8fe4bba9b9d724b83ff8a1895accdea656f5648abcf32f97"
+        },
+        "independent": {
+          "file": "goal-irs990-four-cottonwood-review-20261002/50760293-actual-independent-source-assessment.json",
+          "sha256": "3e37b88bdeb6aa607cb35ae4842705f198cd6c3933f89da443f506a2043f6edb"
+        },
+        "readerTaskId": "/root",
+        "reviewerTaskId": "/root/cottonwood_review",
+        "reviewedAt": "2026-10-02T09:40:56.544Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-teos-xml-11d-20261002/202513189349306486-filing-range.receipt.json",
+        "sha256": "980b730dd68dfff078606398fab2ce85441d2eccaa5a19dd79f7d5c39cd2b352"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-teos-xml-11d-20261002/202513189349306486-extraction.receipt.json",
+        "sha256": "84051e857864911cb01b446f3d2592a3cf62a55d824d42eed64d11215a8acbd3"
+      }
+    },
+    {
+      "id": "202532909349300423",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11C.zip",
+      "archiveSha256": null,
+      "archiveMember": "202532909349300423_public.xml",
+      "xmlSha256": "6e72bb40b3b4f07d1f95380a70c94be6de8379c56fcfceec81f9043deea5f355",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"10903611-646269e3fbdd8\"",
+        "compressedBytes": 8122,
+        "compressedSha256": "bde6e238fd2b1d48bf48ed2bc97f701a0f2f9600201cd600db4309c67211b121",
+        "uncompressedBytes": 38178,
+        "crc32": 3875404807,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-teos-xml-11c-20261002/exact-members-discovery.json",
+          "sha256": "605adc853183d35e0828ef6bde6379a63fe9c463d31388b9c0564a1752a1d597"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-teos-xml-11c-20261002/202532909349300423-local-header.receipt.json",
+          "sha256": "0528a8985852ee87c6446a0f341f95f87431dba2153d08a824f523f4e3717177"
+        }
+      },
+      "filing": {
+        "ein": "930846600",
+        "legalName": "METROEAST COMMUNITY MEDIA",
+        "websiteAddressTxt": "WWW.METROEAST.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-07-01",
+        "taxPeriodEnd": "2025-06-30",
+        "returnTimestamp": "2025-10-17T11:33:51-05:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "829 NE 8TH STREET",
+          "city": "GRESHAM",
+          "state": "OR",
+          "postalCode": "970305643",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-index-2025-20261002/actual-root-four-primary-source-read.json",
+          "sha256": "3e27acdc864f582f8fe4bba9b9d724b83ff8a1895accdea656f5648abcf32f97"
+        },
+        "independent": {
+          "file": "goal-irs990-four-cottonwood-review-20261002/9882892-actual-independent-source-assessment.json",
+          "sha256": "60a911a6f2fa7091814bb7c58f1456918a546de800aee04909cacec73f89165f"
+        },
+        "readerTaskId": "/root",
+        "reviewerTaskId": "/root/cottonwood_review",
+        "reviewedAt": "2026-10-02T09:40:56.544Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-teos-xml-11c-20261002/202532909349300423-filing-range.receipt.json",
+        "sha256": "cf28f5db2b5c6b4ae91a975d46ce2b2bd25bf0b638ccd9906c438844257099fc"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-teos-xml-11c-20261002/202532909349300423-extraction.receipt.json",
+        "sha256": "26839fe9cf8a05c29f5fe3f66e1cfb934637dcee97c986428fb8b63a3cdb3ddc"
+      }
+    },
+    {
+      "id": "202542809349301034",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11B.zip",
+      "archiveSha256": null,
+      "archiveMember": "202542809349301034_public.xml",
+      "xmlSha256": "7799de8bc5e01fdb751b3aeb89abd0278135b5672e70728851c16b739ec923fe",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"1d79e7f2-64626dca47578\"",
+        "compressedBytes": 9781,
+        "compressedSha256": "153b84ebaa1e01586b2dc3dadda4846c07e9d06850f488c0a2579dbeceebc9a5",
+        "uncompressedBytes": 49041,
+        "crc32": 1613672364,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-11b-20261002/exact-members-discovery.json",
+          "sha256": "46f459d8103ca68eb14f987c55235b706f5dbf735e126a35b725d063df195f0d"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-11b-20261002/202542809349301034-local-header.receipt.json",
+          "sha256": "ed29fdc369243d19b10403bdeb53077411ba4385735b7c3bbd3fe71272e8a63c"
+        }
+      },
+      "filing": {
+        "ein": "743027286",
+        "legalName": "HAS DEVELOPMENT CORPORATION",
+        "websiteAddressTxt": "WWW.HASDC.NET",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2025-10-07T13:08:07-05:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "550 WESTCOTT 350",
+          "city": "HOUSTON",
+          "state": "TX",
+          "postalCode": "77007",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-originals-2025-11b-20261002/156448693-actual-primary-source-assessment.json",
+          "sha256": "3bc4b946352db330d1fa300f0a1f96b3fa5cbe3a1b2edde0e3e208dea4e781c1"
+        },
+        "independent": {
+          "file": "goal-irs2025-grey-independent-review-20261002/156448693-actual-independent-source-assessment.json",
+          "sha256": "2ad79f97168f73c52ea9cdfc11bd6ffe27a17dbb591f032a86b31e58c9b3c723"
+        },
+        "readerTaskId": "/root/enercom_static_source",
+        "reviewerTaskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-02T09:49:58.892Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202542809349301034-filing-range.receipt.json",
+        "sha256": "375cde63ec962cf303787001523187adb648b2092cf97fe90f3dfa0543fb1519"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202542809349301034-extraction.receipt.json",
+        "sha256": "6e8723328d99c0020507f1760b6ef3790bbc98ac38cbb0918b17696408ecc07a"
+      }
+    },
+    {
+      "id": "202533189349304573",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11B.zip",
+      "archiveSha256": null,
+      "archiveMember": "202533189349304573_public.xml",
+      "xmlSha256": "2b0c96b0ce177e7928650e8775a26624bfae78da3cd2add83005a712bea28dd2",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"1d79e7f2-64626dca47578\"",
+        "compressedBytes": 8628,
+        "compressedSha256": "e858fe978a7ce6e2f0ee133bb49e92ef20f333a2b1fe94fa10d130962025c1fb",
+        "uncompressedBytes": 44953,
+        "crc32": 893347639,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-11b-20261002/exact-members-discovery.json",
+          "sha256": "46f459d8103ca68eb14f987c55235b706f5dbf735e126a35b725d063df195f0d"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-11b-20261002/202533189349304573-local-header.receipt.json",
+          "sha256": "4b6ceb6d85373e2a2b41883f07aa7d6bd8aae42e8927ed46fb452510948ab2e2"
+        }
+      },
+      "filing": {
+        "ein": "510159134",
+        "legalName": "MEALS FOR THE ELDERLY INC",
+        "websiteAddressTxt": "WWW.MEALSFORTHEELDERLY.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2025-11-14T10:00:51-06:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "310 E HOUSTON HARTE",
+          "city": "SAN ANGELO",
+          "state": "TX",
+          "postalCode": "76903",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-originals-2025-11b-20261002/210685434-actual-primary-source-assessment.json",
+          "sha256": "7578e665a8e75419a6e9447399229ff10639113902a3de7f49c6aafc77694d33"
+        },
+        "independent": {
+          "file": "goal-irs2025-grey-independent-review-20261002/210685434-actual-independent-source-assessment.json",
+          "sha256": "5748dc994802bb1f97785809ad21fe7c0d5da925dcf5025f72d5bd42cbad227a"
+        },
+        "readerTaskId": "/root/enercom_static_source",
+        "reviewerTaskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-02T09:49:58.903Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202533189349304573-filing-range.receipt.json",
+        "sha256": "099366a83d3cef58c66912f4b7c73e02333ab3e5196d919dc8b7de4227b506be"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202533189349304573-extraction.receipt.json",
+        "sha256": "f2f30672150e18cf602c246f503442df40fca6b0914e05c3e0886418b2351362"
+      }
+    },
+    {
+      "id": "202533189349304968",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11B.zip",
+      "archiveSha256": null,
+      "archiveMember": "202533189349304968_public.xml",
+      "xmlSha256": "42db560eaf3127f52dabe079e50aed7e4a004ca4a0aa63fd06dccd48be1e039e",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"1d79e7f2-64626dca47578\"",
+        "compressedBytes": 7353,
+        "compressedSha256": "c87ee10413ed3d632ea57432728fa2216d0f9fbdcedc36df09164608bc118a89",
+        "uncompressedBytes": 38024,
+        "crc32": 600318397,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-11b-20261002/exact-members-discovery.json",
+          "sha256": "46f459d8103ca68eb14f987c55235b706f5dbf735e126a35b725d063df195f0d"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-11b-20261002/202533189349304968-local-header.receipt.json",
+          "sha256": "96004cb933bac61c8235712ac69a9903bbd8569cac7cbd6b4fdb66d25291be3e"
+        }
+      },
+      "filing": {
+        "ein": "474095131",
+        "legalName": "NXTUS INC",
+        "websiteAddressTxt": "WWW.NXTUS.IO",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2025-11-14T10:14:12-06:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "150 N MAIN ST 134",
+          "city": "WICHITA",
+          "state": "KS",
+          "postalCode": "67202",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-originals-2025-11b-20261002/135931341-actual-primary-source-assessment.json",
+          "sha256": "af3c5c1b124846154652a0414c37c03f92f99690175fbc788bb8a065207b5091"
+        },
+        "independent": {
+          "file": "goal-irs2025-grey-independent-review-20261002/135931341-actual-independent-source-assessment.json",
+          "sha256": "b8662637244fa5493bfad6614656b003ff743c81bf2de50ad14ecb182f6b8c2f"
+        },
+        "readerTaskId": "/root/enercom_static_source",
+        "reviewerTaskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-02T09:49:58.911Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202533189349304968-filing-range.receipt.json",
+        "sha256": "7e3589a3f4812594bf4fe8ea15fcbfe840239b95d0c9bdd3de7cd45b18c69b81"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202533189349304968-extraction.receipt.json",
+        "sha256": "57b1075d7a14b3eaa135f20d94c1b9053fde33d12cae73d04625217017517e42"
+      }
+    },
+    {
+      "id": "202543029349302864",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11B.zip",
+      "archiveSha256": null,
+      "archiveMember": "202543029349302864_public.xml",
+      "xmlSha256": "2c137028ea7c652c7656dd27d4e7ad2dca77766c9854dc9ecf47c0a2c2067a81",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"1d79e7f2-64626dca47578\"",
+        "compressedBytes": 8428,
+        "compressedSha256": "1cb52c9a5c9aca1bf7432800f677ab6279902082a08551b93c2c5df8b8c72c94",
+        "uncompressedBytes": 43025,
+        "crc32": 84880185,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-11b-20261002/exact-members-discovery.json",
+          "sha256": "46f459d8103ca68eb14f987c55235b706f5dbf735e126a35b725d063df195f0d"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-11b-20261002/202543029349302864-local-header.receipt.json",
+          "sha256": "3a54169905043b51823bfb75e03bd8c2935fc1d66d84def2d3253672e9d613f6"
+        }
+      },
+      "filing": {
+        "ein": "911651960",
+        "legalName": "EVERGREEN RURAL WATER OF WASHINGTON",
+        "websiteAddressTxt": "WWW.ERWOW.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2025-10-29T17:28:56-05:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "PO BOX 2300",
+          "city": "SHELTON",
+          "state": "WA",
+          "postalCode": "98584",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-originals-2025-11b-20261002/178053253-actual-primary-source-assessment.json",
+          "sha256": "9812f06e99a13bb9cff6dcb9c6b1bfa9e1790b8492841b8aa8a7df48f7a94f0f"
+        },
+        "independent": {
+          "file": "goal-irs2025-grey-independent-review-20261002/178053253-actual-independent-source-assessment.json",
+          "sha256": "43ec48c08ea3f543a785ef2718a544ab2fd0b71198fcafea30ad39b9f5167623"
+        },
+        "readerTaskId": "/root/enercom_static_source",
+        "reviewerTaskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-02T09:50:45.527Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202543029349302864-filing-range.receipt.json",
+        "sha256": "925a8859c0bf27018b20697380321e2a359421f4032f4c5e83df70912983fbfa"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202543029349302864-extraction.receipt.json",
+        "sha256": "c204665fa89620669966c37c6fd5780f258f96136a0764f624ceeab5ddadbb76"
+      }
+    },
+    {
+      "id": "202533169349101768",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11B.zip",
+      "archiveSha256": null,
+      "archiveMember": "202533169349101768_public.xml",
+      "xmlSha256": "1f42502d996d87fe7e680a70b27142fe8839eb305848816d37ea2d8c1d245bfe",
+      "archiveAcquisition": {
+        "kind": "exact_complete_member_from_pinned_archive_ranges",
+        "wholeArchiveCaptured": false,
+        "wholeArchiveSha256Known": false,
+        "etag": "\"1d79e7f2-64626dca47578\"",
+        "compressedBytes": 6864,
+        "compressedSha256": "1f38702ebb9b2b3a09bb3f3e06273ebec2b1644870c7e604982e81aeb18e9853",
+        "uncompressedBytes": 40835,
+        "crc32": 3794751727,
+        "crcMatchesCentralAndLocalRecord": true,
+        "exactFilenameMatchesLocalAndCentral": true,
+        "discovery": {
+          "file": "goal-irs990-originals-2025-11b-20261002/exact-members-discovery.json",
+          "sha256": "46f459d8103ca68eb14f987c55235b706f5dbf735e126a35b725d063df195f0d"
+        },
+        "localHeader": {
+          "file": "goal-irs990-originals-2025-11b-20261002/202533169349101768-local-header.receipt.json",
+          "sha256": "16ee79b491f04b0c006294d1b9a4397a929367173b1d282fa7b914d15f78a613"
+        }
+      },
+      "filing": {
+        "ein": "824860306",
+        "legalName": "FULFILLMENT HOUSE INC",
+        "websiteAddressTxt": "WWW.THEFULFILLMENTHOUSE.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2025-11-12T11:36:35-06:00",
+        "returnType": "990PF",
+        "address": {
+          "addressLine1": "103 S JEFFERSON ST",
+          "city": "KEARNEY",
+          "state": "MO",
+          "postalCode": "64060",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-originals-2025-11b-20261002/194344370-actual-primary-source-assessment.json",
+          "sha256": "34315a7a23d9d99b976e8b0c3e7471e9f7005320f691611cc8acba4869ecc4e4"
+        },
+        "independent": {
+          "file": "goal-irs2025-grey-independent-review-20261002/194344370-actual-independent-source-assessment.json",
+          "sha256": "a864559574f104905ef708dac02c7caa22a4db90cff58261900e17df50f10456"
+        },
+        "readerTaskId": "/root/enercom_static_source",
+        "reviewerTaskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-02T09:50:45.536Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202533169349101768-filing-range.receipt.json",
+        "sha256": "afc0de250709821e9a6f94454455e95c41f65d9548cecfe91de890ecded736c0"
+      },
+      "extraction": {
+        "file": "goal-irs990-originals-2025-11b-20261002/202533169349101768-extraction.receipt.json",
+        "sha256": "67b751f7855596e11a68ee28bcef0a3b39d36ab95d9873d2f786c7afc76b812c"
+      }
     }
   ]
 }
