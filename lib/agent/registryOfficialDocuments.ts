@@ -34,6 +34,15 @@ type IrsEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "official_irs_e
   historicalDate: string; laterDate: string; currentPhysicalAddressClaim: false;
   assignedDomainConflict: { disposition: "retain_assigned_domain_as_distinct_entity"; domain: string; legalName: string; ein: string;
     url: string; observedAt: string; text: string; textSha256: string; htmlSha256: string; packetSha256: string; identityQuote: string } };
+type IrsContactEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "official_irs_filer_books_own_site_contact";
+  sources: [IrsSource, Source]; target: Omit<Target, "dataset" | "role"> & { dataset: "irs_exempt"; role: "exempt_organization" };
+  ein: string; canonicalName: string; filerLegalName: string; declaredWebsite: null;
+  filerAddressRole: "filer_return_address"; filerAddress: Address; filerPhone: string;
+  booksRole: "books_in_care_of_contact"; booksLocator: "Return/ReturnData/IRS990/BooksInCareOfDetail";
+  booksPerson: string; booksPhone: string; booksAddress: Address;
+  ownSiteRole: "company_contact_block"; ownSiteSubject: string; ownSiteContactQuote: string; ownSitePhoneLiteral: string; ownSiteAddress: Address;
+  taxPeriodBegin: string; taxPeriodEnd: string; returnTimestamp: string;
+  bmfAddressEquivalenceClaim: false; legalNameNormalizationClaim: false; currentPhysicalAddressClaim: false; financialInference: false };
 type MunicipalCslbEntry = Omit<BaseEntry, "target"> & { chain: "official_municipal_dba_cslb_header";
   target: Omit<Target, "dataset" | "role"> & { dataset: "ca_contractors"; role: "contractor_mailing_address" };
   csvHeader: { text: string; sha256: string; inspectionReceiptSha256: string };
@@ -77,7 +86,7 @@ type BrokerEntry = Omit<BaseEntry, "target" | "sources" | "phone"> & { chain: "o
     contractQuote: string; disclosureQuote: string; usdot: string; mc: string;
     registrationAddressRole: "original_fmcsa_only"; websiteStreetAddress: null; physicalAddressCorroborated: false;
     currentAuthorityClaim: false; fullNormalizedTextRead: true; renderedCompletenessClaim: false; termsEffectiveDate: null } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry;
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | IrsContactEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -99,7 +108,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13,14].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13,14,15].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -109,6 +118,7 @@ export function registryOfficialDocumentEvidenceHash(row: RegistryFinding, proof
 }
 function sourceChecks(e: RegistryOfficialDocumentEntry) {
   if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
+  else if (e.chain === "official_irs_filer_books_own_site_contact") irsContactSourceChecks(e);
   else if (e.chain === "official_municipal_dba_cslb_header") municipalCslbSourceChecks(e);
   else if (e.chain === "company_pdf_contact_role") companyPdfSourceChecks(e);
   else if (e.chain === "court_contract_counterparty_contact") courtSourceChecks(e);
@@ -176,7 +186,7 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
       && p.sourceAsOf===null && p.provenance.sourceRow.usdot_number===raw.dot_number
       && p.facts.filter(f=>f.field==="usdot_number" && f.value===raw.dot_number).length===1
       && u.href==="https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2288433", "original broker identity or identifiers differ");
-  } else if (e.chain === "official_irs_ein_historical_books_address") {
+  } else if (e.chain === "official_irs_ein_historical_books_address" || e.chain === "official_irs_filer_books_own_site_contact") {
     const parts=row.evidence.split("\nOriginal public source row: ");
     need(p.dataset==="irs_exempt" && t.role==="exempt_organization" && /^\d{9}$/.test(p.recordId) && parts.length===2,"target IRS role invalid");
     raw=JSON.parse(parts[1]); const normalized=JSON.parse(parts[0]);
@@ -240,9 +250,7 @@ function datedUsAddress(a: Address,b: Address) {
   return /^\d{5}(?:-?\d{4})?$/.test(a.postalCode) && /^\d{5}(?:-?\d{4})?$/.test(b.postalCode)
     && (az.length===5 || bz.length===5 || az===bz) && fullAddress({...a,postalCode:az.slice(0,5)},{...b,postalCode:bz.slice(0,5)});
 }
-function irsSourceChecks(e: IrsEntry) {
-  need(e.sources.length===2,"IRS source count differs");
-  for (const s of e.sources) {
+function irsArchiveSourceChecks(s: IrsSource) {
     const u=publicUrl(s.url),a=s.archive;
     need(s.kind==="official_irs_xml_archive_member" && u.hostname==="apps.irs.gov" && /^\/pub\/epostcard\/990\/xml\/\d{4}\/[A-Za-z0-9_]+\.zip$/.test(u.pathname)
       && !u.search && s.requestedUrl===s.url && s.hops===null && s.contentType==="application/zip"
@@ -261,7 +269,10 @@ function irsSourceChecks(e: IrsEntry) {
     need(s.sourceDate && /^\d{4}-\d{2}-\d{2}$/.test(s.sourceDate) && Number.isFinite(Date.parse(s.sourceDate))
       && Date.parse(s.sourceDate)<=Date.parse(s.observedAt) && s.sourceDateText===`<TaxPeriodEndDt>${s.sourceDate}</TaxPeriodEndDt>`
       && s.text.includes(s.sourceDateText),"IRS filing date differs");
-  }
+}
+function irsSourceChecks(e: IrsEntry) {
+  need(e.sources.length===2,"IRS source count differs");
+  for (const s of e.sources) irsArchiveSourceChecks(s);
   const c=e.assignedDomainConflict;
   need(c && c.disposition==="retain_assigned_domain_as_distinct_entity" && c.domain===e.canonicalDomain
     && host(c.url)===e.canonicalDomain && iso(c.observedAt) && hash(c.packetSha256) && c.packetSha256===e.originalReviews.packetSha256
@@ -270,6 +281,58 @@ function irsSourceChecks(e: IrsEntry) {
     && c.text.includes(c.identityQuote) && c.identityQuote.includes(c.legalName)
     && c.identityQuote.includes(c.ein.slice(0,2)+"-"+c.ein.slice(2)),"assigned-domain conflict missing or changed");
   need([e.sourceReader,e.sourceReviewer].every(r=>Date.parse(r.reviewedAt)>=Date.parse(c.observedAt)),"domain conflict source chronology differs");
+}
+// One reviewed BMF/EIN filing joined to its own-site subject by two separately
+// labelled phones and a full books-contact address. This is not a name repair,
+// BMF street normalization, declared-domain claim, or current physical address.
+function irsContactSourceChecks(e: IrsContactEntry) {
+  need(e.id==="seniors-208176668-irs-books-own-site-contact" && e.companyId==="10e99999-acd6-4e4a-bd06-b8b34bf1b5d2"
+    && e.internalId==="202585537" && e.canonicalDomain==="seniorsonthegowi.com" && e.canonicalName==="Seniors On The Go"
+    && e.target.dataset==="irs_exempt" && e.target.role==="exempt_organization" && e.target.recordId==="208176668"
+    && e.sources.length===2,"IRS contact finite scope differs");
+  const [filing,own]=e.sources; irsArchiveSourceChecks(filing);
+  need(filing.status===206 && filing.archive.member==="202533149349303053_public.xml"
+    && filing.url==="https://apps.irs.gov/pub/epostcard/990/xml/2025/2025_TEOS_XML_11B.zip","IRS contact original filing differs");
+  need(own.kind==="own_website" && own.status===200 && own.url==="https://seniorsonthegowi.com/" && own.requestedUrl===own.url
+    && publicUrl(own.url).hostname===e.canonicalDomain && own.hops?.length===1 && own.hops[0].url===own.url && own.hops[0].status===200
+    && /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/.test(own.contentType??"") && iso(own.observedAt)
+    && hash(own.receiptSha256) && hash(own.originalSourcePin) && hash(own.bodySha256) && own.completeRead===true
+    && own.text.length>100 && own.text.length<=150000 && sha(own.text)===own.textSha256
+    && own.sourceDate===null && own.sourceDateText===null,"IRS contact own-site source differs");
+}
+function irsContactIdentityChain(e: IrsContactEntry,context: CompanyIdentityContext) {
+  const [filing,own]=e.sources;
+  need(e.ein==="208176668" && e.legalName==="SENIORS ON THE GO INC" && e.filerLegalName==="Senior on the Go Inc"
+    && e.declaredWebsite===null && e.filerAddressRole==="filer_return_address" && e.booksRole==="books_in_care_of_contact"
+    && e.booksLocator==="Return/ReturnData/IRS990/BooksInCareOfDetail" && e.ownSiteRole==="company_contact_block"
+    && e.bmfAddressEquivalenceClaim===false && e.legalNameNormalizationClaim===false && e.currentPhysicalAddressClaim===false
+    && e.financialInference===false && context.aliases.length===0 && context.addresses.length===0,"IRS contact roles or claim boundary differs");
+  const header=xmlPart(filing.text,"ReturnHeader"),filer=xmlPart(header,"Filer"),name=xmlPart(filer,"BusinessName"),
+    form=xmlPart(xmlPart(filing.text,"ReturnData"),"IRS990"),books=xmlPart(form,"BooksInCareOfDetail");
+  need(xmlValue(filer,"EIN")===e.ein && xmlValue(name,"BusinessNameLine1Txt")===e.filerLegalName
+    && !/<BusinessNameLine2Txt(?:\s|>)/.test(name) && !/<WebsiteAddressTxt(?:\s|>)/.test(filing.text)
+    && xmlValue(header,"TaxPeriodBeginDt")===e.taxPeriodBegin && e.taxPeriodBegin==="2024-01-01"
+    && xmlValue(header,"TaxPeriodEndDt")===e.taxPeriodEnd && e.taxPeriodEnd==="2024-12-31" && filing.sourceDate===e.taxPeriodEnd
+    && xmlValue(header,"TaxYr")==="2024" && xmlValue(header,"ReturnTs")===e.returnTimestamp
+    && e.returnTimestamp==="2025-11-10T12:00:39-05:00","IRS contact filer, domain absence or period differs");
+  need(e.phone==="2623635700" && e.filerPhone===e.phone && e.booksPhone===e.phone && xmlValue(filer,"PhoneNum")===e.filerPhone
+    && xmlValue(books,"PhoneNum")===e.booksPhone && xmlValue(books,"PersonNm")===e.booksPerson && e.booksPerson==="Jack Wieber",
+    "IRS filer or books-contact phone differs");
+  const filerAddress=xmlAddress(filer),booksAddress=xmlAddress(books);
+  need(stableRegistryJson(filerAddress)===stableRegistryJson(e.filerAddress)
+    && e.filerAddress.addressLine1==="575 Bayview Suite 106" && e.filerAddress.city==="Mukwonago" && e.filerAddress.state==="WI" && e.filerAddress.postalCode==="53149"
+    && stableRegistryJson(booksAddress)===stableRegistryJson(e.booksAddress)
+    && e.booksAddress.addressLine1==="575 Bayview Rd Suite 106" && e.booksAddress.city==="Mukwonago" && e.booksAddress.state==="WI" && e.booksAddress.postalCode==="53149",
+    "IRS separate filer/books address differs");
+  const a=e.ownSiteAddress,q=e.ownSiteContactQuote;
+  need(e.ownSiteSubject==="Seniors On The Go - Taxi & Transportation" && e.ownSitePhoneLiteral==="(262) 363-5700"
+    && e.ownSitePhoneLiteral.replace(/\D/g,"")===e.phone && own.text.startsWith(`${e.ownSiteSubject} - Mukwonago, WI `)
+    && q===`${e.ownSitePhoneLiteral} ${e.ownSiteSubject} ${a.addressLine1} ${a.city}, ${a.state} ${a.postalCode}`
+    && own.text.slice(0,350).split(q).length===2 && own.text.indexOf(q)<own.text.indexOf("About Us")
+    && a.addressLine1==="575 Bayview Road Suite 106" && a.city==="Mukwonago" && a.state==="WI" && a.postalCode==="53149"
+    && !a.addressLine2 && fullAddress(e.booksAddress,a),"IRS own-site company-scoped complete contact differs");
+  need(e.targetAddress.addressLine1==="575 BAY VIEW RD STE 106" && e.targetAddress.city==="MUKWONAGO"
+    && e.targetAddress.state==="WI" && e.targetAddress.postalCode==="53149-1749","IRS original BMF address literal differs");
 }
 function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
   need(/^\d{9}$/.test(e.ein) && e.ein===e.target.recordId && e.historicalRole==="books_in_care_of_address"
@@ -292,6 +355,7 @@ function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
 }
 function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentityContext) {
   if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
+  if (e.chain === "official_irs_filer_books_own_site_contact") { irsContactIdentityChain(e,context); return; }
   if (e.chain === "official_municipal_dba_cslb_header") { municipalCslbIdentityChain(e); return; }
   if (e.chain === "company_pdf_contact_role") { companyPdfIdentityChain(e); return; }
   if (e.chain === "court_contract_counterparty_contact") { courtIdentityChain(e); return; }
