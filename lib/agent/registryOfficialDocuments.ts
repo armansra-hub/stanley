@@ -71,7 +71,13 @@ type ConferenceEntry = Omit<BaseEntry, "sources"> & { chain: "university_confere
     contactBlock:string; person:string; personTitle:string; companyDisplay:string; email:string; phoneLiteral:string;
     addressLineLiteral:string; localityLiteral:string; address:Address; publicationDate:null; addressEffectiveDate:null;
     currentAddressClaim:false; registeredOfficeClaim:false; currentEmploymentClaim:false; continuousOccupancyClaim:false; financialInference:false } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry;
+type BrokerEntry = Omit<BaseEntry, "target" | "sources" | "phone"> & { chain: "own_legal_terms_broker_identifiers";
+  target: Omit<Target, "dataset" | "role"> & { dataset: "fmcsa"; role: "registered_carrier_broker" }; sources: [Source];
+  broker: { ownSiteRole: "contracting_legal_party_and_explicit_broker_identifiers"; termsLegalName: string;
+    contractQuote: string; disclosureQuote: string; usdot: string; mc: string;
+    registrationAddressRole: "original_fmcsa_only"; websiteStreetAddress: null; physicalAddressCorroborated: false;
+    currentAuthorityClaim: false; fullNormalizedTextRead: true; renderedCompletenessClaim: false; termsEffectiveDate: null } };
+export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -93,7 +99,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13,14].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -107,6 +113,7 @@ function sourceChecks(e: RegistryOfficialDocumentEntry) {
   else if (e.chain === "company_pdf_contact_role") companyPdfSourceChecks(e);
   else if (e.chain === "court_contract_counterparty_contact") courtSourceChecks(e);
   else if (e.chain === "university_conference_business_contact") conferenceSourceChecks(e);
+  else if (e.chain === "own_legal_terms_broker_identifiers") brokerSourceChecks(e);
   else {
   need(e.sources.length === 2 && e.sources[1].kind === "own_website", "source classes differ");
   for (const s of e.sources) {
@@ -158,6 +165,17 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
       && raw.city === p.identity.city && raw.state === p.identity.state && raw.zipcode === p.identity.postalCode
       && u.hostname === "data.colorado.gov" && u.pathname === "/resource/8upq-58vz.json" && [...u.searchParams.keys()].join() === "debtorid"
       && u.searchParams.get("debtorid") === raw.debtorid, "original UCC record differs");
+  } else if (e.chain === "own_legal_terms_broker_identifiers") {
+    const parts=row.evidence.split("\nOriginal public source row: ");
+    need(p.dataset==="fmcsa" && t.role==="registered_carrier_broker" && parts.length===2 && p.recordId==="2288433", "target broker role differs");
+    const normalized=JSON.parse(parts[0]); raw=JSON.parse(parts[1]);
+    need(sha(parts[1])===t.rowSha256 && stableRegistryJson(normalized)===stableRegistryJson(p.provenance.sourceRow)
+      && raw.dot_number===p.recordId && raw.dot_number===e.broker.usdot && raw.docket1===e.broker.mc && raw.docket1prefix==="MC"
+      && raw.legal_name===p.identity.legalName && raw.phy_street===p.identity.addressLine1 && raw.phy_city===p.identity.city
+      && raw.phy_state===p.identity.state && raw.phy_zip===p.identity.postalCode && raw.phy_country===p.identity.countryCode
+      && p.sourceAsOf===null && p.provenance.sourceRow.usdot_number===raw.dot_number
+      && p.facts.filter(f=>f.field==="usdot_number" && f.value===raw.dot_number).length===1
+      && u.href==="https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2288433", "original broker identity or identifiers differ");
   } else if (e.chain === "official_irs_ein_historical_books_address") {
     const parts=row.evidence.split("\nOriginal public source row: ");
     need(p.dataset==="irs_exempt" && t.role==="exempt_organization" && /^\d{9}$/.test(p.recordId) && parts.length===2,"target IRS role invalid");
@@ -278,6 +296,7 @@ function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentit
   if (e.chain === "company_pdf_contact_role") { companyPdfIdentityChain(e); return; }
   if (e.chain === "court_contract_counterparty_contact") { courtIdentityChain(e); return; }
   if (e.chain === "university_conference_business_contact") { conferenceIdentityChain(e); return; }
+  if (e.chain === "own_legal_terms_broker_identifiers") { brokerIdentityChain(e); return; }
   const [official, own] = e.sources;
   need(/^\d{10}$/.test(e.phone) && own.text.replace(/\D/g, "").includes(e.phone), "own-site phone differs");
   if (e.chain === "dated_author_address") {
@@ -490,6 +509,39 @@ function conferenceIdentityChain(e: ConferenceEntry) {
     && fullAddress(c.address,e.targetAddress),"conference exact South address differs");
 }
 
+// One fully reviewed own-domain legal contract and explicit DOT/MC disclosure.
+// The registry address remains registry evidence; no website address is invented.
+function brokerSourceChecks(e: BrokerEntry) {
+  const s=e.sources[0];
+  need(e.companyId==="8349a8d8-6261-4f3a-8697-b49e8204448f" && e.internalId==="18302043"
+    && e.canonicalDomain==="dormroommovers.com" && e.target.dataset==="fmcsa" && e.target.recordId==="2288433"
+    && e.target.role==="registered_carrier_broker" && e.sources.length===1, "broker finite scope differs");
+  need(s.kind==="own_website" && publicUrl(s.url).href==="https://www.dormroommovers.com/terms"
+    && s.requestedUrl===s.url && s.status===200 && s.contentType==="text/html; charset=utf-8"
+    && s.hops?.length===1 && s.hops[0].url===s.url && s.hops[0].status===200
+    && iso(s.observedAt) && s.observedAt==="2026-10-02T08:04:01.404Z", "broker own-site capture provenance differs");
+  need(s.completeRead===true && s.text.length===24445 && sha(s.text)===s.textSha256
+    && s.textSha256==="24cff61fe4d974aa93651f03f4c7add9e8bcc5bcbe2220b80d9be38c619df920"
+    && s.bodySha256==="17988bd2324fafc61f82b97436898b084540b8c936626d985a763a42add181d1"
+    && s.receiptSha256==="e421d0814c751bdd895363783115664bf8c9224a62c3cda8f6b5119f320a99f7"
+    && s.originalSourcePin===s.receiptSha256 && s.sourceDate===null && s.sourceDateText===null,
+    "broker complete retained terms or dates differ");
+}
+function brokerIdentityChain(e: BrokerEntry) {
+  const b=e.broker,s=e.sources[0];
+  need(b.ownSiteRole==="contracting_legal_party_and_explicit_broker_identifiers"
+    && b.termsLegalName==="Dorm Room Movers, LLC" && e.legalName==="DORM ROOM MOVERS LLC"
+    && sameRegistryLegalName(b.termsLegalName,e.legalName) && b.usdot==="2288433" && b.mc==="746975",
+    "broker legal operator or identifier chain differs");
+  need(b.contractQuote==='Your registration with Dorm Room Movers, LLC ("DRM") and your purchase of our services is subject to the following Purchase Terms and Conditions ("Purchase Terms")'
+    && b.disclosureQuote==="Dorm Room Movers is a broker of household goods moving & storage services. USDOT 2288433, MC-746975. Fla. Broker Reg. No MB154"
+    && s.text.split(b.contractQuote).length===2 && s.text.split(b.disclosureQuote).length===2,
+    "broker contracting party or disclosure quote differs");
+  need(b.registrationAddressRole==="original_fmcsa_only" && b.websiteStreetAddress===null && b.physicalAddressCorroborated===false
+    && b.currentAuthorityClaim===false && b.fullNormalizedTextRead===true && b.renderedCompletenessClaim===false
+    && b.termsEffectiveDate===null, "broker address, date or authority claim differs");
+}
+
 /** A retained dated association only; never a canonical-field update or a claim
  * that an old address, license status, debt or financial value is current. */
 export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now=new Date()): NonNullable<RegistryProfile["verification"]> {
@@ -509,5 +561,5 @@ export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknow
   need((reader as Witness).taskId!==(reviewer as Witness).taskId && Date.parse((reviewer as Witness).reviewedAt)>=Date.parse((reader as Witness).reviewedAt),"independent ordered final witnesses required");
   return {method:"reviewed_official_registration_history",verifiedAt:now.toISOString(),sourceIds:[`document:${e.id}:${sha256}`],officialHistory:{...bare,reader,reviewer,evidenceSha256:bound,entry:e,
     targetAddress:{role:e.target.role,...row.profile.identity},canonicalAddresses:structuredClone(context.addresses),
-    scope:"Reviewed dated document identity association only. Address roles/dates remain separate; no canonical mutation, current occupancy, debt balance, company revenue, budget or license-wide conclusion is inferred."}};
+    scope:e.chain==="own_legal_terms_broker_identifiers" ? "Reviewed own-domain contracting legal name and explicit broker identifiers associate the exact FMCSA record only. No website street-address corroboration or current authority is claimed. Registry/CRM address roles and dates remain separate; no canonical mutation, owned fleet, employee, revenue, debt or budget inference." : "Reviewed dated document identity association only. Address roles/dates remain separate; no canonical mutation, current occupancy, debt balance, company revenue, budget or license-wide conclusion is inferred."}};
 }

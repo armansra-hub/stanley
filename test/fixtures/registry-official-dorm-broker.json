@@ -1,0 +1,190 @@
+{
+  "scope": "Retained exact source data; tests generate only explicitly synthetic final witnesses.",
+  "entry": {
+    "id": "dorm-room-movers-fmcsa-2288433-own-terms-broker",
+    "chain": "own_legal_terms_broker_identifiers",
+    "companyId": "8349a8d8-6261-4f3a-8697-b49e8204448f",
+    "internalId": "18302043",
+    "canonicalDomain": "dormroommovers.com",
+    "canonicalIdentitySha256": "a62cda3a4ca901ff1ca5e91f46767190befcc481b581f01c54889097c0e7a008",
+    "target": {
+      "dataset": "fmcsa",
+      "recordId": "2288433",
+      "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2288433",
+      "rowSha256": "d03ded36f6a16e56302d379648d23ee26053cee2d9020eb64beeefe21148dd78",
+      "evidenceSha256": "ac22011b5aca5768a83165de4e960ba5a2f71d71fc002ddb97f44ffd94e77660",
+      "profileSha256": "de143377022fa7af72798a70be9be7f8113c28fec1f2ef64daa105ce0fec55f9",
+      "sourceAsOf": null,
+      "observedAt": "2026-09-29T23:14:37.236134+00:00",
+      "role": "registered_carrier_broker"
+    },
+    "sources": [
+      {
+        "kind": "own_website",
+        "url": "https://www.dormroommovers.com/terms",
+        "requestedUrl": "https://www.dormroommovers.com/terms",
+        "hops": [
+          {
+            "url": "https://www.dormroommovers.com/terms",
+            "status": 200
+          }
+        ],
+        "observedAt": "2026-10-02T08:04:01.404Z",
+        "receiptSha256": "e421d0814c751bdd895363783115664bf8c9224a62c3cda8f6b5119f320a99f7",
+        "bodySha256": "17988bd2324fafc61f82b97436898b084540b8c936626d985a763a42add181d1",
+        "text": "Terms & Conditions | Dorm Room Movers 888.769.3676 How it Works Pricing {{ school.name }} Change School Services Campuses Contact Us Login Get Started How it Works Pricing {{ school.name }} Change School Services Campuses Get Started or CALL 888.769.3676 Login Terms & Conditions We know it's really exciting but please read this! Purchase Terms and Conditions Your registration with Dorm Room Movers, LLC (\"DRM\") and your purchase of our services is subject to the following Purchase Terms and Conditions (\"Purchase Terms\"), together with our website Terms of Use and Privacy Policy https://www.dormroommovers.com/terms, https://www.dormroommovers.com/privacy, which are incorporated into these Purchase Terms. PLEASE READ THE BELOW PURCHASE TERMS CAREFULLY BEFORE REGISTERING OR PURCHASING OUR SERVICES. YOU SHOULD PRINT A COPY OF THESE PURCHASE TERMS FOR YOUR REFERENCE. IF YOU DO NOT AGREE TO THESE PURCHASE TERMS, YOU MAY NOT REGISTER WITH THIS WEBSITE OR PURCHASE OUR SERVICES. Upon purchase and submission of payments to purchase our services, you acknowledge and accept the Purchase Terms as listed below. Service Description DRM services consists of coordinating the pickup, shipping, storage and delivery of personal items using various third party subcontractors selected by DRM, such as moving companies, delivery companies and storage facilities. DRM does not have liability for the acts or omissions of these third parties. DRM does not at any time take physical possession of your personal items. Registration Information In order to purchase our services, you must first register on our website and pay the non-refundable registration fee. This allows us to get your information into our system so that we can more easily process your orders. Registration and the requisite registration fee is required prior to ordering each individual service. However, if you decide not to purchase DRM services in the same calendar year as registering, your registration and registration fee remains on file with DRM for a year and may be used to order one DRM service at any time during the twelve (12) months following registration. Any registration fee not used to order a service within twelve (12) months is forfeited. Upon registration for our services, a small amount of personally identifying information is necessary. Required registration information includes your name, address, phone number, email address and other personally identifiable information. All information that we collect is subject to our Privacy Policy https://www.dormroommovers.com/privacy . By registering with the website you are agreeing to the collection and use of your information as disclosed in the Privacy Policy. DRM is not responsible for any errors in the information that you submit to DRM in registering or placing your orders, including without limitation any additional fees or misdeliveries that may result from your errors. Card Information All payments must be made by credit or debit card. DRM does not accept payments in the form of checks or cash. You should never provide any DRM representative any checks or cash under any circumstances. Card information and payments will be processed through Braintree Payments, a third party service provider. DRM will not store Cardholder Data or Sensitive Authentication Data in its own servers. However, the card used for registration fees will be kept on file with Braintree Payments. This card on file will be used to charge any service charges or related fees. You will not be invoiced or notified prior to DRM charging your card on file. You may change the card on file by contacting DRM representatives. In the event that DRM is unable to process your credit or debit card information for any reason, you acknowledge that you remain indebted to DRM until the balance due is submitted by you and received by DRM. Should you fail to pay the remaining balance, DRM reserves the right to retain your belongings until full payment is received. You understand and acknowledge that delayed payments may cause delivery delays and rescheduling fees that may result from rescheduling delivery. Balances for storage services that are not paid within the storage period may result in the holding of the items as collateral until payment; if payment, is not received your belongings will be deemed abandoned and may be auctioned. SMS Text Messages If you provide us with a mobile phone number as part of your Account, you are consenting to receive SMS text messages from DRM and its affiliates and we may communicate with you through SMS text message, in addition to communications by email and Facebook Messenger, to manage your Account, your Subscriptions, and your purchase or Products, and to deliver relevant marketing materials to you. By providing a mobile phone number when creating an Account or ordering Products, you represent and warrant to us that the person or entity to whom the mobile phone number belongs has consented to receive SMS text messages in connection with your Account and your purchase of Products. If you provide us with a mobile phone number, you are authorizing DRM to use that mobile phone number to verify your identity, to initiate Subscriptions at your request, subject to these Terms, to initiate the purchase of Products, and to generally manage your Account. DRM will not be liable for any loss that you incur as a result of someone else using the mobile phone number you provide to us, either with or without your knowledge. Data or messaging rates may apply when sending or receiving SMS text messages. SMS text messaging from us may not be available to you depending on your mobile phone carrier. The frequency of SMS text messages you receive from us will vary based on your interaction with us through SMS text messages and based on the Subscriptions and Products you order. You can revoke your consent to receive SMS text messages from us at any time by texting the word STOP to us at (856) 369-3676 from your mobile device. Revoking your consent to receive SMS text messages from us does not cancel any pending orders of Products or active Subscriptions (see below) you may have. If you revoke your consent to receive SMS text messages from us, we will communicate with you about your Account by email or other means. Prices and Fees All prices and fees for our services may be found at our current price list http://dormroommovers.com/prices. Prices are subject to change without notice. The price for your service order on the date and time you place your order is the applicable price for your order. In addition to the prices, various fees may apply as described below for special arrangements or changes. DRM will charge and you agree to pay any of the fees that apply to you. These fees are necessary to compensate DRM for its additional expenses incurred as a result of the deviation from the standard procedures and practices of the DRM services. All promotional discounts apply only to the list price of your selected services. Discounts do not apply to any additional fees. Prices for storage services are per each 4-month storage period as defined as summer, fall semester or spring semester. If you choose a shipping service, any shipping fees will be charged to you in addition to the DRM services. Items over 65 lbs may be subject to a surcharge as set forth in the price list http://dormroommovers.com/prices. Accounts with an outstanding balance after 30 days from the time of pickup will be assessed a $50 late payment fee. This fee will be applied for each subsequent 30 day period in which the account carries a balance. Items will be held by DRM until balance is paid in full. Packing and Supplies You are solely responsible for packing any boxes. Our website has packing tips to assist you in packing your boxes; however, you know your belongings better than we do, so it is your responsibility to use your best judgment in packing your boxes. Each time you register with our site, you will receive a complimentary supply kit for packing your belongings that consists of five (5) boxes and the necessary packing and taping supplies to assist you with packing. It may take up to fourteen (14) days for your supply kits to arrive. If you require additional supplies, you may order additional supply kits from our website. DRM is not responsible if supply kits do not arrive in time for your scheduled pickup for an ordered DRM service. You are responsible for obtaining the proper packing supplies and boxes prior to your selected pickup date and time for any DRM service. Each box and each item that does not fit in a box is a separate \"Item\" for purposes of pricing the DRM services as that term is used below. DRM and their contracted agents reserve the right to pack and or repack items that are overweight or not deemed safe for transport and are subject to additional fees. Access to Residence Halls DRM follows and adheres to all terms and conditions of university housing policies as made known to DRM. DRM requires you to accompany DRM representatives at all times while in the residence halls. If for any reason access to residence halls is limited by university policy, it is your responsibility to arrange a pickup and delivery location that DRM can accommodate. This may require you to bring your belongings outside to DRM or retrieve them from outside the building. All fees and other terms from this Agreement will still apply. Contract Signatures At the time of ordering services, you will be allowed to designate an alternate contact for your order (\"Alternate Contact\"). Choose your Alternate Contact wisely as this individual will be entrusted with your belongings in your absence, for signing for pickup or delivery, for authorizing the charge for the services to the card on file, and for confirming the physical state of your belongings on delivery. Your Alternate Contact can be changed by contacting DRM. DRM is entitled to rely upon the representations made by your Alternate Contact and by identifying your Alternate Contact you hereby authorize them to sign on your behalf to approve card charges, transfer custody of your Items, and confirm their delivery and physical state at delivery. You may not dispute or challenge charges or the physical state of your Items as approved by your Alternate Contact. Storage Services Our storage services require a pick up and delivery of your Items. A. Scheduled Pick Ups and Deliveries When you place your order for storage, you schedule your preferred pick-up and delivery date and location. Pick ups and deliveries that are scheduled during a DRM standard move period for a standard DRM campus location are included within the cost of the DRM storage service. However, there are a limited amount of standard moves allotted per pickup and delivery date. Students that select their date after this number has been met will be assessed a peak pickup/delivery fee as listed at http://dormroommovers.com/prices. Schedule your pickups and deliveries as far in advance as possible to help avoid these fees. We can schedule an \"on-demand\" pick-up or delivery of your Items, outside of the DRM standard move period within your campus location and/or outside of the standard DRM campus location. However, these on-demand pick-ups and deliveries will result in fees ranging from $30 to $500 depending on date and location and are subject to Dorm Room Movers' approval based on the availability of moving teams. You are required to be present at the specified pick-up and delivery location during the scheduled time and date. If you will not be present at pick-up or delivery, the Alternate Contact must be present. If neither you nor your Alternate Contact is available at the scheduled pickup to provide your Items to DRM, you may be charged an additional fee for rescheduling your pickup as listed at http://dormroommovers.com/prices. At your or your Alternate Contact&rsquo;s request, if there is no one present at delivery, DRM may leave your Items outside the scheduled delivery location and DRM's responsibility and liability for your Items terminates at that time. In such case, the DRM representative will sign the delivery form, indicating the physical state of the Items as of delivery, which will be the authoritative statement as to the condition of your Items. You agree and acknowledge that DRM will not be held liable for damage or loss of belongings following delivery by DRM. You may reschedule a pickup or delivery date. If you reschedule a pickup or delivery date or location with at least seven (7) days advance notice of the scheduled pickup or delivery date, there is no additional charge for the rescheduling; reschedules with less than seven (7) days notice may be charged an additional rescheduling fee as listed at http://dormroommovers.com/prices. If you reschedule a pickup or delivery date or location with less than 2 business day&rsquo;s notice, DRM will attempt to accommodate your request but may not be able to do so. Delivery included in &ldquo;all inclusive&rdquo; pricing must be within a 10 mile radius of the campus at which the Items were picked up. Delivery outside of said 10 mile radius from campus will be subject to an additional fee as indicated by the pricing schedule at http://dormroommovers.com/prices. B.Storage Your Items will be stored at a third party climate controlled storage facility selected at the sole discretion of DRM. A \"climate controlled facility\" does not mean the facility is air-conditioned. A &ldquo;climate controlled storage facility&rdquo; is a storage facility with ventilation that maintains a reasonable temperature for storage. Maximum storage period included in storage service pricing for each Item is four (4) months. If you fail to schedule delivery of your Items at least two (2) weeks prior to the end of the 4-month period, you will be charged for an additional four (4) month storage period at the rates listed at http://dormroommovers.com/prices C.Abandonment In the event that you do not schedule a delivery date for your Items and DRM is unable to charge your card for the additional storage period, and no other arrangements are made with DRM for delivery, pickup or shipping of your Items, the items will be considered abandoned. DRM reserves the right to assume ownership of any abandoned items 10 days post the last date of the standard delivery period for your storage period. Abandoned items may be auctioned or otherwise sold. D. On Time Guarantee Movers will arrive before the estimated time slot ends or the customer will be entitled to a Free Registration, subject to the following limitations: Free Registration is granted in form of a future credit for a Registration Fee for a future service with DRM. Registration credit is non transferrable and expires 1 year from the award date. DRM reserves the right to update a customer's estimated time slot window up to 1 hour before the start of the pickup or delivery; In this scenario the customer would only be eligible for the free registration credit if movers fail to arrive on-time to the revised time slot window. In order to receive the credit, an eligible customer must call DRM customer support and make the request within 24 hours of the missed time slot on pickup or delivery. DRM reserves the right to change or cancel the guarantee award policy at any time and will not be held liable due to natural disasters, acts of terror, acts of warfare, or acts of God. Shipping In addition to storage services, DRM coordinates shipping services. We can coordinate the shipping of your Items home for the summer rather than storing them locally. We can also arrange for the shipment of your Items to a storage facility as part of our \"Ship to School\" services. For shipping services, you can deliver your boxed Items to a local United Parcel Service (UPS) location for shipment. If you require the pick up service for any boxed Items for shipping you may schedule a pickup with UPS through the DRM website. UPS is responsible for any arranged pickups, but DRM will provide reasonable assistance if requested. Pickup is subject to the same requirements and limitations and potential additional fees as pickup for Items for storage, which are set forth above. For the Ship to School services, DRM will accept delivery of your Items to the storage facility designated by DRM. DRM will inspect the received Items for exterior damage sustained during the shipment to the warehouse and will notify you of any damage upon receipt. DRM is only an intermediary for the receipt and forwarding of your shipped Items to UPS. You agree to complete the \"Ship from\" and/or \"Ship to\" information correctly within the DRM website when placing your order for shipping services and indicate to the DRM representative or UPS at the time of pickup which Items are to be shipped. DRM will transport the Items to UPS as necessary and process the payment for the shipment to your card on file with DRM. DRM is not liable for the errors or omissions of any shipping carrier. UPS delivery dates are not guaranteed but are an estimated arrival date based on standard transit times provided by UPS. However, in the event of damage during shipping, DRM will use its reasonable efforts to assist with any claim against the shipping carrier. Restricted Items DRM cannot receive, deliver, store or ship dangerous Items. You agree that your Items do not and may not consist of any firearms, hazardous or illegal materials as defined by any federal, state, provincial, or local government in the U.S. Liquid Items, food or other Items that may impose a risk to your or others&rsquo; belongings may not be stored or shipped. In addition cash, jewelry and collectables may not be stored or shipped. DRM reserves the right to refuse storage or shipment of any Item that DRM deems illegal, hazardous, and/or that may otherwise damage equipment or other items. DRM reserves the right to open and inspect any package remitted to it for storage or shipping as DRM or any of its agents or representatives deem necessary. In the case your Items consist of any of the above prohibited items, you assume all responsibility and liability for such Items and any damages or losses that result from your failure to adhere to these service restrictions. You will indemnify and hold harmless DRM for any damages or liability related to any of your Items. Lost or Damaged Items DRM's liability to you for any boxed Item is up to the amount of $150 or for unboxed Items, up to $0.60 per pound with a maximum of $150. You agree that the released value of each Item is no greater than $150 and that DRM&rsquo;s liability on any Item is restricted to $150. DRM will have no liability to you for any Items that do not have clear indications of physical damage to the exterior. DRM will not be liable for internal damage that is concealed within its outer packaging. Any lost or damaged Items must be reported to DRM within twenty-four (24) hours of delivery. After reporting, you must file a full claim with DRM within ten (10) days after delivery. Claims not filed within ten (10) days post the scheduled delivery date will be considered waived. All completed claims will be processed by DRM and a response issued within 30 days from their receipt. Upon approval of the claim, DRM will disburse the lesser of the following amounts: 1. The cost of reasonably restoring the Item to its original condition, up to $150 2. The actual replacement value of the Item, up to $150 3. For unboxed items: $0.60 per pound moved and stored up to $150 each Item All damaged Items must be inspected by a DRM representative upon delivery in order to properly inspect and assess the damage. In the case of loss of your Item, you agree to notify the DRM representative upon delivery of the other Items. The missing Items must be noted on the delivery receipt and signed by the DRM representative. In the case that you are not present during the delivery, the condition as noted on the delivery confirmation as signed by you, your Alternate Contact or the DRM representative will define the existence and extent of the loss or damage. DRM will have no liability for any damage or loss to the following Items: 1. Cash 2. Coins, jewelry, and collectables 3. Items of intangible or indefinable value 4. Extremely fragile items (e.g. Glass, mirrors, etc.) 5. Damage to electronic equipment if not packed in its original manufacturer supplied packaging container and there is no evidence of physical damage or breakage to its packaging container 6. Inadequately packed items 7. Concealed and/or internal damage 8. Unpackaged items, including furniture that is not wrapped and protected 9. Minor damage caused by normal handling (including, but not limited to scratches, nicks, & cuts) 10. Damage to outer storage containers (e.g. plastic totes, suitcases, trunks, etc.) 11. Damage due to natural disasters, acts of terror, acts of warfare, or acts of God 12. Damage caused to assembled furniture and particleboard 13. Any box where liquids or food items are stored 14. Loss or damages occurring while the items are not in the possession of DRM DRM&rsquo;s maximum liability for loss, damage, expense or cost incurred are expressly limited by the terms listed within this Agreement and are limited only to the limited storage period during which Items are in the custody of DRM. For shipped items, UPS's damage policy will apply to any damaged Items. Reference UPS's website for their policy. Shipping damages or lost items should be reported directly to UPS or other shipping carrier. DRM shall have no liability if any claim is denied or only partially paid by the shipping carrier. Warranty Disclaimer and Limitation of Liability DRM is not liable for any indirect, consequential, special, exemplary, or punitive damages resulting from any use of its services. All DRM services are provided \"AS IS\" and DRM makes no warranty with respect to the services or the outcome of using the services. DRM disclaims any and all warranties, express or implied, with respect to the services including without limitation any implied warranty of merchantability, fitness for a particular purpose and any warranty arising from a course of dealing or usage in trade. In no event may DRM&rsquo;s liability to you or any third party for any loss, damage, expense or cost incurred in excess of the fees paid to DRM or $150 per Item whichever is greater, even if such remedy should fail of its essential purpose. Some states do not allow the limitation or exclusions of certain warranties, so the above may not apply to you. Independent Contractors DRM utilizes independent contractors and vendors to perform its services. You recognize the use of these parties and understand that you have no contractual agreement with any of these parties. Affiliation Dorm Room Movers, LLC is a privately owned limited liability company and is in no way affiliated with or endorsed by any university or college unless otherwise noted. Arizona Law Dorm Room Movers, LLC was founded and is controlled in Scottsdale, Arizona. As such, the laws of the great State of Arizona will govern these Purchase Terms. Policy and Compliance Upon registering with us for any of our services, you acknowledge and accept the above stated Purchase Terms. DRM reserves the right to make changes to their policies and terms and conditions at any time and will provide you with notice on our website if we do so. Contact Information To contact Dorm Room Movers with any questions regarding our policies and terms and conditions, please email us at support@DormRoomMovers.com FAQs / Help Center Reviews & Testimonials Ambassadors About Us Blog Jobs Campus Partnerships Marketing Opportunities Consent Preferences Privacy Policy Terms of Service Contact Us 888.769.3676 support@dormroommovers.com Copyright 2007-2026 Dorm Room Movers. Dorm Room Movers is a broker of household goods moving & storage services. USDOT 2288433, MC-746975. Fla. Broker Reg. No MB154 STEP 1: Search for Your School Please select a school. Warning: This site failed to load properly. Please make sure JavaScript is not disabled in your browser and is not blocking scripts from loading. It is recommended to use the latest version of Google Chrome, download it here . If you continue to receive this message after verifying your browser settings, contact us at (888) 769-3676. Return to Homepage",
+        "textSha256": "24cff61fe4d974aa93651f03f4c7add9e8bcc5bcbe2220b80d9be38c619df920",
+        "completeRead": true,
+        "status": 200,
+        "contentType": "text/html; charset=utf-8",
+        "originalSourcePin": "e421d0814c751bdd895363783115664bf8c9224a62c3cda8f6b5119f320a99f7",
+        "sourceDate": null,
+        "sourceDateText": null
+      }
+    ],
+    "originalReviews": {
+      "primary": {
+        "taskId": "/root/kerr_registry_research",
+        "reviewedAt": "2026-09-30T04:41:50.860943+00:00",
+        "receiptSha256": "c25163670aee740733301e54b1903297f2e850d0fa1e4dcb38b19c467f93645e",
+        "receiptActorField": "readerTaskId"
+      },
+      "independent": {
+        "taskId": "/root/source_outcome_reporting",
+        "reviewedAt": "2026-09-30T04:46:31.406Z",
+        "receiptSha256": "0bcc5324965c99def4e6a6c80b36956957f5a300d17cc656e59dbce3d9e94cc3",
+        "receiptActorField": "reviewerTaskId"
+      },
+      "packetSha256": "59d8b9ab62aa6bc4a828ca88ab02f370cdbf19da8bae36cf3fbd208769db9748"
+    },
+    "sourceReader": {
+      "taskId": "/root",
+      "reviewedAt": "2026-10-02T08:18:50.158Z",
+      "receiptSha256": "d568470399571cc24f6b17a05d9343f214f49be9a1974d02969292c13498c3c1",
+      "receiptActorField": "readerTaskId"
+    },
+    "sourceReviewer": {
+      "taskId": "/root/enercom_static_source",
+      "reviewedAt": "2026-10-02T08:25:55.280Z",
+      "receiptSha256": "e137fe7db57a6c962cc88c2b7d6a644088ff2c82d6f6b3f4b78df063a57505a7",
+      "receiptActorField": "reviewerTaskId"
+    },
+    "legalName": "DORM ROOM MOVERS LLC",
+    "targetAddress": {
+      "legalName": "DORM ROOM MOVERS LLC",
+      "addressLine1": "5111 N. SCOTTSDALE RD STE 200",
+      "city": "SCOTTSDALE",
+      "state": "AZ",
+      "postalCode": "85250",
+      "countryCode": "US"
+    },
+    "broker": {
+      "ownSiteRole": "contracting_legal_party_and_explicit_broker_identifiers",
+      "termsLegalName": "Dorm Room Movers, LLC",
+      "contractQuote": "Your registration with Dorm Room Movers, LLC (\"DRM\") and your purchase of our services is subject to the following Purchase Terms and Conditions (\"Purchase Terms\")",
+      "disclosureQuote": "Dorm Room Movers is a broker of household goods moving & storage services. USDOT 2288433, MC-746975. Fla. Broker Reg. No MB154",
+      "usdot": "2288433",
+      "mc": "746975",
+      "registrationAddressRole": "original_fmcsa_only",
+      "websiteStreetAddress": null,
+      "physicalAddressCorroborated": false,
+      "currentAuthorityClaim": false,
+      "fullNormalizedTextRead": true,
+      "renderedCompletenessClaim": false,
+      "termsEffectiveDate": null
+    },
+    "limitations": [
+      "Complete retained normalized Purchase Terms text was read by the actual source pair; unresolved dynamic fields and the JavaScript warning remain. No rendered-page completeness is claimed.",
+      "The company-hosted legal terms and explicit USDOT/MC broker disclosure support only the exact identity association. No own-site street address exists in this evidence; registry and CRM addresses retain their distinct source roles.",
+      "Original FMCSA sourceAsOf is null. Observation date and website copyright are not filing, publication or terms-effective dates. Status A, operation C and zero power units remain literal original observations; no current authority or driver/employee inference.",
+      "Company services use third-party moving/storage contractors. Their workforce, fleet and facilities are not treated as owned assets.",
+      "Both SBA siblings remain outside this finite route. No canonical alias/address, grade or TAM/TAL membership changes.",
+      "No revenue, cash, buying budget, systems pain or purchase timing is established."
+    ]
+  },
+  "finding": {
+    "internalId": "18302043",
+    "companyId": "8349a8d8-6261-4f3a-8697-b49e8204448f",
+    "kind": "ops_profile",
+    "source": "registry",
+    "detail": "FMCSA self-reported fleet and drivers; drivers are not total employees. Source date is the MCS-150 filing date when available. Operation/status values retain the official dataset codes.",
+    "evidence": "{\"legalName\":\"DORM ROOM MOVERS LLC\",\"addressLine1\":\"5111 N. SCOTTSDALE RD STE 200\",\"city\":\"SCOTTSDALE\",\"state\":\"AZ\",\"postalCode\":\"85250\",\"usdot_number\":\"2288433\",\"power_units\":0,\"operating_status\":\"A\",\"carrier_operation\":\"C\",\"countryCode\":\"US\"}\nOriginal public source row: {\"carrier_operation\":\"C\",\"docket1\":\"746975\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"2288433\",\"legal_name\":\"DORM ROOM MOVERS LLC\",\"mcs150_mileage\":\"0\",\"mcs150_mileage_year\":\"0\",\"phy_city\":\"SCOTTSDALE\",\"phy_country\":\"US\",\"phy_state\":\"AZ\",\"phy_street\":\"5111 N. SCOTTSDALE RD STE 200\",\"phy_zip\":\"85250\",\"power_units\":\"0\",\"status_code\":\"A\"}",
+    "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2288433",
+    "registryProfile": {
+      "version": 1,
+      "dataset": "fmcsa",
+      "recordId": "2288433",
+      "sourceAsOf": null,
+      "observedAt": "2026-09-29T23:14:37.236134+00:00",
+      "facts": [
+        {
+          "field": "usdot_number",
+          "value": "2288433"
+        },
+        {
+          "field": "power_units",
+          "value": 0
+        },
+        {
+          "field": "operating_status",
+          "value": "A"
+        },
+        {
+          "field": "carrier_operation",
+          "value": "C"
+        }
+      ],
+      "identity": {
+        "legalName": "DORM ROOM MOVERS LLC",
+        "addressLine1": "5111 N. SCOTTSDALE RD STE 200",
+        "city": "SCOTTSDALE",
+        "state": "AZ",
+        "postalCode": "85250",
+        "countryCode": "US"
+      },
+      "provenance": {
+        "rowSha256": "d03ded36f6a16e56302d379648d23ee26053cee2d9020eb64beeefe21148dd78",
+        "quote": "{\"legalName\":\"DORM ROOM MOVERS LLC\",\"addressLine1\":\"5111 N. SCOTTSDALE RD STE 200\",\"city\":\"SCOTTSDALE\",\"state\":\"AZ\",\"postalCode\":\"85250\",\"usdot_number\":\"2288433\",\"power_units\":0,\"operating_status\":\"A\",\"carrier_operation\":\"C\",\"countryCode\":\"US\"}\nOriginal public source row: {\"carrier_operation\":\"C\",\"docket1\":\"746975\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"2288433\",\"legal_name\":\"DORM ROOM MOVERS LLC\",\"mcs150_mileage\":\"0\",\"mcs150_mileage_year\":\"0\",\"phy_city\":\"SCOTTSDALE\",\"phy_country\":\"US\",\"phy_state\":\"AZ\",\"phy_street\":\"5111 N. SCOTTSDALE RD STE 200\",\"phy_zip\":\"85250\",\"power_units\":\"0\",\"status_code\":\"A\"}",
+        "sourceRow": {
+          "legalName": "DORM ROOM MOVERS LLC",
+          "addressLine1": "5111 N. SCOTTSDALE RD STE 200",
+          "city": "SCOTTSDALE",
+          "state": "AZ",
+          "postalCode": "85250",
+          "usdot_number": "2288433",
+          "power_units": 0,
+          "operating_status": "A",
+          "carrier_operation": "C",
+          "countryCode": "US"
+        },
+        "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\fmcsa-candidates-01925.json"
+      }
+    }
+  },
+  "company": {
+    "id": "8349a8d8-6261-4f3a-8697-b49e8204448f",
+    "netsuite_internal_id": "18302043",
+    "name": "Dorm Room Movers",
+    "domain": "dormroommovers.com"
+  },
+  "context": {
+    "aliases": [],
+    "addresses": [
+      {
+        "addressLine1": "5111 N Scottsdale Suite 200",
+        "city": "Scottsdale",
+        "state": "AZ",
+        "postalCode": "85250",
+        "countryCode": "US",
+        "sourceKind": "netsuite_record",
+        "sourceId": "41883272-60cd-4536-b15e-4d968d941fde",
+        "capturedAt": "2026-07-28T00:00:00+00:00"
+      }
+    ],
+    "context": ""
+  },
+  "heldProfileKeys": [
+    "registry:sba_7a:row-c11a3698be819f75c8cba949de289386bb8de6489815784339b6fed9de7d56a1",
+    "registry:sba_7a:row-a28f48f34f9e4b365858b7e1ef2853bb474dd7b0e37741209264f8e7dec7eaab"
+  ]
+}
