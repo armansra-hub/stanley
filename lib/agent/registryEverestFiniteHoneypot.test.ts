@@ -8,7 +8,7 @@ import { parseRegistryFinding } from "./registryProfiles";
 import { registryWebsiteEvidenceHash, parseRegistryWebsiteCorroboration, registryWebsiteVerifier } from "./registryWebsite";
 
 // Portable fictional Acme fixtures; real retained failure validation stays outside the repository.
-const version = "everest_forms_honeypot_v2" as const;
+const version = "everest_forms_honeypot_v3" as const;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const trap = (label: string) => `<div class="evf-honeypot-container evf-field-hp"><label for="evf-12-field-hp" class="evf-field-label">${label}</label><input type="text" name="everest_forms[hp]" id="evf-12-field-hp" class="input-text"></div>`;
 const form = (s: string) => `<form id="evf-form-12" class="everest-form" data-formid="12" data-ajax_submission="0" data-keyboard_friendly_form="0" data-form_state_type="" method="post" enctype="multipart/form-data" action="/contact/">${s}</form>`;
@@ -30,15 +30,17 @@ function proof(versioned = true) {
   return { ...e, reader: { taskId: "/fixture/reader", reviewedAt: now.toISOString(), evidenceSha256 }, reviewer: { taskId: "/fixture/reviewer", reviewedAt: now.toISOString(), evidenceSha256 } };
 }
 beforeEach(() => fetch.mockReset());
-describe("opt-in Everest v2 Comment label with unchanged structural grammar", () => {
-  it("equalizes the three observed empty trap labels and preserves the complete business text", () => {
+describe("opt-in Everest v3 complete upstream finite labels with unchanged grammar", () => {
+  it("equalizes all six upstream empty trap labels and preserves the complete business text", () => {
     expect(normal(html("Website"))).toBe(normal(html("Message")));
-    expect(normal(html("Comment"))).toBe(normal(html("Message")));
+    for (const label of ["Name", "Phone", "Comment", "Message", "Email", "Website"]) expect(normal(html(label))).toBe(normal(html("Message")));
     expect(normal(html("Message"))).toBe(`${quote} Copyright 2026 Message for customer service`);
   });
-  it.each([undefined, "gravity_forms_honeypot_v1", "gravity_forms_honeypot_v2", "gravity_forms_honeypot_v3", "everest_forms_honeypot_v1"] as const)("never removes Comment in an older mode %s", v => {
-    expect(registryWebsiteText(html("Comment"), v)).toBe(htmlToVisibleText(html("Comment")));
-    expect(registryWebsiteText(html("Comment"), v)).not.toBe(normal(html("Comment")));
+  it.each([undefined, "gravity_forms_honeypot_v1", "gravity_forms_honeypot_v2", "gravity_forms_honeypot_v3", "everest_forms_honeypot_v1", "everest_forms_honeypot_v2"] as const)("keeps Name, Phone and Email in every older mode %s", v => {
+    for (const label of ["Name", "Phone", "Email"]) {
+      expect(registryWebsiteText(html(label), v)).toBe(htmlToVisibleText(html(label)));
+      expect(registryWebsiteText(html(label), v)).not.toBe(normal(html(label)));
+    }
   });
   it.each([
     ["non-Everest form", (s: string) => s.replace('class="everest-form"', 'class="other-form"')],
@@ -52,7 +54,7 @@ describe("opt-in Everest v2 Comment label with unchanged structural grammar", ()
     ["real visible class", (s: string) => s.replace('evf-field-hp', 'evf-field-hp visible')],
     ["visible style", (s: string) => s.replace('class="evf-honeypot-container evf-field-hp"', 'class="evf-honeypot-container evf-field-hp" style="display:block"')],
     ["substantive label", (s: string) => s.replace('>Comment<', '>Acme Inc<')],
-    ["unknown label", (s: string) => s.replace('>Comment<', '>Email<')],
+    ["unknown label", (s: string) => s.replace('>Comment<', '>Fax<')],
     ["label suffix", (s: string) => s.replace('>Comment<', '>Comment address<')],
     ["plural label not observed", (s: string) => s.replace('>Comment<', '>Comments<')],
     ["lowercase label not observed", (s: string) => s.replace('>Comment<', '>comment<')],
@@ -82,7 +84,7 @@ describe("opt-in Everest v2 Comment label with unchanged structural grammar", ()
     const { normalization: _v, ...downgraded } = proof();
     expect(() => parseRegistryWebsiteCorroboration(downgraded, row(), now)).toThrow('bind');
   });
-  it.each(["Website", "Message", "Comment"])("accepts observed %s trap only through complete-page verification", async label => {
+  it.each(["Name", "Phone", "Comment", "Message", "Email", "Website"])("accepts upstream %s trap only through complete-page verification", async label => {
     const body = html(label), p = proof();
     fetch.mockResolvedValue({ status: 200, finalUrl: p.sourceUrl, contentType: "text/html", body });
     const result = await registryWebsiteVerifier()(row(), parseRegistryWebsiteCorroboration(p, row(), now), { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now);
@@ -103,9 +105,9 @@ describe("opt-in Everest v2 Comment label with unchanged structural grammar", ()
     await expect(registryWebsiteVerifier()(row(), p, { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now)).rejects.toThrow('changed');
   });
 
-  it("requires new witnesses for v1-to-v2 despite an otherwise identical page hash", () => {
+  it("requires new witnesses for v2-to-v3 despite an otherwise identical page hash", () => {
     const p = proof(), { reader: _reader, reviewer: _reviewer, ...evidence } = p;
-    const prior = { ...evidence, normalization: "everest_forms_honeypot_v1" as const };
+    const prior = { ...evidence, normalization: "everest_forms_honeypot_v2" as const };
     const evidenceSha256 = registryWebsiteEvidenceHash(row(), prior);
     const old = { ...prior, reader: { ...p.reader, evidenceSha256 }, reviewer: { ...p.reviewer, evidenceSha256 } };
     expect(() => parseRegistryWebsiteCorroboration(old, row(), now)).not.toThrow();
@@ -118,5 +120,19 @@ describe("opt-in Everest v2 Comment label with unchanged structural grammar", ()
   });
   it("rejects unknown normalization versions instead of silently upgrading", () => {
     expect(() => parseRegistryWebsiteCorroboration({ ...proof(), normalization: "everest_forms_honeypot_v999" }, row(), now)).toThrow("normalization");
+  });
+
+  it.each(["Name", "Phone", "Comment", "Message", "Email", "Website"])("does not generalize %s beyond the exact empty hp field", label => {
+    for (const candidate of [
+      form(trap(label).replace('everest_forms[hp]', 'everest_forms[company]')),
+      form(trap(label).replace('class="input-text"', 'class="input-text" value="Acme Inc"')),
+      form(trap(label).replace('</label>', '</label><p>124 Main Street</p>')),
+      form(trap(label).replace('evf-field-hp', 'evf-field-text')),
+      trap(label), '<p>' + label + '</p>',
+    ]) expect(normal(candidate)).toBe(htmlToVisibleText(candidate));
+  });
+  it("retains unsupported casing, translations, suffixes and substantive names", () => {
+    for (const label of ["email", "EMAIL", "Comments", "Company", "URL", "Fax", "Correo", "Email address", "Acme Inc", "123 Main Street", "", " "])
+      expect(normal(form(trap(label)))).toBe(htmlToVisibleText(form(trap(label))));
   });
 });
