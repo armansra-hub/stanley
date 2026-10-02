@@ -1,0 +1,133 @@
+{
+  "notice": "Public original rows; local receipt path omitted for a portable test fixture. Witnesses in tests are synthetic and do not approve publication.",
+  "company": {
+    "id": "26b28bb0-94ef-464c-8672-45a4d8b2aa3c",
+    "netsuite_internal_id": "67075248",
+    "name": "Alliance Leasing",
+    "domain": "alliance-leasing.com"
+  },
+  "context": {
+    "aliases": [
+      "Alliance Leasing Corp"
+    ],
+    "addresses": [
+      {
+        "addressLine1": "2075 S University Blvd # 289",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "802104300",
+        "countryCode": "US",
+        "sourceKind": "netsuite_record",
+        "sourceId": "fda38cf9-8048-47c6-a33d-f3eea11389ec",
+        "capturedAt": "2026-07-28T00:00:00+00:00"
+      }
+    ],
+    "context": ""
+  },
+  "findings": [
+    {
+      "internalId": "67075248",
+      "companyId": "26b28bb0-94ef-464c-8672-45a4d8b2aa3c",
+      "source": "registry",
+      "kind": "ops_profile",
+      "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=786552",
+      "evidence": "{\"debtorid\":\"786552\",\"fileid\":\"950732\",\"organizationname\":\"ALLIANCE LEASING CORP.\",\"address1\":\"2075 S UNIVERSITY #289\",\"city\":\"DENVER\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80210\",\"recordstatus\":\"inactive\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20132002588\",\"masterdocumentid\":\"20132002588\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2013-01-08T00:00:00.000\",\"lapsedate\":\"2023-01-08T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"950732\"}",
+      "detail": "Public UCC filing, not evidence of current debt, loan balance or business growth. Debtor record status: inactive; latest returned filing type: ucc; termination flag: False; lapse date: 2023-01-08T00:00:00.000. The debtor business address is used; no secured-party or registered-agent address is substituted.",
+      "registryProfile": {
+        "version": 1,
+        "dataset": "co_ucc",
+        "recordId": "950732:786552",
+        "displayLabel": "Colorado UCC filing",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:20.765032Z",
+        "facts": [
+          {
+            "field": "registration_number",
+            "value": "950732"
+          },
+          {
+            "field": "filing_date",
+            "value": "2013-01-08"
+          },
+          {
+            "field": "lien_type",
+            "value": "ucc"
+          }
+        ],
+        "identity": {
+          "legalName": "ALLIANCE LEASING CORP.",
+          "addressLine1": "2075 S UNIVERSITY #289",
+          "city": "DENVER",
+          "state": "CO",
+          "postalCode": "80210"
+        },
+        "provenance": {
+          "rowSha256": "5722adc5e0434ea51143154b0b8249a9ae52d6bd4511699fb2885f815a024691",
+          "quote": "{\"debtorid\":\"786552\",\"fileid\":\"950732\",\"organizationname\":\"ALLIANCE LEASING CORP.\",\"address1\":\"2075 S UNIVERSITY #289\",\"city\":\"DENVER\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80210\",\"recordstatus\":\"inactive\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20132002588\",\"masterdocumentid\":\"20132002588\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2013-01-08T00:00:00.000\",\"lapsedate\":\"2023-01-08T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"950732\"}",
+          "sourceRow": {
+            "legalName": "ALLIANCE LEASING CORP.",
+            "addressLine1": "2075 S UNIVERSITY #289",
+            "city": "DENVER",
+            "state": "CO",
+            "postalCode": "80210",
+            "registration_number": "950732",
+            "filing_date": "2013-01-08",
+            "lien_type": "ucc"
+          }
+        }
+      }
+    },
+    {
+      "internalId": "67075248",
+      "companyId": "26b28bb0-94ef-464c-8672-45a4d8b2aa3c",
+      "source": "registry",
+      "kind": "ops_profile",
+      "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1195877",
+      "evidence": "{\"debtorid\":\"1195877\",\"fileid\":\"1499008\",\"organizationname\":\"ALLIANCE LEASING CORP.\",\"address1\":\"10200 E. Girard Ave, Suite B223\",\"city\":\"Denver\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80231\",\"recordstatus\":\"active\",\"actiontype\":\"change only\"}\n{\"transactionid\":\"20172104911\",\"masterdocumentid\":\"20132002588\",\"transactiontype\":\"Amendment\",\"filingdate\":\"2017-11-09T00:00:00.000\",\"lapsedate\":\"2023-01-08T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC amendment-continuation\",\"continuation\":true,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"1499008\"}",
+      "detail": "Public UCC filing, not evidence of current debt, loan balance or business growth. Debtor record status: active; latest returned filing type: ucc; termination flag: False; lapse date: 2023-01-08T00:00:00.000. The debtor business address is used; no secured-party or registered-agent address is substituted.",
+      "registryProfile": {
+        "version": 1,
+        "dataset": "co_ucc",
+        "recordId": "1499008:1195877",
+        "displayLabel": "Colorado UCC filing",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:16.099750Z",
+        "facts": [
+          {
+            "field": "registration_number",
+            "value": "1499008"
+          },
+          {
+            "field": "filing_date",
+            "value": "2017-11-09"
+          },
+          {
+            "field": "lien_type",
+            "value": "ucc"
+          }
+        ],
+        "identity": {
+          "legalName": "ALLIANCE LEASING CORP.",
+          "addressLine1": "10200 E. Girard Ave, Suite B223",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80231"
+        },
+        "provenance": {
+          "rowSha256": "1c1aa6c06bc6d189dc59225cabfa2713bf4f809da180fa7666e556a3c1f46f81",
+          "quote": "{\"debtorid\":\"1195877\",\"fileid\":\"1499008\",\"organizationname\":\"ALLIANCE LEASING CORP.\",\"address1\":\"10200 E. Girard Ave, Suite B223\",\"city\":\"Denver\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80231\",\"recordstatus\":\"active\",\"actiontype\":\"change only\"}\n{\"transactionid\":\"20172104911\",\"masterdocumentid\":\"20132002588\",\"transactiontype\":\"Amendment\",\"filingdate\":\"2017-11-09T00:00:00.000\",\"lapsedate\":\"2023-01-08T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC amendment-continuation\",\"continuation\":true,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"1499008\"}",
+          "sourceRow": {
+            "legalName": "ALLIANCE LEASING CORP.",
+            "addressLine1": "10200 E. Girard Ave, Suite B223",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80231",
+            "registration_number": "1499008",
+            "filing_date": "2017-11-09",
+            "lien_type": "ucc"
+          }
+        }
+      }
+    }
+  ]
+}

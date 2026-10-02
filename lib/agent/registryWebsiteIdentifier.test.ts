@@ -136,3 +136,46 @@ describe("exact public registry identifiers on a reviewed own-company website", 
     await expect(registryWebsiteVerifier()(item, proof(item), company, context, now)).rejects.toThrow("own-domain");
   });
 });
+
+
+describe("closed USDOT colon/hash punctuation", () => {
+  it.each(["USDOT: #12345", "USDOT:#12345", "US DOT number: # 12345", "U.S. DOT no.: #12345", "DOT: 12345", "USDOT #12345", "USDOT12345"])("accepts the exact labelled identifier with closed punctuation: %s", async label => {
+    const item = row(), html = source.replace("USDOT #12345", label);
+    const before = JSON.stringify(item); fetch.mockResolvedValueOnce(page(html));
+    const result = await registryWebsiteVerifier()(item, proof(item, html), company, context, now);
+    expect(result.website?.binding).toBe("exact_usdot_legal_subject");
+    expect(JSON.stringify(item)).toBe(before);
+  });
+  it.each(["USDOT:: #12345", "USDOT ##12345", "USDOT #:12345", "USDOT: # #12345", "USDOT: #12345X", "MC: #12345", "Phone: #12345"])("rejects malformed punctuation or unrelated/inexact identifiers: %s", async label => {
+    const html = source.replace("USDOT #12345", label);
+    await expect(registryWebsiteVerifier()(row(), proof(row(), html), company, context, now)).rejects.toThrow("identifier");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects a second conflicting colon/hash identifier outside the selected passage", async () => {
+    const quote = source.replace("USDOT #12345", "USDOT: #12345"), html = quote + " Other carrier USDOT: #54321.";
+    fetch.mockResolvedValueOnce(page(html));
+    await expect(registryWebsiteVerifier()(row(), proof(row(), html, { quote, quoteSha256: sha(quote) }), company, context, now)).rejects.toThrow("conflicting");
+  });
+  it("keeps the 650-character legal-subject scope", async () => {
+    const html = "Acme Inc Contact 123 Main Street Suite 4 Austin TX 78701. " + "x".repeat(660) + ". USDOT: #12345.";
+    await expect(registryWebsiteVerifier()(row(), proof(row(), html), company, context, now)).rejects.toThrow("not beside");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("keeps the full-page legal-form conflict hold", async () => {
+    const quote = source.replace("USDOT #12345", "USDOT: #12345"), html = quote + " Acme LLC legal notice.";
+    fetch.mockResolvedValueOnce(page(html));
+    await expect(registryWebsiteVerifier()(row(), proof(row(), html, { quote, quoteSha256: sha(quote) }), company, context, now)).rejects.toThrow("conflicting legal forms");
+  });
+  it("does not change EIN label punctuation", async () => {
+    const item = row("irs_exempt", "012345678"), html = source.replace("USDOT #12345", "EIN: #01-2345678");
+    await expect(registryWebsiteVerifier()(item, proof(item, html), company, context, now)).rejects.toThrow("identifier");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("keeps original-row and attestation-content bindings", async () => {
+    const item = row(), html = source.replace("USDOT #12345", "USDOT: #12345"), attested = proof(item, html);
+    item.detail = "changed interpretation";
+    await expect(registryWebsiteVerifier()(item, attested, company, context, now)).rejects.toThrow("bind exact");
+    const wrong = row(); wrong.profile.provenance.sourceRow.usdot_number = "99999";
+    expect(() => parseRegistryWebsiteCorroboration(proof(wrong, html), wrong, now)).toThrow("exact source");
+  });
+});

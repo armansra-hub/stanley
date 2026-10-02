@@ -1,0 +1,410 @@
+{
+  "schema": "reviewed_irs990_entries_v1",
+  "entries": [
+    {
+      "id": "202620159349300242",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_01A.zip",
+      "archiveSha256": "34284965c08341dfd36cf2cc05759a80e83ec998c64d204c219fbfd419634560",
+      "archiveMember": "202620159349300242_public.xml",
+      "xmlSha256": "1f85d507740ee7d10b989448c060c88323394d9946c14eb95513a895b5daff45",
+      "filing": {
+        "ein": "237108393",
+        "legalName": "VISUAL COMMUNICATIONS MEDIA",
+        "websiteAddressTxt": "WWW.VCONLINE.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-01-01",
+        "taxPeriodEnd": "2024-12-31",
+        "returnTimestamp": "2026-01-15T16:38:27-08:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "120 JUDGE JOHN AISO STREET",
+          "city": "LOS ANGELES",
+          "state": "CA",
+          "postalCode": "90012",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-visual-pilot-20261001/primary-supplement-v2.json",
+          "sha256": "c9283a4bd8133e6fec918df96975de44e90fccbfa92c7eb8d00eea9051b1b088"
+        },
+        "independent": {
+          "file": "goal-irs990-visual-pilot-20261001/root-independent-supplement-review.json",
+          "sha256": "79457481812faef4c893e0ab882682733841717c410d992f4459cdee8527a2be"
+        },
+        "readerTaskId": "/root/sweep_reporting_fix",
+        "reviewerTaskId": "/root",
+        "reviewedAt": "2026-10-01T06:28:07.146Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-visual-pilot-20261001/batch.receipt.json",
+        "sha256": "6a259697010d6ba6f4ced49911447dc5b04a157cce86cdfa2b2efca1fb112109"
+      },
+      "extraction": {
+        "file": "goal-irs990-visual-pilot-20261001/extraction.receipt.json",
+        "sha256": "f892640dc797bc68a406bfbf5782daa14e1cbc284270218565a076637b52121e"
+      }
+    },
+    {
+      "id": "202630989349301128",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_04A.zip",
+      "archiveSha256": "dbb42e1af78f121446300dfb3c09e2544140388ace65e7fa791b4bd21c4da0b8",
+      "archiveMember": "202630989349301128_public.xml",
+      "xmlSha256": "dff44b6db0114a1b9d6e3f7c832b71f22cb69513a9350a174b0b8e0a674d3467",
+      "filing": {
+        "ein": "742220750",
+        "legalName": "Texas Legal Services Center INC",
+        "websiteAddressTxt": "www.tlsc.org",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-09-01",
+        "taxPeriodEnd": "2025-08-31",
+        "returnTimestamp": "2026-04-08T12:10:17-05:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "1920 East Riverside Drive",
+          "city": "Austin",
+          "state": "TX",
+          "postalCode": "78741",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-tlsc-pilot-20261001/primary-supplement.json",
+          "sha256": "03da257f93e4d9d9c2ba3262f5c95e8638a92ea3a5ee631dd6979ce88424cc25"
+        },
+        "independent": {
+          "file": "goal-irs990-tlsc-pilot-20261001/root-independent-supplement-review.json",
+          "sha256": "050ec333648fdc45023bb749e16ba3c83bb9edc0258203e7f338376662becd2a"
+        },
+        "readerTaskId": "/root/source_outcome_reporting",
+        "reviewerTaskId": "/root",
+        "reviewedAt": "2026-10-01T06:36:39.167Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-tlsc-pilot-20261001/cap300m-batch.receipt.json",
+        "sha256": "79f4a6b110cd1c90d018abfd8b029d26fa9f88d21355fe5fff949db001f451c4"
+      },
+      "extraction": {
+        "file": "goal-irs990-tlsc-pilot-20261001/extraction.receipt.json",
+        "sha256": "33e355eeec9bd3a6c141ba3cae146006d1b6dbaf2ff576c0113446902aa6e4dc"
+      }
+    },
+    {
+      "id": "202610899349300901",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_04A.zip",
+      "archiveSha256": "dbb42e1af78f121446300dfb3c09e2544140388ace65e7fa791b4bd21c4da0b8",
+      "archiveMember": "202610899349300901_public.xml",
+      "xmlSha256": "9dfe8ee73f0be0ba42c42c84255df8d65655b0da029f2986064c61fc0cc7318a",
+      "filing": {
+        "ein": "363953023",
+        "legalName": "MIDWEST THEOLOGICAL FORUM INC",
+        "websiteAddressTxt": "WWW.THEOLOGICALFORUM.ORG",
+        "taxYear": "2025",
+        "taxPeriodBegin": "2025-01-01",
+        "taxPeriodEnd": "2025-12-31",
+        "returnTimestamp": "2026-03-30T08:16:40-05:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "4340 CROSS ST SUITE 1",
+          "city": "DOWNERS GROVE",
+          "state": "IL",
+          "postalCode": "60515",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-cached04a-nexttwo-20261001/187742959-primary-supplement.json",
+          "sha256": "a91f98901151ff7b31bbf237137e6323059391198c3145839f26f8dfeffe84e9"
+        },
+        "independent": {
+          "file": "goal-irs990-cached04a-nexttwo-20261001/187742959-independent-supplement.json",
+          "sha256": "2f8b8f1157541ec080a3539b9c655ace35fff6e1f748f3629dcd8e62566cd04e"
+        },
+        "readerTaskId": "/root/source_outcome_reporting",
+        "reviewerTaskId": "/root/kerr_registry_research",
+        "reviewedAt": "2026-10-01T06:54:55.002Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-tlsc-pilot-20261001/cap300m-batch.receipt.json",
+        "sha256": "79f4a6b110cd1c90d018abfd8b029d26fa9f88d21355fe5fff949db001f451c4"
+      },
+      "extraction": {
+        "file": "goal-irs990-cached04a-nexttwo-20261001/extraction.receipt.json",
+        "sha256": "d737764378db994a129729b35920b0d56221a83a5cc417eed8d1ef78b1361d19"
+      }
+    },
+    {
+      "id": "202631039349300838",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_04A.zip",
+      "archiveSha256": "dbb42e1af78f121446300dfb3c09e2544140388ace65e7fa791b4bd21c4da0b8",
+      "archiveMember": "202631039349300838_public.xml",
+      "xmlSha256": "9b524f48242051df5a1b67c72f628d84bdd4664d3d0c2e2c2bb5b47671ef1445",
+      "filing": {
+        "ein": "942434900",
+        "legalName": "EDSOURCE INC",
+        "websiteAddressTxt": "EDSOURCE.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-07-01",
+        "taxPeriodEnd": "2025-06-30",
+        "returnTimestamp": "2026-04-13T13:26:03-05:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "1721 BROADWAY 201",
+          "city": "OAKLAND",
+          "state": "CA",
+          "postalCode": "94612",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-cached04a-nexttwo-20261001/67953175-primary-supplement.json",
+          "sha256": "24f87d0af1ba56204d574f9f82ace110b989d5139a16157fc1bed3a83dd484ac"
+        },
+        "independent": {
+          "file": "goal-irs990-cached04a-nexttwo-20261001/67953175-independent-supplement.json",
+          "sha256": "c668378edc7e4f69c7f8d28fc47bcef6599ee713eff6a71941980d1b56eabf95"
+        },
+        "readerTaskId": "/root/source_outcome_reporting",
+        "reviewerTaskId": "/root/kerr_registry_research",
+        "reviewedAt": "2026-10-01T06:54:55.002Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-tlsc-pilot-20261001/cap300m-batch.receipt.json",
+        "sha256": "79f4a6b110cd1c90d018abfd8b029d26fa9f88d21355fe5fff949db001f451c4"
+      },
+      "extraction": {
+        "file": "goal-irs990-cached04a-nexttwo-20261001/extraction.receipt.json",
+        "sha256": "d737764378db994a129729b35920b0d56221a83a5cc417eed8d1ef78b1361d19"
+      }
+    },
+    {
+      "id": "202641069349300604",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_04A.zip",
+      "archiveSha256": "dbb42e1af78f121446300dfb3c09e2544140388ace65e7fa791b4bd21c4da0b8",
+      "archiveMember": "202641069349300604_public.xml",
+      "xmlSha256": "daa164634b052cd873412bb8325b3e163ae16af4becc6c61eb9dead9657b57b1",
+      "filing": {
+        "ein": "462552575",
+        "legalName": "CHARTER FOR CHARITY INC",
+        "websiteAddressTxt": "www.flyc4c.org",
+        "taxYear": "2025",
+        "taxPeriodBegin": "2025-01-01",
+        "taxPeriodEnd": "2025-12-31",
+        "returnTimestamp": "2026-04-15T11:41:17-00:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "PO BOX 542451",
+          "city": "DALLAS",
+          "state": "TX",
+          "postalCode": "753542451",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-cached04a-finaltwo-20261001/146606994-primary-supplement.json",
+          "sha256": "d6168b2c3fcc21f54300b90650781c07210c8a4c20a302ff2eb7ca384d7b5b3e"
+        },
+        "independent": {
+          "file": "goal-irs990-cached04a-finaltwo-20261001/146606994-independent-supplement.json",
+          "sha256": "77f917340c905d0a7668e2680bd49339f22dfb26d415a04ecdfa070272b8988c"
+        },
+        "readerTaskId": "/root",
+        "reviewerTaskId": "/root/sweep_reporting_fix",
+        "reviewedAt": "2026-10-01T07:47:11.675Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-tlsc-pilot-20261001/cap300m-batch.receipt.json",
+        "sha256": "79f4a6b110cd1c90d018abfd8b029d26fa9f88d21355fe5fff949db001f451c4"
+      },
+      "extraction": {
+        "file": "goal-irs990-cached04a-finaltwo-20261001/extraction.receipt.json",
+        "sha256": "99098b0c68ad610703b54310a4207bb49baae1e3a10f2e807994a1fce6ecf2b8"
+      }
+    },
+    {
+      "id": "202640559349300414",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_03A.zip",
+      "archiveSha256": "aa93b2973ce7dc2ac756f9a08f2eef14df2854d73dd2bcb8f31b0965b811cea8",
+      "archiveMember": "202640559349300414_public.xml",
+      "xmlSha256": "24dd0177140eb630db9cb1adbf9b9904909defb402010b2fa7dd21f9a350443c",
+      "filing": {
+        "ein": "270565982",
+        "legalName": "SOLA MEDIA",
+        "websiteAddressTxt": "SOLAMEDIA.ORG",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-07-01",
+        "taxPeriodEnd": "2025-06-30",
+        "returnTimestamp": "2026-02-24T10:28:15-00:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "13230 Evening Creek Drive South STE",
+          "city": "San Diego",
+          "state": "CA",
+          "postalCode": "92128",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-remaining-archives-20261001/03A/173501957-primary-supplement.json",
+          "sha256": "722abc7063614ed66fc3675d34a6ed3cb1b86fde22283fdbe90c8839b2cceb6d"
+        },
+        "independent": {
+          "file": "goal-irs990-remaining-archives-20261001/03A/173501957-independent-supplement.json",
+          "sha256": "1a3d0ed37cdc769cf6097bfb077e9099fed1c9d5f3d6cc3585e5e35ca32fc876"
+        },
+        "readerTaskId": "/root",
+        "reviewerTaskId": "/root/kerr_registry_research",
+        "reviewedAt": "2026-10-01T07:39:18.356Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-remaining-archives-20261001/03A/batch.receipt.json",
+        "sha256": "f90a445b1d407adad18a296ae9fcbb73620de42b32b51a82da84874bbdd4c94d"
+      },
+      "extraction": {
+        "file": "goal-irs990-remaining-archives-20261001/extraction.receipt.json",
+        "sha256": "b5dcc633c482dce5cbd9ddf9cf4927df4f5957bcf0c54679d6f08e29a3194e0e"
+      }
+    },
+    {
+      "id": "202621539349301307",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_06A.zip",
+      "archiveSha256": "29f5883192b1c24d82d6ab5aad622166857c5ff31e724d3225f4987adff884db",
+      "archiveMember": "202621539349301307_public.xml",
+      "xmlSha256": "5ecbc480a96d28ceceea3f936a5e831c45c2cbd7067d7214b6e6b53545a3ed1e",
+      "filing": {
+        "ein": "742424224",
+        "legalName": "CORPUS CHRISTI REGIONAL ECONOMIC DEVELOPMENT CORPORATION",
+        "websiteAddressTxt": "WWW.CCREDC.COM",
+        "taxYear": "2024",
+        "taxPeriodBegin": "2024-08-01",
+        "taxPeriodEnd": "2025-07-31",
+        "returnTimestamp": "2026-06-02T13:13:22-05:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "800 N SHORELINE BLVD 1300 S",
+          "city": "CORPUS CHRISTI",
+          "state": "TX",
+          "postalCode": "78401",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-remaining-archives-20261001/06A/145810320-primary-supplement.json",
+          "sha256": "005d1f6e838aa508e0e19cf25766b9046f3598b9103354da0f978d4813f0e361"
+        },
+        "independent": {
+          "file": "goal-irs990-remaining-archives-20261001/06A/145810320-independent-supplement.json",
+          "sha256": "aba32739efa64157b30e6693bd0c408b32a5aa34610f9f2b1ccb30b86503b8cc"
+        },
+        "readerTaskId": "/root/source_outcome_reporting",
+        "reviewerTaskId": "/root/sweep_reporting_fix",
+        "reviewedAt": "2026-10-01T07:54:28.966Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-remaining-archives-20261001/06A/batch.receipt.json",
+        "sha256": "61d9ad829737d0ce1bd8c3194bcbcfbfa38e14cbb3a8d2805b2e23589690e3f3"
+      },
+      "extraction": {
+        "file": "goal-irs990-remaining-archives-20261001/extraction.receipt.json",
+        "sha256": "b5dcc633c482dce5cbd9ddf9cf4927df4f5957bcf0c54679d6f08e29a3194e0e"
+      }
+    },
+    {
+      "id": "202611149349200801",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_05A.zip",
+      "archiveSha256": "1a0782742173325aecc131dc1bb399490f6958e0c71bf8dbad839f67dcded849",
+      "archiveMember": "202611149349200801_public.xml",
+      "xmlSha256": "29f088127232d5150c8e546c03c2e87dd46ce499842943b611e95c12fee56451",
+      "filing": {
+        "ein": "431877784",
+        "legalName": "ORION CENTER INC",
+        "websiteAddressTxt": "www.orioncenter.org",
+        "taxYear": "2025",
+        "taxPeriodBegin": "2025-01-01",
+        "taxPeriodEnd": "2025-12-31",
+        "returnTimestamp": "2026-04-24T17:40:07-07:00",
+        "returnType": "990EZ",
+        "address": {
+          "addressLine1": "3731 S Glenstone Ave Lot 190",
+          "city": "Springfield",
+          "state": "MO",
+          "postalCode": "65804",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-remaining-archives-20261001/05A/streamed/174013597-primary-supplement.json",
+          "sha256": "601dc1c236adfda139bdcb0426e770eba7c9ee423b215d0322c014f1ae0025e7"
+        },
+        "independent": {
+          "file": "goal-irs990-remaining-archives-20261001/05A/streamed/174013597-independent-supplement.json",
+          "sha256": "09ee067a6892b0652ae10c4cec3a61540ad08f93e8084e64801413a02b9a89fe"
+        },
+        "readerTaskId": "/root/kerr_registry_research",
+        "reviewerTaskId": "/root/source_outcome_reporting",
+        "reviewedAt": "2026-10-01T08:02:11.564Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-remaining-archives-20261001/05A/streamed/batch.receipt.json",
+        "sha256": "f1f0d29adf5ed3c04e4dfe4543ffcaf7dce0012e7ac9406e48b458d968de42bf"
+      },
+      "extraction": {
+        "file": "goal-irs990-remaining-archives-20261001/streamed-extraction.receipt.json",
+        "sha256": "33a96fdadd66ef31f59080e6ea06446502b41c768e34c95e1e4c95faeed159ea"
+      }
+    },
+    {
+      "id": "202632309349301888",
+      "archiveUrl": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_08A.zip",
+      "archiveSha256": "5fffbc2f6626df0d835e7ebf8d9fbc241708368bea9c0ff0266f7fe07354a56a",
+      "archiveMember": "202632309349301888_public.xml",
+      "xmlSha256": "3410a793ca49ab4f89d4d49b9c0dd318f79124ab0fcbb3e16f4fb3efbe95bee6",
+      "filing": {
+        "ein": "472474086",
+        "legalName": "CalMatters",
+        "websiteAddressTxt": "www.calmatters.org",
+        "taxYear": "2025",
+        "taxPeriodBegin": "2025-01-01",
+        "taxPeriodEnd": "2025-12-31",
+        "returnTimestamp": "2026-08-18T10:06:58-07:00",
+        "returnType": "990",
+        "address": {
+          "addressLine1": "1017 L Street 261",
+          "city": "Sacramento",
+          "state": "CA",
+          "postalCode": "95814",
+          "countryCode": "US"
+        }
+      },
+      "sourceReviews": {
+        "primary": {
+          "file": "goal-irs990-remaining-archives-20261001/08A/streamed/79538330-primary-supplement.json",
+          "sha256": "751fb8b708acd6c861a24b3c44f09bb00e61a157ce68aad19e9666cc8968e263"
+        },
+        "independent": {
+          "file": "goal-irs990-remaining-archives-20261001/08A/streamed/79538330-independent-supplement.json",
+          "sha256": "cb549fbd6fdde216d60c0f0a133bf669674d253da9f601695efab011f76ed7c1"
+        },
+        "readerTaskId": "/root/kerr_registry_research",
+        "reviewerTaskId": "/root/source_outcome_reporting",
+        "reviewedAt": "2026-10-01T08:10:25.662Z"
+      },
+      "sourceCapture": {
+        "file": "goal-irs990-remaining-archives-20261001/08A/streamed/batch.receipt.json",
+        "sha256": "5d27e7f8a7ae94cbc7d401db3a70ba4db1252527866f2f568ebc57d4d5e576eb"
+      },
+      "extraction": {
+        "file": "goal-irs990-remaining-archives-20261001/streamed-extraction.receipt.json",
+        "sha256": "33a96fdadd66ef31f59080e6ea06446502b41c768e34c95e1e4c95faeed159ea"
+      }
+    }
+  ]
+}

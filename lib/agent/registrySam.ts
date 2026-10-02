@@ -78,7 +78,8 @@ function readSamRow(raw: string) {
   const record = raw.replace(/\r?\n$/, "");
   if (/[\u0000-\u001f]/.test(record)) throw new Error("invalid SAM original row framing");
   const f = record.split("|");
-  if (f.length !== 142 || f[141] !== "!end" || !/^[A-Z0-9]{12}$/.test(f[0]) || !/^[A-Z0-9]{5}$/.test(f[3])
+  // A retained row may have no CAGE. UEI and every identity/provenance gate remain required.
+  if (f.length !== 142 || f[141] !== "!end" || !/^[A-Z0-9]{12}$/.test(f[0]) || !/^(?:[A-Z0-9]{5})?$/.test(f[3])
     || f[5] !== "A" || !clean(f[11]) || !clean(f[15]) || f[16].length > 200 || !clean(f[17])
     || !/^[A-Z]{2}$/.test(f[18]) || !/^\d{5}$/.test(f[19]) || !/^(?:\d{4})?$/.test(f[20]) || f[21] !== "USA" || !host(f[26]))
     throw new Error("SAM requires the complete active-snapshot US physical record");

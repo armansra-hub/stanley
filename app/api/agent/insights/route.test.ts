@@ -9,7 +9,11 @@ vi.mock("@/lib/db/triggers", () => ({ recordTrigger: mocks.trigger, recomputePri
 vi.mock("@/lib/agent/registryWebsite", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/agent/registryWebsite")>(), registryWebsiteVerifier: () => mocks.website }));
 import { parseRegistryFinding } from "@/lib/agent/registryProfiles";
 import { registryWebsiteEvidenceHash } from "@/lib/agent/registryWebsite";
+import { registryOfficialHistoryBundle, registryOfficialHistoryCanonicalHash, registryOfficialHistoryEvidenceHash } from "@/lib/agent/registryOfficialHistory";
+import historyFixture from "../../../../test/fixtures/registry-official-history.json";
+import type { CompanyIdentityContext } from "@/lib/companyIdentity";
 import { POST, GET } from "./route";
+import { registryIrsFilingEntry, registryIrsFilingEvidenceHash, registryIrsFilingCanonicalHash } from "@/lib/agent/registryIrsFiling";
 
 type Row = Record<string, any>; // DB fixture rows deliberately model the external boundary.
 let tables: Record<string, Row[]>;
@@ -55,6 +59,38 @@ beforeEach(() => {
   });
 });
 describe("registry insight publication", () => {
+  it("publishes reviewed official history through the existing RPC and exact event readback", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-01T04:00:00Z"));
+    try {
+      tables.companies = [{ ...historyFixture.company, lists: ["netsuite_tam"] }];
+      const context = historyFixture.context as CompanyIdentityContext;
+      mocks.identity.mockResolvedValue(context);
+      const input = structuredClone(historyFixture.findings[0]), row = parseRegistryFinding(input), bundle = registryOfficialHistoryBundle();
+      const p = { schema: "colorado_sos_history_v1" as const, bundleId: bundle.id, bundleSha256: bundle.sha256,
+        canonicalIdentitySha256: registryOfficialHistoryCanonicalHash(historyFixture.company, context), addressEntryKey: "university_mailing_2006" as const };
+      const evidenceSha256 = registryOfficialHistoryEvidenceHash(row, p), reviewedAt = new Date().toISOString();
+      const proof = { ...p, reader: { taskId: "/unit-test/reader", reviewedAt, evidenceSha256 }, reviewer: { taskId: "/unit-test/reviewer", reviewedAt, evidenceSha256 } };
+      const finding = { ...input, officialRegistrationHistoryCorroboration: proof };
+      expect((await post({ findings: [finding], dryRun: true })).status).toBe(200);
+      expect(mocks.rpc).not.toHaveBeenCalled();
+      const response = await post({ findings: [finding] });
+      expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ state: "published", receipts: [{ eventVerified: true }] });
+      expect(tables.lead_insights[0].registry_profile.verification.method).toBe("reviewed_official_registration_history");
+      expect(tables.lead_insights[0].evidence).toBe(input.evidence);
+      expect(tables.lead_insights[0].registry_profile.identity).toEqual(input.registryProfile.identity);
+      expect(mocks.rpc).toHaveBeenCalledTimes(1); expect(mocks.website).not.toHaveBeenCalled();
+      expect(mocks.trigger).not.toHaveBeenCalled(); expect(mocks.priority).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("rejects mixed history/SAM/website proofs and invalid history before any write", async () => {
+    for (const extra of [{ samCorroboration: {} }, { officialWebsiteCorroboration: {} }, { samCorroboration: {}, officialWebsiteCorroboration: {} }]) {
+      const response = await post({ findings: [{ ...finding(), officialRegistrationHistoryCorroboration: {}, ...extra }] });
+      expect(response.status).toBe(422); expect(await response.json()).toMatchObject({ error: "registry corroboration methods cannot be mixed on one finding" });
+    }
+    // A passing direct identity never overrides an invalid supplied history proof.
+    expect((await post({ findings: [{ ...finding(), officialRegistrationHistoryCorroboration: {} }] })).status).toBe(422);
+    expect(mocks.rpc).not.toHaveBeenCalled(); expect(writes).not.toHaveBeenCalled(); expect(mocks.website).not.toHaveBeenCalled();
+  });
   it("uses fresh website verification for held identities through the same exact publisher and readback", async () => {
     mocks.identity.mockResolvedValue({ aliases: [], addresses: [], context: "" });
     mocks.website.mockResolvedValue({ method: "official_website_corroboration", verifiedAt: new Date().toISOString(), sourceIds: ["website:sha256:proof"], website: { quote: "exact reviewed passage" } });
@@ -157,5 +193,40 @@ describe("registry insight publication", () => {
     expect(response.status).toBe(200);
     expect(writes).toHaveBeenCalledWith("lead_insights", [expect.objectContaining({ company_id: companyId, source: "linkedin" })]);
     expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("IRS filing existing registry route", () => {
+  function irsInput(entryId="202630989349301128") {
+    const {entry,sha256}=registryIrsFilingEntry(entryId), f=entry.filing;
+    const raw={EIN:f.ein,NAME:f.legalName,STREET:"123 Test St",CITY:"Austin",STATE:"TX",ZIP:"78701"};
+    const identity={legalName:raw.NAME,addressLine1:raw.STREET,city:raw.CITY,state:raw.STATE,postalCode:raw.ZIP},sourceRow={...identity,ein:raw.EIN};
+    const evidence=JSON.stringify(sourceRow)+"\nOriginal public source row: "+JSON.stringify(raw),sha=(s:string)=>createHash("sha256").update(s).digest("hex");
+    const company={id:companyId,netsuite_internal_id:"123",name:f.legalName,domain:entryId==="202630989349301128"?"tlsc.org":"vcmedia.org",lists:["netsuite_tam"]},context={aliases:[],addresses:[],context:""};
+    const input={companyId,internalId:"123",source:"registry",kind:"ops_profile",sourceUrl:"https://www.irs.gov/pub/irs-soi/eo3.csv",evidence,detail:"Dated original BMF observation.",registryProfile:{version:1,dataset:"irs_exempt",recordId:f.ein,sourceAsOf:"2026-09-08",observedAt:"2026-09-29T00:00:00Z",identity,facts:[{field:"ein",value:f.ein}],provenance:{sourceRow,quote:evidence,rowSha256:sha(JSON.stringify(raw))}}};
+    const p={schema:"irs990_ein_domain_v1" as const,entryId,entrySha256:sha256,canonicalIdentitySha256:registryIrsFilingCanonicalHash(company,context),...(entryId==="202630989349301128"?{mode:"declared_domain" as const}:{mode:"observed_redirect" as const,redirect:{requestedUrl:"https://www.vconline.org/",finalUrl:"https://vcmedia.org/",normalizedVisibleTextSha256:"a".repeat(64),observedAt:"2026-10-01T06:45:00Z"}})};
+    const evidenceSha256=registryIrsFilingEvidenceHash(parseRegistryFinding(input),p),reviewedAt=new Date().toISOString();
+    return {company,context,input:{...input,officialIrsFilingCorroboration:{...p,reader:{taskId:"/unit-test/reader",reviewedAt,evidenceSha256},reviewer:{taskId:"/unit-test/reviewer",reviewedAt,evidenceSha256}}}};
+  }
+  it("uses the same dry run, RPC and exact row/event readback without changing original source",async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-01T07:00:00Z"));try{
+      const {company,context,input}=irsInput();tables.companies=[company];mocks.identity.mockResolvedValue(context);
+      expect((await post({findings:[input],dryRun:true})).status).toBe(200);expect(mocks.rpc).not.toHaveBeenCalled();
+      const response=await post({findings:[input]});expect(response.status).toBe(200);expect(await response.json()).toMatchObject({state:"published",receipts:[{eventVerified:true}]});
+      expect(tables.lead_insights[0].registry_profile.verification.method).toBe("reviewed_irs_filing_ein_domain");expect(tables.lead_insights[0].evidence).toBe(input.evidence);expect(tables.lead_insights[0].registry_profile.identity).toEqual(input.registryProfile.identity);expect(mocks.website).not.toHaveBeenCalled();expect(mocks.trigger).not.toHaveBeenCalled();
+    }finally{vi.useRealTimers();}
+  });
+  it("rejects mixed proofs and invalid IRS admission before all writes",async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-01T07:00:00Z"));try{
+      const {input}=irsInput();for(const extra of [{officialWebsiteCorroboration:{}},{samCorroboration:{}},{officialRegistrationHistoryCorroboration:{}}])expect((await post({findings:[{...input,...extra}]})).status).toBe(422);
+      input.officialIrsFilingCorroboration.entrySha256="0".repeat(64);expect((await post({findings:[input]})).status).toBe(422);expect(mocks.rpc).not.toHaveBeenCalled();expect(writes).not.toHaveBeenCalled();
+    }finally{vi.useRealTimers();}
+  });
+  it("sums website and IRS request caches before any lookup or fetch",async()=>{
+    vi.useFakeTimers();vi.setSystemTime(new Date("2026-10-01T07:00:00Z"));try{
+      const {input}=irsInput("202620159349300242");
+      const websites=Array.from({length:3},(_,i)=>{const item=websiteFinding(`https://acme.test/page-${i}`);item.registryProfile.recordId=String(i);const {reader,reviewer,...p}=item.officialWebsiteCorroboration;const evidenceSha256=registryWebsiteEvidenceHash(parseRegistryFinding(item),p);return {...item,officialWebsiteCorroboration:{...p,reader:{...reader,evidenceSha256},reviewer:{...reviewer,evidenceSha256}}};});
+      const response=await post({findings:[input,...websites]});expect(response.status).toBe(422);expect(await response.json()).toMatchObject({error:"registry website requests capped at three distinct pages"});expect(mocks.from).not.toHaveBeenCalled();expect(mocks.website).not.toHaveBeenCalled();expect(mocks.rpc).not.toHaveBeenCalled();
+    }finally{vi.useRealTimers();}
   });
 });

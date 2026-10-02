@@ -1,0 +1,731 @@
+{
+  "purpose": "TEST ONLY: immutable retained source fixtures; all review actors and approval data are synthetic, not source attestations.",
+  "cases": [
+    {
+      "label": "Growth Partners entity_mailing",
+      "company": {
+        "id": "d83b9760-467c-421f-ade1-97d1b3c0d8c7",
+        "netsuite_internal_id": "52217200",
+        "name": "Growth Partners",
+        "domain": "growthhq.com",
+        "website_raw": "https://growthhq.com/"
+      },
+      "context": {
+        "aliases": [],
+        "addresses": [
+          {
+            "addressLine1": "PO Box 100952",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80250",
+            "countryCode": "US",
+            "sourceKind": "netsuite_record",
+            "sourceId": "cb4b87df-fe7e-40e8-aca5-60154428d36d",
+            "capturedAt": "2026-07-28T00:00:00+00:00"
+          }
+        ]
+      },
+      "finding": {
+        "companyId": "d83b9760-467c-421f-ade1-97d1b3c0d8c7",
+        "internalId": "52217200",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20031150417",
+        "profile": {
+          "version": 1,
+          "dataset": "co_sos",
+          "recordId": "20031150417",
+          "displayLabel": "Colorado business registration",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:32:06.914611Z",
+          "facts": [
+            {
+              "field": "registration_number",
+              "value": "20031150417"
+            },
+            {
+              "field": "entity_status",
+              "value": "Good Standing"
+            },
+            {
+              "field": "legal_structure",
+              "value": "DLLC"
+            },
+            {
+              "field": "formation_date",
+              "value": "2003-05-09"
+            }
+          ],
+          "identity": {
+            "legalName": "GROWTH PARTNERS LLC",
+            "addressLine1": "3805 S Jersey St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80237",
+            "countryCode": "US"
+          },
+          "provenance": {
+            "rowSha256": "fbe8465e3a4ffc158950dcd67b28d2d52acefcf4e2ed4b429f181a14c2c86ddb",
+            "quote": "{\"entityid\":\"20031150417\",\"entityname\":\"GROWTH PARTNERS LLC\",\"principaladdress1\":\"3805 S Jersey St\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80237\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2003-05-09T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+            "sourceRow": {
+              "legalName": "GROWTH PARTNERS LLC",
+              "addressLine1": "3805 S Jersey St",
+              "city": "Denver",
+              "state": "CO",
+              "postalCode": "80237",
+              "countryCode": "US",
+              "registration_number": "20031150417",
+              "entity_status": "Good Standing",
+              "legal_structure": "DLLC",
+              "formation_date": "2003-05-09"
+            },
+            "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_sos-fbe8465e3a4ffc158950dcd67b28d2d52acefcf4e2ed4b429f181a14c2c86ddb.json"
+          }
+        },
+        "evidence": "{\"entityid\":\"20031150417\",\"entityname\":\"GROWTH PARTNERS LLC\",\"principaladdress1\":\"3805 S Jersey St\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80237\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2003-05-09T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+        "detail": "TEST ONLY: retained original source with independently reviewed official API identity role. No production approval."
+      },
+      "entry": {
+        "id": "test-52217200",
+        "companyId": "d83b9760-467c-421f-ade1-97d1b3c0d8c7",
+        "internalId": "52217200",
+        "canonicalDomain": "growthhq.com",
+        "canonicalIdentitySha256": "CALCULATED-IN-TEST",
+        "sourceKind": "colorado_business_entity",
+        "source": {
+          "requestedUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2819871448316%2C19871752450%2C19881061026%2C19921015002%2C19921093611%2C19941135736%2C19941144507%2C19951012437%2C19951118311%2C19961067037%2C19961107446%2C19961113919%2C19961128567%2C19961165129%2C19971139003%2C19981044464%2C19981206330%2C19991013691%2C19991061276%2C19991131559%2C19991148875%2C20001004722%2C20001031101%2C20001065494%2C20001093568%2C20001137405%2C20001143800%2C20001156124%2C20001168706%2C20001175106%2C20001177663%2C20001247589%2C20011047692%2C20011082151%2C20011084324%2C20011209186%2C20021014396%2C20021024052%2C20021041063%2C20021105720%2C20021152603%2C20021345947%2C20031030461%2C20031100853%2C20031150417%2C20031192523%2C20031193211%2C20031240505%2C20041054188%2C20041100115%2C20041106494%2C20041208894%2C20041261299%2C20041267522%2C20041362384%2C20041362666%2C20041366699%2C20041432825%2C20041440862%2C20051019546%2C20051091855%2C20051129613%2C20051177540%2C20051217262%2C20051274233%2C20051285883%2C20051294234%2C20051309309%2C20051313310%2C20051428430%2C20051455522%2C20061039210%2C20061105330%2C20061112629%2C20061132557%2C20061185938%2C20061295385%2C20061351740%2C20061436592%2C20071087624%2C20071167220%2C20071289949%2C20071323869%2C20071368731%2C20071387899%2C20071434171%2C20071457252%2C20071537510%2C20081088657%2C20081117023%2C20081137821%2C20081624281%2C20091091595%2C20091142393%2C20091212665%2C20091234043%2C20091245376%2C20091350399%2C20091408906%2C20091467749%2C20091478879%2C20091653690%2C20101053975%2C20101077986%2C20101083464%2C20101124681%2C20101156083%2C20101184742%2C20101332060%2C20101367287%2C20101467218%2C20101571577%2C20101576387%2C20101576751%2C20101640302%2C20101692294%2C20101703193%2C20111016993%2C20111036754%2C20111079935%2C20111101682%2C20111173364%2C20111184532%2C20111266344%2C20111391039%2C20111394084%2C20111508400%2C20111605065%2C20111659423%2C20111680724%2C20111712788%2C20121014607%2C20121027438%2C20121080459%2C20121325394%2C20121377300%2C20121483367%2C20121487849%2C20121543476%2C20121556877%2C20121578479%2C20121595282%2C20121624849%2C20131015792%2C20131099565%2C20131137676%2C20131142714%2C20131325433%2C20131376564%2C20131414145%2C20131414894%2C20131422174%2C20131535547%2C20131594675%2C20131600282%2C20131625204%2C20141089742%2C20141096517%2C20141140943%2C20141309851%2C20141332948%2C20141349136%2C20141449195%2C20141472733%2C20141563815%2C20141566827%2C20141620440%2C20151039461%2C20151068310%2C20151160261%2C20151177625%2C20151181280%2C20151365978%2C20151375354%2C20151378887%2C20151504886%2C20151550510%2C20151556727%2C20151595799%2C20151595829%2C20151605529%2C20151638348%2C20151639964%2C20151662590%2C20151721404%2C20151763035%2C20151830652%2C20151841429%2C20161013556%2C20161033965%2C20161154138%2C20161327693%2C20161463843%2C20161471539%2C20161471833%2C20161487186%2C20161528912%2C20161533830%2C20161702053%2C20161715736%2C20161778949%2C20161840280%2C20161848420%2C20171024999%2C20171107744%2C20171114437%2C20171189909%2C20171205192%2C20171236446%2C20171281150%2C20171311743%2C20171367549%2C20171402340%2C20171497520%2C20171512611%2C20171522760%2C20171541898%2C20171602689%2C20171648118%2C20171659656%2C20171672476%2C20171701072%2C20171767268%2C20171774562%2C20171835110%2C20171856869%2C20171862467%2C20171924975%2C20171925466%2C20171939839%29&%24order=entityid&%24limit=231",
+          "finalUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2819871448316%2C19871752450%2C19881061026%2C19921015002%2C19921093611%2C19941135736%2C19941144507%2C19951012437%2C19951118311%2C19961067037%2C19961107446%2C19961113919%2C19961128567%2C19961165129%2C19971139003%2C19981044464%2C19981206330%2C19991013691%2C19991061276%2C19991131559%2C19991148875%2C20001004722%2C20001031101%2C20001065494%2C20001093568%2C20001137405%2C20001143800%2C20001156124%2C20001168706%2C20001175106%2C20001177663%2C20001247589%2C20011047692%2C20011082151%2C20011084324%2C20011209186%2C20021014396%2C20021024052%2C20021041063%2C20021105720%2C20021152603%2C20021345947%2C20031030461%2C20031100853%2C20031150417%2C20031192523%2C20031193211%2C20031240505%2C20041054188%2C20041100115%2C20041106494%2C20041208894%2C20041261299%2C20041267522%2C20041362384%2C20041362666%2C20041366699%2C20041432825%2C20041440862%2C20051019546%2C20051091855%2C20051129613%2C20051177540%2C20051217262%2C20051274233%2C20051285883%2C20051294234%2C20051309309%2C20051313310%2C20051428430%2C20051455522%2C20061039210%2C20061105330%2C20061112629%2C20061132557%2C20061185938%2C20061295385%2C20061351740%2C20061436592%2C20071087624%2C20071167220%2C20071289949%2C20071323869%2C20071368731%2C20071387899%2C20071434171%2C20071457252%2C20071537510%2C20081088657%2C20081117023%2C20081137821%2C20081624281%2C20091091595%2C20091142393%2C20091212665%2C20091234043%2C20091245376%2C20091350399%2C20091408906%2C20091467749%2C20091478879%2C20091653690%2C20101053975%2C20101077986%2C20101083464%2C20101124681%2C20101156083%2C20101184742%2C20101332060%2C20101367287%2C20101467218%2C20101571577%2C20101576387%2C20101576751%2C20101640302%2C20101692294%2C20101703193%2C20111016993%2C20111036754%2C20111079935%2C20111101682%2C20111173364%2C20111184532%2C20111266344%2C20111391039%2C20111394084%2C20111508400%2C20111605065%2C20111659423%2C20111680724%2C20111712788%2C20121014607%2C20121027438%2C20121080459%2C20121325394%2C20121377300%2C20121483367%2C20121487849%2C20121543476%2C20121556877%2C20121578479%2C20121595282%2C20121624849%2C20131015792%2C20131099565%2C20131137676%2C20131142714%2C20131325433%2C20131376564%2C20131414145%2C20131414894%2C20131422174%2C20131535547%2C20131594675%2C20131600282%2C20131625204%2C20141089742%2C20141096517%2C20141140943%2C20141309851%2C20141332948%2C20141349136%2C20141449195%2C20141472733%2C20141563815%2C20141566827%2C20141620440%2C20151039461%2C20151068310%2C20151160261%2C20151177625%2C20151181280%2C20151365978%2C20151375354%2C20151378887%2C20151504886%2C20151550510%2C20151556727%2C20151595799%2C20151595829%2C20151605529%2C20151638348%2C20151639964%2C20151662590%2C20151721404%2C20151763035%2C20151830652%2C20151841429%2C20161013556%2C20161033965%2C20161154138%2C20161327693%2C20161463843%2C20161471539%2C20161471833%2C20161487186%2C20161528912%2C20161533830%2C20161702053%2C20161715736%2C20161778949%2C20161840280%2C20161848420%2C20171024999%2C20171107744%2C20171114437%2C20171189909%2C20171205192%2C20171236446%2C20171281150%2C20171311743%2C20171367549%2C20171402340%2C20171497520%2C20171512611%2C20171522760%2C20171541898%2C20171602689%2C20171648118%2C20171659656%2C20171672476%2C20171701072%2C20171767268%2C20171774562%2C20171835110%2C20171856869%2C20171862467%2C20171924975%2C20171925466%2C20171939839%29&%24order=entityid&%24limit=231",
+          "status": 200,
+          "contentType": "application/json;charset=utf-8",
+          "observedAt": "2026-10-01T09:57:04.464Z",
+          "responseSha256": "fe364e93f8a6f611739db5bf9db8f23d183414bfa90d175a9cbf8bc516fe6af2",
+          "receiptSha256": "5891cf58fb62ab6d5fcb79cd163f02f7b559e4bff21299b741d4cf036b8e6eca",
+          "rawRow": "{\"entityid\":\"20031150417\",\"entityname\":\"GROWTH PARTNERS LLC\",\"principaladdress1\":\"3805 S Jersey St\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80237\",\"principalcountry\":\"US\",\"mailingaddress1\":\"PO Box 100952\",\"mailingcity\":\"Denver\",\"mailingstate\":\"CO\",\"mailingzipcode\":\"80250\",\"mailingcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"jurisdictonofformation\":\"CO\",\"entitytype\":\"DLLC\",\"agentfirstname\":\"NEIL\",\"agentlastname\":\"CULBERTSON\",\"agentprincipaladdress1\":\"3805 S Jersey St\",\"agentprincipalcity\":\"Denver\",\"agentprincipalstate\":\"CO\",\"agentprincipalzipcode\":\"80237\",\"agentprincipalcountry\":\"US\",\"agentmailingaddress1\":\"PO Box 100952\",\"agentmailingcity\":\"Denver\",\"agentmailingstate\":\"CO\",\"agentmailingzipcode\":\"80250\",\"agentmailingcountry\":\"US\",\"entityformdate\":\"2003-05-09T00:00:00.000\"}",
+          "rawRowSha256": "f82f6aea4ee9a26d1b3a25191a6e5786b0299dd08687b4dd611b8603bd3350c7",
+          "arrayIndex": 44,
+          "byteOffset": 28591,
+          "byteLength": 810
+        },
+        "sourceReader": {
+          "taskId": "/test/source-primary",
+          "reviewedAt": "2026-10-01T10:20:00Z",
+          "receiptSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "sourceReviewer": {
+          "taskId": "/test/source-independent",
+          "reviewedAt": "2026-10-01T10:21:00Z",
+          "receiptSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "originalReviews": {
+          "primary": {
+            "taskId": "/test/original-primary",
+            "reviewedAt": "2026-09-30T12:00:00Z",
+            "receiptSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "independent": {
+            "taskId": "/test/original-independent",
+            "reviewedAt": "2026-09-30T13:00:00Z",
+            "receiptSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "packetSha256": "21282225ee2e416f0fbd6e4e7d4c97bb458981f147ce4a80292b7855bc579940"
+        },
+        "target": {
+          "dataset": "co_sos",
+          "recordId": "20031150417",
+          "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20031150417",
+          "rowSha256": "fbe8465e3a4ffc158950dcd67b28d2d52acefcf4e2ed4b429f181a14c2c86ddb",
+          "evidenceSha256": "fbe8465e3a4ffc158950dcd67b28d2d52acefcf4e2ed4b429f181a14c2c86ddb",
+          "identitySha256": "31d562990ef3ffb697bc6a8898cdc26495fba7a3b4619ce0a61643adf28bf84c",
+          "sourceRowSha256": "67950f01c0fc5b5f63dc00ac61ade7a096f1561c8fd5e454976db27c72e14e86",
+          "factsSha256": "cf95db9a4f3cc8e7c27f72ab6e2b979f4893e54ba8845fe942fe3066bcf2079c",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:32:06.914611Z"
+        },
+        "anchor": {
+          "mode": "address_role",
+          "role": "entity_mailing",
+          "sourceId": "cb4b87df-fe7e-40e8-aca5-60154428d36d"
+        }
+      }
+    },
+    {
+      "label": "Ardor Environmental registered_agent_street",
+      "company": {
+        "id": "39fa4f48-7b7f-4009-9c1c-e8be4e768142",
+        "netsuite_internal_id": "162003754",
+        "name": "Ardor Environmental",
+        "domain": "ardorenvironmental.com",
+        "website_raw": "http://www.ardorenvironmental.com"
+      },
+      "context": {
+        "aliases": [],
+        "addresses": [
+          {
+            "addressLine1": "11546 W 26th Pl",
+            "city": "Lakewood",
+            "state": "CO",
+            "postalCode": "80215",
+            "countryCode": "US",
+            "sourceKind": "netsuite_record",
+            "sourceId": "1494ec4c-fa92-42ec-8c7a-091ac158d618",
+            "capturedAt": "2026-07-28T00:00:00+00:00"
+          }
+        ]
+      },
+      "finding": {
+        "companyId": "39fa4f48-7b7f-4009-9c1c-e8be4e768142",
+        "internalId": "162003754",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20201070798",
+        "profile": {
+          "version": 1,
+          "dataset": "co_sos",
+          "recordId": "20201070798",
+          "displayLabel": "Colorado business registration",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:30:50.448685Z",
+          "facts": [
+            {
+              "field": "registration_number",
+              "value": "20201070798"
+            },
+            {
+              "field": "entity_status",
+              "value": "Good Standing"
+            },
+            {
+              "field": "legal_structure",
+              "value": "DLLC"
+            },
+            {
+              "field": "formation_date",
+              "value": "2020-01-24"
+            }
+          ],
+          "identity": {
+            "legalName": "Ardor Environmental LLC",
+            "addressLine1": "1717 W Drake Rd Apt 2C",
+            "city": "Fort Collins",
+            "state": "CO",
+            "postalCode": "80526",
+            "countryCode": "US"
+          },
+          "provenance": {
+            "rowSha256": "0cd7976da6cbce2755406fe12e5c452f38f95b5d6d87d948d9ed50709da11d5e",
+            "quote": "{\"entityid\":\"20201070798\",\"entityname\":\"Ardor Environmental LLC\",\"principaladdress1\":\"1717 W Drake Rd Apt 2C\",\"principalcity\":\"Fort Collins\",\"principalstate\":\"CO\",\"principalzipcode\":\"80526\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2020-01-24T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+            "sourceRow": {
+              "legalName": "Ardor Environmental LLC",
+              "addressLine1": "1717 W Drake Rd Apt 2C",
+              "city": "Fort Collins",
+              "state": "CO",
+              "postalCode": "80526",
+              "countryCode": "US",
+              "registration_number": "20201070798",
+              "entity_status": "Good Standing",
+              "legal_structure": "DLLC",
+              "formation_date": "2020-01-24"
+            },
+            "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_sos-0cd7976da6cbce2755406fe12e5c452f38f95b5d6d87d948d9ed50709da11d5e.json"
+          }
+        },
+        "evidence": "{\"entityid\":\"20201070798\",\"entityname\":\"Ardor Environmental LLC\",\"principaladdress1\":\"1717 W Drake Rd Apt 2C\",\"principalcity\":\"Fort Collins\",\"principalstate\":\"CO\",\"principalzipcode\":\"80526\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2020-01-24T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+        "detail": "TEST ONLY: retained original source with independently reviewed official API identity role. No production approval."
+      },
+      "entry": {
+        "id": "test-162003754",
+        "companyId": "39fa4f48-7b7f-4009-9c1c-e8be4e768142",
+        "internalId": "162003754",
+        "canonicalDomain": "ardorenvironmental.com",
+        "canonicalIdentitySha256": "CALCULATED-IN-TEST",
+        "sourceKind": "colorado_business_entity",
+        "source": {
+          "requestedUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2820181039914%2C20181044904%2C20181058508%2C20181108997%2C20181125670%2C20181127738%2C20181166694%2C20181199814%2C20181273020%2C20181299554%2C20181307866%2C20181318163%2C20181405460%2C20181415826%2C20181530510%2C20181623405%2C20181628016%2C20181696078%2C20181713970%2C20181735930%2C20181881403%2C20181902439%2C20181902852%2C20181903392%2C20191062580%2C20191118502%2C20191130654%2C20191130742%2C20191132443%2C20191141621%2C20191198940%2C20191270586%2C20191314882%2C20191316086%2C20191321938%2C20191400385%2C20191408582%2C20191541730%2C20191543253%2C20191649243%2C20191697635%2C20191730457%2C20191812062%2C20191822084%2C20191831024%2C20191837972%2C20191856530%2C20191916417%2C20191958490%2C20201010124%2C20201052149%2C20201053286%2C20201055776%2C20201060907%2C20201070798%2C20201088912%2C20201107809%2C20201131488%2C20201272778%2C20201312373%2C20201415517%2C20201434878%2C20201436989%2C20201461872%2C20201498466%2C20201525159%2C20201574183%2C20201608808%2C20201616093%2C20201653195%2C20201695909%2C20201808809%2C20201858981%2C20201871938%2C20201873309%2C20201882353%2C20201978001%2C20208081646%2C20208092602%2C20211030377%2C20211046850%2C20211047752%2C20211124230%2C20211126053%2C20211135763%2C20211151944%2C20211204702%2C20211225632%2C20211238757%2C20211470640%2C20211530517%2C20211541696%2C20211544321%2C20211548598%2C20211554874%2C20211564924%2C20211608311%2C20211647995%2C20211653942%2C20211658422%2C20211749942%2C20211764813%2C20211835841%2C20211852506%2C20211954770%2C20218005653%2C20218018681%2C20218081800%2C20218137660%2C20218140436%2C20218180518%2C20218198273%2C20218218756%2C20218233653%2C20221035701%2C20221080765%2C20221109802%2C20221159288%2C20221356489%2C20221365540%2C20221383489%2C20221386192%2C20221439068%2C20221572537%2C20221646231%2C20221646692%2C20221667336%2C20221699182%2C20221753887%2C20221767441%2C20221786688%2C20221872947%2C20221944255%2C20221962799%2C20221976158%2C20228011114%2C20228029778%2C20228047863%2C20228098749%2C20228101426%2C20228102927%2C20228122652%2C20228124781%2C20228156357%2C20228183705%2C20228289901%2C20231050458%2C20231095176%2C20231113866%2C20231126758%2C20231155581%2C20231175010%2C20231216793%2C20231287325%2C20231288108%2C20231399927%2C20231417662%2C20231430674%2C20231450604%2C20231496025%2C20231509594%2C20231552827%2C20231570355%2C20231607821%2C20231739132%2C20231741200%2C20231780587%2C20231815603%2C20231818764%2C20231822274%2C20231835009%2C20231840535%2C20231855092%2C20231909210%2C20238058948%2C20238083368%2C20238176518%2C20238211754%2C20238221429%2C20238228225%2C20238263380%2C20238283379%2C20238294173%2C20238334783%2C20238356491%2C20238357492%2C20238358131%2C20238358136%2C20238365532%2C20241021564%2C20241032106%2C20241066449%2C20241113037%2C20241201467%2C20241217894%2C20241265383%2C20241270518%2C20241274848%2C20241310198%2C20241367102%2C20241384002%2C20241388475%2C20241393989%2C20241422118%2C20241427988%2C20241447805%2C20241499516%2C20241499636%2C20241513911%2C20241514849%2C20241520611%2C20241532192%2C20241548385%2C20241590215%2C20241687115%2C20241702611%2C20241707448%2C20241710461%2C20241712606%2C20241807637%2C20241817862%2C20241834896%2C20241835604%2C20241841140%2C20241863340%2C20241916373%2C20241930600%2C20241935359%2C20241943478%2C20241946574%29&%24order=entityid&%24limit=231",
+          "finalUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2820181039914%2C20181044904%2C20181058508%2C20181108997%2C20181125670%2C20181127738%2C20181166694%2C20181199814%2C20181273020%2C20181299554%2C20181307866%2C20181318163%2C20181405460%2C20181415826%2C20181530510%2C20181623405%2C20181628016%2C20181696078%2C20181713970%2C20181735930%2C20181881403%2C20181902439%2C20181902852%2C20181903392%2C20191062580%2C20191118502%2C20191130654%2C20191130742%2C20191132443%2C20191141621%2C20191198940%2C20191270586%2C20191314882%2C20191316086%2C20191321938%2C20191400385%2C20191408582%2C20191541730%2C20191543253%2C20191649243%2C20191697635%2C20191730457%2C20191812062%2C20191822084%2C20191831024%2C20191837972%2C20191856530%2C20191916417%2C20191958490%2C20201010124%2C20201052149%2C20201053286%2C20201055776%2C20201060907%2C20201070798%2C20201088912%2C20201107809%2C20201131488%2C20201272778%2C20201312373%2C20201415517%2C20201434878%2C20201436989%2C20201461872%2C20201498466%2C20201525159%2C20201574183%2C20201608808%2C20201616093%2C20201653195%2C20201695909%2C20201808809%2C20201858981%2C20201871938%2C20201873309%2C20201882353%2C20201978001%2C20208081646%2C20208092602%2C20211030377%2C20211046850%2C20211047752%2C20211124230%2C20211126053%2C20211135763%2C20211151944%2C20211204702%2C20211225632%2C20211238757%2C20211470640%2C20211530517%2C20211541696%2C20211544321%2C20211548598%2C20211554874%2C20211564924%2C20211608311%2C20211647995%2C20211653942%2C20211658422%2C20211749942%2C20211764813%2C20211835841%2C20211852506%2C20211954770%2C20218005653%2C20218018681%2C20218081800%2C20218137660%2C20218140436%2C20218180518%2C20218198273%2C20218218756%2C20218233653%2C20221035701%2C20221080765%2C20221109802%2C20221159288%2C20221356489%2C20221365540%2C20221383489%2C20221386192%2C20221439068%2C20221572537%2C20221646231%2C20221646692%2C20221667336%2C20221699182%2C20221753887%2C20221767441%2C20221786688%2C20221872947%2C20221944255%2C20221962799%2C20221976158%2C20228011114%2C20228029778%2C20228047863%2C20228098749%2C20228101426%2C20228102927%2C20228122652%2C20228124781%2C20228156357%2C20228183705%2C20228289901%2C20231050458%2C20231095176%2C20231113866%2C20231126758%2C20231155581%2C20231175010%2C20231216793%2C20231287325%2C20231288108%2C20231399927%2C20231417662%2C20231430674%2C20231450604%2C20231496025%2C20231509594%2C20231552827%2C20231570355%2C20231607821%2C20231739132%2C20231741200%2C20231780587%2C20231815603%2C20231818764%2C20231822274%2C20231835009%2C20231840535%2C20231855092%2C20231909210%2C20238058948%2C20238083368%2C20238176518%2C20238211754%2C20238221429%2C20238228225%2C20238263380%2C20238283379%2C20238294173%2C20238334783%2C20238356491%2C20238357492%2C20238358131%2C20238358136%2C20238365532%2C20241021564%2C20241032106%2C20241066449%2C20241113037%2C20241201467%2C20241217894%2C20241265383%2C20241270518%2C20241274848%2C20241310198%2C20241367102%2C20241384002%2C20241388475%2C20241393989%2C20241422118%2C20241427988%2C20241447805%2C20241499516%2C20241499636%2C20241513911%2C20241514849%2C20241520611%2C20241532192%2C20241548385%2C20241590215%2C20241687115%2C20241702611%2C20241707448%2C20241710461%2C20241712606%2C20241807637%2C20241817862%2C20241834896%2C20241835604%2C20241841140%2C20241863340%2C20241916373%2C20241930600%2C20241935359%2C20241943478%2C20241946574%29&%24order=entityid&%24limit=231",
+          "status": 200,
+          "contentType": "application/json;charset=utf-8",
+          "observedAt": "2026-10-01T09:57:05.269Z",
+          "responseSha256": "f157b2f421b6791a504632badfbd4de5edf9bba21762558f0e19e6a80e75a130",
+          "receiptSha256": "f9a2518bcc7f83018295792a6175d7da20dffe274ccf375ecfbb1321fe6971fa",
+          "rawRow": "{\"entityid\":\"20201070798\",\"entityname\":\"Ardor Environmental LLC\",\"principaladdress1\":\"1717 W Drake Rd Apt 2C\",\"principalcity\":\"Fort Collins\",\"principalstate\":\"CO\",\"principalzipcode\":\"80526\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"jurisdictonofformation\":\"CO\",\"entitytype\":\"DLLC\",\"agentorganizationname\":\"Ardor Environmental LLC\",\"agentprincipaladdress1\":\"11546 W 26th Pl\",\"agentprincipalcity\":\"Lakewood\",\"agentprincipalstate\":\"CO\",\"agentprincipalzipcode\":\"80215\",\"agentprincipalcountry\":\"US\",\"entityformdate\":\"2020-01-24T00:00:00.000\"}",
+          "rawRowSha256": "dab57721470c3b24ff01b888d1549d6b36f7db36124e6a382c40f78bc0521d89",
+          "arrayIndex": 54,
+          "byteOffset": 33965,
+          "byteLength": 551
+        },
+        "sourceReader": {
+          "taskId": "/test/source-primary",
+          "reviewedAt": "2026-10-01T10:20:00Z",
+          "receiptSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "sourceReviewer": {
+          "taskId": "/test/source-independent",
+          "reviewedAt": "2026-10-01T10:21:00Z",
+          "receiptSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "originalReviews": {
+          "primary": {
+            "taskId": "/test/original-primary",
+            "reviewedAt": "2026-09-30T12:00:00Z",
+            "receiptSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "independent": {
+            "taskId": "/test/original-independent",
+            "reviewedAt": "2026-09-30T13:00:00Z",
+            "receiptSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "packetSha256": "6e28a69b9718ff56ba9967c1349420c967f3d486ce35fc3e49f641fc2d92a706"
+        },
+        "target": {
+          "dataset": "co_sos",
+          "recordId": "20201070798",
+          "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20201070798",
+          "rowSha256": "0cd7976da6cbce2755406fe12e5c452f38f95b5d6d87d948d9ed50709da11d5e",
+          "evidenceSha256": "0cd7976da6cbce2755406fe12e5c452f38f95b5d6d87d948d9ed50709da11d5e",
+          "identitySha256": "68ec86ffe3cc59f60ff9ad47db99e84abd5cefd92a10df5711f129befd371829",
+          "sourceRowSha256": "601f61d47ca34ddd12440a02ef0a8c93b8bd25a98a1e6dbe738fd075e0f81f60",
+          "factsSha256": "17989f7c22dd7d972f4002fa65d1a41d38d20d083559d15033d3ccd6350bf736",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:30:50.448685Z"
+        },
+        "anchor": {
+          "mode": "address_role",
+          "role": "registered_agent_street",
+          "sourceId": "1494ec4c-fa92-42ec-8c7a-091ac158d618"
+        }
+      }
+    },
+    {
+      "label": "Remix Media Group registered_agent_mailing",
+      "company": {
+        "id": "e9ea78dc-3b90-48f0-9013-d59d9f65b49d",
+        "netsuite_internal_id": "198695496",
+        "name": "Remix Media Group",
+        "domain": "remixmediagroupllc.com",
+        "website_raw": "https://remixmediagroupllc.com/"
+      },
+      "context": {
+        "aliases": [],
+        "addresses": [
+          {
+            "addressLine1": "PO Box 4001",
+            "city": "Basalt",
+            "state": "CO",
+            "postalCode": "81621",
+            "countryCode": "US",
+            "sourceKind": "netsuite_record",
+            "sourceId": "587b6b7b-0c66-4de5-a0f7-8574b4ef66f4",
+            "capturedAt": "2026-07-28T00:00:00+00:00"
+          }
+        ]
+      },
+      "finding": {
+        "companyId": "e9ea78dc-3b90-48f0-9013-d59d9f65b49d",
+        "internalId": "198695496",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20061185938",
+        "profile": {
+          "version": 1,
+          "dataset": "co_sos",
+          "recordId": "20061185938",
+          "displayLabel": "Colorado business registration",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:32:56.892161Z",
+          "facts": [
+            {
+              "field": "registration_number",
+              "value": "20061185938"
+            },
+            {
+              "field": "entity_status",
+              "value": "Good Standing"
+            },
+            {
+              "field": "legal_structure",
+              "value": "DLLC"
+            },
+            {
+              "field": "formation_date",
+              "value": "2006-05-05"
+            }
+          ],
+          "identity": {
+            "legalName": "ReMix Media Group, LLC",
+            "addressLine1": "97 Cheyenne Ave",
+            "city": "Carbondale",
+            "state": "CO",
+            "postalCode": "81623",
+            "countryCode": "US"
+          },
+          "provenance": {
+            "rowSha256": "59124e9fa3f06db2dfbe815fb14b6c1bfb1565c15b05a3452296ef9cca1878ba",
+            "quote": "{\"entityid\":\"20061185938\",\"entityname\":\"ReMix Media Group, LLC\",\"principaladdress1\":\"97 Cheyenne Ave\",\"principalcity\":\"Carbondale\",\"principalstate\":\"CO\",\"principalzipcode\":\"81623\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2006-05-05T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+            "sourceRow": {
+              "legalName": "ReMix Media Group, LLC",
+              "addressLine1": "97 Cheyenne Ave",
+              "city": "Carbondale",
+              "state": "CO",
+              "postalCode": "81623",
+              "countryCode": "US",
+              "registration_number": "20061185938",
+              "entity_status": "Good Standing",
+              "legal_structure": "DLLC",
+              "formation_date": "2006-05-05"
+            },
+            "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_sos-59124e9fa3f06db2dfbe815fb14b6c1bfb1565c15b05a3452296ef9cca1878ba.json"
+          }
+        },
+        "evidence": "{\"entityid\":\"20061185938\",\"entityname\":\"ReMix Media Group, LLC\",\"principaladdress1\":\"97 Cheyenne Ave\",\"principalcity\":\"Carbondale\",\"principalstate\":\"CO\",\"principalzipcode\":\"81623\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2006-05-05T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+        "detail": "TEST ONLY: retained original source with independently reviewed official API identity role. No production approval."
+      },
+      "entry": {
+        "id": "test-198695496",
+        "companyId": "e9ea78dc-3b90-48f0-9013-d59d9f65b49d",
+        "internalId": "198695496",
+        "canonicalDomain": "remixmediagroupllc.com",
+        "canonicalIdentitySha256": "CALCULATED-IN-TEST",
+        "sourceKind": "colorado_business_entity",
+        "source": {
+          "requestedUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2819871448316%2C19871752450%2C19881061026%2C19921015002%2C19921093611%2C19941135736%2C19941144507%2C19951012437%2C19951118311%2C19961067037%2C19961107446%2C19961113919%2C19961128567%2C19961165129%2C19971139003%2C19981044464%2C19981206330%2C19991013691%2C19991061276%2C19991131559%2C19991148875%2C20001004722%2C20001031101%2C20001065494%2C20001093568%2C20001137405%2C20001143800%2C20001156124%2C20001168706%2C20001175106%2C20001177663%2C20001247589%2C20011047692%2C20011082151%2C20011084324%2C20011209186%2C20021014396%2C20021024052%2C20021041063%2C20021105720%2C20021152603%2C20021345947%2C20031030461%2C20031100853%2C20031150417%2C20031192523%2C20031193211%2C20031240505%2C20041054188%2C20041100115%2C20041106494%2C20041208894%2C20041261299%2C20041267522%2C20041362384%2C20041362666%2C20041366699%2C20041432825%2C20041440862%2C20051019546%2C20051091855%2C20051129613%2C20051177540%2C20051217262%2C20051274233%2C20051285883%2C20051294234%2C20051309309%2C20051313310%2C20051428430%2C20051455522%2C20061039210%2C20061105330%2C20061112629%2C20061132557%2C20061185938%2C20061295385%2C20061351740%2C20061436592%2C20071087624%2C20071167220%2C20071289949%2C20071323869%2C20071368731%2C20071387899%2C20071434171%2C20071457252%2C20071537510%2C20081088657%2C20081117023%2C20081137821%2C20081624281%2C20091091595%2C20091142393%2C20091212665%2C20091234043%2C20091245376%2C20091350399%2C20091408906%2C20091467749%2C20091478879%2C20091653690%2C20101053975%2C20101077986%2C20101083464%2C20101124681%2C20101156083%2C20101184742%2C20101332060%2C20101367287%2C20101467218%2C20101571577%2C20101576387%2C20101576751%2C20101640302%2C20101692294%2C20101703193%2C20111016993%2C20111036754%2C20111079935%2C20111101682%2C20111173364%2C20111184532%2C20111266344%2C20111391039%2C20111394084%2C20111508400%2C20111605065%2C20111659423%2C20111680724%2C20111712788%2C20121014607%2C20121027438%2C20121080459%2C20121325394%2C20121377300%2C20121483367%2C20121487849%2C20121543476%2C20121556877%2C20121578479%2C20121595282%2C20121624849%2C20131015792%2C20131099565%2C20131137676%2C20131142714%2C20131325433%2C20131376564%2C20131414145%2C20131414894%2C20131422174%2C20131535547%2C20131594675%2C20131600282%2C20131625204%2C20141089742%2C20141096517%2C20141140943%2C20141309851%2C20141332948%2C20141349136%2C20141449195%2C20141472733%2C20141563815%2C20141566827%2C20141620440%2C20151039461%2C20151068310%2C20151160261%2C20151177625%2C20151181280%2C20151365978%2C20151375354%2C20151378887%2C20151504886%2C20151550510%2C20151556727%2C20151595799%2C20151595829%2C20151605529%2C20151638348%2C20151639964%2C20151662590%2C20151721404%2C20151763035%2C20151830652%2C20151841429%2C20161013556%2C20161033965%2C20161154138%2C20161327693%2C20161463843%2C20161471539%2C20161471833%2C20161487186%2C20161528912%2C20161533830%2C20161702053%2C20161715736%2C20161778949%2C20161840280%2C20161848420%2C20171024999%2C20171107744%2C20171114437%2C20171189909%2C20171205192%2C20171236446%2C20171281150%2C20171311743%2C20171367549%2C20171402340%2C20171497520%2C20171512611%2C20171522760%2C20171541898%2C20171602689%2C20171648118%2C20171659656%2C20171672476%2C20171701072%2C20171767268%2C20171774562%2C20171835110%2C20171856869%2C20171862467%2C20171924975%2C20171925466%2C20171939839%29&%24order=entityid&%24limit=231",
+          "finalUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2819871448316%2C19871752450%2C19881061026%2C19921015002%2C19921093611%2C19941135736%2C19941144507%2C19951012437%2C19951118311%2C19961067037%2C19961107446%2C19961113919%2C19961128567%2C19961165129%2C19971139003%2C19981044464%2C19981206330%2C19991013691%2C19991061276%2C19991131559%2C19991148875%2C20001004722%2C20001031101%2C20001065494%2C20001093568%2C20001137405%2C20001143800%2C20001156124%2C20001168706%2C20001175106%2C20001177663%2C20001247589%2C20011047692%2C20011082151%2C20011084324%2C20011209186%2C20021014396%2C20021024052%2C20021041063%2C20021105720%2C20021152603%2C20021345947%2C20031030461%2C20031100853%2C20031150417%2C20031192523%2C20031193211%2C20031240505%2C20041054188%2C20041100115%2C20041106494%2C20041208894%2C20041261299%2C20041267522%2C20041362384%2C20041362666%2C20041366699%2C20041432825%2C20041440862%2C20051019546%2C20051091855%2C20051129613%2C20051177540%2C20051217262%2C20051274233%2C20051285883%2C20051294234%2C20051309309%2C20051313310%2C20051428430%2C20051455522%2C20061039210%2C20061105330%2C20061112629%2C20061132557%2C20061185938%2C20061295385%2C20061351740%2C20061436592%2C20071087624%2C20071167220%2C20071289949%2C20071323869%2C20071368731%2C20071387899%2C20071434171%2C20071457252%2C20071537510%2C20081088657%2C20081117023%2C20081137821%2C20081624281%2C20091091595%2C20091142393%2C20091212665%2C20091234043%2C20091245376%2C20091350399%2C20091408906%2C20091467749%2C20091478879%2C20091653690%2C20101053975%2C20101077986%2C20101083464%2C20101124681%2C20101156083%2C20101184742%2C20101332060%2C20101367287%2C20101467218%2C20101571577%2C20101576387%2C20101576751%2C20101640302%2C20101692294%2C20101703193%2C20111016993%2C20111036754%2C20111079935%2C20111101682%2C20111173364%2C20111184532%2C20111266344%2C20111391039%2C20111394084%2C20111508400%2C20111605065%2C20111659423%2C20111680724%2C20111712788%2C20121014607%2C20121027438%2C20121080459%2C20121325394%2C20121377300%2C20121483367%2C20121487849%2C20121543476%2C20121556877%2C20121578479%2C20121595282%2C20121624849%2C20131015792%2C20131099565%2C20131137676%2C20131142714%2C20131325433%2C20131376564%2C20131414145%2C20131414894%2C20131422174%2C20131535547%2C20131594675%2C20131600282%2C20131625204%2C20141089742%2C20141096517%2C20141140943%2C20141309851%2C20141332948%2C20141349136%2C20141449195%2C20141472733%2C20141563815%2C20141566827%2C20141620440%2C20151039461%2C20151068310%2C20151160261%2C20151177625%2C20151181280%2C20151365978%2C20151375354%2C20151378887%2C20151504886%2C20151550510%2C20151556727%2C20151595799%2C20151595829%2C20151605529%2C20151638348%2C20151639964%2C20151662590%2C20151721404%2C20151763035%2C20151830652%2C20151841429%2C20161013556%2C20161033965%2C20161154138%2C20161327693%2C20161463843%2C20161471539%2C20161471833%2C20161487186%2C20161528912%2C20161533830%2C20161702053%2C20161715736%2C20161778949%2C20161840280%2C20161848420%2C20171024999%2C20171107744%2C20171114437%2C20171189909%2C20171205192%2C20171236446%2C20171281150%2C20171311743%2C20171367549%2C20171402340%2C20171497520%2C20171512611%2C20171522760%2C20171541898%2C20171602689%2C20171648118%2C20171659656%2C20171672476%2C20171701072%2C20171767268%2C20171774562%2C20171835110%2C20171856869%2C20171862467%2C20171924975%2C20171925466%2C20171939839%29&%24order=entityid&%24limit=231",
+          "status": 200,
+          "contentType": "application/json;charset=utf-8",
+          "observedAt": "2026-10-01T09:57:04.464Z",
+          "responseSha256": "fe364e93f8a6f611739db5bf9db8f23d183414bfa90d175a9cbf8bc516fe6af2",
+          "receiptSha256": "5891cf58fb62ab6d5fcb79cd163f02f7b559e4bff21299b741d4cf036b8e6eca",
+          "rawRow": "{\"entityid\":\"20061185938\",\"entityname\":\"ReMix Media Group, LLC\",\"principaladdress1\":\"97 Cheyenne Ave\",\"principalcity\":\"Carbondale\",\"principalstate\":\"CO\",\"principalzipcode\":\"81623\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"jurisdictonofformation\":\"CO\",\"entitytype\":\"DLLC\",\"agentfirstname\":\"DAVID\",\"agentmiddlename\":\"LEONARD\",\"agentlastname\":\"JOHNSON\",\"agentprincipaladdress1\":\"97 Cheyenne Ave\",\"agentprincipalcity\":\"Carbondale\",\"agentprincipalstate\":\"CO\",\"agentprincipalzipcode\":\"81623\",\"agentprincipalcountry\":\"US\",\"agentmailingaddress1\":\"PO Box 4001\",\"agentmailingcity\":\"Basalt\",\"agentmailingstate\":\"CO\",\"agentmailingzipcode\":\"81621\",\"agentmailingcountry\":\"US\",\"entityformdate\":\"2006-05-05T00:00:00.000\"}",
+          "rawRowSha256": "003d361be3d7bcf2feeacc96735d2f15ec862e31ba5413fdaa183a5da0dce7b6",
+          "arrayIndex": 75,
+          "byteOffset": 47224,
+          "byteLength": 719
+        },
+        "sourceReader": {
+          "taskId": "/test/source-primary",
+          "reviewedAt": "2026-10-01T10:20:00Z",
+          "receiptSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "sourceReviewer": {
+          "taskId": "/test/source-independent",
+          "reviewedAt": "2026-10-01T10:21:00Z",
+          "receiptSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "originalReviews": {
+          "primary": {
+            "taskId": "/test/original-primary",
+            "reviewedAt": "2026-09-30T12:00:00Z",
+            "receiptSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "independent": {
+            "taskId": "/test/original-independent",
+            "reviewedAt": "2026-09-30T13:00:00Z",
+            "receiptSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "packetSha256": "5be8a2c25cde6171dbceda97e960dc1615835e037f85937b1579987cf82164ae"
+        },
+        "target": {
+          "dataset": "co_sos",
+          "recordId": "20061185938",
+          "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20061185938",
+          "rowSha256": "59124e9fa3f06db2dfbe815fb14b6c1bfb1565c15b05a3452296ef9cca1878ba",
+          "evidenceSha256": "59124e9fa3f06db2dfbe815fb14b6c1bfb1565c15b05a3452296ef9cca1878ba",
+          "identitySha256": "019bfdaa0b2c428361a7c4c0ada6ea481448f79eb8ba4787a3a047c8b8f47bc9",
+          "sourceRowSha256": "b3683c4af4a6e6b1923f340a16688f686a1d2967d3ec6a178ddf0b2bd9b81f81",
+          "factsSha256": "d2fe571b9d7b834d92e541287e8946dc1081a6ff1c8e4d6040812544e4f3b282",
+          "sourceAsOf": "2026-09-29",
+          "observedAt": "2026-09-29T23:32:56.892161Z"
+        },
+        "anchor": {
+          "mode": "address_role",
+          "role": "registered_agent_mailing",
+          "sourceId": "587b6b7b-0c66-4de5-a0f7-8574b4ef66f4"
+        }
+      }
+    },
+    {
+      "label": "Windhaven International, Inc. carrier_mailing",
+      "company": {
+        "id": "6f795e7e-bc38-419b-8b17-1a848dbac3e8",
+        "netsuite_internal_id": "1861963",
+        "name": "Windhaven International, Inc.",
+        "domain": "windhaven.net",
+        "website_raw": "http://www.windhaven.net"
+      },
+      "context": {
+        "aliases": [],
+        "addresses": [
+          {
+            "addressLine1": "1525 W Lake Shore Dr",
+            "city": "Woodstock",
+            "state": "IL",
+            "postalCode": "60098-6917",
+            "countryCode": "US",
+            "sourceKind": "netsuite_record",
+            "sourceId": "cdaad493-2525-4b8d-925d-162bf97f02bd",
+            "capturedAt": "2026-07-28T00:00:00+00:00"
+          }
+        ]
+      },
+      "finding": {
+        "companyId": "6f795e7e-bc38-419b-8b17-1a848dbac3e8",
+        "internalId": "1861963",
+        "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=1632717",
+        "profile": {
+          "version": 1,
+          "dataset": "fmcsa",
+          "recordId": "1632717",
+          "sourceAsOf": "2007-04-16",
+          "observedAt": "2026-09-29T23:16:15.211740+00:00",
+          "facts": [
+            {
+              "field": "usdot_number",
+              "value": "1632717"
+            },
+            {
+              "field": "power_units",
+              "value": 0
+            },
+            {
+              "field": "drivers",
+              "value": 0
+            },
+            {
+              "field": "operating_status",
+              "value": "I"
+            }
+          ],
+          "identity": {
+            "legalName": "WINDHAVEN INTERNATIONAL",
+            "addressLine1": "1525 W LAKE SHORE",
+            "city": "WOODSTOCK",
+            "state": "IL",
+            "postalCode": "60098",
+            "countryCode": "US"
+          },
+          "provenance": {
+            "rowSha256": "984bcc29149dcd6c550ef0d5e9af8950dd810286786735f9a68c2bbdcfa8890b",
+            "quote": "{\"legalName\":\"WINDHAVEN INTERNATIONAL\",\"addressLine1\":\"1525 W LAKE SHORE\",\"city\":\"WOODSTOCK\",\"state\":\"IL\",\"postalCode\":\"60098\",\"usdot_number\":\"1632717\",\"power_units\":0,\"drivers\":0,\"operating_status\":\"I\",\"countryCode\":\"US\"}\nOriginal public source row: {\"dot_number\":\"1632717\",\"legal_name\":\"WINDHAVEN INTERNATIONAL\",\"mcs150_date\":\"20070416\",\"phy_city\":\"WOODSTOCK\",\"phy_country\":\"US\",\"phy_state\":\"IL\",\"phy_street\":\"1525 W LAKE SHORE\",\"phy_zip\":\"60098\",\"power_units\":\"0\",\"status_code\":\"I\",\"total_drivers\":\"0\"}",
+            "sourceRow": {
+              "legalName": "WINDHAVEN INTERNATIONAL",
+              "addressLine1": "1525 W LAKE SHORE",
+              "city": "WOODSTOCK",
+              "state": "IL",
+              "postalCode": "60098",
+              "usdot_number": "1632717",
+              "power_units": 0,
+              "drivers": 0,
+              "operating_status": "I",
+              "countryCode": "US"
+            },
+            "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\fmcsa-candidates-07025.json"
+          }
+        },
+        "evidence": "{\"legalName\":\"WINDHAVEN INTERNATIONAL\",\"addressLine1\":\"1525 W LAKE SHORE\",\"city\":\"WOODSTOCK\",\"state\":\"IL\",\"postalCode\":\"60098\",\"usdot_number\":\"1632717\",\"power_units\":0,\"drivers\":0,\"operating_status\":\"I\",\"countryCode\":\"US\"}\nOriginal public source row: {\"dot_number\":\"1632717\",\"legal_name\":\"WINDHAVEN INTERNATIONAL\",\"mcs150_date\":\"20070416\",\"phy_city\":\"WOODSTOCK\",\"phy_country\":\"US\",\"phy_state\":\"IL\",\"phy_street\":\"1525 W LAKE SHORE\",\"phy_zip\":\"60098\",\"power_units\":\"0\",\"status_code\":\"I\",\"total_drivers\":\"0\"}",
+        "detail": "TEST ONLY: retained original source with independently reviewed official API identity role. No production approval."
+      },
+      "entry": {
+        "id": "test-1861963",
+        "companyId": "6f795e7e-bc38-419b-8b17-1a848dbac3e8",
+        "internalId": "1861963",
+        "canonicalDomain": "windhaven.net",
+        "canonicalIdentitySha256": "CALCULATED-IN-TEST",
+        "sourceKind": "fmcsa_census",
+        "source": {
+          "requestedUrl": "https://data.transportation.gov/resource/az4n-8mr2.json?%24select=dot_number,legal_name,dba_name,phy_street,phy_city,phy_state,phy_zip,phy_country,carrier_mailing_street,carrier_mailing_city,carrier_mailing_state,carrier_mailing_zip,carrier_mailing_country,carrier_mailing_und_date,phone,email_address,mcs150_date,status_code,carrier_operation&%24where=dot_number+in+%2812136,20180,46293,50164,59119,62119,99419,123022,141883,152138,164297,164773,167669,213372,248121,251230,257384,279741,297703,300027,303958,306413,307918,320124,323447,326696,330477,344201,374762,396967,403387,419698,427313,439705,460885,464138,474853,499219,504844,524555,534464,541134,575868,577015,620142,675110,675824,706523,718484,732271,738785,811491,827403,836858,872786,892149,899531,943293,947049,972316,973952,1014057,1016210,1033158,1049738,1054638,1055521,1056549,1076748,1081026,1083112,1088211,1106469,1112672,1113774,1162540,1195003,1204181,1228075,1239227,1256598,1275782,1281430,1300717,1304691,1342283,1348794,1402943,1422919,1435950,1443369,1496870,1538739,1540176,1545442,1564586,1566371,1603641,1632717,1641171,1651601,1653520,1661584,1673841,1675317,1675451,1714271,1723998,1751187,1775733,1796052,1796924,1803968,1852937,1863598,1885040,1895953,1906440,1910783,1921776,1966973,1974294,2046742,2050969,2060969,2073265,2075346,2087259,2113661,2128819,2146441,2148763,2177596,2181250,2214299,2214963,2222274,2223627,2223848,2225836,2227865,2228900,2230611,2232997,2233622,2233659,2234772,2236387,2237555,2239243,2240534,2240989,2244461,2245461,2246274,2247084,2247541,2253045,2261817,2287259,2288433,2295799,2301080,2312848,2329757,2368415,2375527,2379417,2381883,2386734,2396591,2404984,2408792,2416838,2446333,2459480,2475449,2478913,2488844,2491405,2493285,2494597,2495816,2509739,2512269,2522117,2531056,2538269,2545675,2546287,2549501,2562431,2567178,2573039,2573977,2584758,2587788,2590226,2599065,2604063,2616206,2636759,2636953,2641776,2646699,2672444,2688610,2716992,2739760,2745384,2747485,2766106,2774889,2800902,2804153,2805961,2808722,2811681,2833135,2846307,2846400,2847174,2864408,2865622,2875805,2876662,2890110,2890347,2919698,2927565,2934622,2937668,2955185,2962624,2967754,2972446,2975113,2976172,2976220,2984220,2988238,3011883,3031081,3031677,3040851,3044296,3046402,3059814,3064565,3068362,3078234,3082143,3088244,3097552,3113799,3121642,3126762,3130748,3137209,3160112,3166578,3167866,3172255,3173685,3180090,3185790,3190111,3210349,3211614,3212876,3215363,3226027,3233105,3235217,3235513,3239737,3246804,3251194,3286721,3296230,3296995,3300933,3302922,3311421,3316718,3348916,3358287,3359853,3365916,3367785,3370963,3377184,3382960,3383507,3405044,3412818,3416762,3418982,3425171,3437407,3438413,3439696,3475691,3475948,3477060,3478763,3481111,3492285,3495366,3515224,3528434,3535349,3542999,3566469,3582185,3586387,3588020,3594276,3600418,3623597,3633237,3633804,3673646,3690953,3691877,3712866,3714680,3723369,3723992,3724096,3737598,3737600,3748710,3777640,3780179,3784193,3793412,3800734,3851383,3864201,3877854,3891526,3897170,3908202,3961202,3962003,3962818,3981811,3995333,4009268,4030341,4031835,4058103,4118923,4145102,4150297,4154837,4157784,4162194,4166466,4168718,4171076,4176145,4211565,4217917,4221989,4225643,4251352,4278300,4278331,4292013,4293248,4301342,4321122,4323791,4331888,4341466,4348083,4348659,4357921,4371750,4374907,4375426,4392989,4397021,4401906,4410583,4418174,4423729,4433015,4434400,4435442,4458383,4489140,4511173,4540234,4544704,4551899,4571246,5411597,5601905,5894353,5966046,8683717%29&%24order=dot_number&%24limit=1000",
+          "finalUrl": "https://data.transportation.gov/resource/az4n-8mr2.json?%24select=dot_number,legal_name,dba_name,phy_street,phy_city,phy_state,phy_zip,phy_country,carrier_mailing_street,carrier_mailing_city,carrier_mailing_state,carrier_mailing_zip,carrier_mailing_country,carrier_mailing_und_date,phone,email_address,mcs150_date,status_code,carrier_operation&%24where=dot_number+in+%2812136,20180,46293,50164,59119,62119,99419,123022,141883,152138,164297,164773,167669,213372,248121,251230,257384,279741,297703,300027,303958,306413,307918,320124,323447,326696,330477,344201,374762,396967,403387,419698,427313,439705,460885,464138,474853,499219,504844,524555,534464,541134,575868,577015,620142,675110,675824,706523,718484,732271,738785,811491,827403,836858,872786,892149,899531,943293,947049,972316,973952,1014057,1016210,1033158,1049738,1054638,1055521,1056549,1076748,1081026,1083112,1088211,1106469,1112672,1113774,1162540,1195003,1204181,1228075,1239227,1256598,1275782,1281430,1300717,1304691,1342283,1348794,1402943,1422919,1435950,1443369,1496870,1538739,1540176,1545442,1564586,1566371,1603641,1632717,1641171,1651601,1653520,1661584,1673841,1675317,1675451,1714271,1723998,1751187,1775733,1796052,1796924,1803968,1852937,1863598,1885040,1895953,1906440,1910783,1921776,1966973,1974294,2046742,2050969,2060969,2073265,2075346,2087259,2113661,2128819,2146441,2148763,2177596,2181250,2214299,2214963,2222274,2223627,2223848,2225836,2227865,2228900,2230611,2232997,2233622,2233659,2234772,2236387,2237555,2239243,2240534,2240989,2244461,2245461,2246274,2247084,2247541,2253045,2261817,2287259,2288433,2295799,2301080,2312848,2329757,2368415,2375527,2379417,2381883,2386734,2396591,2404984,2408792,2416838,2446333,2459480,2475449,2478913,2488844,2491405,2493285,2494597,2495816,2509739,2512269,2522117,2531056,2538269,2545675,2546287,2549501,2562431,2567178,2573039,2573977,2584758,2587788,2590226,2599065,2604063,2616206,2636759,2636953,2641776,2646699,2672444,2688610,2716992,2739760,2745384,2747485,2766106,2774889,2800902,2804153,2805961,2808722,2811681,2833135,2846307,2846400,2847174,2864408,2865622,2875805,2876662,2890110,2890347,2919698,2927565,2934622,2937668,2955185,2962624,2967754,2972446,2975113,2976172,2976220,2984220,2988238,3011883,3031081,3031677,3040851,3044296,3046402,3059814,3064565,3068362,3078234,3082143,3088244,3097552,3113799,3121642,3126762,3130748,3137209,3160112,3166578,3167866,3172255,3173685,3180090,3185790,3190111,3210349,3211614,3212876,3215363,3226027,3233105,3235217,3235513,3239737,3246804,3251194,3286721,3296230,3296995,3300933,3302922,3311421,3316718,3348916,3358287,3359853,3365916,3367785,3370963,3377184,3382960,3383507,3405044,3412818,3416762,3418982,3425171,3437407,3438413,3439696,3475691,3475948,3477060,3478763,3481111,3492285,3495366,3515224,3528434,3535349,3542999,3566469,3582185,3586387,3588020,3594276,3600418,3623597,3633237,3633804,3673646,3690953,3691877,3712866,3714680,3723369,3723992,3724096,3737598,3737600,3748710,3777640,3780179,3784193,3793412,3800734,3851383,3864201,3877854,3891526,3897170,3908202,3961202,3962003,3962818,3981811,3995333,4009268,4030341,4031835,4058103,4118923,4145102,4150297,4154837,4157784,4162194,4166466,4168718,4171076,4176145,4211565,4217917,4221989,4225643,4251352,4278300,4278331,4292013,4293248,4301342,4321122,4323791,4331888,4341466,4348083,4348659,4357921,4371750,4374907,4375426,4392989,4397021,4401906,4410583,4418174,4423729,4433015,4434400,4435442,4458383,4489140,4511173,4540234,4544704,4551899,4571246,5411597,5601905,5894353,5966046,8683717%29&%24order=dot_number&%24limit=1000",
+          "status": 200,
+          "contentType": "application/json;charset=utf-8",
+          "observedAt": "2026-10-01T09:56:45.994Z",
+          "responseSha256": "decc66736d1dab2d43e7f539868c0903fd2f0ab7c20c424589b9d2a42e1159c5",
+          "receiptSha256": "ddf5006429fc7b4a00c0eae394475cec3c5fdd844b9ecb5c1d2b3e9849f9d0bb",
+          "rawRow": "{\"dot_number\":\"1632717\",\"legal_name\":\"WINDHAVEN INTERNATIONAL\",\"phy_street\":\"1525 W LAKE SHORE\",\"phy_city\":\"WOODSTOCK\",\"phy_state\":\"IL\",\"phy_zip\":\"60098\",\"phy_country\":\"US\",\"carrier_mailing_street\":\"1525 W LAKE SHORE DR\",\"carrier_mailing_city\":\"WOODSTOCK\",\"carrier_mailing_state\":\"IL\",\"carrier_mailing_zip\":\"60098\",\"carrier_mailing_country\":\"US\",\"phone\":\"8152060868\",\"email_address\":\"JRICHARDSON@WINDHAVEN.NET\",\"mcs150_date\":\"20070416\",\"status_code\":\"I\"}",
+          "rawRowSha256": "e0fc625d594ba50cf8684e0c78b1970557dc8d0a37d65065849b096c025dd209",
+          "arrayIndex": 98,
+          "byteOffset": 47011,
+          "byteLength": 454
+        },
+        "sourceReader": {
+          "taskId": "/test/source-primary",
+          "reviewedAt": "2026-10-01T10:20:00Z",
+          "receiptSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "sourceReviewer": {
+          "taskId": "/test/source-independent",
+          "reviewedAt": "2026-10-01T10:21:00Z",
+          "receiptSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "originalReviews": {
+          "primary": {
+            "taskId": "/test/original-primary",
+            "reviewedAt": "2026-09-30T12:00:00Z",
+            "receiptSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "independent": {
+            "taskId": "/test/original-independent",
+            "reviewedAt": "2026-09-30T13:00:00Z",
+            "receiptSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "packetSha256": "b5a342548544f02568718e21b26b7425e7b4e2b244743c164d17bace85cdcd20"
+        },
+        "target": {
+          "dataset": "fmcsa",
+          "recordId": "1632717",
+          "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=1632717",
+          "rowSha256": "984bcc29149dcd6c550ef0d5e9af8950dd810286786735f9a68c2bbdcfa8890b",
+          "evidenceSha256": "73b05614371599b7217f104a1f7c945bf710723193b74a4c26a2f84b85c2b14f",
+          "identitySha256": "81c1b66a06cc8e39a6624afcec2391c5d12c10f424c0579a6ed2e0848f4b48cc",
+          "sourceRowSha256": "625fcef7de122a3e6ef8e579bbc85d4c6bff4f222feaee15107e2bf3c1f8abe8",
+          "factsSha256": "5116d3769fb7f1221674867f4caaa9187aabc210e6e235de33598509bf885050",
+          "sourceAsOf": "2007-04-16",
+          "observedAt": "2026-09-29T23:16:15.211740+00:00"
+        },
+        "anchor": {
+          "mode": "address_role",
+          "role": "carrier_mailing",
+          "sourceId": "cdaad493-2525-4b8d-925d-162bf97f02bd"
+        }
+      }
+    },
+    {
+      "label": "G & G Enterprises company_email_domain",
+      "company": {
+        "id": "a30002a7-34ea-4c85-93db-84b75d7a470d",
+        "netsuite_internal_id": "441502",
+        "name": "G & G Enterprises",
+        "domain": "ggenterprises.biz",
+        "website_raw": "http://www.ggenterprises.biz"
+      },
+      "context": {
+        "aliases": [],
+        "addresses": [
+          {
+            "addressLine1": "3431 W Thunderbird Rd",
+            "city": "Phoenix",
+            "state": "AZ",
+            "postalCode": "85053",
+            "countryCode": "US",
+            "sourceKind": "netsuite_record",
+            "sourceId": "5538eceb-1159-492d-a5f3-93d72eaf270e",
+            "capturedAt": "2026-09-15T00:00:00+00:00"
+          }
+        ]
+      },
+      "finding": {
+        "companyId": "a30002a7-34ea-4c85-93db-84b75d7a470d",
+        "internalId": "441502",
+        "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=872786",
+        "profile": {
+          "version": 1,
+          "dataset": "fmcsa",
+          "recordId": "872786",
+          "sourceAsOf": "2022-02-01",
+          "observedAt": "2026-09-29T23:14:46.755702+00:00",
+          "facts": [
+            {
+              "field": "usdot_number",
+              "value": "872786"
+            },
+            {
+              "field": "power_units",
+              "value": 1
+            },
+            {
+              "field": "drivers",
+              "value": 1
+            },
+            {
+              "field": "operating_status",
+              "value": "I"
+            },
+            {
+              "field": "carrier_operation",
+              "value": "A"
+            }
+          ],
+          "identity": {
+            "legalName": "GLENN T HOTTMANN",
+            "addressLine1": "4015 W THUNDERBIRD RD",
+            "city": "PHOENIX",
+            "state": "AZ",
+            "postalCode": "85053",
+            "countryCode": "US"
+          },
+          "provenance": {
+            "rowSha256": "d8220865ad8aa0a273e87a4d8383c4102f05348344c8403c1aafe04a73f68740",
+            "quote": "{\"legalName\":\"GLENN T HOTTMANN\",\"addressLine1\":\"4015 W THUNDERBIRD RD\",\"city\":\"PHOENIX\",\"state\":\"AZ\",\"postalCode\":\"85053\",\"usdot_number\":\"872786\",\"power_units\":1,\"drivers\":1,\"operating_status\":\"I\",\"carrier_operation\":\"A\",\"countryCode\":\"US\"}\nOriginal public source row: {\"carrier_operation\":\"A\",\"dba_name\":\"G & G ENTERPRISES\",\"docket1\":\"748684\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"872786\",\"legal_name\":\"GLENN T HOTTMANN\",\"mcs150_date\":\"20220201\",\"mcs150_mileage\":\"1\",\"mcs150_mileage_year\":\"2021\",\"phy_city\":\"PHOENIX\",\"phy_country\":\"US\",\"phy_state\":\"AZ\",\"phy_street\":\"4015 W THUNDERBIRD RD\",\"phy_zip\":\"85053\",\"power_units\":\"1\",\"status_code\":\"I\",\"total_drivers\":\"1\"}",
+            "sourceRow": {
+              "legalName": "GLENN T HOTTMANN",
+              "addressLine1": "4015 W THUNDERBIRD RD",
+              "city": "PHOENIX",
+              "state": "AZ",
+              "postalCode": "85053",
+              "usdot_number": "872786",
+              "power_units": 1,
+              "drivers": 1,
+              "operating_status": "I",
+              "carrier_operation": "A",
+              "countryCode": "US"
+            },
+            "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\fmcsa-candidates-02575.json"
+          }
+        },
+        "evidence": "{\"legalName\":\"GLENN T HOTTMANN\",\"addressLine1\":\"4015 W THUNDERBIRD RD\",\"city\":\"PHOENIX\",\"state\":\"AZ\",\"postalCode\":\"85053\",\"usdot_number\":\"872786\",\"power_units\":1,\"drivers\":1,\"operating_status\":\"I\",\"carrier_operation\":\"A\",\"countryCode\":\"US\"}\nOriginal public source row: {\"carrier_operation\":\"A\",\"dba_name\":\"G & G ENTERPRISES\",\"docket1\":\"748684\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"872786\",\"legal_name\":\"GLENN T HOTTMANN\",\"mcs150_date\":\"20220201\",\"mcs150_mileage\":\"1\",\"mcs150_mileage_year\":\"2021\",\"phy_city\":\"PHOENIX\",\"phy_country\":\"US\",\"phy_state\":\"AZ\",\"phy_street\":\"4015 W THUNDERBIRD RD\",\"phy_zip\":\"85053\",\"power_units\":\"1\",\"status_code\":\"I\",\"total_drivers\":\"1\"}",
+        "detail": "TEST ONLY: retained original source with independently reviewed official API identity role. No production approval."
+      },
+      "entry": {
+        "id": "test-441502",
+        "companyId": "a30002a7-34ea-4c85-93db-84b75d7a470d",
+        "internalId": "441502",
+        "canonicalDomain": "ggenterprises.biz",
+        "canonicalIdentitySha256": "CALCULATED-IN-TEST",
+        "sourceKind": "fmcsa_census",
+        "source": {
+          "requestedUrl": "https://data.transportation.gov/resource/az4n-8mr2.json?%24select=dot_number,legal_name,dba_name,phy_street,phy_city,phy_state,phy_zip,phy_country,carrier_mailing_street,carrier_mailing_city,carrier_mailing_state,carrier_mailing_zip,carrier_mailing_country,carrier_mailing_und_date,phone,email_address,mcs150_date,status_code,carrier_operation&%24where=dot_number+in+%2812136,20180,46293,50164,59119,62119,99419,123022,141883,152138,164297,164773,167669,213372,248121,251230,257384,279741,297703,300027,303958,306413,307918,320124,323447,326696,330477,344201,374762,396967,403387,419698,427313,439705,460885,464138,474853,499219,504844,524555,534464,541134,575868,577015,620142,675110,675824,706523,718484,732271,738785,811491,827403,836858,872786,892149,899531,943293,947049,972316,973952,1014057,1016210,1033158,1049738,1054638,1055521,1056549,1076748,1081026,1083112,1088211,1106469,1112672,1113774,1162540,1195003,1204181,1228075,1239227,1256598,1275782,1281430,1300717,1304691,1342283,1348794,1402943,1422919,1435950,1443369,1496870,1538739,1540176,1545442,1564586,1566371,1603641,1632717,1641171,1651601,1653520,1661584,1673841,1675317,1675451,1714271,1723998,1751187,1775733,1796052,1796924,1803968,1852937,1863598,1885040,1895953,1906440,1910783,1921776,1966973,1974294,2046742,2050969,2060969,2073265,2075346,2087259,2113661,2128819,2146441,2148763,2177596,2181250,2214299,2214963,2222274,2223627,2223848,2225836,2227865,2228900,2230611,2232997,2233622,2233659,2234772,2236387,2237555,2239243,2240534,2240989,2244461,2245461,2246274,2247084,2247541,2253045,2261817,2287259,2288433,2295799,2301080,2312848,2329757,2368415,2375527,2379417,2381883,2386734,2396591,2404984,2408792,2416838,2446333,2459480,2475449,2478913,2488844,2491405,2493285,2494597,2495816,2509739,2512269,2522117,2531056,2538269,2545675,2546287,2549501,2562431,2567178,2573039,2573977,2584758,2587788,2590226,2599065,2604063,2616206,2636759,2636953,2641776,2646699,2672444,2688610,2716992,2739760,2745384,2747485,2766106,2774889,2800902,2804153,2805961,2808722,2811681,2833135,2846307,2846400,2847174,2864408,2865622,2875805,2876662,2890110,2890347,2919698,2927565,2934622,2937668,2955185,2962624,2967754,2972446,2975113,2976172,2976220,2984220,2988238,3011883,3031081,3031677,3040851,3044296,3046402,3059814,3064565,3068362,3078234,3082143,3088244,3097552,3113799,3121642,3126762,3130748,3137209,3160112,3166578,3167866,3172255,3173685,3180090,3185790,3190111,3210349,3211614,3212876,3215363,3226027,3233105,3235217,3235513,3239737,3246804,3251194,3286721,3296230,3296995,3300933,3302922,3311421,3316718,3348916,3358287,3359853,3365916,3367785,3370963,3377184,3382960,3383507,3405044,3412818,3416762,3418982,3425171,3437407,3438413,3439696,3475691,3475948,3477060,3478763,3481111,3492285,3495366,3515224,3528434,3535349,3542999,3566469,3582185,3586387,3588020,3594276,3600418,3623597,3633237,3633804,3673646,3690953,3691877,3712866,3714680,3723369,3723992,3724096,3737598,3737600,3748710,3777640,3780179,3784193,3793412,3800734,3851383,3864201,3877854,3891526,3897170,3908202,3961202,3962003,3962818,3981811,3995333,4009268,4030341,4031835,4058103,4118923,4145102,4150297,4154837,4157784,4162194,4166466,4168718,4171076,4176145,4211565,4217917,4221989,4225643,4251352,4278300,4278331,4292013,4293248,4301342,4321122,4323791,4331888,4341466,4348083,4348659,4357921,4371750,4374907,4375426,4392989,4397021,4401906,4410583,4418174,4423729,4433015,4434400,4435442,4458383,4489140,4511173,4540234,4544704,4551899,4571246,5411597,5601905,5894353,5966046,8683717%29&%24order=dot_number&%24limit=1000",
+          "finalUrl": "https://data.transportation.gov/resource/az4n-8mr2.json?%24select=dot_number,legal_name,dba_name,phy_street,phy_city,phy_state,phy_zip,phy_country,carrier_mailing_street,carrier_mailing_city,carrier_mailing_state,carrier_mailing_zip,carrier_mailing_country,carrier_mailing_und_date,phone,email_address,mcs150_date,status_code,carrier_operation&%24where=dot_number+in+%2812136,20180,46293,50164,59119,62119,99419,123022,141883,152138,164297,164773,167669,213372,248121,251230,257384,279741,297703,300027,303958,306413,307918,320124,323447,326696,330477,344201,374762,396967,403387,419698,427313,439705,460885,464138,474853,499219,504844,524555,534464,541134,575868,577015,620142,675110,675824,706523,718484,732271,738785,811491,827403,836858,872786,892149,899531,943293,947049,972316,973952,1014057,1016210,1033158,1049738,1054638,1055521,1056549,1076748,1081026,1083112,1088211,1106469,1112672,1113774,1162540,1195003,1204181,1228075,1239227,1256598,1275782,1281430,1300717,1304691,1342283,1348794,1402943,1422919,1435950,1443369,1496870,1538739,1540176,1545442,1564586,1566371,1603641,1632717,1641171,1651601,1653520,1661584,1673841,1675317,1675451,1714271,1723998,1751187,1775733,1796052,1796924,1803968,1852937,1863598,1885040,1895953,1906440,1910783,1921776,1966973,1974294,2046742,2050969,2060969,2073265,2075346,2087259,2113661,2128819,2146441,2148763,2177596,2181250,2214299,2214963,2222274,2223627,2223848,2225836,2227865,2228900,2230611,2232997,2233622,2233659,2234772,2236387,2237555,2239243,2240534,2240989,2244461,2245461,2246274,2247084,2247541,2253045,2261817,2287259,2288433,2295799,2301080,2312848,2329757,2368415,2375527,2379417,2381883,2386734,2396591,2404984,2408792,2416838,2446333,2459480,2475449,2478913,2488844,2491405,2493285,2494597,2495816,2509739,2512269,2522117,2531056,2538269,2545675,2546287,2549501,2562431,2567178,2573039,2573977,2584758,2587788,2590226,2599065,2604063,2616206,2636759,2636953,2641776,2646699,2672444,2688610,2716992,2739760,2745384,2747485,2766106,2774889,2800902,2804153,2805961,2808722,2811681,2833135,2846307,2846400,2847174,2864408,2865622,2875805,2876662,2890110,2890347,2919698,2927565,2934622,2937668,2955185,2962624,2967754,2972446,2975113,2976172,2976220,2984220,2988238,3011883,3031081,3031677,3040851,3044296,3046402,3059814,3064565,3068362,3078234,3082143,3088244,3097552,3113799,3121642,3126762,3130748,3137209,3160112,3166578,3167866,3172255,3173685,3180090,3185790,3190111,3210349,3211614,3212876,3215363,3226027,3233105,3235217,3235513,3239737,3246804,3251194,3286721,3296230,3296995,3300933,3302922,3311421,3316718,3348916,3358287,3359853,3365916,3367785,3370963,3377184,3382960,3383507,3405044,3412818,3416762,3418982,3425171,3437407,3438413,3439696,3475691,3475948,3477060,3478763,3481111,3492285,3495366,3515224,3528434,3535349,3542999,3566469,3582185,3586387,3588020,3594276,3600418,3623597,3633237,3633804,3673646,3690953,3691877,3712866,3714680,3723369,3723992,3724096,3737598,3737600,3748710,3777640,3780179,3784193,3793412,3800734,3851383,3864201,3877854,3891526,3897170,3908202,3961202,3962003,3962818,3981811,3995333,4009268,4030341,4031835,4058103,4118923,4145102,4150297,4154837,4157784,4162194,4166466,4168718,4171076,4176145,4211565,4217917,4221989,4225643,4251352,4278300,4278331,4292013,4293248,4301342,4321122,4323791,4331888,4341466,4348083,4348659,4357921,4371750,4374907,4375426,4392989,4397021,4401906,4410583,4418174,4423729,4433015,4434400,4435442,4458383,4489140,4511173,4540234,4544704,4551899,4571246,5411597,5601905,5894353,5966046,8683717%29&%24order=dot_number&%24limit=1000",
+          "status": 200,
+          "contentType": "application/json;charset=utf-8",
+          "observedAt": "2026-10-01T09:56:45.994Z",
+          "responseSha256": "decc66736d1dab2d43e7f539868c0903fd2f0ab7c20c424589b9d2a42e1159c5",
+          "receiptSha256": "ddf5006429fc7b4a00c0eae394475cec3c5fdd844b9ecb5c1d2b3e9849f9d0bb",
+          "rawRow": "{\"dot_number\":\"872786\",\"legal_name\":\"GLENN T HOTTMANN\",\"dba_name\":\"G & G ENTERPRISES\",\"phy_street\":\"4015 W THUNDERBIRD RD\",\"phy_city\":\"PHOENIX\",\"phy_state\":\"AZ\",\"phy_zip\":\"85053\",\"phy_country\":\"US\",\"carrier_mailing_street\":\"5350 W BELL RD STEC122 PMB 295\",\"carrier_mailing_city\":\"GLENDALE\",\"carrier_mailing_state\":\"AZ\",\"carrier_mailing_zip\":\"85308\",\"carrier_mailing_country\":\"US\",\"phone\":\"6029183761\",\"email_address\":\"connie@ggenterprises.biz\",\"mcs150_date\":\"20220201\",\"status_code\":\"I\",\"carrier_operation\":\"A\"}",
+          "rawRowSha256": "01211fdf1ff6834210ec4ffed9bb202e1fa243830f00669d8e9cdaaae29673ff",
+          "arrayIndex": 54,
+          "byteOffset": 25434,
+          "byteLength": 511
+        },
+        "sourceReader": {
+          "taskId": "/test/source-primary",
+          "reviewedAt": "2026-10-01T10:20:00Z",
+          "receiptSha256": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "sourceReviewer": {
+          "taskId": "/test/source-independent",
+          "reviewedAt": "2026-10-01T10:21:00Z",
+          "receiptSha256": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "originalReviews": {
+          "primary": {
+            "taskId": "/test/original-primary",
+            "reviewedAt": "2026-09-30T12:00:00Z",
+            "receiptSha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          "independent": {
+            "taskId": "/test/original-independent",
+            "reviewedAt": "2026-09-30T13:00:00Z",
+            "receiptSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          "packetSha256": "4470b27362798391e3cae8cd2011d3288396598f243ca193c91de444b95fc88e"
+        },
+        "target": {
+          "dataset": "fmcsa",
+          "recordId": "872786",
+          "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=872786",
+          "rowSha256": "d8220865ad8aa0a273e87a4d8383c4102f05348344c8403c1aafe04a73f68740",
+          "evidenceSha256": "71af30a8c5bbffc15c7288f0ef61691a6c6065d931540420245ec1904d3bfa97",
+          "identitySha256": "5659cec9e43a94a82161b4d646a4c4496622beb612dce73459a768d892729f13",
+          "sourceRowSha256": "60503f321de00fb36a03dbc0ab6b61055f5bf7124faf4fcb42df17ccead59b4f",
+          "factsSha256": "d3dcfabd786cdea08de2a077c976ce3c7b5e5d76a933a9c0537b5898ebf51173",
+          "sourceAsOf": "2022-02-01",
+          "observedAt": "2026-09-29T23:14:46.755702+00:00"
+        },
+        "anchor": {
+          "mode": "company_email_domain"
+        }
+      }
+    }
+  ]
+}

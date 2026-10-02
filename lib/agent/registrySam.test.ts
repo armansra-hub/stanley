@@ -41,6 +41,38 @@ function proof(f: Fixture, overrides: Partial<Omit<RegistrySamCorroboration, "re
 const verify = (f: Fixture, p = proof(f)) => verifyRegistrySam(f.row, p, f.company, f.context, now);
 
 describe("retained SAM corroboration", () => {
+  it("preserves an explicitly blank CAGE when the UEI and complete reviewed identity match", () => {
+    const f = fixture(); f.fields[3] = "";
+    const before = JSON.stringify(f), p = proof(f);
+    const contentHash = registryContentHash(f.row.profile, f.row.sourceUrl, f.row.detail);
+    const result = verify(f, p);
+    expect(result.sam).toMatchObject({ uei: "AAAA1111BBBB", cage: "", rawRow: p.rawRow, rawRowSha256: p.rawRowSha256 });
+    expect(result.sourceIds).toEqual([`sam:AAAA1111BBBB:${p.rawRowSha256}`]);
+    expect(JSON.stringify(f)).toBe(before);
+    expect(registryContentHash(f.row.profile, f.row.sourceUrl, f.row.detail)).toBe(contentHash);
+  });
+  it.each([" ", "ABCD", "ABCDEF", "abcde", "N/A", "AB-CD"])("still rejects malformed nonblank CAGE %s", cage => {
+    const f = fixture(); f.fields[3] = cage;
+    expect(() => verify(f)).toThrow(/physical record/);
+  });
+  it.each(["", "SHORT", "AAAA1111BBB!", "aaaa1111bbbb"])("requires the existing UEI syntax with blank CAGE: %s", uei => {
+    const f = fixture(); f.fields[3] = ""; f.fields[0] = uei;
+    expect(() => verify(f)).toThrow(/physical record/);
+  });
+  it.each([
+    [5, "I"], [11, "Different Operator Inc"], [15, "124 Main Street"],
+    [16, ""], [17, "Dallas"], [18, "OK"], [19, "78702"], [20, "0124"],
+    [21, "CAN"], [26, "unrelated.test"],
+  ])("blank CAGE does not waive field %s identity/status gates", (index, value) => {
+    const f = fixture(); f.fields[3] = ""; f.fields[Number(index)] = String(value);
+    expect(() => verify(f)).toThrow();
+  });
+  it("binds the exact UEI even when CAGE is absent", () => {
+    const f = fixture(); f.fields[3] = "";
+    const p = proof(f); p.rawRow = p.rawRow.replace("AAAA1111BBBB", "CCCC2222DDDD");
+    p.rawRowSha256 = sha(p.rawRow);
+    expect(() => verify(f, p)).toThrow(/review/);
+  });
   it("binds exact own-domain, target operator and full physical address while preserving original observations", () => {
     const f = fixture(), before = JSON.stringify(f), p = proof(f), contentHash = registryContentHash(f.row.profile, f.row.sourceUrl, f.row.detail);
     const result = verify(f, p);
