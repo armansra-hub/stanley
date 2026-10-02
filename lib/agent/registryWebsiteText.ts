@@ -1,6 +1,6 @@
 import { htmlToVisibleText, htmlAttributes, decodeEntities } from "@/lib/sources/siteDiscovery";
 
-export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2" | "gravity_forms_honeypot_v3" | "everest_forms_honeypot_v1";
+export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2" | "gravity_forms_honeypot_v3" | "everest_forms_honeypot_v1" | "everest_forms_honeypot_v2";
 
 const attributes = /([\w:-]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/g;
 function exactAttributes(raw: string, allowed: string[]): Record<string, string> | null {
@@ -67,7 +67,9 @@ function withoutDeclaredTraps(html: string, extended = false, instagram = false)
 // Independent opt-in grammar for the retained Everest Forms empty trap. It
 // does not upgrade Gravity Forms modes or omit arbitrary Website/Message text.
 const everestField = new RegExp(`<div\\b${attrs}>\\s*<label\\b${attrs}>(Website|Message)<\\/label>\\s*<input\\b${attrs}\\/?>\\s*<\\/div>`, "g");
-function withoutEverestTrap(html: string): string {
+// v2 adds only the Comment label observed in a retained empty Everest trap.
+const everestFieldV2 = new RegExp(everestField.source.replace("Website|Message", "Website|Message|Comment"), "g");
+function withoutEverestTrap(html: string, comment = false): string {
   const source = html.replace(/<!--[^]*?-->/g, " ")
     .replace(/<(script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
   return source.replace(/(<form\b((?:[^"'<>]|"[^"]*"|'[^']*')*)>)([\s\S]*?)(<\/form\s*>)/gi, (form, open: string, raw: string, body: string, close: string) => {
@@ -82,7 +84,7 @@ function withoutEverestTrap(html: string): string {
       .flatMap(input => [...input[1].matchAll(attributes)]
         .filter(a => a[1].toLowerCase() === "name" && htmlAttributes(a[0]).name === "everest_forms[hp]"));
     if (trapNames.length !== 1) return form;
-    const candidates = [...body.matchAll(everestField)];
+    const candidates = [...body.matchAll(comment ? everestFieldV2 : everestField)];
     if (candidates.length !== 1) return form;
     const [whole, outer, label, _title, input] = candidates[0];
     const o = exactAttributes(outer, ["class"]), l = exactAttributes(label, ["for", "class"]),
@@ -103,7 +105,8 @@ function withoutEverestTrap(html: string): string {
  * The proof version is attestation-bound; raw HTML is retained independently. */
 export function registryWebsiteText(html: string, normalization?: RegistryWebsiteNormalization): string {
   if (normalization === undefined) return htmlToVisibleText(html);
-  if (normalization === "everest_forms_honeypot_v1") return htmlToVisibleText(withoutEverestTrap(html));
+  if (normalization === "everest_forms_honeypot_v1" || normalization === "everest_forms_honeypot_v2")
+    return htmlToVisibleText(withoutEverestTrap(html, normalization === "everest_forms_honeypot_v2"));
   if (normalization !== "gravity_forms_honeypot_v1" && normalization !== "gravity_forms_honeypot_v2" && normalization !== "gravity_forms_honeypot_v3")
     throw new Error("invalid registry website normalization");
   return htmlToVisibleText(withoutDeclaredTraps(html, normalization !== "gravity_forms_honeypot_v1", normalization === "gravity_forms_honeypot_v3"));

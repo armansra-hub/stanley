@@ -192,6 +192,35 @@ export function registryStreet(address: { addressLine1: string; addressLine2?: s
     .replace(/\bunit ([a-z0-9]+)(?: unit \1)+$/, "unit $1");
 }
 type RegistryStreetAddress = { addressLine1: string; addressLine2?: string; city?: string; state?: string; countryCode?: string };
+/** Opt-in comparison only; never rewrite retained addresses or legacy proofs. */
+export function sameRegistryTerminalFloor(left: RegistryStreetAddress, right: RegistryStreetAddress) {
+  if (left.countryCode !== "US" || right.countryCode !== "US"
+    || !normalized(left.city ?? "") || normalized(left.city ?? "") !== normalized(right.city ?? "")
+    || !/^[A-Z]{2}$/.test(left.state?.trim().toUpperCase() ?? "")
+    || left.state!.trim().toUpperCase() !== right.state?.trim().toUpperCase()) return false;
+  const floorAddress = (address: RegistryStreetAddress) => {
+    const line2 = address.addressLine2?.trim();
+    const terminal = !line2 && address.addressLine1.trim().match(/^(.+?)[,\s]+((?:fl\.?|floor)\s+\S+|\S+\s+(?:fl\.?|floor))$/i);
+    const base = line2 ? address.addressLine1 : terminal ? terminal[1] : null;
+    const descriptor = line2 || (terminal ? terminal[2] : "");
+    if (!base) return null;
+    const words = descriptor.toLowerCase().split(/\s+/).map(word => addressWords[word] ?? word).join(" ");
+    // USPS Publication 28 C2: FL means Floor. Require one complete numeric floor;
+    // suites, compound units, ranges, omitted floors and invalid ordinals fail.
+    const match = words.match(/^(?:(?:fl\.?|floor) ([1-9]\d*)(st|nd|rd|th)?|([1-9]\d*)(st|nd|rd|th)? (?:fl\.?|floor))$/);
+    if (!match) return null;
+    const digits = match[1] ?? match[3], suffix = match[2] ?? match[4], floor = Number(digits);
+    if (!Number.isSafeInteger(floor)) return null;
+    const expected = floor % 100 >= 11 && floor % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[floor % 10] ?? "th";
+    const street = registryStreet({ addressLine1: base });
+    if (suffix && suffix !== expected || !/^\d+[a-z]? .+/.test(street)
+      || /\b(?:unit|pmb|mailbox|building|bldg|floor|fl|room|rm|dept|department|lot)\b/.test(street)
+      || /\b(?:fl(?:oor)?|bldg|building|room|rm|dept|department|pmb|mailbox|lot)\d|\b\d+(?:st|nd|rd|th)?(?:fl|floor)/.test(street)) return null;
+    return { street, digits };
+  };
+  const a = floorAddress(left), b = floorAddress(right);
+  return Boolean(a && b && a.street === b.street && a.digits === b.digits);
+}
 function albertaRangeRoad(address: RegistryStreetAddress) {
   // Alberta's rural-address notation abbreviates Range Road as RGE RD.
   // Require explicit geography and retain every civic, road and unit token.
