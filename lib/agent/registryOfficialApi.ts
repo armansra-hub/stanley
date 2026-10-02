@@ -31,7 +31,16 @@ const iso = (v: unknown): v is string => typeof v === "string" && /T.+(?:Z|[+-]\
 const words = (v: string) => v.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const validTask = (v: unknown): v is string => typeof v === "string" && v.length <= 160 && /^\/?[a-zA-Z0-9][a-zA-Z0-9_./:-]*$/.test(v);
 function need(value: unknown, reason: string): asserts value { if (!value) throw new Error(`official API ${reason}`); }
-export const registryOfficialApiCanonicalHash = registrySamCanonicalHash;
+/** Match the JSON shape returned by canonical identity reads. Undefined optional
+ * address properties carry no supplied value; retain null, values, address order
+ * and every provenance field. Existing SAM/history hashing is unchanged. */
+export function registryOfficialApiCanonicalHash(company: Company, context: CompanyIdentityContext) {
+  return registrySamCanonicalHash(company, { ...context,
+    addresses: context.addresses.map(address => Object.fromEntries(
+      Object.entries(address).filter(([, value]) => value !== undefined),
+    ) as typeof address),
+  });
+}
 export function registryOfficialApiEvidenceHash(row: RegistryFinding, proof: Omit<RegistryOfficialApiCorroboration, "reader" | "reviewer">) {
   return sha(stableRegistryJson({ companyId: row.companyId, internalId: row.internalId,
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail), evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt, proof }));

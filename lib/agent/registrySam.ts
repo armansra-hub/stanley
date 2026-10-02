@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CompanyIdentityContext } from "@/lib/companyIdentity";
-import { registryContentHash, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
+import { registryContentHash, sameRegistryLegalName, sameRegistryStreet, sameRegistryTerminalFloor, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 
 // One already retained official public extract, not an arbitrary caller URL or
 // a mutable government-match flag. Supporting another extract needs review.
@@ -15,6 +15,7 @@ export type RegistrySamCorroboration = {
   schema: typeof SAM_SNAPSHOT.schema; archiveSha256: string; archiveMember: string;
   lineNumber: number; sourceAsOf: string; observedAt: string;
   rawRow: string; rawRowSha256: string; canonicalIdentitySha256: string;
+  addressComparison?: "explicit_terminal_floor_v1";
   reader: Attestation; reviewer: Attestation;
 };
 type Company = { id: string; netsuite_internal_id: string; name: string; domain?: string | null; website_raw?: string | null };
@@ -52,7 +53,8 @@ export function registrySamEvidenceHash(row: RegistryFinding, proof: Omit<Regist
  * boundary; no caller verified flag or source URL establishes admission. */
 export function parseRegistrySamCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistrySamCorroboration {
   const keys = ["schema", "archiveSha256", "archiveMember", "lineNumber", "sourceAsOf", "observedAt", "rawRow", "rawRowSha256", "canonicalIdentitySha256", "reader", "reviewer"];
-  if (!object(raw) || Object.keys(raw).some(k => !keys.includes(k)) || keys.some(k => !(k in raw))
+  if (!object(raw) || Object.keys(raw).some(k => !keys.includes(k) && k !== "addressComparison") || keys.some(k => !(k in raw))
+    || "addressComparison" in raw && raw.addressComparison !== "explicit_terminal_floor_v1"
     || raw.schema !== SAM_SNAPSHOT.schema || raw.archiveSha256 !== SAM_SNAPSHOT.archiveSha256
     || raw.archiveMember !== SAM_SNAPSHOT.archiveMember || raw.sourceAsOf !== SAM_SNAPSHOT.sourceAsOf
     || !Number.isInteger(raw.lineNumber) || Number(raw.lineNumber) < 2 || Number(raw.lineNumber) > SAM_SNAPSHOT.records + 1
@@ -104,10 +106,13 @@ export function verifyRegistrySam(row: RegistryFinding, raw: unknown, company: C
   const address = sam.physicalAddress, targetZip = target.postalCode.replace(/-/g, ""), samZip = address.postalCode.replace(/-/g, "");
   if ((target.countryCode ?? "US") !== "US" || target.state !== address.state || !target.city || words(target.city) !== words(address.city)
     || targetZip.slice(0, 5) !== samZip.slice(0, 5) || targetZip.length === 9 && samZip.length === 9 && targetZip !== samZip
-    || !sameRegistryStreet({ ...target, countryCode: "US" }, address)) throw new Error("SAM full physical address does not match registry address");
+    || !(sameRegistryStreet({ ...target, countryCode: "US" }, address)
+      || proof.addressComparison === "explicit_terminal_floor_v1" && sameRegistryTerminalFloor({ ...target, countryCode: "US" }, address)))
+    throw new Error("SAM full physical address does not match registry address");
   const { reader, reviewer, ...evidence } = proof;
   return { method: "reviewed_sam_domain_legal_address", verifiedAt: now.toISOString(), sourceIds: [`sam:${sam.uei}:${proof.rawRowSha256}`],
     sam: { ...evidence, ...sam, sourceUrl: SAM_SNAPSHOT.sourceUrl, reader, reviewer,
-      evidenceSha256: registrySamEvidenceHash(row, evidence), comparison: "exact_domain_legal_physical_address",
+      evidenceSha256: registrySamEvidenceHash(row, evidence), comparison: proof.addressComparison === "explicit_terminal_floor_v1"
+        ? "exact_domain_legal_physical_address_explicit_terminal_floor_v1" : "exact_domain_legal_physical_address",
       canonicalAddresses: context.addresses, scope: "SAM registration and address as of the extract date; no current registration or company-address mutation." } };
 }
