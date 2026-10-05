@@ -548,9 +548,15 @@ function publishedAnchorIdentityEqual(left: RegistryProfile["identity"], right: 
   const literal = (value: string) => words(value).replace(/([a-z])[.,](?=\s|$)/g, "$1");
   const fullStreet = (value: RegistryProfile["identity"]) => {
     let line1 = words(value.addressLine1);
+    const inlineUnit = /(?:\b(?:ste|suite|unit|apt|apartment|floor|fl|rm|room|bldg|building)\b|#)/.test(line1);
+    // Only an explicit terminal US ROAD abbreviation after a numbered street.
+    // Keep the street type, whole civic/name tokens and separate unit literal;
+    // inline units, trailing directions, other types and missing types stay exact.
+    if ((!value.countryCode || value.countryCode === "US") && !inlineUnit)
+      line1 = line1.replace(/^(\d\S*\s+.+)\s+rd$/, "$1 road");
     // One terminal cardinal direction may have a full stop. Decimal numbers,
     // opaque units and a separately supplied line 2 retain all punctuation.
-    if (!value.addressLine2?.trim() && !/(?:\b(?:ste|suite|unit|apt|apartment|floor|fl|rm|room|bldg|building)\b|#)/.test(line1))
+    if (!value.addressLine2?.trim() && !inlineUnit)
       line1 = line1.replace(/\b([nsew])\.$/, "$1");
     return words(`${line1} ${value.addressLine2 ?? ""}`);
   };
