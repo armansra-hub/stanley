@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { parseCsv } from "@/lib/csv";
-import type { CompanyIdentityContext } from "@/lib/companyIdentity";
+import type { CompanyIdentityContext, CrmDomainReference } from "@/lib/companyIdentity";
 import { STATE_NAMES } from "@/lib/publicGrowth/identity";
 import { sameCompanySite } from "@/lib/sources/siteDiscovery";
 import { extractCompanyIdentity } from "@/lib/sources/siteContent";
@@ -11,6 +11,7 @@ import { registryWebsiteText, registryWebsiteQuoteOutsideWidget, type RegistryWe
 
 type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string };
 export type RegistryWebsiteCorroboration = {
+  crmDomainReference?: CrmDomainReference;
   normalization?: RegistryWebsiteNormalization;
   // Reviewed canonical-root delegation; it never substitutes for entity/address evidence.
   canonicalRedirect?: { requestedUrl: string; finalUrl: string; normalizedVisibleTextSha256: string };
@@ -165,12 +166,23 @@ export function registryWebsiteEvidenceHash(row: Pick<RegistryFinding, "companyI
 }
 
 export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistryWebsiteCorroboration {
-  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization", "canonicalRedirect", "operatorRelationship", "observedAt", "operatorPage"].includes(k))
+  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization", "canonicalRedirect", "operatorRelationship", "observedAt", "operatorPage", "crmDomainReference"].includes(k))
     || !text(raw.sourceUrl, 2000) || !text(raw.quote, raw.canonicalRedirect !== undefined && raw.mode === undefined ? 6000 : 1800) || raw.quote.length < 20 || !text(raw.subject, 200)
     || !hash(raw.normalizedVisibleTextSha256) || !hash(raw.quoteSha256) || sha(raw.quote) !== raw.quoteSha256)
     throw new Error("invalid registry website evidence");
   if (raw.mode !== undefined && raw.mode !== "registry_identifier" && raw.mode !== "registry_dba_address" && raw.mode !== "site_operator_address" || raw.mode !== "registry_identifier" && raw.identifier !== undefined)
     throw new Error("invalid registry website mode");
+  if (raw.crmDomainReference !== undefined) {
+    const ref = raw.crmDomainReference;
+    if (raw.mode !== "registry_dba_address" || raw.canonicalRedirect !== undefined || raw.operatorRelationship !== undefined
+      || !sourceTime(raw.observedAt) || !object(ref)
+      || Object.keys(ref).sort().join(",") !== "capturedAt,companyId,companyName,domain,headerSha256,internalId,recordId,schema"
+      || ref.schema !== "netsuite_provisioning_email_domain_v1" || ref.companyId !== row.companyId || ref.internalId !== row.internalId
+      || typeof ref.recordId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ref.recordId)
+      || !text(ref.companyName, 200) || !text(ref.domain, 253) || !/^[a-z0-9.-]+$/.test(ref.domain)
+      || !hash(ref.headerSha256) || !sourceTime(ref.capturedAt))
+      throw new Error("invalid registry website CRM domain reference");
+  }
   if (raw.mode === "site_operator_address") {
     const op = raw.operatorPage;
     if (!object(op) || Object.keys(op).some(k => !["schema", "sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "legalOperator", "observedAt"].includes(k))
@@ -180,7 +192,7 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
       || raw.normalization !== undefined || raw.canonicalRedirect !== undefined || raw.operatorRelationship !== undefined
       || op.sourceUrl === raw.sourceUrl)
       throw new Error("invalid two-page website operator evidence");
-  } else if (raw.operatorPage !== undefined || raw.observedAt !== undefined) throw new Error("operator pages require explicit two-page mode");
+  } else if (raw.operatorPage !== undefined || raw.observedAt !== undefined && raw.crmDomainReference === undefined) throw new Error("operator pages require explicit two-page mode");
   if (raw.operatorRelationship !== undefined) {
     const relation = raw.operatorRelationship;
     if (raw.mode !== "registry_dba_address" || !object(relation)
@@ -227,6 +239,12 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
     const earliest = Math.max(Date.parse(raw.observedAt as string), Date.parse(op.observedAt), Date.parse(row.profile.observedAt));
     if (Date.parse((reader as Attestation).reviewedAt) < earliest || Date.parse((reviewer as Attestation).reviewedAt) < Date.parse((reader as Attestation).reviewedAt))
       throw new Error("two-page website review precedes its complete sources");
+  }
+  if (raw.crmDomainReference !== undefined) {
+    const ref = raw.crmDomainReference as CrmDomainReference;
+    const earliest = Math.max(Date.parse(ref.capturedAt), Date.parse(raw.observedAt as string), Date.parse(row.profile.observedAt));
+    if (Date.parse((reader as Attestation).reviewedAt) < earliest || Date.parse((reviewer as Attestation).reviewedAt) < Date.parse((reader as Attestation).reviewedAt))
+      throw new Error("registry website CRM review precedes its complete sources");
   }
   return raw as RegistryWebsiteCorroboration;
 }
@@ -469,10 +487,82 @@ function operatorRelationshipSpan(proof: RegistryWebsiteCorroboration, visibleTe
     throw new Error("registry website operator relationship DBA is ambiguous");
   return { start: start + relative, end: start + relative + proof.subject.length, definitionEnd: start + relation.quote.length };
 }
-function dbaAttribution(proof: RegistryWebsiteCorroboration, visibleText: string, relationshipDba?: SubjectSpan) {
+type DbaNeutralStructure = { subjects: Set<number>; previous: Set<number>; customer: Set<number> };
+/** Offset-only interpretation of four closed neutral structures. No evidence
+ * is deleted or rehashed, and caller text cannot authorize an exception. */
+function dbaNeutralStructure(html: string, visibleText: string, subject: string, sourceUrl: string,
+  normalization?: RegistryWebsiteNormalization): DbaNeutralStructure {
+  const result: DbaNeutralStructure = { subjects: new Set(), previous: new Set(), customer: new Set() };
+  // Other normalization modes retain their existing attribution behavior.
+  if (normalization !== undefined) return result;
+  const source = html.replace(/<!--[^]*?-->/g, " ")
+    .replace(/<(script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+  if (registryWebsiteText(source) !== visibleText) return result;
+  const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const offset = (rawAt: number, raw: string): number | null => {
+    const prefix = registryWebsiteText(source.slice(0, rawAt)), text = registryWebsiteText(raw);
+    const at = prefix.length + (prefix ? 1 : 0);
+    return visibleText.slice(0, prefix.length) === prefix && visibleText.slice(at, at + text.length) === text ? at : null;
+  };
+  const titles = [...source.matchAll(/<title\b[^>]*>[\s\S]*?<\/title\s*>/gi)];
+  const heads = [...source.matchAll(/<head\b[^>]*>([\s\S]*?)<\/head\s*>/gi)];
+  if (heads.length === 1 && titles.length === 1) {
+    const title = titles[0], head = heads[0];
+    // A closed neutral service descriptor, never an arbitrary name after '|'.
+    const grammar = new RegExp("^<title>\\s*Contact " + escaped + " \\| Trucking (?:&amp;|&) Logistics Company\\s*</title>$", "i");
+    if (title.index! >= head.index! && title.index! + title[0].length <= head.index! + head[0].length && grammar.test(title[0])) {
+      const at = offset(title.index!, title[0]);
+      if (at !== null) result.subjects.add(at + "Contact ".length);
+    }
+  }
+  const footers = [...source.matchAll(/<footer\b[^>]*>([\s\S]*?)<\/footer\s*>/gi)];
+  if (footers.length === 1 && !/<footer\b/i.test(footers[0][1])) {
+    const footer = footers[0];
+    // The DBA ends in its own complete copyright paragraph. Privacy Policy is
+    // a separate link, not a suffix allowed in an arbitrary prose occurrence.
+    const grammar = new RegExp("<p>\\s*© ([12]\\d{3}) " + escaped + "\\s*</p>\\s*(?:<div(?: class=[\"'][a-z0-9 _-]*[\"'])?>\\s*)?<a href=([\"'])([^\"'<>]+)\\2>\\s*Privacy Policy\\s*</a>", "gi");
+    for (const match of footer[0].matchAll(grammar)) {
+      let link: URL;
+      try { link = new URL(match[3], sourceUrl); } catch { continue; }
+      if (link.protocol !== "https:" || link.username || link.password || link.port || link.search || link.hash || link.hostname.replace(/^www\./, "") !== new URL(sourceUrl).hostname.replace(/^www\./, "")) continue;
+      const at = offset(footer.index! + match.index!, match[0]);
+      if (at !== null) result.subjects.add(at + `© ${match[1]} `.length);
+    }
+  }
+  // Only the word 'Previous' in a complete, numeric weekly-comparison
+  // paragraph is neutral. Extra prose, labels, tags or invalid dates fail closed.
+  const weekly = /<p>\s*Previous week: (\d{1,3}(?:\.\d{1,2})?)%\s*<br\s*\/?>\s*Current week: (\d{1,3}(?:\.\d{1,2})?)%\s*<br\s*\/?>\s*\*Updated: (\d{1,2})-(\d{1,2})-(\d{2}|\d{4})\s*<\/p>/gi;
+  for (const match of source.matchAll(weekly)) {
+    const month = Number(match[3]), day = Number(match[4]), year = Number(match[5]) + (match[5].length === 2 ? 2000 : 0);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (Number(match[1]) > 100 || Number(match[2]) > 100 || year < 2000 || year > 2999
+      || date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) continue;
+    const at = offset(match.index!, match[0]);
+    if (at !== null) result.previous.add(at);
+  }
+  // Customer Login is a complete navigation control, not a customer subject.
+  for (const nav of source.matchAll(/<nav\b[^>]*>([\s\S]*?)<\/nav\s*>/gi)) {
+    if (/<nav\b/i.test(nav[1])) continue;
+    for (const link of nav[0].matchAll(/<a href=(["'])([^"'<>]+)\1>\s*Customer Login\s*<\/a>/gi)) {
+      try { if (validatePublicHttpUrl(link[2]).protocol !== "https:") continue; } catch { continue; }
+      const at = offset(nav.index! + link.index!, link[0]);
+      if (at !== null) result.customer.add(at);
+    }
+  }
+  return result;
+}
+function dbaAmbiguousAttribution(value: string, start: number, neutral?: DbaNeutralStructure): boolean {
+  return [...value.matchAll(/\b(customer|client|partner|affiliate|subsidiar(?:y|ies)|parent company|third[ -]party|on behalf of|formerly|previously|former|previous)\b/gi)]
+    .some(match => start < 0 || (match[0].toLowerCase() === "previous" ? !neutral?.previous.has(start + match.index!)
+      : match[0].toLowerCase() === "customer" ? !neutral?.customer.has(start + match.index!) : true));
+}
+
+function dbaAttribution(proof: RegistryWebsiteCorroboration, visibleText: string, relationshipDba?: SubjectSpan, neutral?: DbaNeutralStructure) {
   // Both readers still assess the whole source. These are conservative ambiguity
   // guards, not a free-prose relationship parser or authority to clip a DBA.
-  if (/\b(customer|client|partner|affiliate|subsidiar(?:y|ies)|parent company|third[ -]party|on behalf of|formerly|previously|former|previous)\b/i.test(proof.quote))
+  const quoteStart = visibleText.indexOf(proof.quote);
+  const quoteOffset = quoteStart === visibleText.lastIndexOf(proof.quote) ? quoteStart : -1;
+  if (dbaAmbiguousAttribution(proof.quote, quoteOffset, neutral))
     throw new Error("registry website DBA attribution is ambiguous");
   exactSubjectPositions(proof.quote, proof.subject);
   exactSubjectPositions(visibleText, proof.subject, false, true, relationshipDba);
@@ -489,8 +579,8 @@ function dbaAttribution(proof: RegistryWebsiteCorroboration, visibleText: string
     // unrelated terms such as "if you do not agree" are not an operator negation.
     const attributionFollowing = definedDba ? visibleText.slice(end, relationshipDba.definitionEnd) : following;
     if (/[\p{L}\p{N}_'’&-]/u.test(visibleText[at - 1] ?? "") || /[\p{L}\p{N}_'’&-]/u.test(visibleText[end] ?? "")
-      || !definedDba && /^[\p{L}]/u.test(following) && !/^(?:Menu|Home|Contact|Headquarters)\b|^Skip to content\b|^ALL RIGHTS RESERVED\b/u.test(following)
-      || /\b(customer|client|partner|affiliate|subsidiar(?:y|ies)|parent company|third[ -]party|on behalf of|formerly|previously|former|previous)\b/i.test(before)
+      || !definedDba && !neutral?.subjects.has(at) && /^[\p{L}]/u.test(following) && !/^(?:Menu|Home|Contact|Headquarters)\b|^Skip to content\b|^ALL RIGHTS RESERVED\b/u.test(following)
+      || dbaAmbiguousAttribution(before, Math.max(0, at - 120), neutral)
       || /\b(?:not|never|unrelated|belongs to|operated by|owned by)\b/i.test(attributionFollowing))
       throw new Error("registry website DBA subject is partial, conflicting or unrelated");
   }
@@ -578,18 +668,25 @@ export function registryWebsiteVerifier() {
     if (page.status !== 200 || !/(?:text\/html|application\/xhtml\+xml)/i.test(page.contentType ?? "")) throw new RegistryWebsiteAvailabilityError(url, { page });
     return page;
   }
-  return async (row: RegistryFinding, proof: RegistryWebsiteCorroboration, company: { name: string; domain?: string | null; website_raw?: string | null },
+  return async (row: RegistryFinding, proof: RegistryWebsiteCorroboration, company: { name: string; id?: string; netsuite_internal_id?: string | null; domain?: string | null; website_raw?: string | null },
     context: CompanyIdentityContext, now = new Date()): Promise<NonNullable<RegistryProfile["verification"]>> => {
     const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address", operatorMode = proof.mode === "site_operator_address";
     // This new mode always revalidates its fresh, separately bound attestations.
-    if (identifierMode || dbaMode || operatorMode || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
+    if (identifierMode || dbaMode || operatorMode || proof.crmDomainReference !== undefined || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
+    const crm = proof.crmDomainReference;
+    if (crm && (!context.crmDomainReference || stableRegistryJson(context.crmDomainReference) !== stableRegistryJson(crm)
+      || company.id !== row.companyId || company.netsuite_internal_id !== row.internalId
+      || crm.companyName !== company.name || crm.companyId !== row.companyId || crm.internalId !== row.internalId))
+      throw new Error("registry website CRM reference differs from exact server-derived account header");
+    const sourceDomain = crm?.domain ?? domain;
     const redirect = proof.canonicalRedirect;
     // Only the stored canonical host can delegate. No caller-selected path or query.
     if (redirect) ownUrl(redirect.requestedUrl, domain);
-    const url = redirect && proof.sourceUrl === redirect.requestedUrl ? redirect.requestedUrl : ownUrl(proof.sourceUrl, redirect?.finalUrl ?? domain);
+    const url = redirect && proof.sourceUrl === redirect.requestedUrl ? redirect.requestedUrl : ownUrl(proof.sourceUrl, redirect?.finalUrl ?? sourceDomain);
     if (redirect && (new URL(url).search || new URL(url).hash)) throw new Error("registry website redirect source cannot have a query or fragment");
+    if (crm && (new URL(url).search || new URL(url).hash)) throw new Error("CRM-referenced website requires an exact source path");
     const p = row.profile.identity, a = proof.address;
     const cslbMode = identifierMode && proof.identifier?.kind === "cslb_license";
     if (!a && !cslbMode) throw new Error("registry website complete address is required");
@@ -602,7 +699,7 @@ export function registryWebsiteVerifier() {
       || (!identifierMode && a?.countryCode === "US" && p.countryCode === "US" && sameLimitedCompanySubject(left, right));
     if (operatorMode) twoPageOperatorSubject(row, proof, company.name, context.aliases);
     const originalDba = dbaMode ? dbaSubject(row, proof, company.name, context.aliases) : null;
-    if (proof.operatorRelationship) operatorRelationshipSpan(proof, proof.operatorRelationship.quote, redirect?.finalUrl ?? domain);
+    if (proof.operatorRelationship) operatorRelationshipSpan(proof, proof.operatorRelationship.quote, redirect?.finalUrl ?? sourceDomain);
     if (!dbaMode && !operatorMode && (![company.name, ...context.aliases].some(name => sameSubject(name, proof.subject))
       || !sameSubject(proof.subject, p.legalName) || !proof.quote.includes(proof.subject))) throw new Error("registry website subject does not match canonical legal entity");
     // Relationship/location ambiguities stay held even on the account's own site.
@@ -628,7 +725,7 @@ export function registryWebsiteVerifier() {
       throw new Error("registry website DBA complete source city and country are required");
     // Structural heading evidence is checked after the unchanged whole-page read.
     if (identifierMode) identifierAttribution(row, proof, proof.quote, true);
-    if (dbaMode) dbaAttribution(proof, proof.quote);
+    // DBA attribution needs the actual hash-checked HTML to identify neutral structure.
     const exactStreet = a ? sameRegistryStreet(a, p) : false;
     // FMCSA's verified USDOT binds this narrow highway-format discrepancy. No
     // unit, house number, road number, country or postal evidence is discarded.
@@ -645,7 +742,8 @@ export function registryWebsiteVerifier() {
       canonicalRedirectVerification = { ...redirect, fetchedAt: now.toISOString(), htmlSha256: sha(root.body) };
     }
     const page = await readPage(url);
-    ownUrl(page.finalUrl, redirect?.finalUrl ?? domain);
+    ownUrl(page.finalUrl, redirect?.finalUrl ?? sourceDomain);
+    if (crm && page.finalUrl !== url) throw new Error("CRM-referenced website redirected from its reviewed path");
     if (operatorMode && page.finalUrl !== url) throw new Error("two-page contact source redirected from its reviewed path");
     const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
     if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0)
@@ -657,7 +755,8 @@ export function registryWebsiteVerifier() {
       throw new Error("registry website extended redirect quote must be the full visible page");
     if (identifierMode) identifierAttribution(row, proof, visibleText, separateContactHeadingSubjects(page.body, visibleText, proof.subject, proof.normalization));
     if (dbaMode) {
-      dbaAttribution(proof, visibleText, operatorRelationshipSpan(proof, visibleText, redirect?.finalUrl ?? domain));
+      dbaAttribution(proof, visibleText, operatorRelationshipSpan(proof, visibleText, redirect?.finalUrl ?? sourceDomain),
+        dbaNeutralStructure(page.body, visibleText, proof.subject, page.finalUrl, proof.normalization));
       if (labelledIdentifiers(visibleText, "usdot").some(id => id.value !== row.profile.recordId))
         throw new Error("registry website DBA has a conflicting labelled USDOT");
     }
@@ -678,8 +777,8 @@ export function registryWebsiteVerifier() {
       operatorPageVerification = { finalUrl:operator.finalUrl, fetchedAt:now.toISOString(), htmlSha256:sha(operator.body), quoteStart, quoteEnd:quoteStart+op.quote.length };
     }
     const sourceId = `website:sha256:${proof.normalizedVisibleTextSha256}`;
-    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [...new Set([sourceId, ...(redirect ? [`website:sha256:${redirect.normalizedVisibleTextSha256}`] : []), ...(operatorMode ? [`website:sha256:${proof.operatorPage!.normalizedVisibleTextSha256}`] : [])])], website: {
-      ...proof, ...(canonicalRedirectVerification ? { canonicalRedirectVerification } : {}), finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
+    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [...new Set([sourceId, ...(crm ? [`netsuite_record:${crm.recordId}:header:sha256:${crm.headerSha256}`] : []), ...(redirect ? [`website:sha256:${redirect.normalizedVisibleTextSha256}`] : []), ...(operatorMode ? [`website:sha256:${proof.operatorPage!.normalizedVisibleTextSha256}`] : [])])], website: {
+      ...proof, ...(crm ? { crmDomainReferenceVerification: { ...crm, sourceRole: "latest_retained_labelled_provisioning_email_domain_reference", canonicalDomain: domain, canonicalDomainChanged: false } } : {}), ...(canonicalRedirectVerification ? { canonicalRedirectVerification } : {}), finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
       binding: operatorMode ? "exact_own_site_legal_operator_dba_two_page_full_address" : dbaMode ? proof.operatorRelationship ? "exact_original_registry_dba_defined_canonical_full_address" : "exact_original_registry_dba_full_address" : identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
       ...(identifierMode ? { websiteAddress: a ?? null, addressRelationship: a ? "separate_observations_not_address_equivalence" : "website_address_unknown_registry_address_retained" } : {}),
       ...(dbaMode ? { originalDba, originalLegalOperator: p.legalName, websiteAddress: a } : {}),

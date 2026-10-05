@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { serviceClient } from "@/lib/supabase/server";
 
 export type IdentityAddress = {
@@ -6,12 +7,49 @@ export type IdentityAddress = {
   sourceKind: "netsuite_record" | "company_website"; sourceUrl?: string; sourceId: string; capturedAt: string;
 };
 type Company = { id: string; name: string; domain?: string | null; website_raw?: string | null; city?: string | null; state?: string | null; netsuite_internal_id?: string | null };
-export type CompanyIdentityContext = { aliases: string[]; addresses: IdentityAddress[]; context: string };
+export type CompanyIdentityContext = { aliases: string[]; addresses: IdentityAddress[]; context: string; crmDomainReference?: CrmDomainReference };
 type SourceContext = {
   record?: { id: string; header: string; capturedAt: string } | null;
   websites?: { id: string; url: string; capturedAt: string; identity: unknown }[];
   claims?: { id: string; name: string; subjectName: string; relationship: string; sourceUrl: string; capturedAt: string }[];
 };
+/** A reference in the current labelled account header, not a corrected company
+ * domain, legal alias, email ownership claim, or historical-note association. */
+export type CrmDomainReference = {
+  schema: "netsuite_provisioning_email_domain_v1";
+  companyId: string; internalId: string; companyName: string;
+  recordId: string; headerSha256: string; capturedAt: string; domain: string;
+};
+const referenceUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Same public-mail/shared-host exclusions as the official registry email path.
+const referenceProviders = ["gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "aol.com", "icloud.com", "me.com", "mac.com", "mail.com", "proton.me", "protonmail.com", "comcast.net", "att.net", "sbcglobal.net", "verizon.net", "cox.net", "bellsouth.net", "charter.net", "earthlink.net", "gmx.com", "zoho.com", "onmicrosoft.com", "wixsite.com", "wordpress.com", "weebly.com", "godaddysites.com", "blogspot.com", "github.io", "webflow.io", "sites.google.com"];
+export function parseNetSuiteDomainReference(company: Company, record: NonNullable<SourceContext["record"]>): CrmDomainReference | undefined {
+  if (!referenceUuid.test(company.id) || !/^\d+$/.test(company.netsuite_internal_id ?? "")
+    || !referenceUuid.test(record.id) || typeof record.header !== "string" || [...record.header].length > 6000
+    || !/T.+(?:Z|[+-]\d{2}:\d{2})$/.test(record.capturedAt) || !Number.isFinite(Date.parse(record.capturedAt))) return;
+  const lines = record.header.replace(/\r/g, "").replace(/\u00a0/g, " ").split("\n").map(line => line.trim());
+  const boundary = lines.findIndex(line => /^(?:Firmographic Information|Lead Qualification|Research Notes|Comments|Contacts|System Notes|View\s+Touch Type)\b/.test(line));
+  // A closed Account Information section is required; truncation cannot turn
+  // contact or note text into a current field. Never search after its boundary.
+  if (boundary < 0) return;
+  const before = lines.slice(0, boundary), starts = before.flatMap((line, i) => line === "Account Information" ? [i] : []);
+  if (starts.length !== 1) return;
+  const account = before.slice(starts[0] + 1);
+  const names = account.filter(line => /^Company Name(?:\s|$)/.test(line));
+  const emails = account.filter(line => /^Provisioning Email(?:\s|$)/.test(line));
+  const exactName = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+  if (names.length !== 1 || emails.length !== 1 || exactName(names[0].replace(/^Company Name\s*/, "")) !== exactName(company.name)) return;
+  const email = emails[0].replace(/^Provisioning Email\s*/, "");
+  const match = email.match(/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63})$/);
+  const local = email.slice(0, email.lastIndexOf("@"));
+  if (!match || email.length > 254 || local.length > 64 || local.startsWith(".") || local.endsWith(".") || local.includes("..")) return;
+  const domain = match[1].toLowerCase();
+  if (domain.startsWith("www.") || domain.split(".").some(label => label.startsWith("xn--"))
+    || referenceProviders.some(provider => domain === provider || domain.endsWith(`.${provider}`))) return;
+  return { schema: "netsuite_provisioning_email_domain_v1", companyId: company.id, internalId: company.netsuite_internal_id!,
+    companyName: company.name, recordId: record.id, headerSha256: createHash("sha256").update(record.header).digest("hex"), capturedAt: record.capturedAt, domain };
+}
+
 const clean = (value: unknown, limit = 180): string | undefined => typeof value === "string" && value.trim() && value.length <= limit
   ? value.replace(/\s+/g, " ").trim() : undefined;
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -96,7 +134,8 @@ export function buildCompanyIdentityContext(company: Company, sources: SourceCon
     aliases: retainedAliases, addresses: [...uniqueAddresses] };
   while (Buffer.byteLength(JSON.stringify(contextData), "utf8") > 3600 && contextData.addresses.length) contextData.addresses.pop();
   const context = JSON.stringify(contextData);
-  return { aliases: retainedAliases, addresses: uniqueAddresses, context };
+  const crmDomainReference = sources.record ? parseNetSuiteDomainReference(company, sources.record) : undefined;
+  return { aliases: retainedAliases, addresses: uniqueAddresses, context, ...(crmDomainReference ? { crmDomainReference } : {}) };
 }
 
 /** SQL returns at most one 6k account header and eight small public identity
