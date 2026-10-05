@@ -14,7 +14,15 @@ export type RegistryWebsiteCorroboration = {
   normalization?: RegistryWebsiteNormalization;
   // Reviewed canonical-root delegation; it never substitutes for entity/address evidence.
   canonicalRedirect?: { requestedUrl: string; finalUrl: string; normalizedVisibleTextSha256: string };
-  mode?: "registry_identifier" | "registry_dba_address";
+  mode?: "registry_identifier" | "registry_dba_address" | "site_operator_address";
+  // Explicit own-site legal/DBA definition, distinct from the contact page and
+  // never represented as a registry DBA or a changed canonical alias.
+  observedAt?: string;
+  operatorPage?: {
+    schema: "explicit_site_operator_dba_definition_v1";
+    sourceUrl: string; normalizedVisibleTextSha256: string; quote: string; quoteSha256: string;
+    legalOperator: string; observedAt: string;
+  };
   // An explicit definition on this same page; never a new canonical alias.
   operatorRelationship?: {
     schema: "explicit_site_operator_dba_definition_v1";
@@ -143,26 +151,36 @@ export function registryWebsiteEvidenceHash(row: Pick<RegistryFinding, "companyI
   proof: Omit<RegistryWebsiteCorroboration, "reader" | "reviewer">): string {
   const legacy = { companyId: row.companyId, internalId: row.internalId, dataset: row.profile.dataset,
     recordId: row.profile.recordId, rowSha256: row.profile.provenance.rowSha256, ...proof };
-  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address" && !proof.canonicalRedirect) return sha(stableRegistryJson(legacy));
+  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address" && proof.mode !== "site_operator_address" && !proof.canonicalRedirect) return sha(stableRegistryJson(legacy));
   // Existing address-mode callers may pass a narrow row. Explicit new modes must
   // bind the entire parsed publication content, not trust an unchanged row ID/hash.
   if (typeof row.sourceUrl !== "string" || !row.sourceUrl || typeof row.evidence !== "string" || !row.evidence
     || row.detail !== null && typeof row.detail !== "string"
     || typeof row.profile.observedAt !== "string" || !Number.isFinite(Date.parse(row.profile.observedAt)))
     throw new Error("registry website bound evidence requires complete parsed publication content");
-  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : proof.mode === "registry_dba_address" ? "dbaContent" : "redirectContent"]: {
+  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : proof.mode === "registry_dba_address" ? "dbaContent" : proof.mode === "site_operator_address" ? "operatorContent" : "redirectContent"]: {
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail),
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt,
   } }));
 }
 
 export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistryWebsiteCorroboration {
-  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization", "canonicalRedirect", "operatorRelationship"].includes(k))
+  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization", "canonicalRedirect", "operatorRelationship", "observedAt", "operatorPage"].includes(k))
     || !text(raw.sourceUrl, 2000) || !text(raw.quote, raw.canonicalRedirect !== undefined && raw.mode === undefined ? 6000 : 1800) || raw.quote.length < 20 || !text(raw.subject, 200)
     || !hash(raw.normalizedVisibleTextSha256) || !hash(raw.quoteSha256) || sha(raw.quote) !== raw.quoteSha256)
     throw new Error("invalid registry website evidence");
-  if (raw.mode !== undefined && raw.mode !== "registry_identifier" && raw.mode !== "registry_dba_address" || raw.mode !== "registry_identifier" && raw.identifier !== undefined)
+  if (raw.mode !== undefined && raw.mode !== "registry_identifier" && raw.mode !== "registry_dba_address" && raw.mode !== "site_operator_address" || raw.mode !== "registry_identifier" && raw.identifier !== undefined)
     throw new Error("invalid registry website mode");
+  if (raw.mode === "site_operator_address") {
+    const op = raw.operatorPage;
+    if (!object(op) || Object.keys(op).some(k => !["schema", "sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "legalOperator", "observedAt"].includes(k))
+      || op.schema !== "explicit_site_operator_dba_definition_v1" || !text(op.sourceUrl, 2000)
+      || !hash(op.normalizedVisibleTextSha256) || !text(op.quote, 900) || !hash(op.quoteSha256) || sha(op.quote) !== op.quoteSha256
+      || !text(op.legalOperator, 200) || !sourceTime(op.observedAt) || !sourceTime(raw.observedAt)
+      || raw.normalization !== undefined || raw.canonicalRedirect !== undefined || raw.operatorRelationship !== undefined
+      || op.sourceUrl === raw.sourceUrl)
+      throw new Error("invalid two-page website operator evidence");
+  } else if (raw.operatorPage !== undefined || raw.observedAt !== undefined) throw new Error("operator pages require explicit two-page mode");
   if (raw.operatorRelationship !== undefined) {
     const relation = raw.operatorRelationship;
     if (raw.mode !== "registry_dba_address" || !object(relation)
@@ -204,6 +222,12 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
       throw new Error("registry website review does not bind exact current evidence");
   }
   if ((reader as Attestation).taskId === (reviewer as Attestation).taskId) throw new Error("registry website requires independent review");
+  if (raw.mode === "site_operator_address") {
+    const op = raw.operatorPage as NonNullable<RegistryWebsiteCorroboration["operatorPage"]>;
+    const earliest = Math.max(Date.parse(raw.observedAt as string), Date.parse(op.observedAt), Date.parse(row.profile.observedAt));
+    if (Date.parse((reader as Attestation).reviewedAt) < earliest || Date.parse((reviewer as Attestation).reviewedAt) < Date.parse((reader as Attestation).reviewedAt))
+      throw new Error("two-page website review precedes its complete sources");
+  }
   return raw as RegistryWebsiteCorroboration;
 }
 
@@ -472,6 +496,58 @@ function dbaAttribution(proof: RegistryWebsiteCorroboration, visibleText: string
   }
 }
 
+function sourceTime(value: unknown): value is string {
+  return typeof value === "string" && /T.+(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
+}
+function twoPageOperatorSubject(row: RegistryFinding, proof: RegistryWebsiteCorroboration, companyName: string, aliases: string[]) {
+  const op = proof.operatorPage!, p = row.profile.identity;
+  if (words(op.legalOperator) !== words(p.legalName) || !legalParts(p.legalName).suffix
+    || words(proof.subject) !== words(companyName) || !proof.quote.includes(proof.subject)
+    || !aliases.every(name => words(name) === words(companyName) || words(name) === words(p.legalName))
+    || p.countryCode !== "US" || proof.address?.countryCode !== "US"
+    || row.profile.dataset === "cms_nppes" && !row.profile.facts.some(f => f.field === "organization_type" && String(f.value) === "2"))
+    throw new Error("two-page operator must bind exact whole legal name and canonical brand");
+}
+/** A closed present-tense operator definition, not a fuzzy relationship search.
+ * The trailing collective definition can include unnamed employees/affiliates;
+ * only the one exact legal entity before d/b/a supplies the operator role. */
+function explicitOperatorDefinition(proof: RegistryWebsiteCorroboration, visibleText: string) {
+  const op = proof.operatorPage!, start = visibleText.indexOf(op.quote), subject = proof.subject;
+  const simple = `This website is operated by ${op.legalOperator} doing business as ${subject}.`;
+  const prefix = `"${subject}," "we," "our," or "us," means ${op.legalOperator} d/b/a ${subject}, a `;
+  const collective = ", our employees, officers, directors, parent, affiliates and subsidiaries.";
+  const form = legalParts(op.legalOperator).suffix;
+  const expectedForm = form === "llc" ? "limited liability company" : ["inc", "corp"].includes(form ?? "") ? "corporation" : null;
+  const tail = op.quote.startsWith(prefix) && op.quote.endsWith(collective) ? op.quote.slice(prefix.length, -collective.length) : "";
+  const definition = expectedForm && [...stateNames.values()].some(state => tail.toLowerCase() === `${state} ${expectedForm}`.toLowerCase());
+  if (start < 0 || visibleText.lastIndexOf(op.quote) !== start || op.quote !== simple && !definition)
+    throw new Error("two-page legal operator requires one explicit complete present-tense DBA definition");
+  const before = visibleText.slice(Math.max(0,start-180),start), after = visibleText.slice(start+op.quote.length,start+op.quote.length+180);
+  if (/[\p{L}\p{N}_'’&-]/u.test(visibleText[start-1] ?? "")
+    || /\b(not|never|unrelated|customer|client|partner|affiliate|subsidiary|parent|former|previous|example|sample|fictional|hypothetical)\b/i.test(before)
+    || /\b(?:this|that|above|preceding|definition|operator|relationship)\b[^.!?]{0,70}\b(?:not|never|no longer|former|outdated|obsolete|invalid|false|historical)\b/i.test(after))
+    throw new Error("two-page operator definition context is ambiguous or contradictory");
+  const other = visibleText.slice(0,start)+visibleText.slice(start+op.quote.length);
+  if (/\b(?:d\s*\/\s*b\s*\/\s*a|doing business as|operated by|owned by|managed by|controlled by)\b/i.test(other))
+    throw new Error("two-page website contains another operator definition");
+  const legalAt = start + op.quote.indexOf(op.legalOperator);
+  exactSubjectPositions(visibleText,op.legalOperator,false,false,{start:legalAt,end:legalAt+op.legalOperator.length,definitionEnd:start+op.quote.length});
+  const legal = legalParts(op.legalOperator), normalized = ` ${words(visibleText)} `;
+  for (const suffix of ["incorporated","inc","corporation","corp","limited","ltd","llc","llp","pllc","lp","pc"])
+    if (legalParts(`${legal.core} ${suffix}`).suffix !== legal.suffix && normalized.includes(` ${legal.core} ${suffix} `))
+      throw new Error("two-page operator has conflicting legal forms");
+}
+function contactOperatorAttribution(proof: RegistryWebsiteCorroboration, visibleText: string) {
+  if (!/\b(?:office|headquarters|contact)\b/i.test(proof.quote)
+    || /\b(customer|client|partner|affiliate|subsidiary|parent company|registered agent|former|previous|on behalf of)\b/i.test(proof.quote))
+    throw new Error("two-page contact address has an ambiguous role");
+  exactSubjectPositions(visibleText,proof.subject);
+  const escaped = proof.subject.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  if (new RegExp(escaped+"[\\s.,:;()\\[\\]—-]+(?:LLC|LLP|PLLC|LP|PC|Inc\\.?|Incorporated|Corp\\.?|Corporation|Ltd\\.?|Limited)\\b","i").test(visibleText)
+    || /\b(?:d\s*\/\s*b\s*\/\s*a|doing business as|operated by|owned by|managed by|controlled by)\b/i.test(visibleText))
+    throw new Error("two-page contact page has a conflicting operator or legal brand");
+}
+
 function ownUrl(value: string, domain: string): string {
   const url = validatePublicHttpUrl(value);
   // Exact stored host (with optional www), not a caller-selected subsidiary host.
@@ -504,9 +580,9 @@ export function registryWebsiteVerifier() {
   }
   return async (row: RegistryFinding, proof: RegistryWebsiteCorroboration, company: { name: string; domain?: string | null; website_raw?: string | null },
     context: CompanyIdentityContext, now = new Date()): Promise<NonNullable<RegistryProfile["verification"]>> => {
-    const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address";
+    const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address", operatorMode = proof.mode === "site_operator_address";
     // This new mode always revalidates its fresh, separately bound attestations.
-    if (identifierMode || dbaMode || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
+    if (identifierMode || dbaMode || operatorMode || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
     const redirect = proof.canonicalRedirect;
@@ -524,9 +600,10 @@ export function registryWebsiteVerifier() {
     const sameSubject = (left: string, right: string) => sameRegistryLegalName(left, right)
       || (possessiveAddress && samePossessiveWebsiteSubject(left, right))
       || (!identifierMode && a?.countryCode === "US" && p.countryCode === "US" && sameLimitedCompanySubject(left, right));
+    if (operatorMode) twoPageOperatorSubject(row, proof, company.name, context.aliases);
     const originalDba = dbaMode ? dbaSubject(row, proof, company.name, context.aliases) : null;
     if (proof.operatorRelationship) operatorRelationshipSpan(proof, proof.operatorRelationship.quote, redirect?.finalUrl ?? domain);
-    if (!dbaMode && (![company.name, ...context.aliases].some(name => sameSubject(name, proof.subject))
+    if (!dbaMode && !operatorMode && (![company.name, ...context.aliases].some(name => sameSubject(name, proof.subject))
       || !sameSubject(proof.subject, p.legalName) || !proof.quote.includes(proof.subject))) throw new Error("registry website subject does not match canonical legal entity");
     // Relationship/location ambiguities stay held even on the account's own site.
     if (/\b(subsidiar(?:y|ies)|parent company|registered agent|customer(?:'s|’s)? (?:address|office|headquarters)|client(?:'s|’s)? (?:address|office)|former (?:address|office)|previous (?:address|office)|old (?:address|office))\b/i.test(proof.quote))
@@ -547,7 +624,7 @@ export function registryWebsiteVerifier() {
       throw new Error("registry CRA identifier requires an explicit complete Canadian website address");
     if (identifierMode && proof.identifier?.kind !== "cra_charity_registration" && a && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
       throw new Error("registry identifier requires an explicit complete US website address");
-    if (dbaMode && (!a || !p.countryCode || !p.city || words(a.city) !== words(p.city)))
+    if ((dbaMode || operatorMode) && (!a || !p.countryCode || !p.city || words(a.city) !== words(p.city)))
       throw new Error("registry website DBA complete source city and country are required");
     // Structural heading evidence is checked after the unchanged whole-page read.
     if (identifierMode) identifierAttribution(row, proof, proof.quote, true);
@@ -559,7 +636,7 @@ export function registryWebsiteVerifier() {
       && String(row.profile.provenance.sourceRow.usdot_number) === row.profile.recordId
       && new RegExp(`\\b(?:US\\s*)?DOT\\s*#?\\s*${row.profile.recordId}\\b`, "i").test(proof.quote);
     const highwayEquivalent = dot && Boolean(a) && registryStreet(a!).replace(/\bus hwy\b/g, "hwy") === registryStreet(p).replace(/\bus hwy\b/g, "hwy");
-    if (!identifierMode && !exactStreet && (dbaMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
+    if (!identifierMode && !exactStreet && (dbaMode || operatorMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
     let canonicalRedirectVerification: Record<string, unknown> | undefined;
     if (redirect) {
       const root = await readPage(redirect.requestedUrl);
@@ -569,6 +646,7 @@ export function registryWebsiteVerifier() {
     }
     const page = await readPage(url);
     ownUrl(page.finalUrl, redirect?.finalUrl ?? domain);
+    if (operatorMode && page.finalUrl !== url) throw new Error("two-page contact source redirected from its reviewed path");
     const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
     if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0)
       throw new RegistryWebsiteMismatchError(page, proof, visibleText, new Date().toISOString());
@@ -583,12 +661,31 @@ export function registryWebsiteVerifier() {
       if (labelledIdentifiers(visibleText, "usdot").some(id => id.value !== row.profile.recordId))
         throw new Error("registry website DBA has a conflicting labelled USDOT");
     }
+    let operatorPageVerification: Record<string, unknown> | undefined;
+    if (operatorMode) {
+      const op = proof.operatorPage!, operatorUrl = ownUrl(op.sourceUrl, domain);
+      if (operatorUrl === url || new URL(operatorUrl).hash || new URL(url).hash || new URL(operatorUrl).search || new URL(url).search)
+        throw new Error("two-page operator and contact sources must be distinct exact paths");
+      contactOperatorAttribution(proof, visibleText);
+      const operator = await readPage(operatorUrl);ownUrl(operator.finalUrl, domain);
+      if (operator.finalUrl === page.finalUrl) throw new Error("two-page sources resolve to the same page");
+      if (operator.finalUrl !== operatorUrl) throw new Error("two-page operator source redirected from its reviewed path");
+      const operatorText = registryWebsiteText(operator.body);
+      if (sha(operatorText) !== op.normalizedVisibleTextSha256 || !operatorText.includes(op.quote))
+        throw new RegistryWebsiteMismatchError(operator, { ...proof, sourceUrl:op.sourceUrl, normalizedVisibleTextSha256:op.normalizedVisibleTextSha256, quote:op.quote, quoteSha256:op.quoteSha256 }, operatorText, new Date().toISOString());
+      explicitOperatorDefinition(proof, operatorText);
+      const quoteStart = operatorText.indexOf(op.quote);
+      operatorPageVerification = { finalUrl:operator.finalUrl, fetchedAt:now.toISOString(), htmlSha256:sha(operator.body), quoteStart, quoteEnd:quoteStart+op.quote.length };
+    }
     const sourceId = `website:sha256:${proof.normalizedVisibleTextSha256}`;
-    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [...new Set([sourceId, ...(redirect ? [`website:sha256:${redirect.normalizedVisibleTextSha256}`] : [])])], website: {
+    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [...new Set([sourceId, ...(redirect ? [`website:sha256:${redirect.normalizedVisibleTextSha256}`] : []), ...(operatorMode ? [`website:sha256:${proof.operatorPage!.normalizedVisibleTextSha256}`] : [])])], website: {
       ...proof, ...(canonicalRedirectVerification ? { canonicalRedirectVerification } : {}), finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
-      binding: dbaMode ? proof.operatorRelationship ? "exact_original_registry_dba_defined_canonical_full_address" : "exact_original_registry_dba_full_address" : identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
+      binding: operatorMode ? "exact_own_site_legal_operator_dba_two_page_full_address" : dbaMode ? proof.operatorRelationship ? "exact_original_registry_dba_defined_canonical_full_address" : "exact_original_registry_dba_full_address" : identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
       ...(identifierMode ? { websiteAddress: a ?? null, addressRelationship: a ? "separate_observations_not_address_equivalence" : "website_address_unknown_registry_address_retained" } : {}),
       ...(dbaMode ? { originalDba, originalLegalOperator: p.legalName, websiteAddress: a } : {}),
+      ...(operatorMode ? { operatorPageVerification, originalLegalOperator:p.legalName, websiteDba:proof.subject, websiteAddress:a,
+        sourceRoles:{contact:"company_contact_address",operator:"explicit_website_legal_operator_dba"},
+        addressRelationship:"website_contact_matches_original_registry_address_canonical_prior_addresses_retained" } : {}),
       priorAddresses: context.addresses, structuredIdentity: extractCompanyIdentity(page.body, page.finalUrl, candidate => sameCompanySite(candidate, page.finalUrl)) ?? null,
     } };
   };

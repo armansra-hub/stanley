@@ -73,7 +73,7 @@ async function registryPost(req: Request, body: { agent?: unknown; findings?: un
   try { irsProofs = parsed.map(row => row.officialIrsFilingCorroboration === undefined ? null : parseRegistryIrsFilingCorroboration(row.officialIrsFilingCorroboration, row)); }
   catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "invalid IRS filing evidence" }, { status: 422 }); }
   // Sum independent request-local caches conservatively, including website root delegation.
-  const websiteUrls = new Set(websiteProofs.flatMap(proof => proof ? [proof.sourceUrl, ...(proof.canonicalRedirect ? [proof.canonicalRedirect.requestedUrl] : [])] : []));
+  const websiteUrls = new Set(websiteProofs.flatMap(proof => proof ? [proof.sourceUrl, ...(proof.canonicalRedirect ? [proof.canonicalRedirect.requestedUrl] : []), ...(proof.operatorPage ? [proof.operatorPage.sourceUrl] : [])] : []));
   const irsUrls = new Set(irsProofs.flatMap(proof => proof?.redirect ? [proof.redirect.requestedUrl] : []));
   if (websiteUrls.size + irsUrls.size > 3)
     return NextResponse.json({ error: "registry website requests capped at three distinct pages" }, { status: 422 });
