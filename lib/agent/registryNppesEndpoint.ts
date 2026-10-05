@@ -116,3 +116,7 @@ export function verifyRegistryNppesEndpoint(row: RegistryFinding, raw: RegistryO
         endpointAddressRole:"endpoint_affiliation",endpointAddress,additionalPracticeAddress:practiceAddress,phone },
       scope: "Retained Type 2 NPI, same-NPI DIRECT endpoint, compatible organization/parent names, full registry address and own-site telephone association. Canonical/website and provider/endpoint addresses remain separate. No current activity, relocation, license, financial scale, deliverability, mailbox ownership or outreach permission is inferred." } };
 }
+
+// Shared, unchanged strict primitives for separately dispatched NPPES modes.
+export { csv as nppesCsv, organizationAddress as nppesOrganizationAddress, sourcePair as nppesSourcePair };
+export type { CsvRow as NppesCsvRow };

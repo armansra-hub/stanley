@@ -107,10 +107,10 @@ describe("reviewed official API role capability", () => {
   it("returns a copy rather than mutable trusted entry", async () => {
     const f = await setup();
     const copy = f.api.registryOfficialApiEntry(f.entry.id).entry;
-    if (copy.sourceKind === "nppes_organization_endpoint") throw new Error("Expected the original JSON source fixture");
+    if (copy.sourceKind === "nppes_organization_endpoint" || copy.sourceKind === "nppes_organization_dba") throw new Error("Expected the original JSON source fixture");
     copy.source.rawRow = "other";
     const unchanged = f.api.registryOfficialApiEntry(f.entry.id).entry;
-    if (unchanged.sourceKind === "nppes_organization_endpoint") throw new Error("Expected the original JSON source fixture");
+    if (unchanged.sourceKind === "nppes_organization_endpoint" || unchanged.sourceKind === "nppes_organization_dba") throw new Error("Expected the original JSON source fixture");
     expect(unchanged.source.rawRow).toBe(f.entry.source.rawRow);
   });
 });
