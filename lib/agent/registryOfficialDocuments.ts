@@ -97,7 +97,7 @@ type SurveyorEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "municipal
     preliminary: true; approvalAndCertificationUnsigned: true; finalApprovalClaim: false;
     currentLicenseClaim: false; currentAddressClaim: false; addressEquivalenceClaim: false; financialInference: false;
     visiblePageLabel: "PAGE 1 OF 1"; metadataTitle: "PLAT PAGE 1 OF 2"; completeProjectPacketClaim: false } };
-export type RegistryOfficialDocumentEntry = AuthorEntry | DbaEntry | IrsEntry | IrsContactEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry | SurveyorEntry;
+export type RegistryOfficialDocumentEntry = EntityHistoryEntry | AuthorEntry | DbaEntry | IrsEntry | IrsContactEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry | SurveyorEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -119,7 +119,7 @@ function fullAddress(a: Address, b: Address) {
 // document, address-role claim, alias, or source-review attestation in its proof.
 export function registryOfficialDocumentEntry(id: string) {
   const entries = catalog.entries as unknown as RegistryOfficialDocumentEntry[], matches = entries.filter(e => e.id === id);
-  need(catalog.schema === "reviewed_official_document_entries_v1" && [2,3,4,6,12,13,14,15,16].includes(entries.length) && matches.length === 1, "entry missing or ambiguous");
+  need(catalog.schema === "reviewed_official_document_entries_v1" && entries.length > 0 && new Set(entries.map(e=>e.id)).size===entries.length && matches.length === 1, "entry missing or ambiguous");
   return { entry: structuredClone(matches[0]), sha256: sha(stableRegistryJson(matches[0])) };
 }
 export const registryOfficialDocumentCanonicalHash = registryOfficialApiCanonicalHash;
@@ -128,6 +128,8 @@ export function registryOfficialDocumentEvidenceHash(row: RegistryFinding, proof
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt, proof }));
 }
 function sourceChecks(e: RegistryOfficialDocumentEntry) {
+  if(e.chain === "official_entity_address_history") entityHistorySourceChecks(e);
+  else
   if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
   else if (e.chain === "official_irs_filer_books_own_site_contact") irsContactSourceChecks(e);
   else if (e.chain === "official_municipal_dba_cslb_header") municipalCslbSourceChecks(e);
@@ -158,7 +160,7 @@ function sourceChecks(e: RegistryOfficialDocumentEntry) {
   }
   const reviews = [e.sourceReader, e.sourceReviewer], originals = [e.originalReviews.primary, e.originalReviews.independent];
   need(hash(e.originalReviews.packetSha256) && reviews[0].taskId !== reviews[1].taskId && originals[0].taskId !== originals[1].taskId
-    && [...reviews,...originals].every(r => task(r.taskId) && iso(r.reviewedAt) && hash(r.receiptSha256) && ["readerTaskId","reviewerTaskId","readBy"].includes(r.receiptActorField))
+    && [...reviews,...originals].every(r => task(r.taskId) && iso(r.reviewedAt) && hash(r.receiptSha256) && (e.chain === "official_entity_address_history" ? ["readerTaskId", "reviewerTaskId", "readBy", "taskId", "actor"] : ["readerTaskId", "reviewerTaskId", "readBy"]).includes(r.receiptActorField))
     && reviews.every(r => Date.parse(r.reviewedAt) >= Math.max(...e.sources.map(s => Date.parse(s.observedAt))))
     && originals.every(r => Date.parse(r.reviewedAt) >= Date.parse(e.target.observedAt))
     && Date.parse(reviews[1].reviewedAt) >= Date.parse(reviews[0].reviewedAt)
@@ -169,6 +171,7 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
   need(p.dataset === t.dataset && p.recordId === t.recordId && row.sourceUrl === t.sourceUrl && sha(row.evidence) === t.evidenceSha256
     && p.provenance.rowSha256 === t.rowSha256 && sha(stableRegistryJson(p)) === t.profileSha256 && p.sourceAsOf === t.sourceAsOf
     && p.observedAt === t.observedAt && row.evidence === p.provenance.quote, "original target pin changed");
+  if(e.chain === "official_entity_address_history") { entityHistoryTarget(row,e); return; }
   let raw: Record<string, unknown>;
   if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role" || e.chain === "court_contract_counterparty_contact" || e.chain === "university_conference_business_contact") {
     const lines = row.evidence.split("\n"); need(p.dataset === "co_ucc" && t.role === "debtor_business" && lines.length === 2, "target debtor role invalid");
@@ -381,6 +384,7 @@ function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
   }
 }
 function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentityContext) {
+  if(e.chain === "official_entity_address_history") { entityHistoryIdentity(e); return; }
   if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
   if (e.chain === "official_irs_filer_books_own_site_contact") { irsContactIdentityChain(e,context); return; }
   if (e.chain === "official_municipal_dba_cslb_header") { municipalCslbIdentityChain(e); return; }
@@ -699,4 +703,129 @@ export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknow
   return {method:"reviewed_official_registration_history",verifiedAt:now.toISOString(),sourceIds:[`document:${e.id}:${sha256}`],officialHistory:{...bare,reader,reviewer,evidenceSha256:bound,entry:e,
     targetAddress:{role:e.target.role,...row.profile.identity},canonicalAddresses:structuredClone(context.addresses),
     scope:e.chain==="own_legal_terms_broker_identifiers" ? "Reviewed own-domain contracting legal name and explicit broker identifiers associate the exact FMCSA record only. No website street-address corroboration or current authority is claimed. Registry/CRM address roles and dates remain separate; no canonical mutation, owned fleet, employee, revenue, debt or budget inference." : "Reviewed dated document identity association only. Address roles/dates remain separate; no canonical mutation, current occupancy, debt balance, company revenue, budget or license-wide conclusion is inferred."}};
+}
+
+type EntityHistorySource = Omit<Source, "kind"> & {
+  kind: "official_state_filing_pdf" | "official_state_summary_html";
+  entityId: string; documentId: string | null;
+  template: "co_periodic_report_2012" | "co_periodic_report_prose" | "co_entity_summary";
+  pageCount: number; pages: { page: number; text: string; textSha256: string; visualSha256: string }[];
+  principalStreet: Address; principalQuote: string; extractionSha256: string | null;
+  retainedFileHashes: string[];
+};
+type EntityHistoryEntry = Omit<BaseEntry, "sources" | "target"> & {
+  chain: "official_entity_address_history";
+  target: Omit<Target, "dataset" | "role"> & { dataset: "co_ucc" | "co_sos"; role: "debtor_business" | "principal_street" };
+  sources: EntityHistorySource[];
+  history: {
+    jurisdiction: "Colorado"; entityId: string;
+    baseEntry: { id: string; sha256: string };
+    identitySource: number; targetSource: number;
+    identityLink: { role: "reviewed_same_entity_association"; relation: "report_adds_explicit_unit";
+      baseAddress: Address; reportAddress: Address; exactAddressEqualityClaim: false };
+    currentOccupancyClaim: false; relocationDateClaim: false; agentAsPrincipalClaim: false;
+  };
+  originalCountry: { rawCountry: string | null; profileCountryCode: string | null; missingValuesPreserved: true };
+};
+
+function historyBase(e: EntityHistoryEntry): CourtEntry {
+  const found=registryOfficialDocumentEntry(e.history.baseEntry.id);
+  need(found.sha256===e.history.baseEntry.sha256 && found.entry.chain==="court_contract_counterparty_contact", "history base identity changed or unsupported");
+  const base=found.entry;
+  need(base.companyId===e.companyId && base.internalId===e.internalId && base.canonicalDomain===e.canonicalDomain
+    && base.canonicalIdentitySha256===e.canonicalIdentitySha256 && words(base.legalName)===words(e.legalName), "history base subject differs");
+  return base;
+}
+function entityHistorySourceChecks(e: EntityHistoryEntry) {
+  const h=e.history,base=historyBase(e); sourceChecks(base); courtIdentityChain(base);
+  need(Date.parse(e.sourceReader.reviewedAt)>=Math.max(...[base.sourceReader,base.sourceReviewer,base.originalReviews.primary,base.originalReviews.independent].map(r=>Date.parse(r.reviewedAt))), "history source review precedes reviewed base");
+  need(h.jurisdiction==="Colorado" && /^\d{11}$/.test(h.entityId) && e.sources.length>=2 && e.sources.length<=8
+    && Number.isInteger(h.identitySource) && Number.isInteger(h.targetSource) && e.sources[h.identitySource] && e.sources[h.targetSource]
+    && h.currentOccupancyClaim===false && h.relocationDateClaim===false && h.agentAsPrincipalClaim===false, "history role or source scope differs");
+  const urls=new Set<string>();
+  for(const s of e.sources) {
+    const u=publicUrl(s.url);
+    need(!urls.has(s.url),"history duplicate source");urls.add(s.url);
+    need(u.hostname==="www.coloradosos.gov" && s.entityId===h.entityId && s.requestedUrl===s.url && s.status===200
+      && s.hops?.length===1 && s.hops[0].url===s.url && s.hops[0].status===200 && s.completeRead===true
+      && iso(s.observedAt) && hash(s.receiptSha256) && hash(s.bodySha256) && hash(s.originalSourcePin)
+      && s.text.length>100 && s.text.length<=150000 && sha(s.text)===s.textSha256
+      && s.retainedFileHashes.length>=2 && new Set(s.retainedFileHashes).size===s.retainedFileHashes.length
+      && s.retainedFileHashes.every(hash) && [s.bodySha256,s.receiptSha256,s.originalSourcePin].every(x=>s.retainedFileHashes.includes(x!)), "history capture/read provenance differs");
+    need(s.principalStreet.countryCode==="US" && s.principalStreet.state==="CO" && s.text.includes(s.principalQuote), "history principal role/address differs");
+    if(s.kind==="official_state_filing_pdf") {
+      need(u.pathname==="/biz/ViewImage.do" && [...u.searchParams.keys()].sort().join() === "fileId,masterFileId"
+        && u.searchParams.get("masterFileId")===h.entityId && u.searchParams.get("fileId")===s.documentId && /^\d{11}$/.test(s.documentId||"")
+        && s.contentType==="application/pdf" && /^\d{4}-\d{2}-\d{2}$/.test(s.sourceDate||"") && !!s.sourceDateText
+        && s.sourceDateText!.slice(0,10)===`${s.sourceDate!.slice(5,7)}/${s.sourceDate!.slice(8,10)}/${s.sourceDate!.slice(0,4)}`
+        && Date.parse(s.sourceDate!)<=Date.parse(s.observedAt) && s.text.includes(s.sourceDateText!)
+        && s.pageCount===s.pages.length && s.pageCount>0 && s.pageCount<=10 && hash(s.extractionSha256)
+        && s.retainedFileHashes.includes(s.extractionSha256!) && s.pages.every((p,i)=>p.page===i+1 && p.text.length>0
+          && sha(p.text)===p.textSha256 && hash(p.visualSha256) && s.retainedFileHashes.includes(p.visualSha256))
+        && s.text===s.pages.map(p=>p.text).join("\n\n"), "history full filing identity/date/pages differ");
+      const p=s.pages[0].text,a=s.principalStreet;
+      // These are the two official form layouts, with complete retained pages.
+      // The reviewed layout binds the principal block; agent/filer fields are never substituted.
+      if(s.template==="co_periodic_report_2012") {
+        const values=[h.entityId,e.legalName,"Colorado",a.addressLine1,...(a.addressLine2?[a.addressLine2]:[]),a.city,a.state,a.postalCode,"Colorado","United States"].join("\n");
+        need(p.includes("1. Principal office street address:") && p.includes("2. Principal office mailing address:")
+          && s.principalQuote===values && p.split(values).length===2
+          && p.includes(`ID Number: ${h.entityId}`) && p.includes(`Document number: ${s.documentId}`)
+          && p.includes(`Date and Time: ${s.sourceDateText}`), "history labelled form principal block differs");
+      } else {
+        const expected=`The principal office street address is ${a.addressLine1} ${a.addressLine2||""} ${a.city} ${a.state} ${a.postalCode} US`;
+        need(s.template==="co_periodic_report_prose" && p.includes(`The entity name is ${e.legalName}`)
+          && p.includes(`The entity ID Number is ${h.entityId}`) && p.includes(`Document #: ${s.documentId}`)
+          && compact(s.principalQuote)===compact(expected) && compact(p).split(compact(expected)).length===2
+          && p.includes(`Filed on: ${s.sourceDateText}`), "history prose principal block differs");
+      }
+    } else {
+      need(s.kind==="official_state_summary_html" && s.template==="co_entity_summary" && u.pathname==="/biz/BusinessEntityDetail.do"
+        && ["masterFileId","entityId2","fileId"].every(k=>u.searchParams.getAll(k).length===1 && u.searchParams.get(k)===h.entityId)
+        && /^text\/html(?:;|$)/.test(s.contentType||"") && s.documentId===null && s.sourceDate===null && s.sourceDateText===null
+        && s.pageCount===0 && s.pages.length===0 && s.extractionSha256===null && s.text.includes(`Name ${e.legalName} Status `)
+        && s.text.includes(`ID number ${h.entityId} Form `), "history official summary identity differs");
+      const a=s.principalStreet,expected=`Principal office street address ${a.addressLine1}${a.addressLine2?", "+a.addressLine2:""}, ${a.city}, ${a.state} ${a.postalCode}, US`;
+      need(s.principalQuote===expected && s.text.split(expected).length===2, "history summary principal block differs");
+    }
+  }
+}
+function entityHistoryIdentity(e: EntityHistoryEntry) {
+  const h=e.history,base=historyBase(e),link=h.identityLink,report=e.sources[h.identitySource],a=link.baseAddress,b=link.reportAddress;
+  need(report.kind==="official_state_filing_pdf" && link.role==="reviewed_same_entity_association"
+    && link.relation==="report_adds_explicit_unit" && link.exactAddressEqualityClaim===false
+    && stableRegistryJson(a)===stableRegistryJson(base.court.address) && stableRegistryJson(b)===stableRegistryJson(report.principalStreet)
+    && !a.addressLine2 && !!b.addressLine2 && words(a.addressLine1)===words(b.addressLine1)
+    && words(a.city)===words(b.city) && a.state===b.state && a.countryCode===b.countryCode
+    && /^\d{5}-\d{4}$/.test(a.postalCode) && a.postalCode===b.postalCode, "history reviewed entity link differs");
+  // The comparison above validates the reviewed compound identity link only.
+  // It never returns address equality or removes the additional reported unit.
+  const selected=e.sources[h.targetSource];
+  need(e.target.role===(e.target.dataset==="co_sos"?"principal_street":"debtor_business")
+    && (e.target.dataset==="co_sos"?selected.kind==="official_state_summary_html":selected.kind==="official_state_filing_pdf")
+    && datedUsAddress(e.targetAddress,selected.principalStreet), "history exact target principal address differs");
+}
+function entityHistoryTarget(row: RegistryFinding,e: EntityHistoryEntry) {
+  const p=row.profile,t=e.target,u=publicUrl(row.sourceUrl),lines=row.evidence.split("\n"),raw=JSON.parse(lines[0]),c=e.originalCountry;
+  need(words(p.identity.legalName||"")===words(e.legalName) && c.missingValuesPreserved===true
+    && c.profileCountryCode===(Object.hasOwn(p.identity,"countryCode")?p.identity.countryCode:null), "history original full legal name/country differs");
+  if(t.dataset==="co_ucc") {
+    const filing=JSON.parse(lines[1]);
+    need(lines.length===2 && sha(lines[0])===t.rowSha256 && c.rawCountry===(Object.hasOwn(raw,"country")?raw.country:null)
+      && raw.country==="United States" && (!Object.hasOwn(p.identity,"countryCode") || p.identity.countryCode==="US")
+      && p.recordId===`${raw.fileid}:${raw.debtorid}` && filing.fileid===raw.fileid && raw.organizationname===p.identity.legalName
+      && raw.address1===p.identity.addressLine1 && (raw.address2||"")===(p.identity.addressLine2||"")
+      && raw.city===p.identity.city && raw.state===p.identity.state && raw.zipcode===p.identity.postalCode
+      && u.hostname==="data.colorado.gov" && u.pathname==="/resource/8upq-58vz.json" && [...u.searchParams.keys()].join()==="debtorid"
+      && u.searchParams.get("debtorid")===raw.debtorid, "history original UCC differs");
+  } else {
+    need(lines.length===1 && sha(row.evidence)===t.rowSha256 && p.recordId===e.history.entityId && raw.entityid===p.recordId
+      && raw.entityname===p.identity.legalName && raw.principaladdress1===p.identity.addressLine1
+      && (raw.principaladdress2||"")===(p.identity.addressLine2||"") && raw.principalcity===p.identity.city
+      && raw.principalstate===p.identity.state && raw.principalzipcode===p.identity.postalCode
+      && raw.principalcountry==="US" && c.rawCountry==="US" && p.identity.countryCode==="US"
+      && u.hostname==="data.colorado.gov" && u.pathname==="/resource/4ykn-tg5h.json" && [...u.searchParams.keys()].join()==="entityid"
+      && u.searchParams.get("entityid")===raw.entityid, "history original entity differs");
+  }
+  need(datedUsAddress({...p.identity,countryCode:"US"} as Address,e.targetAddress), "history original target address differs");
 }

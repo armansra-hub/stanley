@@ -7,7 +7,7 @@ import { extractCompanyIdentity } from "@/lib/sources/siteContent";
 import { fetchPublicHttpText, validatePublicHttpUrl, type PublicHttpTextResponse } from "@/lib/triggers/urlSafety";
 import { registryContentHash, retainedFmcsaDba, normalizedDba, registryStreet, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 
-import { registryWebsiteText, type RegistryWebsiteNormalization } from "./registryWebsiteText";
+import { registryWebsiteText, registryWebsiteQuoteOutsideWidget, type RegistryWebsiteNormalization } from "./registryWebsiteText";
 
 type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string };
 export type RegistryWebsiteCorroboration = {
@@ -172,8 +172,12 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
       || !text(relation.quote, 650) || !hash(relation.quoteSha256) || sha(relation.quote) !== relation.quoteSha256)
       throw new Error("invalid registry website operator relationship");
   }
-  if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1" && raw.normalization !== "gravity_forms_honeypot_v2" && raw.normalization !== "gravity_forms_honeypot_v3" && raw.normalization !== "everest_forms_honeypot_v1" && raw.normalization !== "everest_forms_honeypot_v2" && raw.normalization !== "everest_forms_honeypot_v3")
+  if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1" && raw.normalization !== "gravity_forms_honeypot_v2" && raw.normalization !== "gravity_forms_honeypot_v3" && raw.normalization !== "everest_forms_honeypot_v1" && raw.normalization !== "everest_forms_honeypot_v2" && raw.normalization !== "everest_forms_honeypot_v3" && raw.normalization !== "testimonials_widget_unordered_v1")
     throw new Error("invalid registry website normalization");
+  // The unordered-widget mode supports ordinary complete legal-name/address
+  // proofs only; identifier, DBA and redirect grammars retain their own gates.
+  if (raw.normalization === "testimonials_widget_unordered_v1" && (raw.mode !== undefined || raw.canonicalRedirect !== undefined))
+    throw new Error("unordered testimonials normalization requires an ordinary address proof");
   if (raw.canonicalRedirect !== undefined) {
     const redirect = raw.canonicalRedirect;
     if (!object(redirect) || Object.keys(redirect).some(k => !["requestedUrl", "finalUrl", "normalizedVisibleTextSha256"].includes(k))
@@ -502,7 +506,7 @@ export function registryWebsiteVerifier() {
     context: CompanyIdentityContext, now = new Date()): Promise<NonNullable<RegistryProfile["verification"]>> => {
     const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address";
     // This new mode always revalidates its fresh, separately bound attestations.
-    if (identifierMode || dbaMode || proof.canonicalRedirect !== undefined) proof = parseRegistryWebsiteCorroboration(proof, row, now);
+    if (identifierMode || dbaMode || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
     const redirect = proof.canonicalRedirect;
@@ -568,6 +572,8 @@ export function registryWebsiteVerifier() {
     const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
     if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0)
       throw new RegistryWebsiteMismatchError(page, proof, visibleText, new Date().toISOString());
+    if (proof.normalization === "testimonials_widget_unordered_v1" && !registryWebsiteQuoteOutsideWidget(page.body, proof.quote))
+      throw new Error("registry website identity quote must be wholly outside the unordered widget");
     // A longer address proof is the entire page, never joined or clipped passages.
     if (redirect && !proof.mode && proof.quote.length > 1800 && proof.quote !== visibleText)
       throw new Error("registry website extended redirect quote must be the full visible page");

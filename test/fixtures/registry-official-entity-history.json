@@ -1,0 +1,247 @@
+{
+  "company": {
+    "id": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+    "netsuite_internal_id": "190125582",
+    "name": "Red Sky Consulting",
+    "domain": "redskyconsulting.co"
+  },
+  "context": {
+    "aliases": [],
+    "addresses": [],
+    "context": ""
+  },
+  "findings": [
+    {
+      "internalId": "190125582",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "kind": "ops_profile",
+      "source": "registry",
+      "detail": "Colorado registration and entity status as reported by the public registry. Registration does not establish revenue, employee count or a new growth event.",
+      "evidence": "{\"entityid\":\"20161033965\",\"entityname\":\"RED SKY Consulting LLC\",\"principaladdress1\":\"2563 15th St, Suite 317\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80211\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2016-01-15T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+      "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20161033965",
+      "registryProfile": {
+        "version": 1,
+        "dataset": "co_sos",
+        "recordId": "20161033965",
+        "displayLabel": "Colorado business registration",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:32:55.642070Z",
+        "facts": [
+          {
+            "field": "registration_number",
+            "value": "20161033965"
+          },
+          {
+            "field": "entity_status",
+            "value": "Good Standing"
+          },
+          {
+            "field": "legal_structure",
+            "value": "DLLC"
+          },
+          {
+            "field": "formation_date",
+            "value": "2016-01-15"
+          }
+        ],
+        "identity": {
+          "legalName": "RED SKY Consulting LLC",
+          "addressLine1": "2563 15th St, Suite 317",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80211",
+          "countryCode": "US"
+        },
+        "provenance": {
+          "rowSha256": "1b2ad285a9cd1ddaae4d3170257ed06b5f470a690f1a3fa2f6d1e53ac36ad5a6",
+          "quote": "{\"entityid\":\"20161033965\",\"entityname\":\"RED SKY Consulting LLC\",\"principaladdress1\":\"2563 15th St, Suite 317\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80211\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"entitytype\":\"DLLC\",\"entityformdate\":\"2016-01-15T00:00:00.000\",\"jurisdictonofformation\":\"CO\"}",
+          "sourceRow": {
+            "legalName": "RED SKY Consulting LLC",
+            "addressLine1": "2563 15th St, Suite 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US",
+            "registration_number": "20161033965",
+            "entity_status": "Good Standing",
+            "legal_structure": "DLLC",
+            "formation_date": "2016-01-15"
+          },
+          "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_sos-1b2ad285a9cd1ddaae4d3170257ed06b5f470a690f1a3fa2f6d1e53ac36ad5a6.json"
+        }
+      }
+    },
+    {
+      "internalId": "190125582",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "kind": "ops_profile",
+      "source": "registry",
+      "detail": "Public UCC filing, not evidence of current debt, loan balance or business growth. Debtor record status: active; latest returned filing type: ucc; termination flag: False; lapse date: 2030-02-20T00:00:00.000. The debtor business address is used; no secured-party or registered-agent address is substituted.",
+      "evidence": "{\"debtorid\":\"1885861\",\"fileid\":\"2388955\",\"organizationname\":\"RED SKY Consulting LLC\",\"address1\":\"2822 Umatilla St\",\"city\":\"Denver\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80211\",\"recordstatus\":\"active\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20252015964\",\"masterdocumentid\":\"20252015964\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2025-02-20T00:00:00.000\",\"lapsedate\":\"2030-02-20T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"2388955\"}",
+      "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1885861",
+      "registryProfile": {
+        "version": 1,
+        "dataset": "co_ucc",
+        "recordId": "2388955:1885861",
+        "displayLabel": "Colorado UCC filing",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:18.303033Z",
+        "facts": [
+          {
+            "field": "registration_number",
+            "value": "2388955"
+          },
+          {
+            "field": "filing_date",
+            "value": "2025-02-20"
+          },
+          {
+            "field": "lien_type",
+            "value": "ucc"
+          }
+        ],
+        "identity": {
+          "legalName": "RED SKY Consulting LLC",
+          "addressLine1": "2822 Umatilla St",
+          "city": "Denver",
+          "state": "CO",
+          "postalCode": "80211"
+        },
+        "provenance": {
+          "rowSha256": "f78cb0a77b7d3d5bc6362ae1062cdc25b7b3e9c04a69574f0ea061712cb040c3",
+          "quote": "{\"debtorid\":\"1885861\",\"fileid\":\"2388955\",\"organizationname\":\"RED SKY Consulting LLC\",\"address1\":\"2822 Umatilla St\",\"city\":\"Denver\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80211\",\"recordstatus\":\"active\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20252015964\",\"masterdocumentid\":\"20252015964\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2025-02-20T00:00:00.000\",\"lapsedate\":\"2030-02-20T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"2388955\"}",
+          "sourceRow": {
+            "legalName": "RED SKY Consulting LLC",
+            "addressLine1": "2822 Umatilla St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "registration_number": "2388955",
+            "filing_date": "2025-02-20",
+            "lien_type": "ucc"
+          },
+          "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_ucc-118679485bd4bfa71b67e6459a0d3e3df6ed7868918639be8054115072c86c79.json"
+        }
+      }
+    },
+    {
+      "internalId": "190125582",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "kind": "ops_profile",
+      "source": "registry",
+      "detail": "Public UCC filing, not evidence of current debt, loan balance or business growth. Debtor record status: active; latest returned filing type: ucc; termination flag: False; lapse date: 2030-02-26T00:00:00.000. The debtor business address is used; no secured-party or registered-agent address is substituted.",
+      "evidence": "{\"debtorid\":\"1887211\",\"fileid\":\"2390709\",\"organizationname\":\"RED SKY Consulting LLC\",\"address1\":\"2822 UMATILLA ST\",\"city\":\"DENVER\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80211\",\"recordstatus\":\"active\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20252017743\",\"masterdocumentid\":\"20252017743\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2025-02-26T00:00:00.000\",\"lapsedate\":\"2030-02-26T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"2390709\"}",
+      "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1887211",
+      "registryProfile": {
+        "version": 1,
+        "dataset": "co_ucc",
+        "recordId": "2390709:1887211",
+        "displayLabel": "Colorado UCC filing",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:18.303033Z",
+        "facts": [
+          {
+            "field": "registration_number",
+            "value": "2390709"
+          },
+          {
+            "field": "filing_date",
+            "value": "2025-02-26"
+          },
+          {
+            "field": "lien_type",
+            "value": "ucc"
+          }
+        ],
+        "identity": {
+          "legalName": "RED SKY Consulting LLC",
+          "addressLine1": "2822 UMATILLA ST",
+          "city": "DENVER",
+          "state": "CO",
+          "postalCode": "80211"
+        },
+        "provenance": {
+          "rowSha256": "b877b2f3144e20b2ca0a38aef1fb74ffe75dd6f7511ad496348f8c4bd8c917df",
+          "quote": "{\"debtorid\":\"1887211\",\"fileid\":\"2390709\",\"organizationname\":\"RED SKY Consulting LLC\",\"address1\":\"2822 UMATILLA ST\",\"city\":\"DENVER\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80211\",\"recordstatus\":\"active\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20252017743\",\"masterdocumentid\":\"20252017743\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2025-02-26T00:00:00.000\",\"lapsedate\":\"2030-02-26T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"2390709\"}",
+          "sourceRow": {
+            "legalName": "RED SKY Consulting LLC",
+            "addressLine1": "2822 UMATILLA ST",
+            "city": "DENVER",
+            "state": "CO",
+            "postalCode": "80211",
+            "registration_number": "2390709",
+            "filing_date": "2025-02-26",
+            "lien_type": "ucc"
+          },
+          "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_ucc-86c0f0dde7a6c594e30c95b2d8ca38e27ec81ca02c6b114295cd824eb50485dc.json"
+        }
+      }
+    },
+    {
+      "internalId": "190125582",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "kind": "ops_profile",
+      "source": "registry",
+      "detail": "Public UCC filing, not evidence of current debt, loan balance or business growth. Debtor record status: active; latest returned filing type: ucc; termination flag: False; lapse date: 2031-09-15T00:00:00.000. The debtor business address is used; no secured-party or registered-agent address is substituted.",
+      "evidence": "{\"debtorid\":\"2019336\",\"fileid\":\"2597628\",\"organizationname\":\"RED SKY CONSULTING LLC\",\"address1\":\"2822 UMATILLA ST\",\"city\":\"DENVER\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80211\",\"recordstatus\":\"active\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20262091855\",\"masterdocumentid\":\"20262091855\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2026-09-15T00:00:00.000\",\"lapsedate\":\"2031-09-15T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"2597628\"}",
+      "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=2019336",
+      "registryProfile": {
+        "version": 1,
+        "dataset": "co_ucc",
+        "recordId": "2597628:2019336",
+        "displayLabel": "Colorado UCC filing",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:18.908331Z",
+        "facts": [
+          {
+            "field": "registration_number",
+            "value": "2597628"
+          },
+          {
+            "field": "filing_date",
+            "value": "2026-09-15"
+          },
+          {
+            "field": "lien_type",
+            "value": "ucc"
+          }
+        ],
+        "identity": {
+          "legalName": "RED SKY CONSULTING LLC",
+          "addressLine1": "2822 UMATILLA ST",
+          "city": "DENVER",
+          "state": "CO",
+          "postalCode": "80211"
+        },
+        "provenance": {
+          "rowSha256": "becdc1d3139bf8898bc0ba5c90606c52eb9c8afa458cdf5c398c6afaae2b3ddf",
+          "quote": "{\"debtorid\":\"2019336\",\"fileid\":\"2597628\",\"organizationname\":\"RED SKY CONSULTING LLC\",\"address1\":\"2822 UMATILLA ST\",\"city\":\"DENVER\",\"state\":\"CO\",\"country\":\"United States\",\"zipcode\":\"80211\",\"recordstatus\":\"active\",\"actiontype\":\"add\"}\n{\"transactionid\":\"20262091855\",\"masterdocumentid\":\"20262091855\",\"transactiontype\":\"Initial Filing\",\"filingdate\":\"2026-09-15T00:00:00.000\",\"lapsedate\":\"2031-09-15T00:00:00.000\",\"filingtype\":\"ucc\",\"documenttype\":\"UCC financing statement\",\"continuation\":false,\"terminationflag\":false,\"manufacturedhometransactions\":false,\"fileid\":\"2597628\"}",
+          "sourceRow": {
+            "legalName": "RED SKY CONSULTING LLC",
+            "addressLine1": "2822 UMATILLA ST",
+            "city": "DENVER",
+            "state": "CO",
+            "postalCode": "80211",
+            "registration_number": "2597628",
+            "filing_date": "2026-09-15",
+            "lien_type": "ucc"
+          },
+          "localFile": "C:\\Users\\Arman Sra\\Documents\\Stanley\\research\\tam-baseline-enrichment-20260929\\datasets\\co-registry\\records\\co_ucc-f080878cf639bee8f9ca43a2ed71b416b6280f218a1ce46b06feb9d4712b86eb.json"
+        }
+      }
+    }
+  ],
+  "entryIds": [
+    "entity-history-co_sos-20161033965",
+    "entity-history-co_ucc-2388955-1885861",
+    "entity-history-co_ucc-2390709-1887211",
+    "entity-history-co_ucc-2597628-2019336"
+  ],
+  "heldProfileKeys": [
+    "registry:co_ucc:2388955:1885862",
+    "registry:co_ucc:2555844:1991345",
+    "registry:co_ucc:2597628:2019338",
+    "registry:co_ucc:2597628:2019339",
+    "registry:co_ucc:2597628:2019340"
+  ]
+}

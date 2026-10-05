@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { htmlToVisibleText, htmlAttributes, decodeEntities } from "@/lib/sources/siteDiscovery";
 
-export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2" | "gravity_forms_honeypot_v3" | "everest_forms_honeypot_v1" | "everest_forms_honeypot_v2" | "everest_forms_honeypot_v3";
+export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2" | "gravity_forms_honeypot_v3" | "everest_forms_honeypot_v1" | "everest_forms_honeypot_v2" | "everest_forms_honeypot_v3" | "testimonials_widget_unordered_v1";
 
 const attributes = /([\w:-]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/g;
 function exactAttributes(raw: string, allowed: string[]): Record<string, string> | null {
@@ -103,12 +104,111 @@ function withoutEverestTrap(html: string, comment = false, finiteLabels = false)
   });
 }
 
-/** Default is the original complete-text algorithm. The opt-in version omits
+// This mode recognizes one closed Testimonials Widget container. Order and the
+// corresponding first-card display assignment are presentation; nothing else is
+// omitted. Raw card bytes, wrapper bytes and positional whitespace/style vectors
+// are integrity-bound in addition to the complete, reordered visible text.
+function unorderedTestimonials(html: string) {
+  function fail(): never { throw new Error("invalid unordered testimonials widget"); }
+  if (html.length > 2 * 1024 * 1024) fail();
+  const tokenPattern = /<!--[\s\S]*?(?:-->|$)|<(script|style|noscript|svg|template|textarea|title|xmp|iframe|noembed)\b(?:[^"'<>]|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/\1\s*>|$)|<\/?[a-z][\w:-]*\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi;
+  const tokens = [...html.matchAll(tokenPattern)].map(m => ({
+    raw: m[0], start: m.index!, end: m.index! + m[0].length,
+    tag: m[0].startsWith("<!--") || m[1] ? null : m[0].match(/^<\/?([\w:-]+)/)![1].toLowerCase(),
+  }));
+  // Nested raw-text/template constructs are outside this finite grammar. Do not
+  // let a regex's first closing tag expose a hidden widget as real structure.
+  for (const token of tokens) {
+    if (token.tag || token.raw.startsWith("<!--")) continue;
+    const name = token.raw.match(/^<([a-z]+)/i)![1];
+    if (new RegExp(`<${name}\\b`, "i").test(token.raw.slice(token.raw.indexOf(">") + 1))) fail();
+  }
+  const widgetTags = tokens.filter(t => t.tag && !t.raw.startsWith("</")
+    && (htmlAttributes(t.raw).class ?? "").split(/\s+/).some(c => /^testimonials-widget-testimonials(?:\d+)?$/.test(c)));
+  const controls = widgetTags.filter(t => (htmlAttributes(t.raw).class ?? "").split(/\s+/).includes("bx-controls"));
+  const candidates = widgetTags.filter(t => !controls.includes(t));
+  if (candidates.length !== 1 || controls.length > 1) fail();
+  const outer = candidates[0], outerAttrs = outer.raw.match(/^<div\b([\s\S]*)>$/i);
+  const o = outerAttrs && exactAttributes(outerAttrs[1], ["class"]);
+  if (!o || /\/\s*>$/.test(outer.raw) || !/^testimonials-widget-testimonials testimonials-widget-testimonials[1-9]\d{0,11}$/.test(o.class ?? "")) fail();
+  const cards: { id: string; html: string }[] = [], styles: string[] = [], gaps: string[] = [];
+  const stack = ["div"], ids = new Set<string>();
+  const allowed = new Set(["div", "blockquote", "span", "a", "p", "br", "strong", "em", "b", "i", "img"]);
+  let cursor = outer.end, previous = outer.end, cardStart = -1, cardId = "", close = "", end = -1;
+  for (const token of tokens.slice(tokens.indexOf(outer) + 1)) {
+    if (html.slice(previous, token.start).includes("<")) fail();
+    previous = token.end;
+    if (!token.tag) {
+      // Comments inside cards are retained byte-for-byte. No raw-text elements
+      // or comment-shaped cards can create structural evidence.
+      if (stack.length < 2 || !token.raw.startsWith("<!--") || !token.raw.endsWith("-->")) fail();
+      continue;
+    }
+    if (!allowed.has(token.tag)) fail();
+    if (token.raw.startsWith("</")) {
+      if (!/^<\/[a-z]+\s*>$/i.test(token.raw) || stack.pop() !== token.tag) fail();
+      if (stack.length === 1) {
+        const raw = html.slice(cardStart, token.end);
+        // Only this exact double-quoted outer presentation attribute changes
+        // assignment; its position and every other opening/inner/closing byte stay.
+        cards.push({ id: cardId, html: raw.replace(/^<div\b[^>]*>/i, open => open.replace(/ style="(?:display: none;)?"/, ' style=""')) });
+        cursor = token.end;
+      } else if (stack.length === 0) {
+        const gap = html.slice(cursor, token.start);
+        if (gap.trim()) fail();
+        gaps.push(gap); close = token.raw; end = token.end; break;
+      }
+    } else {
+      if (/\/\s*>$/.test(token.raw) && !["br", "img"].includes(token.tag)) fail();
+      if (stack.length === 1) {
+        const a = token.raw.match(/^<div\b([\s\S]*)>$/i), parsed = a && exactAttributes(a[1], ["class", "style"]);
+        const id = parsed?.class?.match(/^testimonials-widget-testimonial post-([1-9]\d{0,11}) testimonials-widget type-testimonials-widget status-publish$/)?.[1];
+        const style = parsed?.style, gap = html.slice(cursor, token.start);
+        if (!id || ids.has(id) || cards.length >= 100 || gap.trim()
+          || !/ style="(?:display: none;)?"/.test(token.raw)
+          || style !== (cards.length === 0 ? "" : "display: none;")) fail();
+        ids.add(id); gaps.push(gap); styles.push(style); cardId = id; cardStart = token.start;
+      } else if ((htmlAttributes(token.raw).class ?? "").split(/\s+/).includes("testimonials-widget-testimonial")) fail();
+      if (!["br", "img"].includes(token.tag)) stack.push(token.tag);
+    }
+  }
+  if (end < 0 || cards.length < 2 || stack.length) fail();
+  // The plugin may emit one empty adjacent control div with the same instance.
+  // Its complete bytes remain bound; it cannot hide a second content widget.
+  let controlBytes = "";
+  if (controls.length) {
+    const control = controls[0], next = tokens[tokens.indexOf(control) + 1];
+    const instance = o.class.match(/testimonials-widget-testimonials([1-9]\d*)$/)![1];
+    const rawAttrs = control.raw.match(/^<div\b([\s\S]*)>$/i), a = rawAttrs && exactAttributes(rawAttrs[1], ["class"]);
+    if (!a || a.class !== `testimonials-widget-testimonials bx-controls testimonials-widget-testimonials${instance}-control`
+      || /\/\s*>$/.test(control.raw) || control.start < end || html.slice(end, control.start).trim()
+      || !next || !/^<\/div\s*>$/i.test(next.raw) || html.slice(control.end, next.start).trim()) fail();
+    controlBytes = html.slice(end, next.end);
+  }
+  cards.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const digest = createHash("sha256").update(JSON.stringify({ open: outer.raw, close, gaps, styles, cards, controlBytes })).digest("hex");
+  const canonicalWidget = outer.raw + cards.map((card, i) => gaps[i]
+    + card.html.replace(/^<div\b[^>]*>/i, open => open.replace(' style=""', ` style="${styles[i]}"`))).join("") + gaps[cards.length] + close;
+  const prefix = html.slice(0, outer.start), suffix = html.slice(end);
+  return { prefix, suffix, widgetText: htmlToVisibleText(canonicalWidget),
+    text: htmlToVisibleText(prefix + canonicalWidget + suffix) + ` [registry:testimonials_widget_unordered_v1:sha256:${digest}]` };
+}
+
+/** A quote wholly outside the widget is required. Even a duplicated quote inside
+ * a testimonial is rejected, so stored quote offsets cannot select a customer. */
+export function registryWebsiteQuoteOutsideWidget(html: string, quote: string): boolean {
+  const page = unorderedTestimonials(html);
+  return !page.widgetText.includes(quote)
+    && (htmlToVisibleText(page.prefix).includes(quote) || htmlToVisibleText(page.suffix).includes(quote));
+}
+
+/** Default is the original complete-text algorithm. The opt-in trap versions omit
  * only declared empty anti-spam fields under its separate closed grammar
  * above. It makes no CSS/rendering claim and never drops general hidden content.
  * The proof version is attestation-bound; raw HTML is retained independently. */
 export function registryWebsiteText(html: string, normalization?: RegistryWebsiteNormalization): string {
   if (normalization === undefined) return htmlToVisibleText(html);
+  if (normalization === "testimonials_widget_unordered_v1") return unorderedTestimonials(html).text;
   if (normalization === "everest_forms_honeypot_v1" || normalization === "everest_forms_honeypot_v2" || normalization === "everest_forms_honeypot_v3")
     return htmlToVisibleText(withoutEverestTrap(html, normalization === "everest_forms_honeypot_v2", normalization === "everest_forms_honeypot_v3"));
   if (normalization !== "gravity_forms_honeypot_v1" && normalization !== "gravity_forms_honeypot_v2" && normalization !== "gravity_forms_honeypot_v3")

@@ -2783,6 +2783,1002 @@
         "Parcel acreage is the client project, not Eagle ownership or company size.",
         "Small geometry text was fully read via retained extraction; visual identity and titleblock are legible. No cadastral geometry conclusion."
       ]
+    },
+    {
+      "id": "entity-history-co_sos-20161033965",
+      "chain": "official_entity_address_history",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "internalId": "190125582",
+      "canonicalDomain": "redskyconsulting.co",
+      "canonicalIdentitySha256": "c268c735594afc71a3d885b6737c533b6b7aafcd8dee94caa152dcae2f91ba71",
+      "target": {
+        "dataset": "co_sos",
+        "recordId": "20161033965",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20161033965",
+        "rowSha256": "1b2ad285a9cd1ddaae4d3170257ed06b5f470a690f1a3fa2f6d1e53ac36ad5a6",
+        "evidenceSha256": "1b2ad285a9cd1ddaae4d3170257ed06b5f470a690f1a3fa2f6d1e53ac36ad5a6",
+        "profileSha256": "88a3f7334f1cd3ac8f50e50bce7e86f5a5ff72585bf31c4c71171221ae952ef6",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:32:55.642070Z",
+        "role": "principal_street"
+      },
+      "sources": [
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.424Z",
+          "receiptSha256": "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+          "bodySha256": "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+          "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00\n\nREPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+          "textSha256": "ddceb63ec236551fe4bc6e5e02c65c7456224f9de3fc65cd661c5880a8b6d38f",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "sourceDate": "2021-03-13",
+          "sourceDateText": "03/13/2021 10:07 AM",
+          "entityId": "20161033965",
+          "documentId": "20211248269",
+          "template": "co_periodic_report_2012",
+          "pageCount": 2,
+          "pages": [
+            {
+              "page": 1,
+              "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00",
+              "textSha256": "56b090fa108e173e814dd5d5a83e51df6f72028117013b8033b31f961c88367d",
+              "visualSha256": "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283"
+            },
+            {
+              "page": 2,
+              "text": "REPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+              "textSha256": "8bcd0f5ee9b03d73ef4bd31a7d97db47cd06e11b42fd761e4ced3558eab6e427",
+              "visualSha256": "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "principalQuote": "20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States",
+          "extractionSha256": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "retainedFileHashes": [
+            "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+            "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+            "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+            "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283",
+            "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+          ]
+        },
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.817Z",
+          "receiptSha256": "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+          "bodySha256": "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+          "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+          "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "sourceDate": "2023-12-28",
+          "sourceDateText": "12/28/2023 01:15:08 PM",
+          "entityId": "20161033965",
+          "documentId": "20238353432",
+          "template": "co_periodic_report_prose",
+          "pageCount": 1,
+          "pages": [
+            {
+              "page": 1,
+              "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+              "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+              "visualSha256": "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "2822 Umatilla St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "The principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS",
+          "extractionSha256": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "retainedFileHashes": [
+            "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+            "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+            "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+            "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+          ]
+        },
+        {
+          "kind": "official_state_summary_html",
+          "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "requestedUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:30:10.049Z",
+          "receiptSha256": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "bodySha256": "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+          "text": "Colorado Secretary of State - Summary Skip to content | About Secretary Griswold | Español Summary For this Record... Filing history and documents Get a certificate of good standing File a form Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Business Home Business Information Business Search FAQs, Glossary and Information Details Name RED SKY Consulting LLC Status Good Standing Formation date 01/15/2016 ID number 20161033965 Form Limited Liability Company Periodic report month January Jurisdiction Colorado Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US Principal office mailing address 2563 15th St, Suite 317, Denver, CO 80211, US Registered Agent Name SEAN WILLIAM DONOVAN Street address 2822 Umatilla St, Denver, CO 80211, US Mailing address 2822 Umatilla St, Denver, CO 80211, US Filing history and documents Get a certificate of good standing Get certified copies of documents File a form Set up secure business filing Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Terms & conditions | Accessibility statement | Browser compatibility",
+          "textSha256": "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "text/html; charset=ISO-8859-1",
+          "originalSourcePin": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "sourceDate": null,
+          "sourceDateText": null,
+          "entityId": "20161033965",
+          "documentId": null,
+          "template": "co_entity_summary",
+          "pageCount": 0,
+          "pages": [],
+          "principalStreet": {
+            "addressLine1": "2563 15th St, Suite 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US",
+          "extractionSha256": null,
+          "retainedFileHashes": [
+            "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+            "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+            "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246"
+          ]
+        }
+      ],
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/source_outcome_reporting",
+          "reviewedAt": "2026-09-30T21:42:42.827Z",
+          "receiptSha256": "5aec2a2156aad30faf33fcbdc51a31e597042f625ce52f7bd83ca96e71ea767e",
+          "receiptActorField": "readerTaskId"
+        },
+        "independent": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T21:44:15.169Z",
+          "receiptSha256": "94de129978be884a10e8dd3aa18d53b50ffae8687ca995413423583620de0061",
+          "receiptActorField": "reviewerTaskId"
+        },
+        "packetSha256": "a53c773d1b02c48ee8f4bc92879427df78936a2876c48bd1bbc51ccb6dbe1afa"
+      },
+      "sourceReader": {
+        "taskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-05T00:35:45.708Z",
+        "receiptSha256": "8ed0b15f13ced8f1b7bad97d92d8a009c7af9ab5cb95d00ee899e9603e5a77a7",
+        "receiptActorField": "taskId"
+      },
+      "sourceReviewer": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-05T00:43:50.324Z",
+        "receiptSha256": "ad6a270d481b69d371267c2a9dc1788f8af18142557dbe88d829b55fbbe906ee",
+        "receiptActorField": "actor"
+      },
+      "legalName": "RED SKY Consulting LLC",
+      "phone": "7202306990",
+      "targetAddress": {
+        "addressLine1": "2563 15th St, Suite 317",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80211",
+        "countryCode": "US"
+      },
+      "limitations": [
+        "Filing dates are not occupancy or relocation-effective dates.",
+        "2026 PDF metadata is download generation, not filing date.",
+        "2021 principal mailing is blank; agent mailing and filer address remain separate roles.",
+        "Only history page1 and the two selected complete PDFs were read.",
+        "No new-loan count, debt balance, revenue, budget, growth or financial-health inference."
+      ],
+      "history": {
+        "jurisdiction": "Colorado",
+        "entityId": "20161033965",
+        "baseEntry": {
+          "id": "redsky-ucc-2020794-1595593-court-counterparty-contact",
+          "sha256": "405560fd50a770a6c2e73cb6026cadefdff30b25787d876fda93c6d9a924170f"
+        },
+        "identitySource": 0,
+        "targetSource": 2,
+        "identityLink": {
+          "role": "reviewed_same_entity_association",
+          "relation": "report_adds_explicit_unit",
+          "baseAddress": {
+            "addressLine1": "3015 Wyandot St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "reportAddress": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "exactAddressEqualityClaim": false
+        },
+        "currentOccupancyClaim": false,
+        "relocationDateClaim": false,
+        "agentAsPrincipalClaim": false
+      },
+      "originalCountry": {
+        "rawCountry": "US",
+        "profileCountryCode": "US",
+        "missingValuesPreserved": true
+      }
+    },
+    {
+      "id": "entity-history-co_ucc-2388955-1885861",
+      "chain": "official_entity_address_history",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "internalId": "190125582",
+      "canonicalDomain": "redskyconsulting.co",
+      "canonicalIdentitySha256": "c268c735594afc71a3d885b6737c533b6b7aafcd8dee94caa152dcae2f91ba71",
+      "target": {
+        "dataset": "co_ucc",
+        "recordId": "2388955:1885861",
+        "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1885861",
+        "rowSha256": "f78cb0a77b7d3d5bc6362ae1062cdc25b7b3e9c04a69574f0ea061712cb040c3",
+        "evidenceSha256": "118679485bd4bfa71b67e6459a0d3e3df6ed7868918639be8054115072c86c79",
+        "profileSha256": "4ec193a3559a0c914e1b2868530ba6958e1435ab9886110553a0df89cc6ff7f1",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:18.303033Z",
+        "role": "debtor_business"
+      },
+      "sources": [
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.424Z",
+          "receiptSha256": "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+          "bodySha256": "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+          "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00\n\nREPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+          "textSha256": "ddceb63ec236551fe4bc6e5e02c65c7456224f9de3fc65cd661c5880a8b6d38f",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "sourceDate": "2021-03-13",
+          "sourceDateText": "03/13/2021 10:07 AM",
+          "entityId": "20161033965",
+          "documentId": "20211248269",
+          "template": "co_periodic_report_2012",
+          "pageCount": 2,
+          "pages": [
+            {
+              "page": 1,
+              "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00",
+              "textSha256": "56b090fa108e173e814dd5d5a83e51df6f72028117013b8033b31f961c88367d",
+              "visualSha256": "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283"
+            },
+            {
+              "page": 2,
+              "text": "REPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+              "textSha256": "8bcd0f5ee9b03d73ef4bd31a7d97db47cd06e11b42fd761e4ced3558eab6e427",
+              "visualSha256": "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "principalQuote": "20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States",
+          "extractionSha256": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "retainedFileHashes": [
+            "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+            "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+            "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+            "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283",
+            "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+          ]
+        },
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.817Z",
+          "receiptSha256": "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+          "bodySha256": "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+          "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+          "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "sourceDate": "2023-12-28",
+          "sourceDateText": "12/28/2023 01:15:08 PM",
+          "entityId": "20161033965",
+          "documentId": "20238353432",
+          "template": "co_periodic_report_prose",
+          "pageCount": 1,
+          "pages": [
+            {
+              "page": 1,
+              "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+              "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+              "visualSha256": "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "2822 Umatilla St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "The principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS",
+          "extractionSha256": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "retainedFileHashes": [
+            "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+            "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+            "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+            "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+          ]
+        },
+        {
+          "kind": "official_state_summary_html",
+          "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "requestedUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:30:10.049Z",
+          "receiptSha256": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "bodySha256": "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+          "text": "Colorado Secretary of State - Summary Skip to content | About Secretary Griswold | Español Summary For this Record... Filing history and documents Get a certificate of good standing File a form Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Business Home Business Information Business Search FAQs, Glossary and Information Details Name RED SKY Consulting LLC Status Good Standing Formation date 01/15/2016 ID number 20161033965 Form Limited Liability Company Periodic report month January Jurisdiction Colorado Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US Principal office mailing address 2563 15th St, Suite 317, Denver, CO 80211, US Registered Agent Name SEAN WILLIAM DONOVAN Street address 2822 Umatilla St, Denver, CO 80211, US Mailing address 2822 Umatilla St, Denver, CO 80211, US Filing history and documents Get a certificate of good standing Get certified copies of documents File a form Set up secure business filing Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Terms & conditions | Accessibility statement | Browser compatibility",
+          "textSha256": "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "text/html; charset=ISO-8859-1",
+          "originalSourcePin": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "sourceDate": null,
+          "sourceDateText": null,
+          "entityId": "20161033965",
+          "documentId": null,
+          "template": "co_entity_summary",
+          "pageCount": 0,
+          "pages": [],
+          "principalStreet": {
+            "addressLine1": "2563 15th St, Suite 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US",
+          "extractionSha256": null,
+          "retainedFileHashes": [
+            "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+            "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+            "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246"
+          ]
+        }
+      ],
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/source_outcome_reporting",
+          "reviewedAt": "2026-09-30T21:42:42.827Z",
+          "receiptSha256": "5aec2a2156aad30faf33fcbdc51a31e597042f625ce52f7bd83ca96e71ea767e",
+          "receiptActorField": "readerTaskId"
+        },
+        "independent": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T21:44:15.169Z",
+          "receiptSha256": "94de129978be884a10e8dd3aa18d53b50ffae8687ca995413423583620de0061",
+          "receiptActorField": "reviewerTaskId"
+        },
+        "packetSha256": "a53c773d1b02c48ee8f4bc92879427df78936a2876c48bd1bbc51ccb6dbe1afa"
+      },
+      "sourceReader": {
+        "taskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-05T00:35:45.708Z",
+        "receiptSha256": "8ed0b15f13ced8f1b7bad97d92d8a009c7af9ab5cb95d00ee899e9603e5a77a7",
+        "receiptActorField": "taskId"
+      },
+      "sourceReviewer": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-05T00:43:50.324Z",
+        "receiptSha256": "ad6a270d481b69d371267c2a9dc1788f8af18142557dbe88d829b55fbbe906ee",
+        "receiptActorField": "actor"
+      },
+      "legalName": "RED SKY Consulting LLC",
+      "phone": "7202306990",
+      "targetAddress": {
+        "addressLine1": "2822 Umatilla St",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80211",
+        "countryCode": "US"
+      },
+      "limitations": [
+        "Filing dates are not occupancy or relocation-effective dates.",
+        "2026 PDF metadata is download generation, not filing date.",
+        "2021 principal mailing is blank; agent mailing and filer address remain separate roles.",
+        "Only history page1 and the two selected complete PDFs were read.",
+        "No new-loan count, debt balance, revenue, budget, growth or financial-health inference."
+      ],
+      "history": {
+        "jurisdiction": "Colorado",
+        "entityId": "20161033965",
+        "baseEntry": {
+          "id": "redsky-ucc-2020794-1595593-court-counterparty-contact",
+          "sha256": "405560fd50a770a6c2e73cb6026cadefdff30b25787d876fda93c6d9a924170f"
+        },
+        "identitySource": 0,
+        "targetSource": 1,
+        "identityLink": {
+          "role": "reviewed_same_entity_association",
+          "relation": "report_adds_explicit_unit",
+          "baseAddress": {
+            "addressLine1": "3015 Wyandot St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "reportAddress": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "exactAddressEqualityClaim": false
+        },
+        "currentOccupancyClaim": false,
+        "relocationDateClaim": false,
+        "agentAsPrincipalClaim": false
+      },
+      "originalCountry": {
+        "rawCountry": "United States",
+        "profileCountryCode": null,
+        "missingValuesPreserved": true
+      }
+    },
+    {
+      "id": "entity-history-co_ucc-2390709-1887211",
+      "chain": "official_entity_address_history",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "internalId": "190125582",
+      "canonicalDomain": "redskyconsulting.co",
+      "canonicalIdentitySha256": "c268c735594afc71a3d885b6737c533b6b7aafcd8dee94caa152dcae2f91ba71",
+      "target": {
+        "dataset": "co_ucc",
+        "recordId": "2390709:1887211",
+        "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=1887211",
+        "rowSha256": "b877b2f3144e20b2ca0a38aef1fb74ffe75dd6f7511ad496348f8c4bd8c917df",
+        "evidenceSha256": "86c0f0dde7a6c594e30c95b2d8ca38e27ec81ca02c6b114295cd824eb50485dc",
+        "profileSha256": "99416a4fa2f66f1d47ce0e8187f56952916d84301773f930d37d4d5406c429c0",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:18.303033Z",
+        "role": "debtor_business"
+      },
+      "sources": [
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.424Z",
+          "receiptSha256": "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+          "bodySha256": "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+          "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00\n\nREPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+          "textSha256": "ddceb63ec236551fe4bc6e5e02c65c7456224f9de3fc65cd661c5880a8b6d38f",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "sourceDate": "2021-03-13",
+          "sourceDateText": "03/13/2021 10:07 AM",
+          "entityId": "20161033965",
+          "documentId": "20211248269",
+          "template": "co_periodic_report_2012",
+          "pageCount": 2,
+          "pages": [
+            {
+              "page": 1,
+              "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00",
+              "textSha256": "56b090fa108e173e814dd5d5a83e51df6f72028117013b8033b31f961c88367d",
+              "visualSha256": "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283"
+            },
+            {
+              "page": 2,
+              "text": "REPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+              "textSha256": "8bcd0f5ee9b03d73ef4bd31a7d97db47cd06e11b42fd761e4ced3558eab6e427",
+              "visualSha256": "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "principalQuote": "20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States",
+          "extractionSha256": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "retainedFileHashes": [
+            "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+            "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+            "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+            "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283",
+            "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+          ]
+        },
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.817Z",
+          "receiptSha256": "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+          "bodySha256": "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+          "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+          "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "sourceDate": "2023-12-28",
+          "sourceDateText": "12/28/2023 01:15:08 PM",
+          "entityId": "20161033965",
+          "documentId": "20238353432",
+          "template": "co_periodic_report_prose",
+          "pageCount": 1,
+          "pages": [
+            {
+              "page": 1,
+              "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+              "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+              "visualSha256": "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "2822 Umatilla St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "The principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS",
+          "extractionSha256": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "retainedFileHashes": [
+            "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+            "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+            "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+            "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+          ]
+        },
+        {
+          "kind": "official_state_summary_html",
+          "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "requestedUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:30:10.049Z",
+          "receiptSha256": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "bodySha256": "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+          "text": "Colorado Secretary of State - Summary Skip to content | About Secretary Griswold | Español Summary For this Record... Filing history and documents Get a certificate of good standing File a form Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Business Home Business Information Business Search FAQs, Glossary and Information Details Name RED SKY Consulting LLC Status Good Standing Formation date 01/15/2016 ID number 20161033965 Form Limited Liability Company Periodic report month January Jurisdiction Colorado Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US Principal office mailing address 2563 15th St, Suite 317, Denver, CO 80211, US Registered Agent Name SEAN WILLIAM DONOVAN Street address 2822 Umatilla St, Denver, CO 80211, US Mailing address 2822 Umatilla St, Denver, CO 80211, US Filing history and documents Get a certificate of good standing Get certified copies of documents File a form Set up secure business filing Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Terms & conditions | Accessibility statement | Browser compatibility",
+          "textSha256": "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "text/html; charset=ISO-8859-1",
+          "originalSourcePin": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "sourceDate": null,
+          "sourceDateText": null,
+          "entityId": "20161033965",
+          "documentId": null,
+          "template": "co_entity_summary",
+          "pageCount": 0,
+          "pages": [],
+          "principalStreet": {
+            "addressLine1": "2563 15th St, Suite 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US",
+          "extractionSha256": null,
+          "retainedFileHashes": [
+            "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+            "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+            "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246"
+          ]
+        }
+      ],
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/source_outcome_reporting",
+          "reviewedAt": "2026-09-30T21:42:42.827Z",
+          "receiptSha256": "5aec2a2156aad30faf33fcbdc51a31e597042f625ce52f7bd83ca96e71ea767e",
+          "receiptActorField": "readerTaskId"
+        },
+        "independent": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T21:44:15.169Z",
+          "receiptSha256": "94de129978be884a10e8dd3aa18d53b50ffae8687ca995413423583620de0061",
+          "receiptActorField": "reviewerTaskId"
+        },
+        "packetSha256": "a53c773d1b02c48ee8f4bc92879427df78936a2876c48bd1bbc51ccb6dbe1afa"
+      },
+      "sourceReader": {
+        "taskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-05T00:35:45.708Z",
+        "receiptSha256": "8ed0b15f13ced8f1b7bad97d92d8a009c7af9ab5cb95d00ee899e9603e5a77a7",
+        "receiptActorField": "taskId"
+      },
+      "sourceReviewer": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-05T00:43:50.324Z",
+        "receiptSha256": "ad6a270d481b69d371267c2a9dc1788f8af18142557dbe88d829b55fbbe906ee",
+        "receiptActorField": "actor"
+      },
+      "legalName": "RED SKY Consulting LLC",
+      "phone": "7202306990",
+      "targetAddress": {
+        "addressLine1": "2822 Umatilla St",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80211",
+        "countryCode": "US"
+      },
+      "limitations": [
+        "Filing dates are not occupancy or relocation-effective dates.",
+        "2026 PDF metadata is download generation, not filing date.",
+        "2021 principal mailing is blank; agent mailing and filer address remain separate roles.",
+        "Only history page1 and the two selected complete PDFs were read.",
+        "No new-loan count, debt balance, revenue, budget, growth or financial-health inference."
+      ],
+      "history": {
+        "jurisdiction": "Colorado",
+        "entityId": "20161033965",
+        "baseEntry": {
+          "id": "redsky-ucc-2020794-1595593-court-counterparty-contact",
+          "sha256": "405560fd50a770a6c2e73cb6026cadefdff30b25787d876fda93c6d9a924170f"
+        },
+        "identitySource": 0,
+        "targetSource": 1,
+        "identityLink": {
+          "role": "reviewed_same_entity_association",
+          "relation": "report_adds_explicit_unit",
+          "baseAddress": {
+            "addressLine1": "3015 Wyandot St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "reportAddress": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "exactAddressEqualityClaim": false
+        },
+        "currentOccupancyClaim": false,
+        "relocationDateClaim": false,
+        "agentAsPrincipalClaim": false
+      },
+      "originalCountry": {
+        "rawCountry": "United States",
+        "profileCountryCode": null,
+        "missingValuesPreserved": true
+      }
+    },
+    {
+      "id": "entity-history-co_ucc-2597628-2019336",
+      "chain": "official_entity_address_history",
+      "companyId": "db1fd9a5-5398-4d5f-8d2a-b90639645309",
+      "internalId": "190125582",
+      "canonicalDomain": "redskyconsulting.co",
+      "canonicalIdentitySha256": "c268c735594afc71a3d885b6737c533b6b7aafcd8dee94caa152dcae2f91ba71",
+      "target": {
+        "dataset": "co_ucc",
+        "recordId": "2597628:2019336",
+        "sourceUrl": "https://data.colorado.gov/resource/8upq-58vz.json?debtorid=2019336",
+        "rowSha256": "becdc1d3139bf8898bc0ba5c90606c52eb9c8afa458cdf5c398c6afaae2b3ddf",
+        "evidenceSha256": "f080878cf639bee8f9ca43a2ed71b416b6280f218a1ce46b06feb9d4712b86eb",
+        "profileSha256": "bdd45220aafdb6f0d6e2b891193a40f3e187e4e2297370b29b9d177c1062906b",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:38:18.908331Z",
+        "role": "debtor_business"
+      },
+      "sources": [
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20211248269",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.424Z",
+          "receiptSha256": "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+          "bodySha256": "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+          "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00\n\nREPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+          "textSha256": "ddceb63ec236551fe4bc6e5e02c65c7456224f9de3fc65cd661c5880a8b6d38f",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "sourceDate": "2021-03-13",
+          "sourceDateText": "03/13/2021 10:07 AM",
+          "entityId": "20161033965",
+          "documentId": "20211248269",
+          "template": "co_periodic_report_2012",
+          "pageCount": 2,
+          "pages": [
+            {
+              "page": 1,
+              "text": "REPORT Page 1 of 2 Rev. 12/01/2012 \nDocument must be filed electronically.      \nPaper documents are not accepted. \nFees & forms are subject to change. \nFor more information or to print copies  \nof filed documents, visit www.sos.state.co.us.  \n \nABOVE SPACE FOR OFFICE USE ONLY \n \nPeriodic Report \nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S) \n \nID number:    ______________ \n \nEntity name:    ______________________________________________________ \n \nJurisdiction under the law of which the \nentity was formed or registered:  ______________________________________________________ \n \n \n1. Principal office street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   \n______________ \n       (Province – if applicable)                (Country – if not US) \n \n2. Principal office mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____   ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________   ______________ \n          (Province – if applicable)                 (Country – if not US) \n \n3. Registered agent name:  (if an individual) ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)      (Suffix) \n \n        or     (if a business organization) ______________________________________________________ \n \n4. The person identified above as registered agent has consented to being so appointed. \n \n5. Registered agent street address:  ______________________________________________________ \n                 (Street name and number) \n______________________________________________________ \n \n__________________________   CO       ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n \n \n6. Registered agent mailing address: ______________________________________________________ \n     (if different from above)                         (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ _____  ____________________ \n                          (City)                   (State)            (Postal/Zip Code) \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States\nDonovan\nSean\nW\n3015 Wyandot St\nDenver\n80211\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\nColorado Secretary of State\nDate and Time: 03/13/2021 10:07 AM\nID Number: 20161033965\nDocument number: 20211248269\nAmount Paid: $10.00",
+              "textSha256": "56b090fa108e173e814dd5d5a83e51df6f72028117013b8033b31f961c88367d",
+              "visualSha256": "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283"
+            },
+            {
+              "page": 2,
+              "text": "REPORT Page 2 of 2 Rev. 12/01/2012 \nNotice: \nCausing this document to be delivered to the secretary of state for filing shall constitute the affirmation or \nacknowledgment of each individual causing such delivery, under penalties of perjury, that the document is the \nindividual's act and deed, or that the individual in good faith believes the document is the act and deed of the \nperson on whose behalf the individual is causing the document to be delivered for filing, taken in conformity \nwith the requirements of part 3 of article 90 of title 7, C.R.S., the constituent documents, and the organic \nstatutes, and that the individual in good faith believes the facts stated in the document are true and the \ndocument complies with the requirements of that Part, the constituent documents, and the organic statutes. \n \nThis perjury notice applies to each individual who causes this document to be delivered to the secretary of \nstate, whether or not such individual is named in the document as one who has caused it to be delivered. \n \n7. Name(s) and address(es) of the  \n    \nindividual(s) causing the document \n    to be delivered for filing:  ____________________ ______________ ______________ _____ \n          (Last)              (First)             (Middle)               (Suffix)  \n \n______________________________________________________ \n          (Street name and number or Post Office Box information) \n______________________________________________________ \n \n__________________________ ____ ______________________ \n                          (City)                   (State)            (Postal/Zip Code)  \n_______________________ ______________ \n          (Province – if applicable)            (Country – if not US) \n \n           (The document need not state the true name and address of more than one individual.  However, if you wish to state the name and address  \n   \n            of any additional individuals causing the document to be delivered for filing, mark this box    and include an attachment stating the  \n \n            name and address of such individuals.) \n \n \nDisclaimer: \nThis form, and any related instructions, are not intended to provide legal, business or tax advice, and are \noffered as a public service without representation or warranty.  While this form is believed to satisfy minimum \nlegal requirements as of its revision date, compliance with applicable law, as the same may be amended from  \ntime to time, remains the responsibility of the user of this form.  Questions should be addressed to the user’s \nattorney. \nWilkins\nStacy\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nUnited States\n",
+              "textSha256": "8bcd0f5ee9b03d73ef4bd31a7d97db47cd06e11b42fd761e4ced3558eab6e427",
+              "visualSha256": "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "principalQuote": "20161033965\nRED SKY Consulting LLC\nColorado\n3015 Wyandot St.\nSte. 317\nDenver\nCO\n80211-3822\nColorado\nUnited States",
+          "extractionSha256": "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+          "retainedFileHashes": [
+            "9db5dda4a935eac57c2e50f629c858e77e5351807131bcbba57f6bbd973d68ea",
+            "15f107438b5a2c4f158d101f8f8f942db1bc6643a8454c87abd62b2fdf2cb2da",
+            "4c051bd985fa8b3371d0e9e88e34d28444cdfd313f4e50f1cc5a26490514a054",
+            "69233af1bb5ce87562ab6c027149adf8b0c47274210f1f84d5635cf9561e7283",
+            "c86bb3ff243627d27c002c559ac0787376b6133f4238b0b181d8c8c724cbdb3d"
+          ]
+        },
+        {
+          "kind": "official_state_filing_pdf",
+          "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "requestedUrl": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/ViewImage.do?masterFileId=20161033965&fileId=20238353432",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:32:51.817Z",
+          "receiptSha256": "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+          "bodySha256": "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+          "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+          "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "application/pdf",
+          "originalSourcePin": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "sourceDate": "2023-12-28",
+          "sourceDateText": "12/28/2023 01:15:08 PM",
+          "entityId": "20161033965",
+          "documentId": "20238353432",
+          "template": "co_periodic_report_prose",
+          "pageCount": 1,
+          "pages": [
+            {
+              "page": 1,
+              "text": "Periodic Report\nfiled pursuant to §7-90-301, et seq. and §7-90-501 of the Colorado Revised Statutes (C.R.S)\nThe entity name is RED SKY Consulting LLC\nThe entity ID Number is 20161033965\nJurisdiction under the law of which the entity was formed or registered is Colorado\nThe principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe principal office mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe name of the registered agent is Sean W Donovan\nThe registered agent's street address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe registered agent's mailing address is 2822 Umatilla St \nDenver CO 80211 \nUS\nThe person above has agreed to be appointed as the registered agent for this entity.\nCausing this document to be delivered to the Secretary of State for filing shall constitute the affirmation or acknowledgment of \neach individual causing such delivery, under penalties of perjury, that the document is the individual's act and deed, or that the \nindividual in good faith believes the document is the act and deed of the person on whose behalf the individual is causing the \ndocument to be delivered for filing, taken in conformity with the requirements of part 3 of article 90 of title 7, C.R.S., and, if \napplicable, the constituent documents, and the organic statutes, and that the individual in good faith believes the facts stated in \nthe document are true and the document complies with the requirements of that Part, the constituent documents, and the organic \nstatutes.\nThis perjury notice applies to each individual who causes this document to be delivered to the Secretary of State, whether or not \nsuch individual is named in the document as one who has caused it to be delivered.\nName(s) and address(es) of the individual(s) causing the document to be delivered for filing\nSean Donovan \n2822 Umatilla St \nDenver CO 80211 \nUS\nColorado Secretary of State\nID#: 20161033965\nDocument #: 20238353432\n Filed on: 12/28/2023 01:15:08 PM\nPaid: $10.00",
+              "textSha256": "a764523efdb7fd58cc0123338a69262ae540e8840e49ccfa0d40f88fd2de3437",
+              "visualSha256": "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+            }
+          ],
+          "principalStreet": {
+            "addressLine1": "2822 Umatilla St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "The principal office street address is 2822 Umatilla St \nDenver CO 80211 \nUS",
+          "extractionSha256": "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+          "retainedFileHashes": [
+            "7206d4541be384925e6a4d020f80e0392cc16d94eb53c8f17d1fc140ba1b9d9b",
+            "4511c95d80483e868e2fd53c00accfcc38cf0582c1bfc0066b1f3e2d87568024",
+            "19e708ff1b8fbcb804418154d301da501ee55ecfa784cdfb799e409fe36150b4",
+            "c6efb5a02e5b86087087831ddd2afbe42f857621c0f591a840fe12c00a62116c"
+          ]
+        },
+        {
+          "kind": "official_state_summary_html",
+          "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "requestedUrl": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+          "hops": [
+            {
+              "url": "https://www.coloradosos.gov/biz/BusinessEntityDetail.do?quitButtonDestination=BusinessEntityResults&nameTyp=ENT&masterFileId=20161033965&entityId2=20161033965&fileId=20161033965&srchTyp=ENTITY",
+              "status": 200
+            }
+          ],
+          "observedAt": "2026-10-05T00:30:10.049Z",
+          "receiptSha256": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "bodySha256": "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+          "text": "Colorado Secretary of State - Summary Skip to content | About Secretary Griswold | Español Summary For this Record... Filing history and documents Get a certificate of good standing File a form Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Business Home Business Information Business Search FAQs, Glossary and Information Details Name RED SKY Consulting LLC Status Good Standing Formation date 01/15/2016 ID number 20161033965 Form Limited Liability Company Periodic report month January Jurisdiction Colorado Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US Principal office mailing address 2563 15th St, Suite 317, Denver, CO 80211, US Registered Agent Name SEAN WILLIAM DONOVAN Street address 2822 Umatilla St, Denver, CO 80211, US Mailing address 2822 Umatilla St, Denver, CO 80211, US Filing history and documents Get a certificate of good standing Get certified copies of documents File a form Set up secure business filing Subscribe to email notification Unsubscribe from email notification Subscribe to text notification Unsubscribe from text notification Terms & conditions | Accessibility statement | Browser compatibility",
+          "textSha256": "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246",
+          "completeRead": true,
+          "status": 200,
+          "contentType": "text/html; charset=ISO-8859-1",
+          "originalSourcePin": "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+          "sourceDate": null,
+          "sourceDateText": null,
+          "entityId": "20161033965",
+          "documentId": null,
+          "template": "co_entity_summary",
+          "pageCount": 0,
+          "pages": [],
+          "principalStreet": {
+            "addressLine1": "2563 15th St, Suite 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211",
+            "countryCode": "US"
+          },
+          "principalQuote": "Principal office street address 2563 15th St, Suite 317, Denver, CO 80211, US",
+          "extractionSha256": null,
+          "retainedFileHashes": [
+            "3f0fb2e334d6d28e4d36ec60b09be3a9d1455806e77c4ff5caa2eec25a0951b8",
+            "ae0f22bd86d96f9f646191e6de0439b502053df4b9984f1e337b5305fb8f7969",
+            "26a15c4a8367cf76deb4befae8916eaef466af484760f0f03280bb8e3ccc4246"
+          ]
+        }
+      ],
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/source_outcome_reporting",
+          "reviewedAt": "2026-09-30T21:42:42.827Z",
+          "receiptSha256": "5aec2a2156aad30faf33fcbdc51a31e597042f625ce52f7bd83ca96e71ea767e",
+          "receiptActorField": "readerTaskId"
+        },
+        "independent": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T21:44:15.169Z",
+          "receiptSha256": "94de129978be884a10e8dd3aa18d53b50ffae8687ca995413423583620de0061",
+          "receiptActorField": "reviewerTaskId"
+        },
+        "packetSha256": "a53c773d1b02c48ee8f4bc92879427df78936a2876c48bd1bbc51ccb6dbe1afa"
+      },
+      "sourceReader": {
+        "taskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-05T00:35:45.708Z",
+        "receiptSha256": "8ed0b15f13ced8f1b7bad97d92d8a009c7af9ab5cb95d00ee899e9603e5a77a7",
+        "receiptActorField": "taskId"
+      },
+      "sourceReviewer": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-05T00:43:50.324Z",
+        "receiptSha256": "ad6a270d481b69d371267c2a9dc1788f8af18142557dbe88d829b55fbbe906ee",
+        "receiptActorField": "actor"
+      },
+      "legalName": "RED SKY Consulting LLC",
+      "phone": "7202306990",
+      "targetAddress": {
+        "addressLine1": "2822 Umatilla St",
+        "city": "Denver",
+        "state": "CO",
+        "postalCode": "80211",
+        "countryCode": "US"
+      },
+      "limitations": [
+        "Filing dates are not occupancy or relocation-effective dates.",
+        "2026 PDF metadata is download generation, not filing date.",
+        "2021 principal mailing is blank; agent mailing and filer address remain separate roles.",
+        "Only history page1 and the two selected complete PDFs were read.",
+        "No new-loan count, debt balance, revenue, budget, growth or financial-health inference."
+      ],
+      "history": {
+        "jurisdiction": "Colorado",
+        "entityId": "20161033965",
+        "baseEntry": {
+          "id": "redsky-ucc-2020794-1595593-court-counterparty-contact",
+          "sha256": "405560fd50a770a6c2e73cb6026cadefdff30b25787d876fda93c6d9a924170f"
+        },
+        "identitySource": 0,
+        "targetSource": 1,
+        "identityLink": {
+          "role": "reviewed_same_entity_association",
+          "relation": "report_adds_explicit_unit",
+          "baseAddress": {
+            "addressLine1": "3015 Wyandot St",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "reportAddress": {
+            "addressLine1": "3015 Wyandot St.",
+            "addressLine2": "Ste. 317",
+            "city": "Denver",
+            "state": "CO",
+            "postalCode": "80211-3822",
+            "countryCode": "US"
+          },
+          "exactAddressEqualityClaim": false
+        },
+        "currentOccupancyClaim": false,
+        "relocationDateClaim": false,
+        "agentAsPrincipalClaim": false
+      },
+      "originalCountry": {
+        "rawCountry": "United States",
+        "profileCountryCode": null,
+        "missingValuesPreserved": true
+      }
     }
   ]
 }
