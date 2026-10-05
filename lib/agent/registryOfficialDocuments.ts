@@ -97,7 +97,22 @@ type SurveyorEntry = Omit<BaseEntry, "sources" | "target"> & { chain: "municipal
     preliminary: true; approvalAndCertificationUnsigned: true; finalApprovalClaim: false;
     currentLicenseClaim: false; currentAddressClaim: false; addressEquivalenceClaim: false; financialInference: false;
     visiblePageLabel: "PAGE 1 OF 1"; metadataTitle: "PLAT PAGE 1 OF 2"; completeProjectPacketClaim: false } };
-export type RegistryOfficialDocumentEntry = EntityHistoryEntry | AuthorEntry | DbaEntry | IrsEntry | IrsContactEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry | SurveyorEntry;
+type AuthoredReportEntry = Omit<BaseEntry, "sources"> & {
+  chain: "dated_company_report_phone";
+  sources: [Omit<Source, "kind"> & { kind: "company_authored_report_pdf" }, Source];
+  canonicalAliases: string[]; canonicalAliasRole: "retained_context_only";
+  report: { role: "historical_author_business_contact"; documentDate: string; documentDateText: string;
+    pageCount: number; pages: { page: number; text: string; textSha256: string; visualSha256: string }[];
+    extractionReceiptSha256: string; identityPage: number; authorQuote: string; recipientQuote: string;
+    letterhead: { role: "graphical_author_letterhead"; inExtractedText: false; subject: string;
+      addressLineLiteral: string; localityLiteral: string; phoneLiteral: string;
+      observations: { taskId: string; receiptSha256: string; page: number; visualSha256: string; text: string }[] };
+    ownSiteSubjectQuote: string; ownSitePhoneQuote: string; masterDocumentId: string;
+    originalCountryCode: null; originalAddressLine2: null; addressEffectiveDate: null;
+    currentAddressClaim: false; continuousOccupancyClaim: false; legalAliasEquivalenceClaim: false; currentDebtClaim: false };
+};
+
+export type RegistryOfficialDocumentEntry = AuthoredReportEntry | EntityHistoryEntry | AuthorEntry | DbaEntry | IrsEntry | IrsContactEntry | MunicipalCslbEntry | CompanyPdfEntry | CourtEntry | ConferenceEntry | BrokerEntry | SurveyorEntry;
 export type RegistryOfficialDocumentCorroboration = { schema: "official_document_roles_v1"; entryId: string; entrySha256: string;
   canonicalIdentitySha256: string; reader: Witness; reviewer: Witness };
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -128,7 +143,8 @@ export function registryOfficialDocumentEvidenceHash(row: RegistryFinding, proof
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt, proof }));
 }
 function sourceChecks(e: RegistryOfficialDocumentEntry) {
-  if(e.chain === "official_entity_address_history") entityHistorySourceChecks(e);
+  if(e.chain === "dated_company_report_phone") authoredReportSourceChecks(e);
+  else if(e.chain === "official_entity_address_history") entityHistorySourceChecks(e);
   else
   if (e.chain === "official_irs_ein_historical_books_address") irsSourceChecks(e);
   else if (e.chain === "official_irs_filer_books_own_site_contact") irsContactSourceChecks(e);
@@ -173,9 +189,13 @@ function originalTarget(row: RegistryFinding, e: RegistryOfficialDocumentEntry) 
     && p.observedAt === t.observedAt && row.evidence === p.provenance.quote, "original target pin changed");
   if(e.chain === "official_entity_address_history") { entityHistoryTarget(row,e); return; }
   let raw: Record<string, unknown>;
-  if (e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role" || e.chain === "court_contract_counterparty_contact" || e.chain === "university_conference_business_contact") {
+  if (e.chain === "dated_company_report_phone" || e.chain === "dated_author_address" || e.chain === "company_pdf_contact_role" || e.chain === "court_contract_counterparty_contact" || e.chain === "university_conference_business_contact") {
     const lines = row.evidence.split("\n"); need(p.dataset === "co_ucc" && t.role === "debtor_business" && lines.length === 2, "target debtor role invalid");
     raw = JSON.parse(lines[0]); const filing = JSON.parse(lines[1]);
+    if(e.chain === "dated_company_report_phone") need(!Object.hasOwn(p.identity,"countryCode") && !Object.hasOwn(p.identity,"addressLine2")
+      && raw.organizationname===e.legalName && !raw.address2 && raw.country==="United States"
+      && filing.masterdocumentid===e.report.masterDocumentId && e.report.masterDocumentId==="2003F037484"
+      && filing.transactiontype==="Amendment" && raw.recordstatus==="inactive", "authored report original roles or missing fields differ");
     if(e.chain === "court_contract_counterparty_contact") {
       const c=e.originalCountry;
       need(c.missingValuesPreserved===true && c.jurisdiction==="Colorado public UCC registry"
@@ -384,6 +404,7 @@ function irsIdentityChain(e: IrsEntry,context: CompanyIdentityContext) {
   }
 }
 function identityChain(e: RegistryOfficialDocumentEntry, context: CompanyIdentityContext) {
+  if(e.chain === "dated_company_report_phone") { authoredReportIdentityChain(e,context); return; }
   if(e.chain === "official_entity_address_history") { entityHistoryIdentity(e); return; }
   if (e.chain === "official_irs_ein_historical_books_address") { irsIdentityChain(e,context); return; }
   if (e.chain === "official_irs_filer_books_own_site_contact") { irsContactIdentityChain(e,context); return; }
@@ -685,6 +706,64 @@ function surveyorIdentityChain(e: SurveyorEntry) {
 
 /** A retained dated association only; never a canonical-field update or a claim
  * that an old address, license status, debt or financial value is current. */
+// A compiled, independently reviewed report entry, not general trust in a new
+// host. Graphical observations remain separate from unchanged extracted text.
+function authoredReportSourceChecks(e: AuthoredReportEntry) {
+  const [pdf,own]=e.sources,p=e.report;
+  need(e.sources.length===2 && pdf.kind==="company_authored_report_pdf" && own.kind==="own_website"
+    && e.target.dataset==="co_ucc" && e.target.role==="debtor_business", "authored report source roles differ");
+  for(const s of e.sources) need(iso(s.observedAt) && hash(s.receiptSha256) && hash(s.originalSourcePin)
+    && hash(s.bodySha256) && s.completeRead===true && s.status===200 && s.text.length>20 && s.text.length<=150000
+    && sha(s.text)===s.textSha256, "authored report complete source pin invalid");
+  need(pdf.url==="https://www.tobaccofreeco.org/wp-content/uploads/2018/01/LGBT-Survey-Report.pdf"
+    && publicUrl(pdf.url).href===pdf.url && pdf.requestedUrl===pdf.url && pdf.contentType==="application/pdf"
+    && pdf.hops?.length===1 && pdf.hops[0].url===pdf.url && pdf.hops[0].status===200,
+    "authored report exact capture differs");
+  const u=publicUrl(own.url);
+  need(u.hostname.replace(/^www\./,"")===e.canonicalDomain && u.pathname==="/" && !u.search
+    && /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/.test(own.contentType??"")
+    && own.sourceDate===null && own.sourceDateText===null && own.hops && own.hops.length>0 && own.hops.length<=5
+    && own.hops[0].url===own.requestedUrl && own.hops.at(-1)?.url===own.url && own.hops.at(-1)?.status===200
+    && own.hops.every((h,i)=>host(h.url)===e.canonicalDomain
+      && (i===own.hops!.length-1?h.status===200:[301,302,303,307,308].includes(h.status))),
+    "authored report canonical site capture differs");
+  need(p && Number.isSafeInteger(p.pageCount) && p.pageCount>=1 && p.pageCount<=100 && p.pages.length===p.pageCount
+    && hash(p.extractionReceiptSha256) && p.extractionReceiptSha256===pdf.originalSourcePin
+    && p.pages.every((v,i)=>v.page===i+1 && v.text.length>0 && sha(v.text)===v.textSha256 && hash(v.visualSha256))
+    && pdf.text===p.pages.map(v=>`--- PAGE ${v.page} ---\n${v.text}`).join("\n\n"),
+    "authored report complete pages differ");
+  need(p.documentDate==="2014-01-28" && p.documentDateText==="January 28, 2014"
+    && pdf.sourceDate===p.documentDate && pdf.sourceDateText===p.documentDateText
+    && Date.parse(p.documentDate)<=Date.parse(pdf.observedAt), "authored report memorandum date differs");
+}
+function authoredReportIdentityChain(e: AuthoredReportEntry, context: CompanyIdentityContext) {
+  const p=e.report,l=p.letterhead,a=e.targetAddress,own=e.sources[1];
+  need(p.role==="historical_author_business_contact" && p.identityPage===1 && p.addressEffectiveDate===null
+    && p.currentAddressClaim===false && p.continuousOccupancyClaim===false && p.legalAliasEquivalenceClaim===false
+    && p.currentDebtClaim===false && p.originalCountryCode===null && p.originalAddressLine2===null
+    && e.canonicalAliasRole==="retained_context_only" && Array.isArray(e.canonicalAliases)
+    && stableRegistryJson(context.aliases)===stableRegistryJson(e.canonicalAliases), "authored report identity roles differ");
+  const page=compact(p.pages[p.identityPage-1].text);
+  need(p.authorQuote.startsWith("FROM: ") && p.authorQuote.endsWith(`, ${e.legalName}`)
+    && p.recipientQuote.startsWith("TO: ") && page.split(p.authorQuote).length===2 && page.split(p.recipientQuote).length===2
+    && page.indexOf(p.recipientQuote)<page.indexOf(p.authorQuote) && page.indexOf(p.authorQuote)<page.indexOf("RE:")
+    && page.includes(`DATE: ${p.documentDateText}`), "authored report author or recipient attribution differs");
+  need(l.role==="graphical_author_letterhead" && l.inExtractedText===false && l.subject===e.legalName
+    && !p.pages[0].text.includes(l.addressLineLiteral) && !a.addressLine2
+    && sameRegistryStreet({addressLine1:l.addressLineLiteral},a)
+    && l.localityLiteral===`${a.city}, ${a.state} ${a.postalCode}`
+    && /^\d{10}$/.test(e.phone) && l.phoneLiteral.replace(/\D/g,"")===e.phone,
+    "authored report graphical address or phone differs");
+  need(l.observations.length===2 && l.observations.every((o,i)=>o.taskId===[e.sourceReader,e.sourceReviewer][i].taskId
+    && o.receiptSha256===[e.sourceReader,e.sourceReviewer][i].receiptSha256 && o.page===p.identityPage
+    && o.visualSha256===p.pages[o.page-1].visualSha256 && o.text.includes(l.subject)
+    && o.text.includes(l.addressLineLiteral) && o.text.includes(l.localityLiteral) && o.text.includes(`TEL: ${l.phoneLiteral}`)),
+    "authored report paired visual observations differ");
+  need(own.text.startsWith(p.ownSiteSubjectQuote) && p.ownSiteSubjectQuote.endsWith(` | ${e.legalName}`)
+    && p.ownSitePhoneQuote===`${l.phoneLiteral} | Privacy & Terms` && own.text.split(p.ownSitePhoneQuote).length===2,
+    "authored report canonical subject or telephone differs");
+}
+
 export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknown, company: Company, context: CompanyIdentityContext, now=new Date()): NonNullable<RegistryProfile["verification"]> {
   const keys=["schema","entryId","entrySha256","canonicalIdentitySha256","reader","reviewer"];
   need(object(raw) && Object.keys(raw).every(k=>keys.includes(k)) && keys.every(k=>Object.hasOwn(raw,k)) && raw.schema==="official_document_roles_v1" && typeof raw.entryId==="string", "proof shape invalid");
@@ -692,7 +771,8 @@ export function verifyRegistryOfficialDocument(row: RegistryFinding, raw: unknow
   need(raw.entrySha256===sha256, "entry changed"); sourceChecks(e); originalTarget(row,e); identityChain(e,context);
   need(company.id===e.companyId && row.companyId===e.companyId && company.netsuite_internal_id===e.internalId && row.internalId===e.internalId
     && host(company.domain||company.website_raw||"")===e.canonicalDomain && sameRegistryLegalName(company.name,e.legalName)
-    && context.aliases.every(x=>sameRegistryLegalName(x,e.legalName)) && raw.canonicalIdentitySha256===e.canonicalIdentitySha256
+    && (e.chain === "dated_company_report_phone" ? stableRegistryJson(context.aliases)===stableRegistryJson(e.canonicalAliases)
+      : context.aliases.every(x=>sameRegistryLegalName(x,e.legalName))) && raw.canonicalIdentitySha256===e.canonicalIdentitySha256
     && raw.canonicalIdentitySha256===registryOfficialDocumentCanonicalHash(company,context), "canonical identity or legal operator changed");
   const {reader,reviewer,...bare}=raw,bound=registryOfficialDocumentEvidenceHash(row,bare as Omit<RegistryOfficialDocumentCorroboration,"reader"|"reviewer">);
   const earliest=Math.max(Date.parse(row.profile.observedAt),...e.sources.map(s=>Date.parse(s.observedAt)),...[e.sourceReader,e.sourceReviewer,e.originalReviews.primary,e.originalReviews.independent].map(r=>Date.parse(r.reviewedAt)),...context.addresses.map(a=>Date.parse(a.capturedAt)));
