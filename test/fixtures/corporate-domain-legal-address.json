@@ -1,0 +1,244 @@
+{
+  "purpose": "Synthetic, portable regression fixtures. No actual CRM record, notes, captures, website HTML or source-read attestations.",
+  "fixtures": [
+    {
+      "id": "123",
+      "company": {
+        "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "netsuite_internal_id": "123",
+        "name": "Harbor Logistics",
+        "domain": "harbor-logistics.com"
+      },
+      "record": {
+        "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "capturedAt": "2026-07-28T00:00:00+00:00",
+        "header": "Lead: 123 Harbor Logistics\nAccount Information\nCompany Name Harbor Logistics\nWeb Address https://harbor-logistics.com\nProvisioning Email ops@harbor-example.com\nFirmographic Information\nIndustry Transportation"
+      },
+      "rows": [
+        {
+          "internalId": "123",
+          "companyId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "kind": "ops_profile",
+          "source": "registry",
+          "detail": "Historical SBA approval, not current available cash. Jobs supported is not verified employee headcount. Public extract has no unique loan ID; the record key identifies this retained approval record.",
+          "evidence": "{\"addressLine1\":\"1045 GREENS PKWY\",\"approval_amount\":750000,\"approval_date\":\"2021-05-14\",\"city\":\"HOUSTON\",\"jobs_supported\":30,\"legalName\":\"Harbor LOGISTICS INC\",\"legal_structure\":\"CORPORATION\",\"naics_code\":\"488510\",\"postalCode\":\"77067\",\"state\":\"TX\"}\nOriginal public source row: {\"ApprovalDate\":\"2021-05-14\",\"ApprovalFY\":\"2021\",\"AsOfDate\":\"2026-06-30\",\"BankCity\":\"TULSA\",\"BankFDICNumber\":\"04214\",\"BankNCUANumber\":\"\",\"BankName\":\"BOKF, National Association\",\"BankState\":\"OK\",\"BankStreet\":\"One Williams Center\",\"BankZip\":\"74172\",\"BorrCity\":\"HOUSTON\",\"BorrName\":\"Harbor LOGISTICS INC\",\"BorrState\":\"TX\",\"BorrStreet\":\"1045 GREENS PKWY\",\"BorrZip\":\"77067\",\"BusinessAge\":\"New Business or 2 years or less\",\"BusinessType\":\"CORPORATION\",\"ChargeOffDate\":\"\",\"CollateralInd\":\"Y\",\"CongressionalDistrict\":\"18\",\"FirstDisbursementDate\":\"2021-05-26\",\"FixedorVariableInterestInd\":\"V\",\"FranchiseCode\":\"\",\"FranchiseName\":\"\",\"GrossApproval\":\"750000.0\",\"GrossChargeOffAmount\":\"0.0\",\"InitialInterestRate\":\"3.25\",\"JobsSupported\":\"30.0\",\"LoanStatus\":\"P I F\",\"LocationID\":\"0059358\",\"NaicsCode\":\"488510\",\"NaicsDescription\":\"Freight Transportation Arrangement \",\"PaidInFullDate\":\"2021-09-30\",\"ProcessingMethod\":\"SBA Express Program\",\"Program\":\" 7A\",\"ProjectCounty\":\"HARRIS\",\"ProjectState\":\"TX\",\"RevolverStatus\":\"N\",\"SBADistrictOffice\":\"HOUSTON DISTRICT OFFICE\",\"SBAGuaranteedApproval\":\"375000.0\",\"SoldSecMrktInd\":\"\",\"TermInMonths\":\"120.0\"}",
+          "sourceUrl": "https://data.sba.gov/sites/default/files/uploaded_resources/FOIA_7a_FY2020_Present_asof_260630.csv",
+          "registryProfile": {
+            "version": 1,
+            "dataset": "sba_7a",
+            "recordId": "row-bcfc6dacaf76423edd6746ed6fc630b0fd6feca398041913e232fbad05753346",
+            "sourceAsOf": "2026-06-30",
+            "observedAt": "2026-09-29T23:13:15.574012+00:00",
+            "facts": [
+              {
+                "field": "approval_date",
+                "value": "2021-05-14"
+              },
+              {
+                "field": "approval_amount",
+                "value": 750000
+              },
+              {
+                "field": "jobs_supported",
+                "value": 30
+              },
+              {
+                "field": "naics_code",
+                "value": "488510"
+              },
+              {
+                "field": "legal_structure",
+                "value": "CORPORATION"
+              }
+            ],
+            "identity": {
+              "legalName": "Harbor LOGISTICS INC",
+              "addressLine1": "1045 GREENS PKWY",
+              "city": "HOUSTON",
+              "state": "TX",
+              "postalCode": "77067"
+            },
+            "provenance": {
+              "rowSha256": "a6757578cd8898bbd446cea10ffcc750f0e949eb6c8d85514180d81ed81dea52",
+              "quote": "{\"addressLine1\":\"1045 GREENS PKWY\",\"approval_amount\":750000,\"approval_date\":\"2021-05-14\",\"city\":\"HOUSTON\",\"jobs_supported\":30,\"legalName\":\"Harbor LOGISTICS INC\",\"legal_structure\":\"CORPORATION\",\"naics_code\":\"488510\",\"postalCode\":\"77067\",\"state\":\"TX\"}\nOriginal public source row: {\"ApprovalDate\":\"2021-05-14\",\"ApprovalFY\":\"2021\",\"AsOfDate\":\"2026-06-30\",\"BankCity\":\"TULSA\",\"BankFDICNumber\":\"04214\",\"BankNCUANumber\":\"\",\"BankName\":\"BOKF, National Association\",\"BankState\":\"OK\",\"BankStreet\":\"One Williams Center\",\"BankZip\":\"74172\",\"BorrCity\":\"HOUSTON\",\"BorrName\":\"Harbor LOGISTICS INC\",\"BorrState\":\"TX\",\"BorrStreet\":\"1045 GREENS PKWY\",\"BorrZip\":\"77067\",\"BusinessAge\":\"New Business or 2 years or less\",\"BusinessType\":\"CORPORATION\",\"ChargeOffDate\":\"\",\"CollateralInd\":\"Y\",\"CongressionalDistrict\":\"18\",\"FirstDisbursementDate\":\"2021-05-26\",\"FixedorVariableInterestInd\":\"V\",\"FranchiseCode\":\"\",\"FranchiseName\":\"\",\"GrossApproval\":\"750000.0\",\"GrossChargeOffAmount\":\"0.0\",\"InitialInterestRate\":\"3.25\",\"JobsSupported\":\"30.0\",\"LoanStatus\":\"P I F\",\"LocationID\":\"0059358\",\"NaicsCode\":\"488510\",\"NaicsDescription\":\"Freight Transportation Arrangement \",\"PaidInFullDate\":\"2021-09-30\",\"ProcessingMethod\":\"SBA Express Program\",\"Program\":\" 7A\",\"ProjectCounty\":\"HARRIS\",\"ProjectState\":\"TX\",\"RevolverStatus\":\"N\",\"SBADistrictOffice\":\"HOUSTON DISTRICT OFFICE\",\"SBAGuaranteedApproval\":\"375000.0\",\"SoldSecMrktInd\":\"\",\"TermInMonths\":\"120.0\"}",
+              "sourceRow": {
+                "legalName": "Harbor LOGISTICS INC",
+                "addressLine1": "1045 GREENS PKWY",
+                "city": "HOUSTON",
+                "state": "TX",
+                "postalCode": "77067",
+                "approval_date": "2021-05-14",
+                "approval_amount": 750000,
+                "jobs_supported": 30,
+                "naics_code": "488510",
+                "legal_structure": "CORPORATION"
+              }
+            }
+          }
+        },
+        {
+          "internalId": "123",
+          "companyId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "kind": "ops_profile",
+          "source": "registry",
+          "detail": "FMCSA self-reported fleet and drivers; drivers are not total employees. Source date is the MCS-150 filing date when available. Operation/status values retain the official dataset codes.",
+          "evidence": "{\"legalName\":\"Harbor LOGISTICS INC\",\"addressLine1\":\"1045 GREENS PARKWAY\",\"city\":\"HOUSTON\",\"state\":\"TX\",\"postalCode\":\"77067\",\"usdot_number\":\"2240534\",\"power_units\":0,\"operating_status\":\"A\",\"carrier_operation\":\"C\",\"countryCode\":\"US\"}\nOriginal public source row: {\"carrier_operation\":\"C\",\"docket1\":\"622633\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"2240534\",\"legal_name\":\"Harbor LOGISTICS INC\",\"mcs150_date\":\"20220324\",\"mcs150_mileage\":\"0\",\"mcs150_mileage_year\":\"0\",\"phy_city\":\"HOUSTON\",\"phy_country\":\"US\",\"phy_state\":\"TX\",\"phy_street\":\"1045 GREENS PARKWAY\",\"phy_zip\":\"77067\",\"power_units\":\"0\",\"status_code\":\"A\"}",
+          "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=2240534",
+          "registryProfile": {
+            "version": 1,
+            "dataset": "fmcsa",
+            "recordId": "2240534",
+            "sourceAsOf": "2022-03-24",
+            "observedAt": "2026-09-29T23:15:54.780401+00:00",
+            "facts": [
+              {
+                "field": "usdot_number",
+                "value": "2240534"
+              },
+              {
+                "field": "power_units",
+                "value": 0
+              },
+              {
+                "field": "operating_status",
+                "value": "A"
+              },
+              {
+                "field": "carrier_operation",
+                "value": "C"
+              }
+            ],
+            "identity": {
+              "legalName": "Harbor LOGISTICS INC",
+              "addressLine1": "1045 GREENS PARKWAY",
+              "city": "HOUSTON",
+              "state": "TX",
+              "postalCode": "77067",
+              "countryCode": "US"
+            },
+            "provenance": {
+              "rowSha256": "e7e6e61309d0b4f624b2b8984a64590617d45a034c9130d6e8a458f10cddc86d",
+              "quote": "{\"legalName\":\"Harbor LOGISTICS INC\",\"addressLine1\":\"1045 GREENS PARKWAY\",\"city\":\"HOUSTON\",\"state\":\"TX\",\"postalCode\":\"77067\",\"usdot_number\":\"2240534\",\"power_units\":0,\"operating_status\":\"A\",\"carrier_operation\":\"C\",\"countryCode\":\"US\"}\nOriginal public source row: {\"carrier_operation\":\"C\",\"docket1\":\"622633\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"2240534\",\"legal_name\":\"Harbor LOGISTICS INC\",\"mcs150_date\":\"20220324\",\"mcs150_mileage\":\"0\",\"mcs150_mileage_year\":\"0\",\"phy_city\":\"HOUSTON\",\"phy_country\":\"US\",\"phy_state\":\"TX\",\"phy_street\":\"1045 GREENS PARKWAY\",\"phy_zip\":\"77067\",\"power_units\":\"0\",\"status_code\":\"A\"}",
+              "sourceRow": {
+                "legalName": "Harbor LOGISTICS INC",
+                "addressLine1": "1045 GREENS PARKWAY",
+                "city": "HOUSTON",
+                "state": "TX",
+                "postalCode": "77067",
+                "usdot_number": "2240534",
+                "power_units": 0,
+                "operating_status": "A",
+                "carrier_operation": "C",
+                "countryCode": "US"
+              }
+            }
+          }
+        }
+      ],
+      "subject": "Harbor Logistics Inc.",
+      "quote": "Harbor Logistics Inc. 1045 Greens Parkway, Houston, TX 77067",
+      "address": {
+        "addressLine1": "1045 Greens Parkway",
+        "city": "Houston",
+        "state": "TX",
+        "postalCode": "77067",
+        "countryCode": "US"
+      },
+      "html": "<html><body><footer>Harbor Logistics Inc. 1045 Greens Parkway, Houston, TX 77067</footer></body></html>",
+      "sourceUrl": "https://www.harbor-example.com/contact",
+      "observedAt": "2026-10-05T15:45:56.526Z"
+    },
+    {
+      "id": "456",
+      "company": {
+        "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "netsuite_internal_id": "456",
+        "name": "Prairie Freight Systems",
+        "domain": "prairie-old.com"
+      },
+      "record": {
+        "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "capturedAt": "2026-07-28T00:00:00+00:00",
+        "header": "Lead: 123 Prairie Freight Systems\nAccount Information\nCompany Name Prairie Freight Systems\nWeb Address https://prairie-old.com\nProvisioning Email ops@prairie-example.com\nFirmographic Information\nIndustry Transportation"
+      },
+      "rows": [
+        {
+          "internalId": "456",
+          "companyId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "kind": "ops_profile",
+          "source": "registry",
+          "detail": "FMCSA self-reported fleet and drivers; drivers are not total employees. Source date is the MCS-150 filing date when available. Operation/status values retain the official dataset codes.",
+          "evidence": "{\"legalName\":\"PRAIRIE FREIGHT SYSTEMS INC\",\"addressLine1\":\"6667 W OLD SHAKOPEE RD STE 108\",\"city\":\"BLOOMINGTON\",\"state\":\"MN\",\"postalCode\":\"55438\",\"usdot_number\":\"738785\",\"power_units\":4,\"drivers\":7,\"operating_status\":\"A\",\"carrier_operation\":\"A\",\"countryCode\":\"US\"}\nOriginal public source row: {\"business_org_desc\":\"CORPORATION\",\"carrier_operation\":\"A\",\"docket1\":\"348812\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"738785\",\"legal_name\":\"PRAIRIE FREIGHT SYSTEMS INC\",\"mcs150_date\":\"20260502\",\"mcs150_mileage\":\"206000\",\"mcs150_mileage_year\":\"2025\",\"phy_city\":\"BLOOMINGTON\",\"phy_country\":\"US\",\"phy_state\":\"MN\",\"phy_street\":\"6667 W OLD SHAKOPEE RD STE 108\",\"phy_zip\":\"55438\",\"power_units\":\"4\",\"status_code\":\"A\",\"total_drivers\":\"7\"}",
+          "sourceUrl": "https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=738785",
+          "registryProfile": {
+            "version": 1,
+            "dataset": "fmcsa",
+            "recordId": "738785",
+            "sourceAsOf": "2026-05-02",
+            "observedAt": "2026-09-29T23:16:19.148421+00:00",
+            "facts": [
+              {
+                "field": "usdot_number",
+                "value": "738785"
+              },
+              {
+                "field": "power_units",
+                "value": 4
+              },
+              {
+                "field": "drivers",
+                "value": 7
+              },
+              {
+                "field": "operating_status",
+                "value": "A"
+              },
+              {
+                "field": "carrier_operation",
+                "value": "A"
+              }
+            ],
+            "identity": {
+              "legalName": "PRAIRIE FREIGHT SYSTEMS INC",
+              "addressLine1": "6667 W OLD SHAKOPEE RD STE 108",
+              "city": "BLOOMINGTON",
+              "state": "MN",
+              "postalCode": "55438",
+              "countryCode": "US"
+            },
+            "provenance": {
+              "rowSha256": "95a958aa9b82a3e1b9cb68f7669fe36ea4a0199098e8bb9a3b3ce21ed72a8463",
+              "quote": "{\"legalName\":\"PRAIRIE FREIGHT SYSTEMS INC\",\"addressLine1\":\"6667 W OLD SHAKOPEE RD STE 108\",\"city\":\"BLOOMINGTON\",\"state\":\"MN\",\"postalCode\":\"55438\",\"usdot_number\":\"738785\",\"power_units\":4,\"drivers\":7,\"operating_status\":\"A\",\"carrier_operation\":\"A\",\"countryCode\":\"US\"}\nOriginal public source row: {\"business_org_desc\":\"CORPORATION\",\"carrier_operation\":\"A\",\"docket1\":\"348812\",\"docket1_status_code\":\"A\",\"docket1prefix\":\"MC\",\"dot_number\":\"738785\",\"legal_name\":\"PRAIRIE FREIGHT SYSTEMS INC\",\"mcs150_date\":\"20260502\",\"mcs150_mileage\":\"206000\",\"mcs150_mileage_year\":\"2025\",\"phy_city\":\"BLOOMINGTON\",\"phy_country\":\"US\",\"phy_state\":\"MN\",\"phy_street\":\"6667 W OLD SHAKOPEE RD STE 108\",\"phy_zip\":\"55438\",\"power_units\":\"4\",\"status_code\":\"A\",\"total_drivers\":\"7\"}",
+              "sourceRow": {
+                "legalName": "PRAIRIE FREIGHT SYSTEMS INC",
+                "addressLine1": "6667 W OLD SHAKOPEE RD STE 108",
+                "city": "BLOOMINGTON",
+                "state": "MN",
+                "postalCode": "55438",
+                "usdot_number": "738785",
+                "power_units": 4,
+                "drivers": 7,
+                "operating_status": "A",
+                "carrier_operation": "A",
+                "countryCode": "US"
+              }
+            }
+          }
+        }
+      ],
+      "subject": "Prairie Freight Systems, Inc.",
+      "quote": "Prairie Freight Systems, Inc. Contact 6667 W Old Shakopee Rd., Ste. 108 Bloomington, MN 55438",
+      "address": {
+        "addressLine1": "6667 W Old Shakopee Rd.",
+        "addressLine2": "Ste. 108",
+        "city": "Bloomington",
+        "state": "MN",
+        "postalCode": "55438",
+        "countryCode": "US"
+      },
+      "html": "<html><body><footer>Prairie Freight Systems, Inc. Contact 6667 W Old Shakopee Rd., Ste. 108 Bloomington, MN 55438</footer></body></html>",
+      "sourceUrl": "https://www.prairie-example.com/contact",
+      "observedAt": "2026-10-05T15:45:56.526Z"
+    }
+  ]
+}

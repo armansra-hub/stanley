@@ -94,12 +94,12 @@ describe("separately reviewed current CRM domain reference", () => {
     const earlier = proof(r); earlier.reader.reviewedAt = "2026-10-03T00:00:00Z"; expect(() => parseRegistryWebsiteCorroboration(earlier, r, now)).toThrow("precedes");
     const reverse = proof(r); reverse.reviewer.reviewedAt = "2026-10-04T23:59:00Z"; expect(() => parseRegistryWebsiteCorroboration(reverse, r, now)).toThrow("precedes");
   });
-  it.each([{ mode: undefined }, { mode: "registry_identifier" }, { canonicalRedirect: { requestedUrl: "https://old-brand.com/", finalUrl: "https://brand.com/", normalizedVisibleTextSha256: "a".repeat(64) } }])("rejects unsupported combinations %j", change => {
+  it.each([{ mode: "registry_identifier" }, { canonicalRedirect: { requestedUrl: "https://old-brand.com/", finalUrl: "https://brand.com/", normalizedVisibleTextSha256: "a".repeat(64) } }])("rejects unsupported combinations %j", change => {
     const r = row(); expect(() => parseRegistryWebsiteCorroboration({ ...proof(r), ...change }, r, now)).toThrow();
   });
   it("rechecks CRM proof mode and witnesses even when invoked directly rather than through HTTP parsing", async () => {
     const r = row();
-    await expect(registryWebsiteVerifier()(r, proof(r, { mode: undefined }), company, context(), now)).rejects.toThrow("invalid registry website CRM domain reference");
+    await expect(registryWebsiteVerifier()(r, proof(r, { mode: undefined }), company, context(), now)).rejects.toThrow("canonical legal entity");
   });
   it("keeps canonical-domain DBA proofs unchanged without reference or new observedAt", async () => {
     const r = row(), p = proof(r, { crmDomainReference: undefined, observedAt: undefined });

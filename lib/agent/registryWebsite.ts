@@ -152,14 +152,14 @@ export function registryWebsiteEvidenceHash(row: Pick<RegistryFinding, "companyI
   proof: Omit<RegistryWebsiteCorroboration, "reader" | "reviewer">): string {
   const legacy = { companyId: row.companyId, internalId: row.internalId, dataset: row.profile.dataset,
     recordId: row.profile.recordId, rowSha256: row.profile.provenance.rowSha256, ...proof };
-  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address" && proof.mode !== "site_operator_address" && !proof.canonicalRedirect) return sha(stableRegistryJson(legacy));
+  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address" && proof.mode !== "site_operator_address" && !proof.canonicalRedirect && !proof.crmDomainReference) return sha(stableRegistryJson(legacy));
   // Existing address-mode callers may pass a narrow row. Explicit new modes must
   // bind the entire parsed publication content, not trust an unchanged row ID/hash.
   if (typeof row.sourceUrl !== "string" || !row.sourceUrl || typeof row.evidence !== "string" || !row.evidence
     || row.detail !== null && typeof row.detail !== "string"
     || typeof row.profile.observedAt !== "string" || !Number.isFinite(Date.parse(row.profile.observedAt)))
     throw new Error("registry website bound evidence requires complete parsed publication content");
-  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : proof.mode === "registry_dba_address" ? "dbaContent" : proof.mode === "site_operator_address" ? "operatorContent" : "redirectContent"]: {
+  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : proof.mode === "registry_dba_address" ? "dbaContent" : proof.mode === "site_operator_address" ? "operatorContent" : proof.crmDomainReference ? "crmContent" : "redirectContent"]: {
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail),
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt,
   } }));
@@ -174,7 +174,7 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
     throw new Error("invalid registry website mode");
   if (raw.crmDomainReference !== undefined) {
     const ref = raw.crmDomainReference;
-    if (raw.mode !== "registry_dba_address" || raw.canonicalRedirect !== undefined || raw.operatorRelationship !== undefined
+    if ((raw.mode !== undefined && raw.mode !== "registry_dba_address") || raw.canonicalRedirect !== undefined || raw.operatorRelationship !== undefined
       || !sourceTime(raw.observedAt) || !object(ref)
       || Object.keys(ref).sort().join(",") !== "capturedAt,companyId,companyName,domain,headerSha256,internalId,recordId,schema"
       || ref.schema !== "netsuite_provisioning_email_domain_v1" || ref.companyId !== row.companyId || ref.internalId !== row.internalId
@@ -694,7 +694,9 @@ export function registryWebsiteVerifier() {
       && typeof p.city === "string" && p.city.length > 0 && words(a.city) === words(p.city) && words(a.state) === words(p.state)
       && a.postalCode.slice(0, 5) === p.postalCode.slice(0, 5) && sameRegistryStreet(a, p)
       && [company.name, ...context.aliases].some(name => sameRegistryLegalName(name, p.legalName));
-    const sameSubject = (left: string, right: string) => sameRegistryLegalName(left, right)
+    // CRM-referenced ordinary proofs retain whole legal-name agreement only.
+    const sameSubject = (left: string, right: string) => crm && proof.mode === undefined
+      ? sameRegistryLegalName(left, right) : sameRegistryLegalName(left, right)
       || (possessiveAddress && samePossessiveWebsiteSubject(left, right))
       || (!identifierMode && a?.countryCode === "US" && p.countryCode === "US" && sameLimitedCompanySubject(left, right));
     if (operatorMode) twoPageOperatorSubject(row, proof, company.name, context.aliases);
@@ -721,6 +723,8 @@ export function registryWebsiteVerifier() {
       throw new Error("registry CRA identifier requires an explicit complete Canadian website address");
     if (identifierMode && proof.identifier?.kind !== "cra_charity_registration" && a && (a.countryCode !== "US" || !stateNames.has(a.state) || !/^\d{5}(?:-\d{4})?$/.test(a.postalCode)))
       throw new Error("registry identifier requires an explicit complete US website address");
+    if (crm && proof.mode === undefined && (!a || !p.city || words(a.city) !== words(p.city)))
+      throw new Error("registry website CRM complete source city is required");
     if ((dbaMode || operatorMode) && (!a || !p.countryCode || !p.city || words(a.city) !== words(p.city)))
       throw new Error("registry website DBA complete source city and country are required");
     // Structural heading evidence is checked after the unchanged whole-page read.
@@ -733,7 +737,7 @@ export function registryWebsiteVerifier() {
       && String(row.profile.provenance.sourceRow.usdot_number) === row.profile.recordId
       && new RegExp(`\\b(?:US\\s*)?DOT\\s*#?\\s*${row.profile.recordId}\\b`, "i").test(proof.quote);
     const highwayEquivalent = dot && Boolean(a) && registryStreet(a!).replace(/\bus hwy\b/g, "hwy") === registryStreet(p).replace(/\bus hwy\b/g, "hwy");
-    if (!identifierMode && !exactStreet && (dbaMode || operatorMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
+    if (!identifierMode && !exactStreet && (crm || dbaMode || operatorMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
     let canonicalRedirectVerification: Record<string, unknown> | undefined;
     if (redirect) {
       const root = await readPage(redirect.requestedUrl);
