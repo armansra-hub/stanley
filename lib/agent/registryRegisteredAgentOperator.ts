@@ -63,6 +63,47 @@ function completePersonLiteral(text: string, person: string) {
   }
   return false;
 }
+// A finite typography exception for reviewed static HTML, not a visibility or
+// general CSS parser. Exact original HTML remains pinned; no style is stripped.
+function reviewedTypography(html: string) {
+  const markers = [...html.matchAll(/\bstyle\s*=/gi)];
+  const attributes = [...html.matchAll(/\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)];
+  if (markers.length !== attributes.length) return false; // Unquoted/malformed style.
+  const tags = [...html.matchAll(/<[^>]*>/g)];
+  if (attributes.some(a => !tags.some(t => a.index > t.index && a.index + a[0].length < t.index + t[0].length))) return false;
+  for (const tag of tags) {
+    if ([...tag[0].matchAll(/\bstyle\s*=/gi)].length > 1) return false;
+  }
+  for (const attribute of attributes) {
+    const css = attribute[1] ?? attribute[2];
+    if (!css || css.length > 1024 || /[^\x20-\x7e]|[\\&{}<>!@()]/.test(css)) return false;
+    const declarations = css.trim().replace(/;$/, "").split(";");
+    const seen = new Set<string>();
+    for (const declaration of declarations) {
+      const pair = /^\s*([a-z-]+)\s*:\s*([^:]+?)\s*$/i.exec(declaration);
+      if (!pair) return false;
+      const property = pair[1].toLowerCase(), value = pair[2];
+      if (seen.has(property)) return false;
+      seen.add(property);
+      if (property === "font-size") {
+        const n = /^(\d{1,2}(?:\.\d{1,2})?)px$/.exec(value);
+        if (!n || Number(n[1]) < 8 || Number(n[1]) > 72) return false;
+      } else if (property === "line-height") {
+        const n = /^(\d(?:\.\d{1,2})?)(?:em)?$/.exec(value);
+        if (!n || Number(n[1]) < 1 || Number(n[1]) > 3) return false;
+      } else if (property === "font-weight" || property === "letter-spacing") {
+        if (value !== "normal") return false;
+      } else if (property === "color") {
+        if (!/^#(?:[a-f0-9]{3}|[a-f0-9]{6})$/i.test(value)) return false;
+      } else if (property === "font-family") {
+        if (value.length > 512 || /\b(?:var|calc|url|expression|inherit|initial|unset|revert|none)\b/i.test(value)) return false;
+        const names = value.split(",").map(n => n.trim());
+        if (names.length > 6 || names.some(n => !/^(?:[a-z_][a-z0-9_-]{0,159}|"[a-z][a-z0-9 _-]{0,159}"|'[a-z][a-z0-9 _-]{0,159}')$/i.test(n))) return false;
+      } else return false;
+    }
+  }
+  return true;
+}
 function quote(b: RegisteredAgentOperatorBridge, q: Quote) {
   need(shape(q, ["pageTextSha256", "start", "end", "text", "ordinaryHtml"]), "quote shape differs");
   const pages = b.pages.filter(p => p.textSha256 === q.pageTextSha256), h = q.ordinaryHtml;
@@ -75,7 +116,7 @@ function quote(b: RegisteredAgentOperatorBridge, q: Quote) {
   need(shape(h, ["start", "end", "html", "sha256"]) && typeof h.html === "string" && h.html.length > 0 && h.html.length <= 8000
     && Number.isSafeInteger(h.start) && h.start >= 0 && h.end === h.start + h.html.length
     && hash(h.sha256) && sha(h.html) === h.sha256 && !/<!--|<\/?(?:script|style|template|noscript|svg|math|textarea|title|iframe|xmp|plaintext)\b/i.test(h.html)
-    && !/\b(?:aria-hidden|on\w+|style)\s*=/i.test(h.html)
+    && !/\b(?:aria-hidden|on\w+)\s*=/i.test(h.html) && reviewedTypography(h.html)
     && !/<[^>]*\s+hidden(?=\s|=|\/?>)/i.test(h.html), "ordinary reviewed HTML span differs");
   const tags = /<\/?(?:div|section|article|h[1-6]|p|span|strong|em|b|i|a|br)\b(?:[^"'<>]|"[^"<>]*"|'[^'<>]*')*\/?\s*>/gi;
   const text = h.html.replace(tags, " ");

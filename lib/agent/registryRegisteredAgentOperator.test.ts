@@ -138,3 +138,54 @@ describe("independent-review regressions: complete names, hidden spans and exact
     p.reviewer.reviewedAt = "2026-10-06T11:30:00.0000001Z"; assert.doesNotThrow(() => f.check(p));
   });
 });
+
+
+describe("finite reviewed typography without source-text normalization", () => {
+  function html(f: Fixture, markup: string) {
+    const q = f.bridge.legalQuote.ordinaryHtml;
+    q.html = markup; q.end = q.start + markup.length; q.sha256 = sha(markup);
+    f.bridge.pages[0].htmlSha256 = sha(markup);
+  }
+  const accepted = [
+    "font-size:16px; line-height:1.4em;",
+    "font-weight:normal; letter-spacing:normal;",
+    "font-family:wfont_023108_example,wf_example,orig_example_light;",
+    "font-family:'Example Font',sans-serif;",
+    "color:#FFFFFF;",
+    "font-size:8px; line-height:1; color:#abc",
+    "font-size:72px;line-height:3em;"
+  ];
+  for (const css of accepted) it("accepts finite typography " + css, () => {
+    const f = setup(), before = JSON.stringify([f.row, f.bridge.pages[0].text, f.bridge.legalQuote.text]);
+    html(f, '<p style="' + css + '">' + f.bridge.legalQuote.text + '</p>');
+    assert.doesNotThrow(() => f.check());
+    assert.equal(JSON.stringify([f.row, f.bridge.pages[0].text, f.bridge.legalQuote.text]), before);
+    assert.ok(f.bridge.legalQuote.ordinaryHtml.html.includes(css));
+  });
+  it("retains a complete nested typography paragraph with repeated properties on distinct elements", () => {
+    const f = setup();
+    html(f, '<p class="font_8" style="font-size:16px; line-height:1.4em;"><span style="font-weight:normal;"><span style="font-family:wfont_023108_example,wf_example,orig_example_light;"><span style="font-size:16px;"><span style="color:#FFFFFF;"><span style="letter-spacing:normal;">' + f.bridge.legalQuote.text + '</span></span></span></span></span></p>');
+    const raw = f.bridge.legalQuote.ordinaryHtml.html;assert.doesNotThrow(() => f.check());assert.equal(f.bridge.legalQuote.ordinaryHtml.html,raw);
+  });
+  const rejected = [
+    '', 'display:none', 'visibility:hidden', 'opacity:0', 'clip:rect(0,0,0,0)', 'transform:scale(0)',
+    'position:absolute', 'overflow:hidden', 'width:0', 'height:0', 'content-visibility:hidden',
+    'font-size:0px', 'font-size:0.01px', 'font-size:7.99px', 'font-size:73px', 'font-size:1em',
+    'line-height:0', 'line-height:.1em', 'line-height:4em', 'line-height:100px',
+    'font-weight:0', 'letter-spacing:-999px', 'color:transparent', 'color:#ffffff00',
+    'color:var(--invisible)', 'font-size:calc(16px)', 'font-family:url(example)',
+    'font-size:16px!important', 'font-size:16px;FONT-SIZE:8px', 'font-size:16px;;color:#fff',
+    'font-family:inherit', 'font-family:none', 'font-family:Example Font',
+    'font-size:16px; --x:none', 'font-size:16px; display:none', 'font-size:16px/*comment*/',
+    'font-size:16px; color:&#35;fff', 'font-size:16px; color:expression(x)'
+  ];
+  for (const css of rejected) it("rejects hidden, unknown or ambiguous CSS " + css, () => {
+    const f=setup();html(f,'<p style="'+css+'">'+f.bridge.legalQuote.text+'</p>');assert.throws(()=>f.check(),/ordinary reviewed HTML span differs/);
+  });
+  for (const attr of ['style=font-size:16px','style="font-size:16px" style="color:#fff"','style="font-size:16px" hidden','style="font-size:16px" aria-hidden="true"','style="font-size:16px" onclick="x()"']) it("rejects malformed or active attributes " + attr, () => {
+    const f=setup();html(f,'<p '+attr+'>'+f.bridge.legalQuote.text+'</p>');assert.throws(()=>f.check(),/ordinary reviewed HTML span differs/);
+  });
+  it("rejects CSS escapes",()=>{const f=setup();html(f,'<p style="font-size:16px; '+String.fromCharCode(92)+'64isplay:none">'+f.bridge.legalQuote.text+'</p>');assert.throws(()=>f.check(),/ordinary reviewed HTML span differs/);});
+  it("does not admit inert content through typography",()=>{const f=setup();html(f,'<template><p style="font-size:16px">'+f.bridge.legalQuote.text+'</p></template>');assert.throws(()=>f.check(),/ordinary reviewed HTML span differs/);});
+  it("retains stale proof rejection after only a typography change",()=>{const f=setup(),proof=f.proof();html(f,'<p style="font-size:16px">'+f.bridge.legalQuote.text+'</p>');assert.throws(()=>f.check(proof));});
+});

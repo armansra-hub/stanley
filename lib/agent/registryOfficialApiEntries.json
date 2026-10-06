@@ -12292,6 +12292,148 @@
           ]
         }
       }
+    },
+    {
+      "id": "co_20211204702_talent_team_registered_agent_operator_20261006",
+      "companyId": "1b8b593a-ec02-4b66-9356-f61c34a37aae",
+      "internalId": "187644219",
+      "canonicalDomain": "talenttoteam.com",
+      "canonicalIdentitySha256": "86480bdbd1696f6a90263c099b896f88e6b6a769852140ef65d92a109a383d35",
+      "sourceKind": "colorado_business_entity",
+      "source": {
+        "requestedUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2820181039914%2C20181044904%2C20181058508%2C20181108997%2C20181125670%2C20181127738%2C20181166694%2C20181199814%2C20181273020%2C20181299554%2C20181307866%2C20181318163%2C20181405460%2C20181415826%2C20181530510%2C20181623405%2C20181628016%2C20181696078%2C20181713970%2C20181735930%2C20181881403%2C20181902439%2C20181902852%2C20181903392%2C20191062580%2C20191118502%2C20191130654%2C20191130742%2C20191132443%2C20191141621%2C20191198940%2C20191270586%2C20191314882%2C20191316086%2C20191321938%2C20191400385%2C20191408582%2C20191541730%2C20191543253%2C20191649243%2C20191697635%2C20191730457%2C20191812062%2C20191822084%2C20191831024%2C20191837972%2C20191856530%2C20191916417%2C20191958490%2C20201010124%2C20201052149%2C20201053286%2C20201055776%2C20201060907%2C20201070798%2C20201088912%2C20201107809%2C20201131488%2C20201272778%2C20201312373%2C20201415517%2C20201434878%2C20201436989%2C20201461872%2C20201498466%2C20201525159%2C20201574183%2C20201608808%2C20201616093%2C20201653195%2C20201695909%2C20201808809%2C20201858981%2C20201871938%2C20201873309%2C20201882353%2C20201978001%2C20208081646%2C20208092602%2C20211030377%2C20211046850%2C20211047752%2C20211124230%2C20211126053%2C20211135763%2C20211151944%2C20211204702%2C20211225632%2C20211238757%2C20211470640%2C20211530517%2C20211541696%2C20211544321%2C20211548598%2C20211554874%2C20211564924%2C20211608311%2C20211647995%2C20211653942%2C20211658422%2C20211749942%2C20211764813%2C20211835841%2C20211852506%2C20211954770%2C20218005653%2C20218018681%2C20218081800%2C20218137660%2C20218140436%2C20218180518%2C20218198273%2C20218218756%2C20218233653%2C20221035701%2C20221080765%2C20221109802%2C20221159288%2C20221356489%2C20221365540%2C20221383489%2C20221386192%2C20221439068%2C20221572537%2C20221646231%2C20221646692%2C20221667336%2C20221699182%2C20221753887%2C20221767441%2C20221786688%2C20221872947%2C20221944255%2C20221962799%2C20221976158%2C20228011114%2C20228029778%2C20228047863%2C20228098749%2C20228101426%2C20228102927%2C20228122652%2C20228124781%2C20228156357%2C20228183705%2C20228289901%2C20231050458%2C20231095176%2C20231113866%2C20231126758%2C20231155581%2C20231175010%2C20231216793%2C20231287325%2C20231288108%2C20231399927%2C20231417662%2C20231430674%2C20231450604%2C20231496025%2C20231509594%2C20231552827%2C20231570355%2C20231607821%2C20231739132%2C20231741200%2C20231780587%2C20231815603%2C20231818764%2C20231822274%2C20231835009%2C20231840535%2C20231855092%2C20231909210%2C20238058948%2C20238083368%2C20238176518%2C20238211754%2C20238221429%2C20238228225%2C20238263380%2C20238283379%2C20238294173%2C20238334783%2C20238356491%2C20238357492%2C20238358131%2C20238358136%2C20238365532%2C20241021564%2C20241032106%2C20241066449%2C20241113037%2C20241201467%2C20241217894%2C20241265383%2C20241270518%2C20241274848%2C20241310198%2C20241367102%2C20241384002%2C20241388475%2C20241393989%2C20241422118%2C20241427988%2C20241447805%2C20241499516%2C20241499636%2C20241513911%2C20241514849%2C20241520611%2C20241532192%2C20241548385%2C20241590215%2C20241687115%2C20241702611%2C20241707448%2C20241710461%2C20241712606%2C20241807637%2C20241817862%2C20241834896%2C20241835604%2C20241841140%2C20241863340%2C20241916373%2C20241930600%2C20241935359%2C20241943478%2C20241946574%29&%24order=entityid&%24limit=231",
+        "finalUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2820181039914%2C20181044904%2C20181058508%2C20181108997%2C20181125670%2C20181127738%2C20181166694%2C20181199814%2C20181273020%2C20181299554%2C20181307866%2C20181318163%2C20181405460%2C20181415826%2C20181530510%2C20181623405%2C20181628016%2C20181696078%2C20181713970%2C20181735930%2C20181881403%2C20181902439%2C20181902852%2C20181903392%2C20191062580%2C20191118502%2C20191130654%2C20191130742%2C20191132443%2C20191141621%2C20191198940%2C20191270586%2C20191314882%2C20191316086%2C20191321938%2C20191400385%2C20191408582%2C20191541730%2C20191543253%2C20191649243%2C20191697635%2C20191730457%2C20191812062%2C20191822084%2C20191831024%2C20191837972%2C20191856530%2C20191916417%2C20191958490%2C20201010124%2C20201052149%2C20201053286%2C20201055776%2C20201060907%2C20201070798%2C20201088912%2C20201107809%2C20201131488%2C20201272778%2C20201312373%2C20201415517%2C20201434878%2C20201436989%2C20201461872%2C20201498466%2C20201525159%2C20201574183%2C20201608808%2C20201616093%2C20201653195%2C20201695909%2C20201808809%2C20201858981%2C20201871938%2C20201873309%2C20201882353%2C20201978001%2C20208081646%2C20208092602%2C20211030377%2C20211046850%2C20211047752%2C20211124230%2C20211126053%2C20211135763%2C20211151944%2C20211204702%2C20211225632%2C20211238757%2C20211470640%2C20211530517%2C20211541696%2C20211544321%2C20211548598%2C20211554874%2C20211564924%2C20211608311%2C20211647995%2C20211653942%2C20211658422%2C20211749942%2C20211764813%2C20211835841%2C20211852506%2C20211954770%2C20218005653%2C20218018681%2C20218081800%2C20218137660%2C20218140436%2C20218180518%2C20218198273%2C20218218756%2C20218233653%2C20221035701%2C20221080765%2C20221109802%2C20221159288%2C20221356489%2C20221365540%2C20221383489%2C20221386192%2C20221439068%2C20221572537%2C20221646231%2C20221646692%2C20221667336%2C20221699182%2C20221753887%2C20221767441%2C20221786688%2C20221872947%2C20221944255%2C20221962799%2C20221976158%2C20228011114%2C20228029778%2C20228047863%2C20228098749%2C20228101426%2C20228102927%2C20228122652%2C20228124781%2C20228156357%2C20228183705%2C20228289901%2C20231050458%2C20231095176%2C20231113866%2C20231126758%2C20231155581%2C20231175010%2C20231216793%2C20231287325%2C20231288108%2C20231399927%2C20231417662%2C20231430674%2C20231450604%2C20231496025%2C20231509594%2C20231552827%2C20231570355%2C20231607821%2C20231739132%2C20231741200%2C20231780587%2C20231815603%2C20231818764%2C20231822274%2C20231835009%2C20231840535%2C20231855092%2C20231909210%2C20238058948%2C20238083368%2C20238176518%2C20238211754%2C20238221429%2C20238228225%2C20238263380%2C20238283379%2C20238294173%2C20238334783%2C20238356491%2C20238357492%2C20238358131%2C20238358136%2C20238365532%2C20241021564%2C20241032106%2C20241066449%2C20241113037%2C20241201467%2C20241217894%2C20241265383%2C20241270518%2C20241274848%2C20241310198%2C20241367102%2C20241384002%2C20241388475%2C20241393989%2C20241422118%2C20241427988%2C20241447805%2C20241499516%2C20241499636%2C20241513911%2C20241514849%2C20241520611%2C20241532192%2C20241548385%2C20241590215%2C20241687115%2C20241702611%2C20241707448%2C20241710461%2C20241712606%2C20241807637%2C20241817862%2C20241834896%2C20241835604%2C20241841140%2C20241863340%2C20241916373%2C20241930600%2C20241935359%2C20241943478%2C20241946574%29&%24order=entityid&%24limit=231",
+        "status": 200,
+        "contentType": "application/json;charset=utf-8",
+        "observedAt": "2026-10-01T09:57:05.269Z",
+        "responseSha256": "f157b2f421b6791a504632badfbd4de5edf9bba21762558f0e19e6a80e75a130",
+        "receiptSha256": "f9a2518bcc7f83018295792a6175d7da20dffe274ccf375ecfbb1321fe6971fa",
+        "rawRow": "{\"entityid\":\"20211204702\",\"entityname\":\"Talent to Team, LLC\",\"principaladdress1\":\"1601 29th St Unit 1292 PMB 1026\",\"principalcity\":\"Boulder\",\"principalstate\":\"CO\",\"principalzipcode\":\"80301\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"jurisdictonofformation\":\"CO\",\"entitytype\":\"DLLC\",\"agentfirstname\":\"AMY\",\"agentmiddlename\":\"KATHRYN\",\"agentlastname\":\"GIGGEY-BURNS\",\"agentprincipaladdress1\":\"695 E Kings Deer Pt\",\"agentprincipalcity\":\"Monument\",\"agentprincipalstate\":\"CO\",\"agentprincipalzipcode\":\"80132\",\"agentprincipalcountry\":\"US\",\"entityformdate\":\"2021-02-27T00:00:00.000\"}",
+        "rawRowSha256": "5ac16cb5b9f5d27d84b41c926142eb966c6ba18b8c7caa5d38978ede517f1673",
+        "arrayIndex": 86,
+        "byteOffset": 55242,
+        "byteLength": 587
+      },
+      "sourceReader": {
+        "taskId": "/root/enercom_static_source",
+        "reviewedAt": "2026-10-06T09:44:05.587Z",
+        "receiptSha256": "007d2e0478db0dc5fb3b87fc42b5dc635f3d18dd47a6ed89f6c2d9e3197a5e79"
+      },
+      "sourceReviewer": {
+        "taskId": "/root/grey_independent_review",
+        "reviewedAt": "2026-10-06T09:46:49.289Z",
+        "receiptSha256": "5a2acda1ece1f477582bd2655f72f4d3e6156a09ed18a479e0aad7c5d4bd91f0"
+      },
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root",
+          "reviewedAt": "2026-09-30T09:00:08.021038+00:00",
+          "receiptSha256": "64a7221839ec17daf65384f890697365b8b1ce559a81066ea9a38e13e9f32944"
+        },
+        "independent": {
+          "taskId": "/root/sweep_reporting_fix",
+          "reviewedAt": "2026-09-30T09:31:00.767Z",
+          "receiptSha256": "94ea9b3793916327dc98b06721b955a8ecf0bb51a4e1f291044c9d6d770ef5be"
+        },
+        "packetSha256": "5637867157566c223744d7a6258959edd99bc4fde07a7c577d6617ef467db76a"
+      },
+      "target": {
+        "dataset": "co_sos",
+        "recordId": "20211204702",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20211204702",
+        "rowSha256": "1a1ab06e7360015d55e5a8cd17c1bf7b77810e05ca54176a82455b2a2d628b3f",
+        "evidenceSha256": "1a1ab06e7360015d55e5a8cd17c1bf7b77810e05ca54176a82455b2a2d628b3f",
+        "identitySha256": "432efc52d8eca177cfbd80d4e0aced596eb6e091b51645771ead25c691da2893",
+        "sourceRowSha256": "242f8490594dc7112670887af512467d7456d3cd684ad4642db0aee424573b16",
+        "factsSha256": "2f7ac590c0a63b9c0e75bd863a894bd9f8d172d9486c0a51b5f4d9ff0e4a1e41",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:33:31.335358Z"
+      },
+      "anchor": {
+        "mode": "reviewed_registered_agent_operator"
+      },
+      "registeredAgentOperatorBridge": {
+        "schema": "reviewed_registered_agent_operator_v1",
+        "canonicalName": "Talent to Team",
+        "siteLegalName": "Talent to Team",
+        "sourceInputSha256": "5a45548f39c8230cc9e702650a0670b947d61902b68feb0857237e8764ec09b3",
+        "primaryDecisionSha256": "007d2e0478db0dc5fb3b87fc42b5dc635f3d18dd47a6ed89f6c2d9e3197a5e79",
+        "independentDecisionSha256": "5a2acda1ece1f477582bd2655f72f4d3e6156a09ed18a479e0aad7c5d4bd91f0",
+        "officialAgent": {
+          "firstName": "AMY",
+          "middleName": "KATHRYN",
+          "lastName": "GIGGEY-BURNS",
+          "suffix": ""
+        },
+        "siteOperator": {
+          "firstName": "Amy",
+          "lastName": "Giggey-Burns",
+          "displayName": "Amy Giggey-Burns",
+          "role": "CEO"
+        },
+        "pages": [
+          {
+            "requestedUrl": "https://www.talenttoteam.com/meet-the-team",
+            "finalUrl": "https://www.talenttoteam.com/meet-the-team",
+            "status": 200,
+            "contentType": "text/html; charset=UTF-8",
+            "observedAt": "2026-10-06T09:25:33.585Z",
+            "hops": [
+              {
+                "url": "https://www.talenttoteam.com/meet-the-team",
+                "status": 200
+              }
+            ],
+            "htmlSha256": "0878e42be059ba4dbe8d6c3e26bdc012499112efe570ef9934b5278e159fdf97",
+            "textSha256": "36ac181a26d9dc90e2a9a3abb37a8600124808dffcb60c6ba45f0d4793e7a961",
+            "receiptSha256": "e75b51570b5b26e656550ab980f121f2cfe3e02e62d53d70129f7e83abacfeef",
+            "text": "TALENT TO TEAM | Meet The Team\n\ntop of page\n\nSERVICES\n\nPEOPLE STRATEGY\nRECRUITING\nHR OPS & ADMIN\nPROJECT BASED\n\nPRICING\n\nTESTIMONIALS\n\nTHE TEAM\n\nBLOG\n\nABOUT US\n\nJOIN US\n\nCONTACT\n\nMore...\n\nUse tab to navigate through the menu items.\nSCHEDULE A CALL\n\nHOME\n\nOUR TEAM\n\nAmy Giggey-Burns\nFounder / CEO\n\nElliot Cho\nCOO,\nVP of People\n\nJimena Zubiria\nHead of Customer Success,\nVP of People\n\nKaity Tully\nSenior Manager of People,\nDirector of HR\n\nWyatt Hill\nPartnership & Growth Manager,\nPeople Ops Manager\n\nAyanna Edwards\nManager of HR Services\n\nKrystal Cooper\nChief People Officer\n\nBonnie Sims\nVP of People\n\nJanet Petrie\nVP of People\n\nFred Keena\nVP of People\n\nMullai DeFino\nVP of People\n\nMalissa Pason\nPeople Ops Manager\n\nJulie Gallagher\nDirector of HR\n\nLaney Woolf\nDirector of HR\n\nTapiwanashe Nhundu\nPeople Ops Manager\n\nAmy Werner\nPeople Ops Manager\n\nRobin Nigro\nPeople Ops Manager\n\nMary McClure\nPeople Operations Manager\n\nMatt Ludtke\nPeople Ops Manager\n\nVanessa Davisson\nPrincipal Recruiter\n\nZiola Saputo\nLead Recruiter\n\nSarah Espinosa\nLead Recruiter\n\nErika Thomas\nRecruiter\n\nStephanie Golovach\nOperations Manager\n\nSpecialists\n\nMandy Franceschina\nImmigration & Mobility Specialist\n\nOur Specialists\n\n2026 &copy; Talent To Team\n\nSERVICES\n\nPEOPLE STRATEGY\nRECRUITING\nHR OPS & ADMIN\nPROJECT BASED\n\nPRICING\n\nTESTIMONIALS\n\nTHE TEAM\n\nBLOG\n\nABOUT US\n\nJOIN US\n\nCONTACT\n\nMore...\n\nUse tab to navigate through the menu items.\nMAILING ADDRESS:\n\nTalent to Team #1026\n\n1601 29th St STE 1292\n\nBoulder, CO 80301\n\nPHONE: 970-717-4200\n\nFAX: 720-712-4392\n\nFOLLOW US:\n\nPrivacy/AI\n\nbottom of page",
+            "representation": "complete_retained_static_text_v1"
+          }
+        ],
+        "legalQuote": {
+          "pageTextSha256": "36ac181a26d9dc90e2a9a3abb37a8600124808dffcb60c6ba45f0d4793e7a961",
+          "start": 1425,
+          "end": 1445,
+          "text": "Talent to Team #1026",
+          "ordinaryHtml": {
+            "start": 238582,
+            "end": 239132,
+            "html": "<p class=\"font_8 wixui-rich-text__text\" style=\"font-size:16px; line-height:1.4em;\"><span style=\"font-weight:normal;\" class=\"wixui-rich-text__text\"><span style=\"font-family:wfont_023108_e01aa9261e2445778a33c20f84e4c694,wf_e01aa9261e2445778a33c20f8,orig_be_vietnam_pro_light;\" class=\"wixui-rich-text__text\"><span style=\"font-size:16px;\" class=\"wixui-rich-text__text\"><span style=\"color:#FFFFFF;\" class=\"wixui-rich-text__text\"><span style=\"letter-spacing:normal;\" class=\"wixui-rich-text__text\">Talent to Team #1026</span></span></span></span></span></p>",
+            "sha256": "9af5e972bdc5787567ad9b73869c91eeb766086dc00a19e6fef586ccd3966f58"
+          }
+        },
+        "operatorQuote": {
+          "pageTextSha256": "36ac181a26d9dc90e2a9a3abb37a8600124808dffcb60c6ba45f0d4793e7a961",
+          "start": 265,
+          "end": 295,
+          "text": "Amy Giggey-Burns\nFounder / CEO",
+          "ordinaryHtml": {
+            "start": 195736,
+            "end": 195885,
+            "html": "<div data-testid=\"gallery-item-title\" class=\"cKIeaN\">Amy Giggey-Burns</div><p data-testid=\"gallery-item-description\" class=\"wkCC96\">Founder / CEO</p>",
+            "sha256": "2e6bd5b21f3213a7664ebdb23e4c0dad72de535bab44bc986642b6a412df9d39"
+          }
+        },
+        "limitations": {
+          "association": "independently_reviewed_company_inference",
+          "statutoryPersonIdentityVerified": false,
+          "omittedMiddleNamesVerified": false,
+          "addressEquivalenceClaimed": false,
+          "agentOwnershipClaimed": false,
+          "canonicalIdentityChanged": false,
+          "literalDifferences": [
+            "The original official legal entity is Talent to Team, LLC; the literal site mailing name is Talent to Team #1026. The site omits LLC and does not independently certify the full legal form.",
+            "The exact official natural-person agent is AMY KATHRYN GIGGEY-BURNS. The actual ordinary Team card is Amy Giggey-Burns, Founder / CEO; the entry selects the literal CEO role without rewriting the complete card. Kathryn is omitted and no statutory same-person identity or ownership is certified.",
+            "The original principal address is 1601 29th St Unit 1292 PMB 1026, Boulder CO80301US; the website separately labels Talent to Team #1026, 1601 29th St STE1292, Boulder CO80301 as MAILING ADDRESS. Unit, suite and mailbox roles are not declared equivalent and the site omits explicit country.",
+            "The official agent address is695 E Kings Deer Pt, Monument CO80132US. Current canonical company-site contexts contain Boulder suite/street variants. These remain literal separate role/source observations, not a relocation, current occupancy or identity-field correction.",
+            "The original registry extract was observed September29,2026; the full official role row October1; the Team page October6. Good Standing and the February27,2021 formation date remain dated registry facts, not current revenue or a new growth event.",
+            "Prior homepage/contact complete reads remain attributed to root/sweep_reporting_fix. The October6 source pair is Enercom/Grey; later schema-only successors preserve their original complete-read provenance and do not claim new source reads.",
+            "The Team roster is not verified employee/payroll headcount. Client testimonials and client HR systems do not establish this firm’s own growth, installed accounting software, revenue, budget or buying timing.",
+            "The complete static text and exact ordinary company-name paragraph retain all typography attributes. The isolated typography proposal is required for that paragraph; no browser-rendered visibility, full raw HTML or full CRM read is claimed."
+          ]
+        }
+      }
     }
   ]
 }
