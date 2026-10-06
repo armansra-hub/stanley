@@ -12130,6 +12130,168 @@
           ]
         }
       }
+    },
+    {
+      "id": "co_20101077986_canopy_registered_agent_operator_20261006",
+      "companyId": "6254eada-c109-492d-8aef-2ce6ce8a16ce",
+      "internalId": "137110045",
+      "canonicalDomain": "canopyadvisory.com",
+      "canonicalIdentitySha256": "ee8c51f6831c1f130ee07d6dd2abb1c35da8196fb3ab39cbd00cb67a046e8005",
+      "sourceKind": "colorado_business_entity",
+      "source": {
+        "requestedUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2819871448316%2C19871752450%2C19881061026%2C19921015002%2C19921093611%2C19941135736%2C19941144507%2C19951012437%2C19951118311%2C19961067037%2C19961107446%2C19961113919%2C19961128567%2C19961165129%2C19971139003%2C19981044464%2C19981206330%2C19991013691%2C19991061276%2C19991131559%2C19991148875%2C20001004722%2C20001031101%2C20001065494%2C20001093568%2C20001137405%2C20001143800%2C20001156124%2C20001168706%2C20001175106%2C20001177663%2C20001247589%2C20011047692%2C20011082151%2C20011084324%2C20011209186%2C20021014396%2C20021024052%2C20021041063%2C20021105720%2C20021152603%2C20021345947%2C20031030461%2C20031100853%2C20031150417%2C20031192523%2C20031193211%2C20031240505%2C20041054188%2C20041100115%2C20041106494%2C20041208894%2C20041261299%2C20041267522%2C20041362384%2C20041362666%2C20041366699%2C20041432825%2C20041440862%2C20051019546%2C20051091855%2C20051129613%2C20051177540%2C20051217262%2C20051274233%2C20051285883%2C20051294234%2C20051309309%2C20051313310%2C20051428430%2C20051455522%2C20061039210%2C20061105330%2C20061112629%2C20061132557%2C20061185938%2C20061295385%2C20061351740%2C20061436592%2C20071087624%2C20071167220%2C20071289949%2C20071323869%2C20071368731%2C20071387899%2C20071434171%2C20071457252%2C20071537510%2C20081088657%2C20081117023%2C20081137821%2C20081624281%2C20091091595%2C20091142393%2C20091212665%2C20091234043%2C20091245376%2C20091350399%2C20091408906%2C20091467749%2C20091478879%2C20091653690%2C20101053975%2C20101077986%2C20101083464%2C20101124681%2C20101156083%2C20101184742%2C20101332060%2C20101367287%2C20101467218%2C20101571577%2C20101576387%2C20101576751%2C20101640302%2C20101692294%2C20101703193%2C20111016993%2C20111036754%2C20111079935%2C20111101682%2C20111173364%2C20111184532%2C20111266344%2C20111391039%2C20111394084%2C20111508400%2C20111605065%2C20111659423%2C20111680724%2C20111712788%2C20121014607%2C20121027438%2C20121080459%2C20121325394%2C20121377300%2C20121483367%2C20121487849%2C20121543476%2C20121556877%2C20121578479%2C20121595282%2C20121624849%2C20131015792%2C20131099565%2C20131137676%2C20131142714%2C20131325433%2C20131376564%2C20131414145%2C20131414894%2C20131422174%2C20131535547%2C20131594675%2C20131600282%2C20131625204%2C20141089742%2C20141096517%2C20141140943%2C20141309851%2C20141332948%2C20141349136%2C20141449195%2C20141472733%2C20141563815%2C20141566827%2C20141620440%2C20151039461%2C20151068310%2C20151160261%2C20151177625%2C20151181280%2C20151365978%2C20151375354%2C20151378887%2C20151504886%2C20151550510%2C20151556727%2C20151595799%2C20151595829%2C20151605529%2C20151638348%2C20151639964%2C20151662590%2C20151721404%2C20151763035%2C20151830652%2C20151841429%2C20161013556%2C20161033965%2C20161154138%2C20161327693%2C20161463843%2C20161471539%2C20161471833%2C20161487186%2C20161528912%2C20161533830%2C20161702053%2C20161715736%2C20161778949%2C20161840280%2C20161848420%2C20171024999%2C20171107744%2C20171114437%2C20171189909%2C20171205192%2C20171236446%2C20171281150%2C20171311743%2C20171367549%2C20171402340%2C20171497520%2C20171512611%2C20171522760%2C20171541898%2C20171602689%2C20171648118%2C20171659656%2C20171672476%2C20171701072%2C20171767268%2C20171774562%2C20171835110%2C20171856869%2C20171862467%2C20171924975%2C20171925466%2C20171939839%29&%24order=entityid&%24limit=231",
+        "finalUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?%24select=entityid%2Centityname%2Cprincipaladdress1%2Cprincipaladdress2%2Cprincipalcity%2Cprincipalstate%2Cprincipalzipcode%2Cprincipalcountry%2Cmailingaddress1%2Cmailingaddress2%2Cmailingcity%2Cmailingstate%2Cmailingzipcode%2Cmailingcountry%2Centitystatus%2Cjurisdictonofformation%2Centitytype%2Cagentfirstname%2Cagentmiddlename%2Cagentlastname%2Cagentsuffix%2Cagentorganizationname%2Cagentprincipaladdress1%2Cagentprincipaladdress2%2Cagentprincipalcity%2Cagentprincipalstate%2Cagentprincipalzipcode%2Cagentprincipalcountry%2Cagentmailingaddress1%2Cagentmailingaddress2%2Cagentmailingcity%2Cagentmailingstate%2Cagentmailingzipcode%2Cagentmailingcountry%2Centityformdate&%24where=entityid+in%2819871448316%2C19871752450%2C19881061026%2C19921015002%2C19921093611%2C19941135736%2C19941144507%2C19951012437%2C19951118311%2C19961067037%2C19961107446%2C19961113919%2C19961128567%2C19961165129%2C19971139003%2C19981044464%2C19981206330%2C19991013691%2C19991061276%2C19991131559%2C19991148875%2C20001004722%2C20001031101%2C20001065494%2C20001093568%2C20001137405%2C20001143800%2C20001156124%2C20001168706%2C20001175106%2C20001177663%2C20001247589%2C20011047692%2C20011082151%2C20011084324%2C20011209186%2C20021014396%2C20021024052%2C20021041063%2C20021105720%2C20021152603%2C20021345947%2C20031030461%2C20031100853%2C20031150417%2C20031192523%2C20031193211%2C20031240505%2C20041054188%2C20041100115%2C20041106494%2C20041208894%2C20041261299%2C20041267522%2C20041362384%2C20041362666%2C20041366699%2C20041432825%2C20041440862%2C20051019546%2C20051091855%2C20051129613%2C20051177540%2C20051217262%2C20051274233%2C20051285883%2C20051294234%2C20051309309%2C20051313310%2C20051428430%2C20051455522%2C20061039210%2C20061105330%2C20061112629%2C20061132557%2C20061185938%2C20061295385%2C20061351740%2C20061436592%2C20071087624%2C20071167220%2C20071289949%2C20071323869%2C20071368731%2C20071387899%2C20071434171%2C20071457252%2C20071537510%2C20081088657%2C20081117023%2C20081137821%2C20081624281%2C20091091595%2C20091142393%2C20091212665%2C20091234043%2C20091245376%2C20091350399%2C20091408906%2C20091467749%2C20091478879%2C20091653690%2C20101053975%2C20101077986%2C20101083464%2C20101124681%2C20101156083%2C20101184742%2C20101332060%2C20101367287%2C20101467218%2C20101571577%2C20101576387%2C20101576751%2C20101640302%2C20101692294%2C20101703193%2C20111016993%2C20111036754%2C20111079935%2C20111101682%2C20111173364%2C20111184532%2C20111266344%2C20111391039%2C20111394084%2C20111508400%2C20111605065%2C20111659423%2C20111680724%2C20111712788%2C20121014607%2C20121027438%2C20121080459%2C20121325394%2C20121377300%2C20121483367%2C20121487849%2C20121543476%2C20121556877%2C20121578479%2C20121595282%2C20121624849%2C20131015792%2C20131099565%2C20131137676%2C20131142714%2C20131325433%2C20131376564%2C20131414145%2C20131414894%2C20131422174%2C20131535547%2C20131594675%2C20131600282%2C20131625204%2C20141089742%2C20141096517%2C20141140943%2C20141309851%2C20141332948%2C20141349136%2C20141449195%2C20141472733%2C20141563815%2C20141566827%2C20141620440%2C20151039461%2C20151068310%2C20151160261%2C20151177625%2C20151181280%2C20151365978%2C20151375354%2C20151378887%2C20151504886%2C20151550510%2C20151556727%2C20151595799%2C20151595829%2C20151605529%2C20151638348%2C20151639964%2C20151662590%2C20151721404%2C20151763035%2C20151830652%2C20151841429%2C20161013556%2C20161033965%2C20161154138%2C20161327693%2C20161463843%2C20161471539%2C20161471833%2C20161487186%2C20161528912%2C20161533830%2C20161702053%2C20161715736%2C20161778949%2C20161840280%2C20161848420%2C20171024999%2C20171107744%2C20171114437%2C20171189909%2C20171205192%2C20171236446%2C20171281150%2C20171311743%2C20171367549%2C20171402340%2C20171497520%2C20171512611%2C20171522760%2C20171541898%2C20171602689%2C20171648118%2C20171659656%2C20171672476%2C20171701072%2C20171767268%2C20171774562%2C20171835110%2C20171856869%2C20171862467%2C20171924975%2C20171925466%2C20171939839%29&%24order=entityid&%24limit=231",
+        "status": 200,
+        "contentType": "application/json;charset=utf-8",
+        "observedAt": "2026-10-01T09:57:04.464Z",
+        "responseSha256": "fe364e93f8a6f611739db5bf9db8f23d183414bfa90d175a9cbf8bc516fe6af2",
+        "receiptSha256": "5891cf58fb62ab6d5fcb79cd163f02f7b559e4bff21299b741d4cf036b8e6eca",
+        "rawRow": "{\"entityid\":\"20101077986\",\"entityname\":\"Canopy Advisory Group, Inc.\",\"principaladdress1\":\"260 Josephine St Ste 400\",\"principalcity\":\"Denver\",\"principalstate\":\"CO\",\"principalzipcode\":\"80206\",\"principalcountry\":\"US\",\"entitystatus\":\"Good Standing\",\"jurisdictonofformation\":\"Delaware\",\"entitytype\":\"FPC\",\"agentfirstname\":\"GRIFFEN\",\"agentmiddlename\":\"ALEXANDRA H\",\"agentlastname\":\"OSHAUGHNESSY\",\"agentprincipaladdress1\":\"260 Josephine St Ste 400\",\"agentprincipalcity\":\"Denver\",\"agentprincipalstate\":\"CO\",\"agentprincipalzipcode\":\"80206\",\"agentprincipalcountry\":\"US\",\"entityformdate\":\"2010-02-05T00:00:00.000\"}",
+        "rawRowSha256": "b77e7f5749d544e25d0d8ec25719ab6efd42401da9afa8acf03472c855bc53a3",
+        "arrayIndex": 103,
+        "byteOffset": 65178,
+        "byteLength": 603
+      },
+      "sourceReader": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-06T06:25:55.320Z",
+        "receiptSha256": "561f8e85b08c1691c08aae3aec0f8e3ea7c4b7bb525032ff9682f72ce1d4ab59"
+      },
+      "sourceReviewer": {
+        "taskId": "/root/enercom_static_source",
+        "reviewedAt": "2026-10-06T06:27:47.070Z",
+        "receiptSha256": "d346b3f80e21621533c438694a61211b11917ec0ff27a09ade8e01e96e9e7a77"
+      },
+      "originalReviews": {
+        "primary": {
+          "taskId": "/root/sweep_reporting_fix",
+          "reviewedAt": "2026-09-30T20:17:23.807Z",
+          "receiptSha256": "fa64210a0c4161dd1a211946c9c79c6d71e2f14225f7bde689e6ff57e23c0e06"
+        },
+        "independent": {
+          "taskId": "/root/source_outcome_reporting",
+          "reviewedAt": "2026-09-30T20:21:59.017Z",
+          "receiptSha256": "9d2f11749b19f318bb886c8161c08bb67fde2efd5a5cb781bdeccee0a60c436d"
+        },
+        "packetSha256": "00ba294a1701882eb6b0bf559330c60e3ce018da43f116631a289e822c305da5"
+      },
+      "target": {
+        "dataset": "co_sos",
+        "recordId": "20101077986",
+        "sourceUrl": "https://data.colorado.gov/resource/4ykn-tg5h.json?entityid=20101077986",
+        "rowSha256": "d38afc20ff4f9f824928a9c202aa070f0687c261b22d4901c8ff687fa89c557e",
+        "evidenceSha256": "d38afc20ff4f9f824928a9c202aa070f0687c261b22d4901c8ff687fa89c557e",
+        "identitySha256": "54f40941873505c6cb246418ba51e33be761daf6d55230a43e41ac549de6cf9e",
+        "sourceRowSha256": "388aad9c38911710175ee4e31436927278d8a30ec6ec33671382835da7c24717",
+        "factsSha256": "5af92299df4524a3d53fdfa04ee56024ec88d4db5707ed4960d4e87474aa7743",
+        "sourceAsOf": "2026-09-29",
+        "observedAt": "2026-09-29T23:31:00.837781Z"
+      },
+      "anchor": {
+        "mode": "reviewed_registered_agent_operator"
+      },
+      "registeredAgentOperatorBridge": {
+        "schema": "reviewed_registered_agent_operator_v1",
+        "canonicalName": "Canopy Advisory Group",
+        "siteLegalName": "Canopy Advisory Group",
+        "sourceInputSha256": "e9a368a9674cabf5b3858f33706c70196f8a8a6f61dd8fac6ecfbf4f07e43fa6",
+        "primaryDecisionSha256": "561f8e85b08c1691c08aae3aec0f8e3ea7c4b7bb525032ff9682f72ce1d4ab59",
+        "independentDecisionSha256": "d346b3f80e21621533c438694a61211b11917ec0ff27a09ade8e01e96e9e7a77",
+        "officialAgent": {
+          "firstName": "GRIFFEN",
+          "middleName": "ALEXANDRA H",
+          "lastName": "OSHAUGHNESSY",
+          "suffix": ""
+        },
+        "siteOperator": {
+          "firstName": "Griffen",
+          "lastName": "O’Shaughnessy",
+          "displayName": "Griffen O’Shaughnessy",
+          "role": "Founder and CEO"
+        },
+        "pages": [
+          {
+            "requestedUrl": "https://canopyadvisory.com/privacy-policy",
+            "finalUrl": "https://canopyadvisory.com/privacy-policy/",
+            "status": 200,
+            "contentType": "text/html; charset=UTF-8",
+            "observedAt": "2026-10-06T06:10:30.360Z",
+            "hops": [
+              {
+                "url": "https://canopyadvisory.com/privacy-policy",
+                "status": 301
+              },
+              {
+                "url": "https://canopyadvisory.com/privacy-policy/",
+                "status": 200
+              }
+            ],
+            "htmlSha256": "2b57063af06bd9c166c28adaa0728f6993a012c2108b82fccac7af7961dba976",
+            "textSha256": "c1aa35bd8e40c3c724faaba68995d4ac9111e941412a38702982c23ef6dacf94",
+            "receiptSha256": "fdce2d34b2b3912c08aabd24bd937aa476e554c445d3b43d8b8a419e95168a72",
+            "text": "Privacy Policy - Canopy Advisory Group\n\nWho We Are\n\nWhat We Do\n\nResources\n\nSchedule a Consultation\n\nOur Story\n\nOur Team\n\nCanopy Expert Advisors\n\nJoin Our Network\n\nWhy Fractional\n\nHow It Works\n\nOur Vetting Process\n\nFractional Services\n\nSuccess Stories\n\nFinance and Accounting\n\nBusiness Strategy\n\nMarketing\n\nNonprofit\n\nLeadership\n\nIT\n\nHuman Resources\n\nOperations\n\nSales\n\nResource Library\n\nUpcoming Webinars\n\nPast Webinars\n\nFAQs\n\nWho we are\n\nCanopy Advisory Group is headquartered in Denver, Colorado.\n\n1150 Delaware St,\n\nDenver, CO 80204\n\n720.989.1705\n\nhttps://canopyadvisory.com.\n\nWhat personal data we collect and why we collect it\n\nComments\n\nWhen visitors leave comments on the site we collect the data shown in the comments form, and also the visitor’s IP address and browser user agent string to help spam detection.\n\nAn anonymized string created from your email address (also called a hash) may be provided to the Gravatar service to see if you are using it. The Gravatar service privacy policy is available here: https://automattic.com/privacy/. After approval of your comment, your profile picture is visible to the public in the context of your comment.\n\nMedia\n\nIf you upload images to the website, you should avoid uploading images with embedded location data (EXIF GPS) included. Visitors to the website can download and extract any location data from images on the website.\n\nContact forms\n\nIf you submit a form via our website, we collect and store that information in order to contact you. Some forms may have an option to add you to a list that we will use to periodically email you. You can unsubscribe from this email list at any time using the unsubscribe link in the footer of the email.\n\nCookies\n\nIf you leave a comment on our site you may opt-in to saving your name, email address and website in cookies. These are for your convenience so that you do not have to fill in your details again when you leave another comment. These cookies will last for one year.\n\nEmbedded content from other websites\n\nArticles on this site may include embedded content (e.g. videos, images, articles, etc.). Embedded content from other websites behaves in the exact same way as if the visitor has visited the other website.\n\nThese websites may collect data about you, use cookies, embed additional third-party tracking, and monitor your interaction with that embedded content, including tracking your interaction with the embedded content if you have an account and are logged in to that website.\n\nAnalytics\n\nWe collect anonymous analytics data via Google Analytics. We use this data to optimize our website performance and content. This analytics data cannot be used to personally identify you.\n\nWho we share your data with\n\nWe do not share your data with any third party organizations or companies.\n\nHow long we retain your data\n\nIf you leave a comment, the comment and its metadata are retained indefinitely. This is so we can recognize and approve any follow-up comments automatically instead of holding them in a moderation queue.\n\nFor users that register on our website (if any), we also store the personal information they provide in their user profile. All users can see, edit, or delete their personal information at any time (except they cannot change their username). Website administrators can also see and edit that information.\n\nWhat rights you have over your data\n\nIf you have submitted a contact form via this website, you can request to receive an exported file of the personal data we hold about you, including any data you have provided to us. You can also request that we erase any personal data we hold about you. This does not include any data we are obliged to keep for administrative, legal, or security purposes. To request your personal data, you may email us at [email protected] .\n\nLearn more from our experts in the field.\n\nBrowse Resources\n\nConnect with Us\n\nSubscribe to receive resources, tips and updates.\n\nCheck out our newsletter and join the conversation.\n\nEmail\n\nJoin Our Network\n©2026 Canopy Advisory Group.\nAll Rights Reserved. Privacy Policy\n\nWho We Are\n\nOur Story\n\nOur Team\n\nOur Experts\n\nFAQs\n\nWhat We Do\n\nHow It Works\n\nOur Vetting Process\n\nFractional Services\n\nSuccess Stories\n\nResources\n\nResource Library\n\nUpcoming Webinars\n\nPast Webinars\n\nContact Us",
+            "representation": "complete_retained_static_text_v1"
+          },
+          {
+            "requestedUrl": "https://canopyadvisory.com/our-team/",
+            "finalUrl": "https://canopyadvisory.com/our-team/",
+            "status": 200,
+            "contentType": "text/html; charset=UTF-8",
+            "observedAt": "2026-10-06T06:23:22.560Z",
+            "hops": [
+              {
+                "url": "https://canopyadvisory.com/our-team/",
+                "status": 200
+              }
+            ],
+            "htmlSha256": "0270d39331b443651926a9e82ecddf229206544b2adc96a4627fe83c0be0e46a",
+            "textSha256": "95e3da5210e42f5b364faaa2fdda41dd9a61aac0dc66fbe71d1c8b6fadd78858",
+            "receiptSha256": "28a61d9c249b0ce6e1507f3c729520ad9a357542cd7418fb86c1262ec075b572",
+            "text": "Our Team - Canopy Advisory Group\n\nWho We Are\n\nWhat We Do\n\nResources\n\nSchedule a Consultation\n\nOur Story\n\nOur Team\n\nCanopy Expert Advisors\n\nJoin Our Network\n\nWhy Fractional\n\nHow It Works\n\nOur Vetting Process\n\nFractional Services\n\nSuccess Stories\n\nFinance and Accounting\n\nBusiness Strategy\n\nMarketing\n\nNonprofit\n\nLeadership\n\nIT\n\nHuman Resources\n\nOperations\n\nSales\n\nResource Library\n\nUpcoming Webinars\n\nPast Webinars\n\nFAQs\n\nOur Team\n\nMeet the group of people dedicated to helping you build your best team.\n\nOur team’s passion lies in helping you and your organization thrive. They are your guides in finding the right fractional talent to solve your business challenges, onboarding and moving projects forward as quickly and efficiently as possible, and ensuring that your entire experience is exceptional from start to finish.\n\nGriffen O’Shaughnessy\n\nFounder and CEO\n\nGriffen is an attorney and CPA with more than twenty years of professional experience. She worked in Holland & Hart’s mergers and acquisitions practice until the fall of 2009 when she started Canopy. Griffen also worked in the audit group of Arthur Andersen before attending law school at American University.\n\nHow Griffen Supports Canopy Clients: Griffen is heavily involved in every Canopy relationship, from the very beginning of the discovery process to a review of each project to make certain every client is delighted with their experience.\n\nRead More\n\nGriffen O’Shaughnessy\n\nFounder and CEO\n\nEducation\n\nGoshen College – BA, Accounting\n\nAmerican University – JD, magna cum laude\n\nBiography\n\nGriffen is an attorney and CPA with more than twenty years of professional experience. She worked in Holland & Hart’s mergers and acquisitions practice until the fall of 2009 when she started Canopy.  Griffen also worked in the audit group of Arthur Andersen before attending law school at American University.\n\nAfter identifying a void in the market, Griffen founded Canopy’s cutting-edge approach to curate the best independent professionals in town and connect them with businesses and non-profits for project based and contract to hire work. As the CEO, Griffen provides innovative leadership that allows Canopy clients to gain access to top-tier independent experts, while also providing these experts with the flexibility to do what they love both at work and home.\n\nCurrently, Griffen is on the Board of Directors for Girls, Inc. of Metro Denver and the Vice President of the Board for the Country Club Historic Neighborhood.\n\nIn 2018 Griffen was awarded the Denver Business Journal’s 40 Under 40 award and in 2016 Griffen was a finalist for the Denver Business Journal’s Outstanding Women in Business Award.\n\nMC Pittinos\n\nDirector of Operations\n\nWith more than 20 years of experience working for small and mid-sized businesses, Mary Clare “MC” Pittinos provides a broad range of skills including data asset management, process automation and development, and marketing communications. Her ability to apply real world experience to everyday opportunities and obstacles allows the Canopy team to focus on providing an unparalleled level of service to its consultants and clients.\n\nHow MC Supports Canopy Clients: MC manages Canopy’s operations, including both the internal processes and logistics for the organization, as well as operations management and support for Canopy Expert Advisors and Canopy client relationships.\n\nRead More\n\nMC Pittinos\n\nDirector of Operations\n\nEducation\n\nMiami University, Oxford, Ohio – BA English Literature\n\nBiography\n\nWith more than 20 years of experience working for small and mid-sized business, Mary Clare “MC” Pittinos provides a broad range of skills including data asset management, process automation and development, and marketing communications. Her ability to apply real world experience to everyday opportunities and obstacles allows the Canopy team focus on providing an unparalleled level of service to its consultants and clients.\n\nMC has a Bachelor of Arts in English Literature from Miami University. She is active on the Educational Advisory Board at her children’s school and enjoys spending time with her husband and their two children.\n\nSerena Robinson\n\nDirector of Marketing & Events\n\nSerena is marketing and events manager at Canopy and joined the team in 2018. She is a New York City native with more than 12 years of events, marketing and public relations experience – from marketing and events at financial firms, to start-ups, art and design companies and nonprofit organizations.\n\nHow Serena Supports Canopy Clients: Serena manages the newsletter, emails and other communications Canopy clients receive, ensuring that you are kept up-to-date and in the know about Canopy events, available talent and other relevant information.\n\nRead More\n\nSerena Robinson\n\nDirector of Marketing & Events\n\nEducation\n\nNew York University – BA, Politics\n\nBiography\n\nSerena is marketing and events manager at Canopy and joined the team in 2018. She is a New York City native with over twelve years of events, marketing and public relations experience – from marketing and events at financial firms, to start-ups, art and design companies and non-profit organizations.\n\nShe began her career with the Morgan Stanley events team in New York, eventually moving on to the Public Relations and Event Marketing at 1stdibs.com, the world’s leading online luxury art and design marketplace. Subsequently she joined Deutsche Bank’s corporate events team, where she developed programs, special events, sponsorships, and financial conferences.\n\nAfter moving to Denver with her husband, and prior to joining Canopy, Serena worked at Children’s Hospital Colorado Foundation on the Special Events and Executive and Marketing teams.\n\nAdditionally, she currently serves on the Young Guns Coors Art and Citizen of the West events committees. She is a past Event Co-Chair of the Denver Art Museum’s CultureHaus board and member of the Children’s Museum event committee. In New York, she was Junior Committee Co-Chair of the Wildlife Conservation Society as well as that of the Parrish Art Museum, and also served on the Save Venice, Whitney Museum and the Deerfield Alumni committees.\n\nEllen Pepper\n\nDirector of Talent Acquisition\n\nEllen is an experienced legal and corporate recruiter specializing in full-cycle search for elite roles across the legal, corporate and growth sectors. She brings expertise in talent acquisition, talent strategy, analysis, coaching, development and retention to the team, including a range of international, national and regional law firms. Ellen earned her bachelor’s degree from the University of Michigan and her law degree from the University of Colorado Law School.\n\nHow Ellen Supports Canopy Clients: Ellen leads the interviewing and vetting process at Canopy Advisory Group, identifying and selecting the experienced professionals who join Canopy’s network of fractional experts.  She ensures that every advisor Canopy places is equipped to deliver real impact from day one.\n\nRead More\n\nEllen Pepper\n\nDirector of Talent Acquisition\n\nEducation\n\nUniversity of Michigan – BS\n\nUniversity of Colorado Law School\n\nBiography\n\nEllen serves as Director of Talent Acquisition at Canopy Advisory Group, where she leads the vetting process that ensures Canopy’s network of fractional experts represents the very best in their fields. With years of experience in full-cycle talent acquisition and a background as a practicing attorney, Ellen brings an analytical mindset combined with talent expertise to her role.\n\nAt Canopy, Ellen is the driving force behind nterviewing and selecting the experienced professionals who join the Canopy Expert Advisor community. She brings a rigorous, structured approach to the vetting process — evaluating not just credentials and experience, but the strategic mindset, collaborative style, and execution capability that Canopy’s clients depend on.\n\nEllen holds a bachelor’s degree from the University of Michigan and a J.D. from the University of Colorado Law School.\n\nProfessional Skills\n\nSales Strategy\n\nProject Management\n\nStrategic Planning\n\nMarket Research\n\nCRM\n\nRisk Management\n\nPresentation Skills\n\nRFPs\n\nNegotiations\n\nContract Analysis\n\nVioleta Madera\n\nFinance Manager\n\nVioleta is a bilingual, responsible, self-motivated, committed, hardworking, team player, with a positive attitude. She has extensive knowledge in Quickbooks online and desktop, Microsoft Office and Google sheets. She is a highly motivated and dedicated Business Management graduate who provides optimum customer service, is a proven fast learner and at being multitasked.\n\nHow Violeta Supports Canopy Clients: Violeta manages the financial aspects of every Canopy fractional relationship, ensuring time tracking, invoicing and payments are on schedule and low effort for our clients.\n\nRead More\n\nVioleta Madera\n\nFinance Manager\n\nVioleta is a bilingual, responsible, self-motivated, committed, hardworking, team player, with a positive attitude. She has extensive knowledge in Quickbooks online and desktop, Microsoft Office and Google sheets. She is a highly motivated and dedicated Business Management graduate who provides optimum customer service, is a proven fast learner and at being multitasked.\n\nHave interest in joining Canopy's network of expert advisors?\n\nJoin Our Network\n\nLearn more from our experts in the field.\n\nBrowse Resources\n\nConnect with Us\n\nSubscribe to receive resources, tips and updates.\n\nCheck out our newsletter and join the conversation.\n\nEmail\n\nJoin Our Network\n©2026 Canopy Advisory Group.\nAll Rights Reserved. Privacy Policy\n\nWho We Are\n\nOur Story\n\nOur Team\n\nOur Experts\n\nFAQs\n\nWhat We Do\n\nHow It Works\n\nOur Vetting Process\n\nFractional Services\n\nSuccess Stories\n\nResources\n\nResource Library\n\nUpcoming Webinars\n\nPast Webinars\n\nContact Us",
+            "representation": "complete_retained_static_text_v1"
+          }
+        ],
+        "legalQuote": {
+          "pageTextSha256": "c1aa35bd8e40c3c724faaba68995d4ac9111e941412a38702982c23ef6dacf94",
+          "start": 439,
+          "end": 498,
+          "text": "Canopy Advisory Group is headquartered in Denver, Colorado.",
+          "ordinaryHtml": {
+            "start": 35880,
+            "end": 35946,
+            "html": "<p>Canopy Advisory Group is headquartered in Denver, Colorado.</p>",
+            "sha256": "ce8f92f63326c22df60fd8bc4839befc9e296548bd5b6ae4d69452433c747af0"
+          }
+        },
+        "operatorQuote": {
+          "pageTextSha256": "95e3da5210e42f5b364faaa2fdda41dd9a61aac0dc66fbe71d1c8b6fadd78858",
+          "start": 826,
+          "end": 864,
+          "text": "Griffen O’Shaughnessy\n\nFounder and CEO",
+          "ordinaryHtml": {
+            "start": 39740,
+            "end": 39889,
+            "html": "<h2 class=\"mb-0 text-canopy-blue\">Griffen O’Shaughnessy</h2>\n                            <h3 class=\"team-member-position\"><i>Founder and CEO</i></h3>",
+            "sha256": "0004a0f49cf552e40eda15e4a0dd9926d434680c176bb38c5cdaadd3dcba34fa"
+          }
+        },
+        "limitations": {
+          "association": "independently_reviewed_company_inference",
+          "statutoryPersonIdentityVerified": false,
+          "omittedMiddleNamesVerified": false,
+          "addressEquivalenceClaimed": false,
+          "agentOwnershipClaimed": false,
+          "canonicalIdentityChanged": false,
+          "literalDifferences": [
+            "The official entity is Canopy Advisory Group, Inc.; the literal Privacy company name is Canopy Advisory Group. The site omits Inc. and does not independently establish a full legal form.",
+            "The official natural-person registered agent is GRIFFEN ALEXANDRA H OSHAUGHNESSY; the literal Team card names Griffen O’Shaughnessy, Founder and CEO. The omitted middle names are not verified and no statutory same-person identity or ownership is certified.",
+            "The original Colorado principal/agent address is 260 Josephine St Ste 400, Denver CO 80206 US. The saved canonical and Privacy address is 1150 Delaware Street, Denver CO 80204, without the separate original UCC debtor unit #100. These roles remain distinct; no address equivalence, relocation or current occupancy is established.",
+            "The selected CO entity is supported by a reviewed company-association inference. Separate original UCC 1519548:1210861 remains held; no person/entity identifier on that filing or exact unit #100 bridge was supplied.",
+            "The September 29, 2026 original registry extract, October 1 full official role observation and October 6 page observations retain separate dates. The Team narrative of starting Canopy in fall 2009 and official formation on February 5, 2010 are not a verified legal succession or relocation chronology.",
+            "Complete retained static text is preserved, including repeated modal material. Decisive name/role and company quotes are tied to ordinary body HTML spans; no browser rendering or complete raw HTML read is claimed. Finance-manager QuickBooks experience is not evidence of Canopy installed software, and the advisor network is not confirmed employee headcount."
+          ]
+        }
+      }
     }
   ]
 }

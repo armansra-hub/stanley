@@ -202,8 +202,10 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
       || !text(relation.quote, 650) || !hash(relation.quoteSha256) || sha(relation.quote) !== relation.quoteSha256)
       throw new Error("invalid registry website operator relationship");
   }
-  if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1" && raw.normalization !== "gravity_forms_honeypot_v2" && raw.normalization !== "gravity_forms_honeypot_v3" && raw.normalization !== "everest_forms_honeypot_v1" && raw.normalization !== "everest_forms_honeypot_v2" && raw.normalization !== "everest_forms_honeypot_v3" && raw.normalization !== "testimonials_widget_unordered_v1")
+  if (raw.normalization !== undefined && raw.normalization !== "gravity_forms_honeypot_v1" && raw.normalization !== "gravity_forms_honeypot_v2" && raw.normalization !== "gravity_forms_honeypot_v3" && raw.normalization !== "everest_forms_honeypot_v1" && raw.normalization !== "everest_forms_honeypot_v2" && raw.normalization !== "everest_forms_honeypot_v3" && raw.normalization !== "testimonials_widget_unordered_v1" && raw.normalization !== "caldera_forms_honeypot_v1")
     throw new Error("invalid registry website normalization");
+  if (raw.normalization === "caldera_forms_honeypot_v1" && (raw.mode !== undefined || raw.canonicalRedirect !== undefined))
+    throw new Error("Caldera normalization requires an ordinary address proof");
   // The unordered-widget mode supports ordinary complete legal-name/address
   // proofs only; identifier, DBA and redirect grammars retain their own gates.
   if (raw.normalization === "testimonials_widget_unordered_v1" && (raw.mode !== undefined || raw.canonicalRedirect !== undefined))
@@ -672,7 +674,7 @@ export function registryWebsiteVerifier() {
     context: CompanyIdentityContext, now = new Date()): Promise<NonNullable<RegistryProfile["verification"]>> => {
     const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address", operatorMode = proof.mode === "site_operator_address";
     // This new mode always revalidates its fresh, separately bound attestations.
-    if (identifierMode || dbaMode || operatorMode || proof.crmDomainReference !== undefined || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
+    if (identifierMode || dbaMode || operatorMode || proof.crmDomainReference !== undefined || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1" || proof.normalization === "caldera_forms_honeypot_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
     const crm = proof.crmDomainReference;

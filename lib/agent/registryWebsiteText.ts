@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { htmlToVisibleText, htmlAttributes, decodeEntities } from "@/lib/sources/siteDiscovery";
 
-export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2" | "gravity_forms_honeypot_v3" | "everest_forms_honeypot_v1" | "everest_forms_honeypot_v2" | "everest_forms_honeypot_v3" | "testimonials_widget_unordered_v1";
+export type RegistryWebsiteNormalization = "gravity_forms_honeypot_v1" | "gravity_forms_honeypot_v2" | "gravity_forms_honeypot_v3" | "everest_forms_honeypot_v1" | "everest_forms_honeypot_v2" | "everest_forms_honeypot_v3" | "testimonials_widget_unordered_v1" | "caldera_forms_honeypot_v1";
 
 const attributes = /([\w:-]+)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/g;
 function exactAttributes(raw: string, allowed: string[]): Record<string, string> | null {
@@ -103,6 +103,75 @@ function withoutEverestTrap(html: string, comment = false, finiteLabels = false)
     return open + body.slice(0, start) + " " + body.slice(start + whole.length) + close;
   });
 }
+
+// The retained Caldera forms place one empty, zero-size trap immediately after
+// their identity controls. This opt-in grammar removes only that closed block;
+// a generic hidden div, arbitrary label, populated field or real form row stays.
+const calderaLabels: Record<string, string> = {
+  Name: "name", Url: "url", "Order Number": "order_number", "Web Site": "web_site",
+};
+function withoutCalderaTrap(html: string): string {
+  if (html.length > 2 * 1024 * 1024) throw new Error("invalid Caldera trap page");
+  // Mask non-markup contexts only for locating real forms; return original bytes
+  // outside accepted trap offsets. Never discover a form inside a raw-text tag.
+  let ambiguous = false;
+  const source = html.replace(/<!--[\s\S]*?(?:-->|$)|<(script|style|noscript|svg|template|textarea|title|xmp|iframe|noembed)\b(?:[^"'<>]|"[^"]*"|'[^']*')*>[\s\S]*?(?:<\/\1\s*>|$)/gi, raw => {
+    const tag = raw.match(/^<([a-z]+)/i)?.[1];
+    if (tag && new RegExp(`<${tag}\\b`, "i").test(raw.slice(raw.indexOf(">") + 1))) ambiguous = true;
+    return " ".repeat(raw.length);
+  });
+  // HTML plaintext consumes the remaining document; never parse its apparent forms.
+  if (ambiguous || /<plaintext\b/i.test(source)) return html;
+  const formPattern = /(<form\b((?:[^"'<>]|"[^"]*"|'[^']*')*)>)([\s\S]*?)(<\/form\s*>)/gi;
+  const forms = [...source.matchAll(formPattern)], edits: { start: number; end: number }[] = [];
+  const ids = forms.map(m => htmlAttributes(m[2]).id).filter(Boolean);
+  const prefixPattern = new RegExp(`^\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*<div\\b${attrs}>\\s*<\\/div>\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*`, "i");
+  const trapPattern = new RegExp(`^<div\\b${attrs}>\\s*<label>(Name|Url|Order Number|Web Site)<\\/label>\\s*<input\\b${attrs}\\/?>\\s*<\\/div>`, "i");
+  for (const form of forms) {
+    const f = exactAttributes(form[2], ["data-instance", "class", "method", "enctype", "id", "data-form-id", "aria-label", "data-target", "data-template", "data-cfajax", "data-load-element", "data-load-class", "data-post-disable", "data-action", "data-request", "data-custom-callback", "data-hiderows"]);
+    const id = f?.["data-form-id"], instance = f?.["data-instance"];
+    if (!f || !id || !/^CF[a-f0-9]{13}$/.test(id) || !instance || !/^[1-9]\d{0,5}$/.test(instance)
+      || f.id !== `${id}_${instance}` || ids.filter(x => x === f.id).length !== 1
+      || !classes(f.class, [id, "caldera_forms_form", "cfajax-trigger"])
+      || f.method !== "POST" || f.enctype !== "multipart/form-data" || !f["aria-label"]
+      || f["data-target"] !== `#caldera_notices_${instance}` || f["data-template"] !== `#cfajax_${id}-tmpl`
+      || f["data-cfajax"] !== id || f["data-load-element"] !== "_parent" || f["data-load-class"] !== "cf_processing"
+      || f["data-post-disable"] !== "0" || f["data-action"] !== "cf_process_ajax_submit"
+      || f["data-custom-callback"] !== "slug_post_form_submit" || f["data-hiderows"] !== "true"
+      || !new RegExp(`^https://[a-z0-9.-]+/cf-api/${id}$`).test(f["data-request"] ?? "")
+      || /<\/?form\b/i.test(form[3])) continue;
+    const bodyStart = form.index! + form[1].length;
+    const body = html.slice(bodyStart, bodyStart + form[3].length), prefix = body.match(prefixPattern);
+    if (!prefix) continue;
+    const nonce = exactAttributes(prefix[1], ["type", "id", "name", "value", "data-nonce-time"]);
+    const ref = exactAttributes(prefix[2], ["type", "name", "value"]), box = exactAttributes(prefix[3], ["id"]);
+    const controls = prefix.slice(4, 8).map(raw => exactAttributes(raw, ["type", "name", "value"]));
+    const expected = [["_cf_frm_id", id], ["_cf_frm_ct", instance], ["cfajax", id]];
+    if (!nonce || nonce.type !== "hidden" || nonce.id !== `_cf_verify_${id}` || nonce.name !== "_cf_verify"
+      || !/^[a-f0-9]{10}$/.test(nonce.value ?? "") || !/^\d{10}$/.test(nonce["data-nonce-time"] ?? "")
+      || !ref || ref.type !== "hidden" || ref.name !== "_wp_http_referer" || !/^\/(?!\/)[^<>\s]*$/.test(ref.value ?? "")
+      || !box || box.id !== `cf2-${id}_${instance}`
+      || expected.some(([name, value], i) => !controls[i] || controls[i]!.type !== "hidden" || controls[i]!.name !== name || controls[i]!.value !== value)
+      || !controls[3] || controls[3].type !== "hidden" || controls[3].name !== "_cf_cr_pst" || !/^[1-9]\d*$/.test(controls[3].value ?? "")) continue;
+    const field = body.slice(prefix[0].length).match(trapPattern);
+    if (!field) continue;
+    const outer = exactAttributes(field[1], ["class", "style"]), input = exactAttributes(field[3], ["type", "name", "value", "autocomplete"]);
+    if (!Object.hasOwn(calderaLabels, field[2]) || !outer || outer.class !== "hide" || outer.style !== "display:none; overflow:hidden;height:0;width:0;"
+      || !input || input.type !== "text" || input.name !== calderaLabels[field[2]] || input.value !== "" || input.autocomplete !== "off") continue;
+    // Duplicated identity/trap controls or a changed first real row are ambiguous.
+    const names = [...body.matchAll(new RegExp(`<input\\b${attrs}\\/?>`, "gi"))]
+      .flatMap(m => [...m[1].matchAll(attributes)].filter(a => a[1].toLowerCase() === "name").map(a => htmlAttributes(a[0]).name));
+    if (["_cf_verify", "_wp_http_referer", "_cf_frm_id", "_cf_frm_ct", "cfajax", "_cf_cr_pst", input.name].some(name => names.filter(n => n === name).length !== 1)) continue;
+    const next = body.slice(prefix[0].length + field[0].length).match(new RegExp(`^\\s*<div\\b${attrs}>`, "i"));
+    const row = next && exactAttributes(next[1], ["id", "class"]);
+    if (!row || row.id !== `${id}_${instance}-row-1` || !classes(row.class, ["row", "first_row"])) continue;
+    const start = bodyStart + prefix[0].length;
+    edits.push({ start, end: start + field[0].length });
+  }
+  for (const edit of edits.reverse()) html = html.slice(0, edit.start) + " " + html.slice(edit.end);
+  return html;
+}
+
 
 // This mode recognizes one closed Testimonials Widget container. Order and the
 // corresponding first-card display assignment are presentation; nothing else is
@@ -208,6 +277,7 @@ export function registryWebsiteQuoteOutsideWidget(html: string, quote: string): 
  * The proof version is attestation-bound; raw HTML is retained independently. */
 export function registryWebsiteText(html: string, normalization?: RegistryWebsiteNormalization): string {
   if (normalization === undefined) return htmlToVisibleText(html);
+  if (normalization === "caldera_forms_honeypot_v1") return htmlToVisibleText(withoutCalderaTrap(html));
   if (normalization === "testimonials_widget_unordered_v1") return unorderedTestimonials(html).text;
   if (normalization === "everest_forms_honeypot_v1" || normalization === "everest_forms_honeypot_v2" || normalization === "everest_forms_honeypot_v3")
     return htmlToVisibleText(withoutEverestTrap(html, normalization === "everest_forms_honeypot_v2", normalization === "everest_forms_honeypot_v3"));
