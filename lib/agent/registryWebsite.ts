@@ -653,6 +653,85 @@ function contactOperatorAttribution(proof: RegistryWebsiteCorroboration, visible
     throw new Error("two-page contact page has a conflicting operator or legal brand");
 }
 
+// A narrow alternative layout for an ordinary, independently reviewed US
+// address proof. This does not reorder text or infer a country, unit or role.
+function headingFirstAddressText(proof: RegistryWebsiteCorroboration): string[] {
+  const a = proof.address!;
+  return [a.state, stateNames.get(a.state)!].filter(Boolean).flatMap(state =>
+    ["Find Us", "Our Office", "Office Address", "Headquarters"].map(label =>
+      words(`${label} ${a.city} ${state} ${a.addressLine1} ${a.addressLine2 ?? ""} ${a.postalCode}`)));
+}
+
+function headingFirstAddressBlock(html: string, visibleText: string, proof: RegistryWebsiteCorroboration) {
+  const expected = headingFirstAddressText(proof), matches: { htmlStart: number; htmlEnd: number; htmlSha256: string }[] = [];
+  type Frame = { tag: string; start: number; blocked: boolean; children: { tag: string; start: number; end: number }[] };
+  const stack: Frame[] = [];
+  const unsafeAttributes = /\s(?:hidden|inert|style|aria-hidden|on[a-z]+)(?=\s|=|\/?>)/i;
+  const voidTags = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/;
+  const rawTags = /^(?:script|style|textarea|title|iframe|xmp|noembed|noframes|noscript)$/;
+  const inertTags = /^(?:template|svg|math|select|head)$/;
+  // Strict tokenization is intentionally not browser layout inference. Malformed
+  // nesting, active/inert ancestors and unsupported candidate markup fail closed.
+  const token = /<!--[^]*?-->|<!doctype\s+[^<>]*>|<\/?([a-z][a-z0-9-]*)\b(?:[^"'<>]|"[^"<>]*"|'[^'<>]*')*>/giy;
+  let at = 0;
+  while (at < html.length) {
+    const next = html.indexOf("<", at);
+    if (next < 0) break;
+    token.lastIndex = next;
+    const m = token.exec(html);
+    if (!m) return null;
+    at = token.lastIndex;
+    if (!m[1]) continue;
+    const tag = m[1].toLowerCase(), closing = m[0].startsWith("</");
+    if (!closing && tag === "plaintext") return null;
+    if (!closing && rawTags.test(tag)) {
+      const end = new RegExp(`</${tag}\\s*>`, "ig"); end.lastIndex = at;
+      const close = end.exec(html);
+      if (!close || tag === "script" && /<!--[\s\S]*?<script(?=[\s/>])/i.test(html.slice(at, close.index))) return null;
+      at = end.lastIndex; continue;
+    }
+    if (closing) {
+      const frame = stack.pop();
+      if (!frame || frame.tag !== tag) return null;
+      stack.at(-1)?.children.push({ tag, start: frame.start, end: at });
+      if (frame.blocked || !/^(?:div|address|section)$/.test(tag) || at - frame.start > 2000) continue;
+      // Exactly three sibling elements: a closed location label, the complete
+      // city/state heading, and one complete street/unit/ZIP element.
+      if (frame.children.length !== 3 || frame.children.some(c => !/^(?:div|p|h[1-6])$/.test(c.tag))) continue;
+      const parts = frame.children.map(c => words(registryWebsiteText(html.slice(c.start, c.end))));
+      const a = proof.address!;
+      if (!["find us", "our office", "office address", "headquarters"].includes(parts[0])
+        || ![a.state, stateNames.get(a.state)!].filter(Boolean).some(state => parts[1] === words(a.city + " " + state))
+        || parts[2] !== words(a.addressLine1 + " " + (a.addressLine2 ?? "") + " " + a.postalCode)) continue;
+      const streetText = parts[2], streetHtml = html.slice(frame.children[2].start, frame.children[2].end);
+      const streetLeaves = [...streetHtml.matchAll(/<(div|p|span)\b(?:[^"'<>]|"[^"<>]*"|'[^'<>]*')*>([^<>]*)<\/\1\s*>/gi)];
+      if (streetLeaves.filter(leaf => words(registryWebsiteText(leaf[0])) === streetText).length !== 1) continue;
+      const block = html.slice(frame.start, at);
+      // One complete small container, no scripts, comments, links, attributes
+      // affecting visibility, or text borrowed from neighbouring containers.
+      if (/<!--/.test(block) || unsafeAttributes.test(block)) continue;
+      const ordinary = block.replace(/<\/?(?:div|address|section|p|span|h[1-6]|b|strong|i|em|br)\b(?:[^"'<>]|"[^"<>]*"|'[^'<>]*')*>/gi, "");
+      if (/[<>]/.test(ordinary)) continue;
+      const blockText = registryWebsiteText(block);
+      if (!expected.includes(words(blockText)) || !proof.quote.includes(blockText)) continue;
+      const start = visibleText.indexOf(blockText);
+      if (start < 0 || visibleText.lastIndexOf(blockText) !== start) continue;
+      const vicinity = visibleText.slice(Math.max(0, start - 160), start + blockText.length + 80);
+      if (/\b(?:not|never|unrelated|former|previous|old|registered agent|customer|client|partner|affiliate|subsidiary|parent company|example|fictional)\b/i.test(vicinity)) continue;
+      matches.push({ htmlStart: frame.start, htmlEnd: at, htmlSha256: sha(block) });
+    } else if (!voidTags.test(tag)) {
+      if (/\/\s*>$/.test(m[0])) return null;
+      stack.push({ tag, start: next, children: [], blocked: Boolean(stack.at(-1)?.blocked) || inertTags.test(tag) || unsafeAttributes.test(m[0]) });
+    }
+  }
+  // Nested containers with identical whole text are harmless; disjoint matches
+  // are ambiguous. The innermost complete address container is retained.
+  if (stack.length || !matches.length) return null;
+  const smallest = matches.reduce((a, b) => a.htmlEnd - a.htmlStart < b.htmlEnd - b.htmlStart ? a : b);
+  return matches.every(m => m.htmlStart <= smallest.htmlStart && m.htmlEnd >= smallest.htmlEnd) ? smallest : null;
+}
+
+
 function ownUrl(value: string, domain: string): string {
   const url = validatePublicHttpUrl(value);
   // Exact stored host (with optional www), not a caller-selected subsidiary host.
@@ -729,8 +808,15 @@ export function registryWebsiteVerifier() {
     // Do not collect a province/country from elsewhere or modify street/unit data.
     const completeLocality = a && stateSpellings.some(state => contains(proof.quote, `${a.city} ${state} ${a.postalCode}`)
       || (a.countryCode === "CA" && a.state === "AB" && contains(proof.quote, `${a.city} ${state} Canada ${a.postalCode}`)));
+    const headingFirstLayout = !completeLocality && proof.mode === undefined && !proof.crmDomainReference
+      && !proof.canonicalRedirect && !proof.operatorRelationship && !proof.normalization && a?.countryCode === "US" && p.countryCode === "US"
+      && words(a.city) === words(p.city ?? "") && a.postalCode === p.postalCode
+      && words(proof.subject) === words(p.legalName) && sameRegistryStreet(a, p)
+      && headingFirstAddressText(proof).some(block => contains(proof.quote, block))
+      && !/\b(?:not|never|unrelated|former|previous|old|registered agent|customer|client|partner|affiliate|subsidiary|parent company|example|fictional)\b/i.test(proof.quote);
+    if (headingFirstLayout) proof = parseRegistryWebsiteCorroboration(proof, row, now);
     if (a && (![a.addressLine1, a.addressLine2].filter((v): v is string => Boolean(v)).every(value => contains(proof.quote, value))
-      || !completeLocality
+      || !completeLocality && !headingFirstLayout
       || (!identifierMode && (words(a.state) !== words(p.state) || a.countryCode !== (p.countryCode ?? "US")
       || (a.countryCode === "CA" ? words(a.postalCode).replace(/ /g, "") !== words(p.postalCode).replace(/ /g, "") : a.postalCode.slice(0, 5) !== p.postalCode.slice(0, 5))))))
       throw new Error("registry website complete address is not corroborated");
@@ -770,6 +856,8 @@ export function registryWebsiteVerifier() {
     const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
     if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0)
       throw new RegistryWebsiteMismatchError(page, proof, visibleText, new Date().toISOString());
+    const headingFirstVerification = headingFirstLayout ? headingFirstAddressBlock(page.body, visibleText, proof) : null;
+    if (headingFirstLayout && !headingFirstVerification) throw new Error("registry website heading-first address is not one ordinary complete block");
     if (proof.normalization === "testimonials_widget_unordered_v1" && !registryWebsiteQuoteOutsideWidget(page.body, proof.quote))
       throw new Error("registry website identity quote must be wholly outside the unordered widget");
     // A longer address proof is the entire page, never joined or clipped passages.
@@ -808,6 +896,7 @@ export function registryWebsiteVerifier() {
       ...(operatorMode ? { operatorPageVerification, originalLegalOperator:p.legalName, websiteDba:proof.subject, websiteAddress:a,
         sourceRoles:{contact:"company_contact_address",operator:"explicit_website_legal_operator_dba"},
         addressRelationship:"website_contact_matches_original_registry_address_canonical_prior_addresses_retained" } : {}),
+      ...(headingFirstVerification ? { addressLayout: { schema: "city_state_heading_before_street_postal_v1", ...headingFirstVerification } } : {}),
       priorAddresses: context.addresses, structuredIdentity: extractCompanyIdentity(page.body, page.finalUrl, candidate => sameCompanySite(candidate, page.finalUrl)) ?? null,
     } };
   };
