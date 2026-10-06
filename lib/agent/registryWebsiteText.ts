@@ -108,7 +108,7 @@ function withoutEverestTrap(html: string, comment = false, finiteLabels = false)
 // their identity controls. This opt-in grammar removes only that closed block;
 // a generic hidden div, arbitrary label, populated field or real form row stays.
 const calderaLabels: Record<string, string> = {
-  Name: "name", Url: "url", "Order Number": "order_number", "Web Site": "web_site",
+  Name: "name", Url: "url", "Order Number": "order_number", "Web Site": "web_site", Email: "email", Phone: "phone",
 };
 function withoutCalderaTrap(html: string): string {
   if (html.length > 2 * 1024 * 1024) throw new Error("invalid Caldera trap page");
@@ -126,7 +126,7 @@ function withoutCalderaTrap(html: string): string {
   const forms = [...source.matchAll(formPattern)], edits: { start: number; end: number }[] = [];
   const ids = forms.map(m => htmlAttributes(m[2]).id).filter(Boolean);
   const prefixPattern = new RegExp(`^\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*<div\\b${attrs}>\\s*<\\/div>\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*<input\\b${attrs}\\/?>\\s*`, "i");
-  const trapPattern = new RegExp(`^<div\\b${attrs}>\\s*<label>(Name|Url|Order Number|Web Site)<\\/label>\\s*<input\\b${attrs}\\/?>\\s*<\\/div>`, "i");
+  const trapPattern = new RegExp(`^<div\\b${attrs}>\\s*<label>(Name|Url|Order Number|Web Site|Email|Phone)<\\/label>\\s*<input\\b${attrs}\\/?>\\s*<\\/div>`, "i");
   for (const form of forms) {
     const f = exactAttributes(form[2], ["data-instance", "class", "method", "enctype", "id", "data-form-id", "aria-label", "data-target", "data-template", "data-cfajax", "data-load-element", "data-load-class", "data-post-disable", "data-action", "data-request", "data-custom-callback", "data-hiderows"]);
     const id = f?.["data-form-id"], instance = f?.["data-instance"];

@@ -11,7 +11,7 @@ import { registryWebsiteEvidenceHash, parseRegistryWebsiteCorroboration, registr
 const version = "caldera_forms_honeypot_v1" as const;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const id = "CF123456789abcd";
-const labels = { Name: "name", Url: "url", "Order Number": "order_number", "Web Site": "web_site" };
+const labels = { Name: "name", Url: "url", "Order Number": "order_number", "Web Site": "web_site", Email: "email", Phone: "phone" };
 const trap = (label: keyof typeof labels) => `<div class="hide" style="display:none; overflow:hidden;height:0;width:0;"><label>${label}</label><input type="text" name="${labels[label]}" value="" autocomplete="off"></div>`;
 const form = (field: string) => `<form data-instance="1" class="${id} caldera_forms_form cfajax-trigger" method="POST" enctype="multipart/form-data" id="${id}_1" data-form-id="${id}" aria-label="Contact form" data-target="#caldera_notices_1" data-template="#cfajax_${id}-tmpl" data-cfajax="${id}" data-load-element="_parent" data-load-class="cf_processing" data-post-disable="0" data-action="cf_process_ajax_submit" data-request="https://acme.com/cf-api/${id}" data-custom-callback="slug_post_form_submit" data-hiderows="true">
 <input type="hidden" id="_cf_verify_${id}" name="_cf_verify" value="abc1234567" data-nonce-time="1791273619"><input type="hidden" name="_wp_http_referer" value="/contact/"><div id="cf2-${id}_1"></div><input type="hidden" name="_cf_frm_id" value="${id}"><input type="hidden" name="_cf_frm_ct" value="1"><input type="hidden" name="cfajax" value="${id}"><input type="hidden" name="_cf_cr_pst" value="676">
@@ -36,6 +36,35 @@ beforeEach(() => fetch.mockReset());
 describe("closed opt-in Caldera empty trap", () => {
   it.each(Object.keys(labels) as (keyof typeof labels)[])("removes only the structurally bound %s trap", label => {
     expect(normal(html(label))).toBe(`${quote} Name * Order Number * 13 + 6 = * Copyright 2026`);
+  });
+  describe.each(["Email", "Phone"] as const)("observed %s trap", label => {
+    it.each([
+      ["different name", (s: string) => s.replace(`name="${labels[label]}"`, 'name="customer"')],
+      ["occupied value", (s: string) => s.replace(`name="${labels[label]}" value=""`, `name="${labels[label]}" value="customer@example.com"`)],
+      ["required user field", (s: string) => s.replace(`name="${labels[label]}"`, `name="${labels[label]}" required`)],
+      ["visible wrapper", (s: string) => s.replace('display:none;', 'display:block;')],
+      ["unbound placement", (s: string) => s.replace('<div class="hide"', '<p>Customer contact</p><div class="hide"')],
+      ["duplicate real field", (s: string) => s.replace('</form>', `<input name="${labels[label]}"></form>`)],
+      ["changed first row", (s: string) => s.replace('-row-1"', '-row-2"')],
+    ] as const)("retains %s", (_description, change) => {
+      const candidate = change(html(label));
+      expect(normal(candidate)).toBe(htmlToVisibleText(candidate));
+    });
+    it("retains unscoped controls and every legacy-mode label", () => {
+      expect(normal(trap(label))).toBe(htmlToVisibleText(trap(label)));
+      for (const mode of [undefined, "gravity_forms_honeypot_v1", "gravity_forms_honeypot_v2", "gravity_forms_honeypot_v3", "everest_forms_honeypot_v1", "everest_forms_honeypot_v2", "everest_forms_honeypot_v3"] as const)
+        expect(registryWebsiteText(html(label), mode)).toBe(htmlToVisibleText(html(label)));
+    });
+    it("verifies the complete page while retaining genuine user fields and arithmetic", async () => {
+      const p = proof(), body = html(label);
+      fetch.mockResolvedValue({ status: 200, finalUrl: p.sourceUrl, contentType: "text/html", body });
+      const result = await registryWebsiteVerifier()(row(), p, { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now);
+      expect(result.website).toMatchObject({ htmlSha256: sha(body), normalizedVisibleTextSha256: p.normalizedVisibleTextSha256 });
+      for (const changed of [body.replace("Name *", "Customer *"), body.replace("13 + 6", "14 + 6")]) {
+        fetch.mockResolvedValue({ status: 200, finalUrl: p.sourceUrl, contentType: "text/html", body: changed });
+        await expect(registryWebsiteVerifier()(row(), p, { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now)).rejects.toThrow("changed");
+      }
+    });
   });
   it.each([
     ["wrong framework", (s: string) => s.replace("caldera_forms_form", "ordinary_form")],
