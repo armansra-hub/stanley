@@ -516,6 +516,7 @@ export function validatePublishedRegistryAnchors(rows: readonly RegistryAnchorRo
       if (row.source !== "registry" || row.kind !== "ops_profile" || !text(row.id, 100)
         || rows.filter(other => other.id === row.id).length !== 1 || !publication || !verification
         || !anchorMethods.has(verification.method) || verification.publishedAnchor !== undefined
+        || verification.website?.mode === "cmra_mailbox_address" // Mailing correspondence is not a transitive address anchor.
         || !Array.isArray(verification.sourceIds) || !verification.sourceIds.length || !verification.sourceIds.every(id => text(id, 1000))
         || !text(publication.eventId, 100) || !/^[a-f0-9]{64}$/.test(publication.contentHash)
         || !Number.isFinite(Date.parse(publication.publishedAt)) || Date.parse(publication.publishedAt) > now.getTime() + 60_000

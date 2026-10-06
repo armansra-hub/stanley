@@ -8,6 +8,7 @@ import { fetchPublicHttpText, validatePublicHttpUrl, type PublicHttpTextResponse
 import { registryContentHash, retainedFmcsaDba, normalizedDba, registryStreet, sameRegistryLegalName, sameRegistryStreet, stableRegistryJson, type RegistryFinding, type RegistryProfile } from "./registryProfiles";
 
 import { registryWebsiteText, registryWebsiteQuoteOutsideWidget, type RegistryWebsiteNormalization } from "./registryWebsiteText";
+import { reviewedCmraLocation, verifyCmraMailboxAddress, verifyCmraReviews, type CmraLocationReference } from "./registryCmraMailbox";
 
 type Attestation = { taskId: string; reviewedAt: string; evidenceSha256: string };
 export type RegistryWebsiteCorroboration = {
@@ -15,7 +16,8 @@ export type RegistryWebsiteCorroboration = {
   normalization?: RegistryWebsiteNormalization;
   // Reviewed canonical-root delegation; it never substitutes for entity/address evidence.
   canonicalRedirect?: { requestedUrl: string; finalUrl: string; normalizedVisibleTextSha256: string };
-  mode?: "registry_identifier" | "registry_dba_address" | "site_operator_address";
+  mode?: "registry_identifier" | "registry_dba_address" | "site_operator_address" | "cmra_mailbox_address";
+  cmraLocation?: CmraLocationReference;
   // Explicit own-site legal/DBA definition, distinct from the contact page and
   // never represented as a registry DBA or a changed canonical alias.
   observedAt?: string;
@@ -152,26 +154,32 @@ export function registryWebsiteEvidenceHash(row: Pick<RegistryFinding, "companyI
   proof: Omit<RegistryWebsiteCorroboration, "reader" | "reviewer">): string {
   const legacy = { companyId: row.companyId, internalId: row.internalId, dataset: row.profile.dataset,
     recordId: row.profile.recordId, rowSha256: row.profile.provenance.rowSha256, ...proof };
-  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address" && proof.mode !== "site_operator_address" && !proof.canonicalRedirect && !proof.crmDomainReference) return sha(stableRegistryJson(legacy));
+  if (proof.mode !== "registry_identifier" && proof.mode !== "registry_dba_address" && proof.mode !== "site_operator_address" && proof.mode !== "cmra_mailbox_address" && !proof.canonicalRedirect && !proof.crmDomainReference) return sha(stableRegistryJson(legacy));
   // Existing address-mode callers may pass a narrow row. Explicit new modes must
   // bind the entire parsed publication content, not trust an unchanged row ID/hash.
   if (typeof row.sourceUrl !== "string" || !row.sourceUrl || typeof row.evidence !== "string" || !row.evidence
     || row.detail !== null && typeof row.detail !== "string"
     || typeof row.profile.observedAt !== "string" || !Number.isFinite(Date.parse(row.profile.observedAt)))
     throw new Error("registry website bound evidence requires complete parsed publication content");
-  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : proof.mode === "registry_dba_address" ? "dbaContent" : proof.mode === "site_operator_address" ? "operatorContent" : proof.crmDomainReference ? "crmContent" : "redirectContent"]: {
+  return sha(stableRegistryJson({ ...legacy, [proof.mode === "registry_identifier" ? "identifierContent" : proof.mode === "registry_dba_address" ? "dbaContent" : proof.mode === "site_operator_address" ? "operatorContent" : proof.mode === "cmra_mailbox_address" ? "cmraContent" : proof.crmDomainReference ? "crmContent" : "redirectContent"]: {
     contentHash: registryContentHash(row.profile, row.sourceUrl, row.detail),
     evidenceSha256: sha(row.evidence), observedAt: row.profile.observedAt,
   } }));
 }
 
 export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFinding, now = new Date()): RegistryWebsiteCorroboration {
-  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization", "canonicalRedirect", "operatorRelationship", "observedAt", "operatorPage", "crmDomainReference"].includes(k))
+  if (!object(raw) || Object.keys(raw).some(k => !["sourceUrl", "normalizedVisibleTextSha256", "quote", "quoteSha256", "subject", "address", "reader", "reviewer", "mode", "identifier", "normalization", "canonicalRedirect", "operatorRelationship", "observedAt", "operatorPage", "crmDomainReference", "cmraLocation"].includes(k))
     || !text(raw.sourceUrl, 2000) || !text(raw.quote, raw.canonicalRedirect !== undefined && raw.mode === undefined ? 6000 : 1800) || raw.quote.length < 20 || !text(raw.subject, 200)
     || !hash(raw.normalizedVisibleTextSha256) || !hash(raw.quoteSha256) || sha(raw.quote) !== raw.quoteSha256)
     throw new Error("invalid registry website evidence");
-  if (raw.mode !== undefined && raw.mode !== "registry_identifier" && raw.mode !== "registry_dba_address" && raw.mode !== "site_operator_address" || raw.mode !== "registry_identifier" && raw.identifier !== undefined)
+  if (raw.mode !== undefined && raw.mode !== "registry_identifier" && raw.mode !== "registry_dba_address" && raw.mode !== "site_operator_address" && raw.mode !== "cmra_mailbox_address" || raw.mode !== "registry_identifier" && raw.identifier !== undefined)
     throw new Error("invalid registry website mode");
+  if (raw.mode === "cmra_mailbox_address") {
+    reviewedCmraLocation(raw.cmraLocation);
+    if (!sourceTime(raw.observedAt) || raw.normalization !== undefined || raw.canonicalRedirect !== undefined
+      || raw.crmDomainReference !== undefined || raw.operatorPage !== undefined || raw.operatorRelationship !== undefined)
+      throw new Error("CMRA requires a separate ordinary own-domain mailbox proof");
+  } else if (raw.cmraLocation !== undefined) throw new Error("CMRA location requires explicit mailbox mode");
   if (raw.crmDomainReference !== undefined) {
     const ref = raw.crmDomainReference;
     if ((raw.mode !== undefined && raw.mode !== "registry_dba_address") || raw.canonicalRedirect !== undefined || raw.operatorRelationship !== undefined
@@ -192,7 +200,7 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
       || raw.normalization !== undefined || raw.canonicalRedirect !== undefined || raw.operatorRelationship !== undefined
       || op.sourceUrl === raw.sourceUrl)
       throw new Error("invalid two-page website operator evidence");
-  } else if (raw.operatorPage !== undefined || raw.observedAt !== undefined && raw.crmDomainReference === undefined) throw new Error("operator pages require explicit two-page mode");
+  } else if (raw.operatorPage !== undefined || raw.observedAt !== undefined && raw.crmDomainReference === undefined && raw.mode !== "cmra_mailbox_address") throw new Error("operator pages require explicit two-page mode");
   if (raw.operatorRelationship !== undefined) {
     const relation = raw.operatorRelationship;
     if (raw.mode !== "registry_dba_address" || !object(relation)
@@ -236,6 +244,11 @@ export function parseRegistryWebsiteCorroboration(raw: unknown, row: RegistryFin
       throw new Error("registry website review does not bind exact current evidence");
   }
   if ((reader as Attestation).taskId === (reviewer as Attestation).taskId) throw new Error("registry website requires independent review");
+  if (raw.mode === "cmra_mailbox_address") {
+    verifyCmraMailboxAddress(raw.cmraLocation as CmraLocationReference, row.profile.identity, a as NonNullable<RegistryWebsiteCorroboration["address"]>, raw.quote);
+    verifyCmraReviews(raw.cmraLocation as CmraLocationReference, raw.observedAt as string, row.profile.observedAt,
+      reader as Attestation, reviewer as Attestation, now);
+  }
   if (raw.mode === "site_operator_address") {
     const op = raw.operatorPage as NonNullable<RegistryWebsiteCorroboration["operatorPage"]>;
     const earliest = Math.max(Date.parse(raw.observedAt as string), Date.parse(op.observedAt), Date.parse(row.profile.observedAt));
@@ -672,9 +685,9 @@ export function registryWebsiteVerifier() {
   }
   return async (row: RegistryFinding, proof: RegistryWebsiteCorroboration, company: { name: string; id?: string; netsuite_internal_id?: string | null; domain?: string | null; website_raw?: string | null },
     context: CompanyIdentityContext, now = new Date()): Promise<NonNullable<RegistryProfile["verification"]>> => {
-    const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address", operatorMode = proof.mode === "site_operator_address";
+    const identifierMode = proof.mode === "registry_identifier", dbaMode = proof.mode === "registry_dba_address", operatorMode = proof.mode === "site_operator_address", cmraMode = proof.mode === "cmra_mailbox_address";
     // This new mode always revalidates its fresh, separately bound attestations.
-    if (identifierMode || dbaMode || operatorMode || proof.crmDomainReference !== undefined || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1" || proof.normalization === "caldera_forms_honeypot_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
+    if (identifierMode || dbaMode || operatorMode || cmraMode || proof.crmDomainReference !== undefined || proof.canonicalRedirect !== undefined || proof.normalization === "testimonials_widget_unordered_v1" || proof.normalization === "caldera_forms_honeypot_v1") proof = parseRegistryWebsiteCorroboration(proof, row, now);
     const domain = company.domain || company.website_raw;
     if (!domain) throw new Error("registry website canonical domain is missing");
     const crm = proof.crmDomainReference;
@@ -689,6 +702,7 @@ export function registryWebsiteVerifier() {
     const url = redirect && proof.sourceUrl === redirect.requestedUrl ? redirect.requestedUrl : ownUrl(proof.sourceUrl, redirect?.finalUrl ?? sourceDomain);
     if (redirect && (new URL(url).search || new URL(url).hash)) throw new Error("registry website redirect source cannot have a query or fragment");
     if (crm && (new URL(url).search || new URL(url).hash)) throw new Error("CRM-referenced website requires an exact source path");
+    if (cmraMode && (new URL(url).search || new URL(url).hash)) throw new Error("CMRA website requires an exact source path");
     const p = row.profile.identity, a = proof.address;
     const cslbMode = identifierMode && proof.identifier?.kind === "cslb_license";
     if (!a && !cslbMode) throw new Error("registry website complete address is required");
@@ -733,13 +747,14 @@ export function registryWebsiteVerifier() {
     if (identifierMode) identifierAttribution(row, proof, proof.quote, true);
     // DBA attribution needs the actual hash-checked HTML to identify neutral structure.
     const exactStreet = a ? sameRegistryStreet(a, p) : false;
+    const cmraVerification = cmraMode ? verifyCmraMailboxAddress(proof.cmraLocation!, p, a!, proof.quote) : undefined;
     // FMCSA's verified USDOT binds this narrow highway-format discrepancy. No
     // unit, house number, road number, country or postal evidence is discarded.
     const dot = row.profile.dataset === "fmcsa" && /^\d+$/.test(row.profile.recordId)
       && String(row.profile.provenance.sourceRow.usdot_number) === row.profile.recordId
       && new RegExp(`\\b(?:US\\s*)?DOT\\s*#?\\s*${row.profile.recordId}\\b`, "i").test(proof.quote);
     const highwayEquivalent = dot && Boolean(a) && registryStreet(a!).replace(/\bus hwy\b/g, "hwy") === registryStreet(p).replace(/\bus hwy\b/g, "hwy");
-    if (!identifierMode && !exactStreet && (crm || dbaMode || operatorMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
+    if (!identifierMode && !exactStreet && !cmraVerification && (crm || dbaMode || operatorMode || !highwayEquivalent)) throw new Error("registry website street or unit differs from source record");
     let canonicalRedirectVerification: Record<string, unknown> | undefined;
     if (redirect) {
       const root = await readPage(redirect.requestedUrl);
@@ -751,6 +766,7 @@ export function registryWebsiteVerifier() {
     ownUrl(page.finalUrl, redirect?.finalUrl ?? sourceDomain);
     if (crm && page.finalUrl !== url) throw new Error("CRM-referenced website redirected from its reviewed path");
     if (operatorMode && page.finalUrl !== url) throw new Error("two-page contact source redirected from its reviewed path");
+    if (cmraMode && page.finalUrl !== url) throw new Error("CMRA company source redirected from its reviewed path");
     const visibleText = registryWebsiteText(page.body, proof.normalization), start = visibleText.indexOf(proof.quote);
     if (sha(visibleText) !== proof.normalizedVisibleTextSha256 || start < 0)
       throw new RegistryWebsiteMismatchError(page, proof, visibleText, new Date().toISOString());
@@ -783,9 +799,10 @@ export function registryWebsiteVerifier() {
       operatorPageVerification = { finalUrl:operator.finalUrl, fetchedAt:now.toISOString(), htmlSha256:sha(operator.body), quoteStart, quoteEnd:quoteStart+op.quote.length };
     }
     const sourceId = `website:sha256:${proof.normalizedVisibleTextSha256}`;
-    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [...new Set([sourceId, ...(crm ? [`netsuite_record:${crm.recordId}:header:sha256:${crm.headerSha256}`] : []), ...(redirect ? [`website:sha256:${redirect.normalizedVisibleTextSha256}`] : []), ...(operatorMode ? [`website:sha256:${proof.operatorPage!.normalizedVisibleTextSha256}`] : [])])], website: {
+    return { method: "official_website_corroboration", verifiedAt: now.toISOString(), sourceIds: [...new Set([sourceId, ...(cmraVerification ? [`cmra-location:${cmraVerification.locationId}:sha256:${cmraVerification.locationSha256}`, `retained-web-result:sha256:${cmraVerification.retainedResultSha256}`] : []), ...(crm ? [`netsuite_record:${crm.recordId}:header:sha256:${crm.headerSha256}`] : []), ...(redirect ? [`website:sha256:${redirect.normalizedVisibleTextSha256}`] : []), ...(operatorMode ? [`website:sha256:${proof.operatorPage!.normalizedVisibleTextSha256}`] : [])])], website: {
       ...proof, ...(crm ? { crmDomainReferenceVerification: { ...crm, sourceRole: "latest_retained_labelled_provisioning_email_domain_reference", canonicalDomain: domain, canonicalDomainChanged: false } } : {}), ...(canonicalRedirectVerification ? { canonicalRedirectVerification } : {}), finalUrl: page.finalUrl, fetchedAt: now.toISOString(), htmlSha256: sha(page.body), quoteStart: start, quoteEnd: start + proof.quote.length,
-      binding: operatorMode ? "exact_own_site_legal_operator_dba_two_page_full_address" : dbaMode ? proof.operatorRelationship ? "exact_original_registry_dba_defined_canonical_full_address" : "exact_original_registry_dba_full_address" : identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
+      binding: cmraMode ? "reviewed_cmra_mailbox_correspondence" : operatorMode ? "exact_own_site_legal_operator_dba_two_page_full_address" : dbaMode ? proof.operatorRelationship ? "exact_original_registry_dba_defined_canonical_full_address" : "exact_original_registry_dba_full_address" : identifierMode ? "exact_" + proof.identifier!.kind + "_legal_subject" : exactStreet ? "exact_legal_name_address" : "exact_usdot_highway_format", registryAddress: p,
+      ...(cmraVerification ? { cmraVerification, websiteAddress: a, addressRelationship: cmraVerification.addressRelationship } : {}),
       ...(identifierMode ? { websiteAddress: a ?? null, addressRelationship: a ? "separate_observations_not_address_equivalence" : "website_address_unknown_registry_address_retained" } : {}),
       ...(dbaMode ? { originalDba, originalLegalOperator: p.legalName, websiteAddress: a } : {}),
       ...(operatorMode ? { operatorPageVerification, originalLegalOperator:p.legalName, websiteDba:proof.subject, websiteAddress:a,

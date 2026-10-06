@@ -1,0 +1,54 @@
+{
+  "schema": "reviewed_cmra_locations_v1",
+  "locations": [
+    {
+      "id": "ups-hollywood-3389-sheridan-st",
+      "rule": "pmb_hash_same_number_without_provider_unit_v1",
+      "address": {
+        "addressLine1": "3389 Sheridan St",
+        "city": "Hollywood",
+        "state": "FL",
+        "postalCode": "33021",
+        "countryCode": "US"
+      },
+      "sourceRole": "mailbox_format_at_reviewed_provider_location_not_customer_occupancy",
+      "evidence": {
+        "representation": "complete_retained_web_tool_text_v1",
+        "retainedResultSha256": "417614b5d77f47b8e0a1808e8a3627db720abf1f6ed44d64b4ae499848659548",
+        "sources": [
+          {
+            "role": "postal_private_mailbox_guidance",
+            "url": "https://pe.usps.com/text/pub28/28c2_040.htm",
+            "retainedSectionSha256": "36dc00204c16bba698353fd667c819fc3e961b00d99a082bd1a168724c61c7f2",
+            "retainedSectionCharacters": 5268,
+            "retrievalLabel": "Crawled: today"
+          },
+          {
+            "role": "postal_secondary_unit_constraints",
+            "url": "https://pe.usps.com/text/pub28/pub28c2_003.htm",
+            "retainedSectionSha256": "bec469a99efa21cd80b6cfcf853ddee1197ecb3c9ca27643356d2b53a45f166b",
+            "retainedSectionCharacters": 4604,
+            "retrievalLabel": "Crawled: today"
+          },
+          {
+            "role": "provider_location_mailbox_format",
+            "url": "https://locations.theupsstore.com/fl/hollywood/3389-sheridan-st/mailbox-services",
+            "retainedSectionSha256": "aadeae4f5b2e3d042a8882b209675cd10ed11c4d92624ed3002e6fe7d7393cf6",
+            "retainedSectionCharacters": 12849,
+            "retrievalLabel": "Crawled: last month"
+          }
+        ]
+      },
+      "sourceReader": {
+        "taskId": "/root/enercom_static_source",
+        "reviewedAt": "2026-10-06T11:22:38.481Z",
+        "receiptSha256": "f4a9c633a56ceb2d386dcfbce5dfd06242fd89e6e00e6bc2115377e462d456b8"
+      },
+      "sourceReviewer": {
+        "taskId": "/root",
+        "reviewedAt": "2026-10-06T11:24:13.028Z",
+        "receiptSha256": "14a2ce0791ad0ff9f6b9d924c1bcf32b715791a84638e124e98e6fa379f03ece"
+      }
+    }
+  ]
+}
