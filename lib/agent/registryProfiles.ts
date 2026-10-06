@@ -325,6 +325,19 @@ function sameUsAddressFormat(left: RegistryStreetAddress, right: RegistryStreetA
   };
   const labelledSecondLine = (address: RegistryStreetAddress) => !address.addressLine2?.trim()
     || /^unit [a-z0-9]+$/.test(registryStreet({ addressLine1: address.addressLine2 }));
+  const numberedCompass = (address: RegistryStreetAddress) => {
+    // Compare split compass initials only before an explicit numbered street.
+    // "100 N E ST" may mean North E Street, so letter-named streets stay distinct.
+    // Do not alter registryStreet fingerprints, source fields or any unit token.
+    if (!labelledSecondLine(address)) return null;
+    if (!/^\d+[a-z]? [ns] ?[ew] [1-9]\d*(?:st|nd|rd|th)? /.test(normalized(address.addressLine1))) return null;
+    const match = registryStreet(address).match(/^(\d+[a-z]? )([ns]) ?([ew]) ([1-9]\d*)(st|nd|rd|th)? (st|ave|rd|blvd|dr|ln|ct|cir|way|pl|ter)((?: unit [a-z0-9]+)?)$/);
+    if (!match) return null;
+    const lastTwo = Number(match[4].slice(-2)), last = Number(match[4].slice(-1));
+    const ordinal = lastTwo >= 11 && lastTwo <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[last] ?? "th";
+    if (match[5] && match[5] !== ordinal) return null;
+    return match[1] + match[2] + match[3] + " " + match[4] + (match[5] ?? "") + " " + match[6] + match[7];
+  };
   const alley = (address: RegistryStreetAddress) => {
     if (!labelledSecondLine(address)) return null;
     const match = registryStreet(address).match(/^(\d+[a-z]? .+) (?:alley|aly)((?: (?:n|s|e|w|ne|nw|se|sw))?(?: unit [a-z0-9]+)?)$/);
@@ -418,6 +431,7 @@ function sameUsAddressFormat(left: RegistryStreetAddress, right: RegistryStreetA
   };
   const a = suite(left), b = suite(right);
   return (repeatedLocality(left) !== null && repeatedLocality(left) === registryStreet(right))
+    || (numberedCompass(left) !== null && numberedCompass(left) === numberedCompass(right))
     || (repeatedLocality(right) !== null && repeatedLocality(right) === registryStreet(left))
     || (attentionAddress(left) !== null && attentionAddress(left) === registryStreet(right))
     || (attentionAddress(right) !== null && attentionAddress(right) === registryStreet(left))

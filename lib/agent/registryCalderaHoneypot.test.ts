@@ -11,7 +11,7 @@ import { registryWebsiteEvidenceHash, parseRegistryWebsiteCorroboration, registr
 const version = "caldera_forms_honeypot_v1" as const;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const id = "CF123456789abcd";
-const labels = { Name: "name", Url: "url", "Order Number": "order_number", "Web Site": "web_site", Email: "email", Phone: "phone" };
+const labels = { Name: "name", Url: "url", "Order Number": "order_number", "Web Site": "web_site", Email: "email", Phone: "phone", Company: "company", Twitter: "twitter" };
 const trap = (label: keyof typeof labels) => `<div class="hide" style="display:none; overflow:hidden;height:0;width:0;"><label>${label}</label><input type="text" name="${labels[label]}" value="" autocomplete="off"></div>`;
 const form = (field: string) => `<form data-instance="1" class="${id} caldera_forms_form cfajax-trigger" method="POST" enctype="multipart/form-data" id="${id}_1" data-form-id="${id}" aria-label="Contact form" data-target="#caldera_notices_1" data-template="#cfajax_${id}-tmpl" data-cfajax="${id}" data-load-element="_parent" data-load-class="cf_processing" data-post-disable="0" data-action="cf_process_ajax_submit" data-request="https://acme.com/cf-api/${id}" data-custom-callback="slug_post_form_submit" data-hiderows="true">
 <input type="hidden" id="_cf_verify_${id}" name="_cf_verify" value="abc1234567" data-nonce-time="1791273619"><input type="hidden" name="_wp_http_referer" value="/contact/"><div id="cf2-${id}_1"></div><input type="hidden" name="_cf_frm_id" value="${id}"><input type="hidden" name="_cf_frm_ct" value="1"><input type="hidden" name="cfajax" value="${id}"><input type="hidden" name="_cf_cr_pst" value="676">
@@ -37,7 +37,7 @@ describe("closed opt-in Caldera empty trap", () => {
   it.each(Object.keys(labels) as (keyof typeof labels)[])("removes only the structurally bound %s trap", label => {
     expect(normal(html(label))).toBe(`${quote} Name * Order Number * 13 + 6 = * Copyright 2026`);
   });
-  describe.each(["Email", "Phone"] as const)("observed %s trap", label => {
+  describe.each(["Email", "Phone", "Company", "Twitter"] as const)("observed %s trap", label => {
     it.each([
       ["different name", (s: string) => s.replace(`name="${labels[label]}"`, 'name="customer"')],
       ["occupied value", (s: string) => s.replace(`name="${labels[label]}" value=""`, `name="${labels[label]}" value="customer@example.com"`)],
@@ -88,7 +88,7 @@ describe("closed opt-in Caldera empty trap", () => {
     ["duplicate wrapper class", (s: string) => s.replace('class="hide"', 'class="hide" class="hide"')],
     ["extra wrapper attribute", (s: string) => s.replace('class="hide"', 'class="hide" aria-label="Acme Inc"')],
     ["business-bearing label", (s: string) => s.replace('<label>Name</label>', '<label>Acme Inc Headquarters</label>')],
-    ["unknown label", (s: string) => s.replace('<label>Name</label>', '<label>Company</label>')],
+    ["unknown label", (s: string) => s.replace('<label>Name</label>', '<label>Custom Label</label>')],
     ["lowercase label with absent input name", (s: string) => s.replace('<label>Name</label>', '<label>name</label>').replace('name="name"', '')],
     ["label attributes", (s: string) => s.replace('<label>Name</label>', '<label title="Acme Inc">Name</label>')],
     ["label markup", (s: string) => s.replace('<label>Name</label>', '<label><span>Name</span></label>')],
@@ -149,5 +149,38 @@ describe("closed opt-in Caldera empty trap", () => {
     const p = proof(), body = change(html("Url"));
     fetch.mockResolvedValue({ status: 200, finalUrl: p.sourceUrl, contentType: "text/html", body });
     await expect(registryWebsiteVerifier()(row(), p, { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now)).rejects.toThrow("changed");
+  });
+});
+
+// All built-in English defaults from the pinned Caldera Forms 1.9.7 honey.php.
+// Filters, translations and the home_url fallback remain outside this finite mode.
+describe("complete default pool, no generic hidden-field exclusion", () => {
+  it.each(["Company", "Twitter"] as const)("preserves genuine visible/footer %s", label => {
+    const real = '<footer><h5>' + label + '</h5></footer><form><label>' + label + '</label><input name="visible_' + label + '"></form>';
+    expect(normal(html(label) + real)).toBe(normal(html("Name")) + " " + htmlToVisibleText(real));
+    expect(normal(real)).toBe(htmlToVisibleText(real));
+  });
+  it.each(["Company", "Twitter"] as const)("verifier detects changes to real %s", async label => {
+    const body = html(label) + '<footer><h5>' + label + '</h5></footer>';
+    const p = proof(); p.normalizedVisibleTextSha256 = sha(normal(body));
+    const { reader: _reader, reviewer: _reviewer, ...evidence } = p;
+    const hash = registryWebsiteEvidenceHash(row(), evidence);
+    p.reader.evidenceSha256 = hash; p.reviewer.evidenceSha256 = hash;
+    fetch.mockResolvedValue({ status: 200, finalUrl: p.sourceUrl, contentType: "text/html", body });
+    await registryWebsiteVerifier()(row(), p, { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now);
+    fetch.mockResolvedValue({ status: 200, finalUrl: p.sourceUrl, contentType: "text/html", body: body.replace('<h5>' + label, '<h5>Changed ' + label) });
+    await expect(registryWebsiteVerifier()(row(), p, { name: "Acme Inc", domain: "acme.com" }, { aliases: [], addresses: [], context: "" }, now)).rejects.toThrow("changed");
+  });
+  it.each(Object.keys(labels) as (keyof typeof labels)[])("retains mismatched default pair %s", label => {
+    const s = html(label).replace('name="' + labels[label] + '"', 'name="' + (labels[label] === "name" ? "email" : "name") + '"');
+    expect(normal(s)).toBe(htmlToVisibleText(s));
+  });
+  it.each(["Company", "Twitter"] as const)("retains %s in plaintext and unbound contexts", label => {
+    for (const s of ['<plaintext>' + html(label), '<textarea>' + form(trap(label)) + '</textarea>', form(trap(label)).replace('data-form-id="' + id, 'data-form-id="CF0000000000000'), '<div style="display:none">' + label + '</div>'])
+      expect(normal(s)).toBe(htmlToVisibleText(s));
+  });
+  it.each([["Custom Field", "custom_field"], ["https://example.com", "https://example.com"], ["Empresa", "company"], ["COMPANY", "company"], ["Twitter", "Twitter"]])("retains non-default or wrong-case %s/%s", (label, name) => {
+    const s = html("Name").replace('<label>Name</label>', '<label>' + label + '</label>').replace('name="name"', 'name="' + name + '"');
+    expect(normal(s)).toBe(htmlToVisibleText(s));
   });
 });
