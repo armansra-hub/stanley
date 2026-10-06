@@ -3,10 +3,10 @@ import { stableRegistryJson } from "./registryProfiles";
 import { registeredAgentOperatorInstant as instant } from "./registryRegisteredAgentOperator";
 
 type Review = { taskId: string; reviewedAt: string; receiptSha256: string };
-type Row = { requestedUrl: string; finalUrl: string; status: number; contentType: string; observedAt: string;
+export type Row = { requestedUrl: string; finalUrl: string; status: number; contentType: string; observedAt: string;
   responseSha256: string; receiptSha256: string; rawRow: string; rawRowSha256: string;
   arrayIndex: number; byteOffset: number; byteLength: number; matchedRows: number };
-type Quote = { start: number; end: number; text: string;
+export type Quote = { start: number; end: number; text: string;
   ordinaryHtml: { start: number; end: number; html: string; sha256: string } };
 export type FirmLicenseBridge = {
   schema: "reviewed_colorado_firm_license_v1"; canonicalName: string; licenseToken: string;
@@ -36,7 +36,7 @@ function url(value: string, host: string, path?: string) {
     && value.length <= 16000 && (!path || u.pathname === path), "source URL differs");
   return u;
 }
-function row(s: Row, path: string) {
+export function row(s: Row, path: string) {
   need(shape(s, ["requestedUrl", "finalUrl", "status", "contentType", "observedAt", "responseSha256", "receiptSha256",
     "rawRow", "rawRowSha256", "arrayIndex", "byteOffset", "byteLength", "matchedRows"])
     && s.requestedUrl === s.finalUrl && s.status === 200 && /^application\/json(?:\s*;|$)/i.test(s.contentType)
@@ -49,7 +49,7 @@ function row(s: Row, path: string) {
   const raw: unknown = JSON.parse(s.rawRow); need(object(raw), "row object absent");
   return { u, raw, keys };
 }
-function ordinaryQuote(page: FirmLicenseBridge["ownSite"], q: Quote) {
+export function ordinaryQuote(page: FirmLicenseBridge["ownSite"], q: Quote) {
   need(shape(q, ["start", "end", "text", "ordinaryHtml"]) && typeof q.text === "string" && q.text.length > 0 && q.text.length <= 2000
     && Number.isSafeInteger(q.start) && q.start >= 0 && q.end === q.start + q.text.length && page.text.slice(q.start, q.end) === q.text,
   "literal page quote differs");

@@ -1,3 +1,4 @@
+import { verifyRegisteredTradeSite, type RegisteredTradeSiteBridge } from "./registryRegisteredTradeSite";
 import { verifyFirmLicenseBridge, type FirmLicenseBridge } from "./registryFirmLicenseBridge";
 import { verifyRegisteredAgentOperator, registeredAgentOperatorInstant, type RegisteredAgentOperatorBridge } from "./registryRegisteredAgentOperator";
 import { verifyRegistryNppesOtherName, type RegistryNppesOtherNameEntry } from "./registryNppesOtherName";
@@ -44,7 +45,8 @@ export type RegistryOfficialApiEntry = {
   siteOperatorBridge?: OwnSiteOperatorBridge;
   registeredAgentOperatorBridge?: RegisteredAgentOperatorBridge;
   firmLicenseBridge?: FirmLicenseBridge;
-  anchor: { mode: "address_role"; role: Role; sourceId: string } | { mode: "company_email_domain" } | { mode: "reviewed_registered_agent_operator" } | { mode: "reviewed_colorado_firm_license" };
+  registeredTradeSiteBridge?: RegisteredTradeSiteBridge;
+  anchor: { mode: "address_role"; role: Role; sourceId: string } | { mode: "company_email_domain" } | { mode: "reviewed_registered_agent_operator" } | { mode: "reviewed_colorado_firm_license" } | { mode: "reviewed_registered_trade_site" };
 };
 export type RegistryOfficialApiCorroboration = {
   schema: "official_api_roles_v1"; entryId: string; entrySha256: string; canonicalIdentitySha256: string;
@@ -272,6 +274,11 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     });
   }
   const source = entry.source;
+  const tradeSiteMode = entry.anchor.mode === "reviewed_registered_trade_site";
+  need(tradeSiteMode === Object.hasOwn(entry, "registeredTradeSiteBridge")
+    && (!tradeSiteMode || entry.sourceKind === "colorado_business_entity" && !Object.hasOwn(entry, "nameBridge")
+      && !Object.hasOwn(entry, "siteOperatorBridge") && !Object.hasOwn(entry, "registeredAgentOperatorBridge") && !Object.hasOwn(entry, "firmLicenseBridge")
+      && !providers.some(p => entry.canonicalDomain === p || entry.canonicalDomain.endsWith(`.${p}`))), "registered trade-site scope differs");
   const operatorMode = entry.anchor.mode === "reviewed_registered_agent_operator", licenseMode = entry.anchor.mode === "reviewed_colorado_firm_license";
   need(licenseMode === Object.hasOwn(entry, "firmLicenseBridge") && (!licenseMode || entry.sourceKind === "colorado_business_entity"
     && !Object.hasOwn(entry, "nameBridge") && !Object.hasOwn(entry, "siteOperatorBridge") && !Object.hasOwn(entry, "registeredAgentOperatorBridge")
@@ -294,7 +301,7 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     && originals.every(a => Date.parse(a.reviewedAt) >= Date.parse(row.profile.observedAt))
     && Date.parse(reviews[1].reviewedAt) >= Date.parse(reviews[0].reviewedAt)
     && Date.parse(originals[1].reviewedAt) >= Date.parse(originals[0].reviewedAt), "actual source review lineage invalid");
-  if (licenseMode) need(reviews.every(review => registeredAgentOperatorInstant(review.reviewedAt) >= registeredAgentOperatorInstant(source.observedAt)), "firm license exact main source chronology differs");
+  if (licenseMode || tradeSiteMode) need(reviews.every(review => registeredAgentOperatorInstant(review.reviewedAt) >= registeredAgentOperatorInstant(source.observedAt)), "firm license exact main source chronology differs");
   const physical = verifyOriginal(row, entry, parsed), legal = row.profile.identity.legalName, dba = entry.sourceKind === "fmcsa_census" ? retainedFmcsaDba(row.profile) : null;
   const nameBridge = registeredTradeAssociation(entry, company, context, legal, dba, reviewedTradeBundle);
   const siteBridge = ownSiteOperatorAssociation(entry, company, context, parsed, physical, legal, dba);
@@ -309,7 +316,7 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     roleAddress = address(parsed, entry.sourceKind, role.role);
     const anchors = context.addresses.filter(a => a.sourceId === role.sourceId && ["netsuite_record", "company_website"].includes(a.sourceKind) && iso(a.capturedAt) && fullAddress(a, roleAddress!));
     need(anchors.length === 1, "complete canonical role anchor missing or ambiguous"); anchor = anchors[0];
-  } else if (operatorMode || licenseMode) {
+  } else if (operatorMode || licenseMode || tradeSiteMode) {
     need(Object.keys(entry.anchor).length === 1, "operator anchor shape differs");
   } else {
     need(entry.anchor.mode === "company_email_domain" && entry.sourceKind === "fmcsa_census", "contact anchor mode invalid");
@@ -321,6 +328,9 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     sourceReader: entry.sourceReader, sourceReviewer: entry.sourceReviewer }) : null;
   const firmLicense = licenseMode ? verifyFirmLicenseBridge({ bridge: entry.firmLicenseBridge!, source: parsed, domain: entry.canonicalDomain,
     companyName: company.name, sourceReader: entry.sourceReader, sourceReviewer: entry.sourceReviewer }) : null;
+  const tradeSite = tradeSiteMode ? verifyRegisteredTradeSite({ bridge: entry.registeredTradeSiteBridge!, source: parsed,
+    companyName: company.name, aliases: context.aliases, domain: entry.canonicalDomain, observedAt: source.observedAt,
+    sourceReader: entry.sourceReader, sourceReviewer: entry.sourceReviewer }) : null;
   const { reader, reviewer, ...evidence } = raw, bound = registryOfficialApiEvidenceHash(row, evidence as Omit<RegistryOfficialApiCorroboration, "reader" | "reviewer">);
   const earliest = Math.max(Date.parse(row.profile.observedAt), Date.parse(source.observedAt), ...[...reviews, ...originals].map(a => Date.parse(a.reviewedAt)), anchor ? Date.parse(anchor.capturedAt) : 0,
     ...(nameBridge ? [Date.parse(nameBridge.sourceReader.reviewedAt), Date.parse(nameBridge.sourceReviewer.reviewedAt), Date.parse(nameBridge.canonicalAnchor.capturedAt)] : []),
@@ -329,7 +339,7 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     && iso(witness.reviewedAt) && Date.parse(witness.reviewedAt) >= earliest && Date.parse(witness.reviewedAt) <= now.getTime() + 60000
     && now.getTime() - Date.parse(witness.reviewedAt) <= 7 * 86400000 && witness.evidenceSha256 === bound, "final review does not bind exact content");
   need((reader as Witness).taskId !== (reviewer as Witness).taskId && Date.parse((reviewer as Witness).reviewedAt) >= Date.parse((reader as Witness).reviewedAt), "distinct ordered final review required");
-  if (operatorMode || licenseMode) {
+  if (operatorMode || licenseMode || tradeSiteMode) {
     // The new reviewed operator mode preserves exact 100ns ordering; all legacy
     // modes retain their existing timestamp behavior above.
     const ticks = registeredAgentOperatorInstant;
@@ -340,8 +350,8 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
       && [first, second].every(t => t <= current + 60000n * 10000n && current - t <= 7n * 86400000n * 10000n),
     "registered-agent operator exact final chronology differs");
   }
-  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : []), ...(nameBridge ? [`co_sos:${nameBridge.entityId}:${nameBridge.bundleSha256}`, nameBridge.canonicalAnchor.sourceId] : []), ...(siteBridge ? [siteBridge.canonicalAnchor.sourceId] : []), ...(agentOperator ? agentOperator.pages.map(p => `website:sha256:${p.textSha256}`) : []), ...(firmLicense ? [`firm-license:${firmLicense.licenseToken}:${firmLicense.license.rawRowSha256}`, `trade-owner:${firmLicense.trade.rawRowSha256}`, `website:sha256:${firmLicense.ownSite.textSha256}`] : [])],
-    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email, ...(nameBridge ? { registeredTradeNameBridge: nameBridge } : {}), ...(siteBridge ? { ownSiteOperatorNameBridge: siteBridge } : {}), ...(agentOperator ? { registeredAgentOperatorCorrespondence: agentOperator } : {}), ...(firmLicense ? { coloradoFirmLicenseAssociation: firmLicense } : {}),
+  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : []), ...(nameBridge ? [`co_sos:${nameBridge.entityId}:${nameBridge.bundleSha256}`, nameBridge.canonicalAnchor.sourceId] : []), ...(siteBridge ? [siteBridge.canonicalAnchor.sourceId] : []), ...(agentOperator ? agentOperator.pages.map(p => `website:sha256:${p.textSha256}`) : []), ...(firmLicense ? [`firm-license:${firmLicense.licenseToken}:${firmLicense.license.rawRowSha256}`, `trade-owner:${firmLicense.trade.rawRowSha256}`, `website:sha256:${firmLicense.ownSite.textSha256}`] : []), ...(tradeSite ? [`trade-owner:${tradeSite.trade.rawRowSha256}`, `website:sha256:${tradeSite.ownSite.textSha256}`] : [])],
+    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email, ...(nameBridge ? { registeredTradeNameBridge: nameBridge } : {}), ...(siteBridge ? { ownSiteOperatorNameBridge: siteBridge } : {}), ...(agentOperator ? { registeredAgentOperatorCorrespondence: agentOperator } : {}), ...(firmLicense ? { coloradoFirmLicenseAssociation: firmLicense } : {}), ...(tradeSite ? { registeredTradeSiteAssociation: tradeSite } : {}),
       targetAddress: { role: entry.sourceKind === "fmcsa_census" ? "carrier_physical" : "principal_street", ...physical },
       scope: "Reviewed official API entity/contact role association at the retained observation date. Original physical facts remain unchanged; mailing and registered-agent addresses are not operating locations. A declared company email domain does not establish current website ownership or contact permission." } };
 }
