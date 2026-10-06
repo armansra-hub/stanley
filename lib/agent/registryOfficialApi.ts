@@ -1,3 +1,4 @@
+import { verifyRegisteredAgentOperator, registeredAgentOperatorInstant, type RegisteredAgentOperatorBridge } from "./registryRegisteredAgentOperator";
 import { verifyRegistryNppesOtherName, type RegistryNppesOtherNameEntry } from "./registryNppesOtherName";
 import { verifyRegistryNppesEndpoint, type RegistryNppesEndpointEntry } from "./registryNppesEndpoint";
 import { createHash } from "node:crypto";
@@ -40,7 +41,8 @@ export type RegistryOfficialApiEntry = {
     identitySha256: string; sourceRowSha256: string; factsSha256: string; sourceAsOf: string | null; observedAt: string };
   nameBridge?: RegisteredTradeNameBridge;
   siteOperatorBridge?: OwnSiteOperatorBridge;
-  anchor: { mode: "address_role"; role: Role; sourceId: string } | { mode: "company_email_domain" };
+  registeredAgentOperatorBridge?: RegisteredAgentOperatorBridge;
+  anchor: { mode: "address_role"; role: Role; sourceId: string } | { mode: "company_email_domain" } | { mode: "reviewed_registered_agent_operator" };
 };
 export type RegistryOfficialApiCorroboration = {
   schema: "official_api_roles_v1"; entryId: string; entrySha256: string; canonicalIdentitySha256: string;
@@ -268,6 +270,11 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     });
   }
   const source = entry.source;
+  const operatorMode = entry.anchor.mode === "reviewed_registered_agent_operator";
+  need(operatorMode === Object.hasOwn(entry, "registeredAgentOperatorBridge")
+    && (!operatorMode || entry.sourceKind === "colorado_business_entity" && !Object.hasOwn(entry, "nameBridge")
+      && !Object.hasOwn(entry, "siteOperatorBridge") && !providers.some(p => entry.canonicalDomain === p || entry.canonicalDomain.endsWith(`.${p}`))),
+  "registered-agent operator scope differs");
   need(raw.entrySha256 === sha256 && ["colorado_business_entity", "fmcsa_census"].includes(entry.sourceKind), "entry pin or source kind invalid");
   need(source.status === 200 && source.contentType.toLowerCase().startsWith("application/json") && iso(source.observedAt)
     && source.requestedUrl === source.finalUrl && sourceUrl(source.requestedUrl, entry.sourceKind, entry.target.recordId)
@@ -296,11 +303,16 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     roleAddress = address(parsed, entry.sourceKind, role.role);
     const anchors = context.addresses.filter(a => a.sourceId === role.sourceId && ["netsuite_record", "company_website"].includes(a.sourceKind) && iso(a.capturedAt) && fullAddress(a, roleAddress!));
     need(anchors.length === 1, "complete canonical role anchor missing or ambiguous"); anchor = anchors[0];
+  } else if (entry.anchor.mode === "reviewed_registered_agent_operator") {
+    need(Object.keys(entry.anchor).length === 1, "operator anchor shape differs");
   } else {
     need(entry.anchor.mode === "company_email_domain" && entry.sourceKind === "fmcsa_census", "contact anchor mode invalid");
     email = emailDomain(parsed.email_address);
     need(email && email === entry.canonicalDomain, "strict company email domain differs or is shared");
   }
+  const agentOperator = operatorMode ? verifyRegisteredAgentOperator({ bridge: entry.registeredAgentOperatorBridge!,
+    source: parsed, legal, company, context, domain: entry.canonicalDomain, observedAt: source.observedAt,
+    sourceReader: entry.sourceReader, sourceReviewer: entry.sourceReviewer }) : null;
   const { reader, reviewer, ...evidence } = raw, bound = registryOfficialApiEvidenceHash(row, evidence as Omit<RegistryOfficialApiCorroboration, "reader" | "reviewer">);
   const earliest = Math.max(Date.parse(row.profile.observedAt), Date.parse(source.observedAt), ...[...reviews, ...originals].map(a => Date.parse(a.reviewedAt)), anchor ? Date.parse(anchor.capturedAt) : 0,
     ...(nameBridge ? [Date.parse(nameBridge.sourceReader.reviewedAt), Date.parse(nameBridge.sourceReviewer.reviewedAt), Date.parse(nameBridge.canonicalAnchor.capturedAt)] : []),
@@ -309,8 +321,19 @@ export function verifyRegistryOfficialApi(row: RegistryFinding, raw: unknown, co
     && iso(witness.reviewedAt) && Date.parse(witness.reviewedAt) >= earliest && Date.parse(witness.reviewedAt) <= now.getTime() + 60000
     && now.getTime() - Date.parse(witness.reviewedAt) <= 7 * 86400000 && witness.evidenceSha256 === bound, "final review does not bind exact content");
   need((reader as Witness).taskId !== (reviewer as Witness).taskId && Date.parse((reviewer as Witness).reviewedAt) >= Date.parse((reader as Witness).reviewedAt), "distinct ordered final review required");
-  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : []), ...(nameBridge ? [`co_sos:${nameBridge.entityId}:${nameBridge.bundleSha256}`, nameBridge.canonicalAnchor.sourceId] : []), ...(siteBridge ? [siteBridge.canonicalAnchor.sourceId] : [])],
-    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email, ...(nameBridge ? { registeredTradeNameBridge: nameBridge } : {}), ...(siteBridge ? { ownSiteOperatorNameBridge: siteBridge } : {}),
+  if (operatorMode) {
+    // The new reviewed operator mode preserves exact 100ns ordering; all legacy
+    // modes retain their existing timestamp behavior above.
+    const ticks = registeredAgentOperatorInstant;
+    const sourceTimes = [row.profile.observedAt, source.observedAt, ...[...reviews, ...originals].map(w => w.reviewedAt)].map(ticks);
+    const first = ticks((reader as Witness).reviewedAt), second = ticks((reviewer as Witness).reviewedAt);
+    const current = BigInt(now.getTime()) * 10000n;
+    need(sourceTimes.every(t => first >= t) && second >= first
+      && [first, second].every(t => t <= current + 60000n * 10000n && current - t <= 7n * 86400000n * 10000n),
+    "registered-agent operator exact final chronology differs");
+  }
+  return { method: "reviewed_official_registration_history", verifiedAt: now.toISOString(), sourceIds: [`${row.profile.dataset}:${row.profile.recordId}:${sha256}`, ...(anchor ? [anchor.sourceId] : []), ...(nameBridge ? [`co_sos:${nameBridge.entityId}:${nameBridge.bundleSha256}`, nameBridge.canonicalAnchor.sourceId] : []), ...(siteBridge ? [siteBridge.canonicalAnchor.sourceId] : []), ...(agentOperator ? agentOperator.pages.map(p => `website:sha256:${p.textSha256}`) : [])],
+    officialHistory: { ...evidence, reader, reviewer, evidenceSha256: bound, entry, canonicalAnchor: anchor, roleAddress, companyEmailDomain: email, ...(nameBridge ? { registeredTradeNameBridge: nameBridge } : {}), ...(siteBridge ? { ownSiteOperatorNameBridge: siteBridge } : {}), ...(agentOperator ? { registeredAgentOperatorCorrespondence: agentOperator } : {}),
       targetAddress: { role: entry.sourceKind === "fmcsa_census" ? "carrier_physical" : "principal_street", ...physical },
       scope: "Reviewed official API entity/contact role association at the retained observation date. Original physical facts remain unchanged; mailing and registered-agent addresses are not operating locations. A declared company email domain does not establish current website ownership or contact permission." } };
 }
