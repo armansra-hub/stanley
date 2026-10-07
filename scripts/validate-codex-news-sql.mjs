@@ -9,6 +9,8 @@ const { pgcrypto } = require("@electric-sql/pglite/contrib/pgcrypto");
 const db = await PGlite.create("memory://", { extensions: { pgcrypto } });
 const source = await readFile(new URL("../supabase/migrations/0137_codex_news_analysis.sql", import.meta.url), "utf8");
 const repair = await readFile(new URL("../supabase/migrations/0138_codex_news_scalar_claim.sql", import.meta.url), "utf8");
+const sourceReview = await readFile(new URL("../supabase/migrations/0143_codex_source_review.sql", import.meta.url), "utf8");
+const exactSource = await readFile(new URL("../supabase/migrations/0144_codex_exact_source_claim.sql", import.meta.url), "utf8");
 const scalar = async (sql, values = []) => (await db.query(sql, values)).rows[0]?.value;
 const rpc = (action, payload) => scalar("select intelligence_codex_news($1,$2) value", [action, payload]);
 const checks = [];
@@ -64,7 +66,25 @@ try {
       assert.ok(!JSON.stringify(plan.rows).includes("q.result"));
     }
   });
-  await db.exec(await readFile(new URL("../supabase/migrations/0143_codex_source_review.sql", import.meta.url), "utf8"));
+  await test("exact-source migration replays unscoped 0138 and scoped 0143 claims unchanged, including reapply", async () => {
+    await seed();
+    const oldRequest = { requestId: randomUUID(), taskId: "/root/reader" };
+    const old = await rpc("claim", oldRequest);
+    assert.equal(old.review.selection, undefined);
+    await db.exec(sourceReview);
+    await seed();
+    const scopedRequest = { requestId: randomUUID(), taskId: "/root/reader", sourceKind: "news", companyIds: [company], observedThrough: new Date().toISOString() };
+    const scoped = await rpc("claim", scopedRequest);
+    const before = await scalar("select jsonb_agg(to_jsonb(q) order by id) value from intelligence_jobs q");
+    await db.exec(exactSource); await db.exec(exactSource);
+    assert.equal((await rpc("claim", oldRequest)).lease, old.lease);
+    assert.equal((await rpc("claim", scopedRequest)).lease, scoped.lease);
+    assert.deepEqual((await rpc("claim", scopedRequest)).review.selection, scoped.review.selection);
+    assert.equal((await rpc("claim", scopedRequest)).review.selection.observationId, undefined);
+    assert.deepEqual(await scalar("select jsonb_agg(to_jsonb(q) order by id) value from intelligence_jobs q"), before);
+    for (const p of [old, scoped]) await rpc("hold", { ...bound(p), taskId: "/root/reader", reason: "Offline migration replay verified; preserve the existing claim receipt and source hold." });
+    await db.exec("truncate intelligence_jobs,intelligence_observations");
+  });
   await test("scalar TAL-first selection skips many pending paid candidates and large irrelevant bodies, then reaches all-TAM fallback", async () => {
     const tam = randomUUID();
     await db.query("insert into companies(id,name,domain,status,lists,tal_claimed) values($1,'TAM only','tam-only.com','new',array['netsuite_tam'],false)", [tam]);
@@ -184,6 +204,132 @@ try {
     await assert.rejects(rpc("claim", { ...req, requestId: randomUUID(), companyIds: [company, company] }), /Duplicate/);
     await assert.rejects(rpc("claim", { requestId: randomUUID(), taskId: "/root/reader", companyIds: [company] }), /Finite scope/);
     assert.equal(await rpc("claim", { ...req, requestId: randomUUID(), observedThrough: "2000-01-01T00:00:00Z" }), null);
+  });
+  const exactRequest = (observationId, overrides = {}) => ({ requestId: randomUUID(), taskId: "/root/reader", sourceKind: "news", companyIds: [company], observedThrough: new Date().toISOString(), observationId, ...overrides });
+  const resetExact = async () => {
+    await db.exec("truncate intelligence_jobs,intelligence_observations");
+    await db.query("update companies set lists=array['tam_removed'],status='removed_from_tam',tal_claimed=true where id=$1", [company]);
+  };
+  const seedExact = async options => {
+    const seeded = await seed(options);
+    await db.query("update intelligence_observations set observed_at=now()-interval '1 second' where id=$1", [seeded.observation]);
+    return seeded;
+  };
+  const savedJobs = () => scalar("select jsonb_agg(to_jsonb(q) order by id) value from intelligence_jobs q");
+  await test("exact observation bypasses older incompatible siblings in TAL and TAM without changing default ordering", async () => {
+    for (const tal of [true, false]) {
+      await resetExact();
+      if (!tal) await db.query("update companies set lists=array['netsuite_tam'],status='new',tal_claimed=false where id=$1", [company]);
+      const older = await seedExact({ kind: "job", priority: 999, metadata: { descriptionAvailable: true,
+        sourceCharacters: text.length, retainedCharacters: text.length, atsType: "lever", atsToken: "acme", atsJobKey: "old" } });
+      const target = await seedExact({ kind: "job", metadata: { textTruncated: false, sourceCharacters: text.length, retainedCharacters: text.length,
+        atsType: "lever", atsToken: "acme", atsJobKey: "new", descriptionAvailable: true, bodySchemaValidated: true, bodySchemaVersion: "ats-body-schema-v1" } });
+      const before = await scalar("select to_jsonb(q) value from intelligence_jobs q where id=$1", [older.id]);
+      const req = exactRequest(target.observation, { sourceKind: "job" });
+      const p = await rpc("claim", req); assert.equal(p.jobId, target.id);
+      assert.equal(p.review.selection.observationId, target.observation);
+      assert.deepEqual(await scalar("select to_jsonb(q) value from intelligence_jobs q where id=$1", [older.id]), before);
+      assert.equal((await rpc("claim", req)).lease, p.lease);
+      await assert.rejects(rpc("claim", { ...req, observationId: older.observation }), /selection conflict/);
+      const { observationId: omitted, ...withoutTarget } = req;
+      await assert.rejects(rpc("claim", withoutTarget), /selection conflict/);
+      const complete = await rpc("finish", finishPayload(await analyzed(p, "no_signal")));
+      assert.equal(complete.review.receipt.observationId, target.observation);
+      assert.equal(complete.publication.event.id, complete.review.receipt.eventId);
+      assert.equal(complete.publication.trigger, null);
+      assert.equal((await rpc("status", { requestId: req.requestId })).review.receipt.eventId, complete.review.receipt.eventId);
+      // Exact selection does not rewrite the historical source or its missing provenance.
+      const defaultClaim = await rpc("claim", { ...withoutTarget, requestId: randomUUID() });
+      assert.equal(defaultClaim.jobId, older.id);
+      await assert.rejects(analyzed(defaultClaim, "no_signal"), /Job completeness provenance missing/);
+      await rpc("hold", { ...bound(defaultClaim), taskId: "/root/reader", reason: "Older incompatible source remains held; exact selection did not alter its provenance." });
+    }
+  });
+  await test("invalid exact selectors reject before mutation and require explicit source plus singleton scope", async () => {
+    await resetExact(); const target = await seedExact(); const valid = exactRequest(target.observation); const before = await savedJobs();
+    for (const value of [null, "", "not-a-uuid", 1, true, [], {}, target.observation.replaceAll("-", "")]) {
+      await assert.rejects(rpc("claim", { ...valid, observationId: value }), /Exact observation/);
+    }
+    for (const key of ["sourceKind", "companyIds", "observedThrough"]) {
+      const invalid = { ...valid }; delete invalid[key];
+      await assert.rejects(rpc("claim", invalid), /Exact observation|Finite scope/);
+    }
+    const unscoped = { ...valid }; delete unscoped.companyIds; delete unscoped.observedThrough;
+    await assert.rejects(rpc("claim", unscoped), /Exact observation/);
+    await assert.rejects(rpc("claim", { ...valid, sourceKind: null }), /Exact observation/);
+    await assert.rejects(rpc("claim", { ...valid, companyIds: [company, randomUUID()] }), /Exact observation/);
+    assert.deepEqual(await savedJobs(), before);
+  });
+  await test("missing or ineligible exact sources never fall back to other observations or revive existing work", async () => {
+    const cases = [
+      ["unknown observation", async (_t, req) => { req.observationId = randomUUID(); }],
+      ["wrong company", async (_t, req) => { req.companyIds = [randomUUID()]; }],
+      ["wrong kind", async (_t, req) => { req.sourceKind = "website"; }],
+      ["cutoff", async (_t, req) => { req.observedThrough = "2000-01-01T00:00:00Z"; }],
+      ["pending provider", async t => { await db.query("update intelligence_jobs set result=result||jsonb_build_object('pendingRequest',jsonb_build_object('fingerprint','existing-paid')) where id=$1", [t.id]); }],
+      ["complete", async t => { await db.query("update intelligence_jobs set status='complete' where id=$1", [t.id]); }],
+      ["running", async t => { await db.query("update intelligence_jobs set status='running',lease_token=$2,lease_until=now()+interval '20 minutes' where id=$1", [t.id, randomUUID()]); }],
+      ["not due", async t => { await db.query("update intelligence_jobs set due_at=now()+interval '1 day' where id=$1", [t.id]); }],
+      ["noninterpret", async t => { await db.query("update intelligence_jobs set kind='other' where id=$1", [t.id]); }],
+      ["superseded", async t => { await db.query("update intelligence_observations set is_current=false where id=$1", [t.observation]); }],
+      ["feedback excluded", async t => { await db.query("update intelligence_observations set feedback_excluded=true where id=$1", [t.observation]); }],
+      ["duplicate TAL history", async () => { await db.query("update companies set lists=array['tam_duplicate'] where id=$1", [company]); }],
+      ["removed non-TAL", async () => { await db.query("update companies set lists=array['netsuite_tam'],tal_claimed=false,status='removed_from_tam' where id=$1", [company]); }],
+      ["held", async (t, req) => { const p = await rpc("claim", req); await rpc("hold", { ...bound(p), taskId: "/root/reader", reason: "Existing canonical hold must not be reopened by another exact observation claim." }); req.requestId = randomUUID(); }],
+    ];
+    for (const [name, change] of cases) {
+      await resetExact();
+      await seedExact({ priority: 999 }); await seedExact({ kind: "website", priority: 999 });
+      const target = await seedExact(); const req = exactRequest(target.observation);
+      await change(target, req); const before = await savedJobs();
+      assert.equal(await rpc("claim", req), null, name);
+      assert.deepEqual(await savedJobs(), before, `${name} modified a job`);
+    }
+    await resetExact();
+    const target = await seedExact({ result: { codexNews: { requestId: randomUUID(), history: "orphan-preserved" } } });
+    const before = await savedJobs();
+    await assert.rejects(rpc("claim", exactRequest(target.observation)), /receipt requires reconciliation/);
+    assert.deepEqual(await savedJobs(), before);
+  });
+  await test("exact observation retains provider pause, capacity, source, snapshot, review and SQL privilege gates", async () => {
+    await resetExact(); const target = await seedExact(); const req = exactRequest(target.observation);
+    await db.exec("update intelligence_jev_budget_policy set enabled=true");
+    await assert.rejects(rpc("claim", req), /admission unavailable/);
+    await db.exec("update intelligence_jev_budget_policy set enabled=false; update intelligence_config set enabled=false");
+    await assert.rejects(rpc("claim", req), /admission unavailable/);
+    await db.exec("update intelligence_config set enabled=true");
+    const active = [];
+    for (let n = 0; n < 3; n++) { const t = await seedExact(); active.push(await rpc("claim", exactRequest(t.observation))); }
+    const before = await savedJobs(); assert.equal(await rpc("claim", req), null); assert.deepEqual(await savedJobs(), before);
+    await rpc("hold", { ...bound(active[0]), taskId: "/root/reader", reason: "Offline release of one capacity slot; all other active lease identities remain unchanged." });
+    const p = await rpc("claim", req); assert.equal(p.jobId, target.id);
+    await db.query("update intelligence_observations set title='Changed' where id=$1", [target.observation]);
+    await assert.rejects(analyzed(p, "no_signal"), /snapshot changed/);
+    await db.query("update intelligence_observations set title='Office opening' where id=$1", [target.observation]);
+    const a = await analyzed(p, "no_signal"), f = finishPayload(a);
+    await assert.rejects(rpc("finish", { ...f, review: { ...f.review, reviewer: { ...f.review.reviewer, taskId: "/root/reader" } } }), /Independent review/);
+    await assert.rejects(rpc("finish", { ...f, review: { ...f.review, reviewer: { ...f.review.reviewer, readEnd: 1 } } }), /Independent review/);
+    assert.equal((await rpc("finish", f)).review.receipt.triggerId, null);
+    await resetExact();
+    const capacityTarget = await seedExact();
+    for (let n = 0; n < 12; n++) {
+      const worker = await seedExact();
+      await db.query("update intelligence_jobs set status='running',lease_token=$2,lease_until=now()+interval '20 minutes' where id=$1", [worker.id, randomUUID()]);
+    }
+    const capacityBefore = await savedJobs();
+    assert.equal(await rpc("claim", exactRequest(capacityTarget.observation)), null);
+    assert.deepEqual(await savedJobs(), capacityBefore);
+    await resetExact();
+    const incomplete = await seedExact({ metadata: { articleBodyAvailable: false } });
+    const bad = await rpc("claim", exactRequest(incomplete.observation));
+    await assert.rejects(analyzed(bad, "no_signal"), /article is incomplete/);
+    for (const role of ["anon", "authenticated"]) {
+      assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value", [role]), false);
+      await db.exec(`set role ${role}`);
+      try { await assert.rejects(rpc("claim", exactRequest(incomplete.observation)), /permission denied/); }
+      finally { await db.exec("reset role"); }
+    }
+    assert.equal(await scalar("select has_function_privilege('service_role','intelligence_codex_news(text,jsonb)','EXECUTE') value"), true);
   });
   console.log(JSON.stringify({ offline: true, passed: checks.length, checks, providerCalls: 0, productionAccess: false }));
 } finally { await db.close(); }

@@ -36,7 +36,7 @@ export const codexSourceKind = z.enum(["news", "website", "job"]);
 export const newsActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("claim"), requestId: uuid, taskId: actor,
     sourceKind: codexSourceKind.optional(), companyIds: z.array(uuid).min(1).max(100).optional(),
-    observedThrough: z.iso.datetime({ offset: true }).optional() }).strict(),
+    observedThrough: z.iso.datetime({ offset: true }).optional(), observationId: uuid.optional() }).strict(),
   z.object({ action: z.literal("analyze"), ...bound, analysis: newsAnalysisSchema }).strict(),
   z.object({ action: z.literal("finish"), ...bound, review: newsReviewSchema }).strict(),
   z.object({ action: z.literal("hold"), ...bound, taskId: actor, reason }).strict(),
@@ -45,6 +45,9 @@ export const newsActionSchema = z.discriminatedUnion("action", [
   if (value.action !== "claim") return;
   if (Boolean(value.companyIds) !== Boolean(value.observedThrough)) ctx.addIssue({ code: "custom", message: "companyIds and observedThrough must be supplied together" });
   if (value.companyIds && new Set(value.companyIds).size !== value.companyIds.length) ctx.addIssue({ code: "custom", message: "duplicate companyIds" });
+  if (value.observationId && (!value.sourceKind || value.companyIds?.length !== 1 || !value.observedThrough)) {
+    ctx.addIssue({ code: "custom", message: "observationId requires explicit sourceKind, one companyId and observedThrough" });
+  }
 });
 type Analysis = z.infer<typeof newsAnalysisSchema>;
 type Review = z.infer<typeof newsReviewSchema>;

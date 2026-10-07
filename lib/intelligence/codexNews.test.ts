@@ -51,6 +51,20 @@ describe("Codex canonical news review", () => {
     expect(() => newsActionSchema.parse({ ...claim, companyIds: [packet().snapshot.company.id] })).toThrow();
     expect(() => newsActionSchema.parse({ ...claim, companyIds: [packet().snapshot.company.id, packet().snapshot.company.id], observedThrough: "2026-09-29T00:00:00Z" })).toThrow();
   });
+  it("accepts an exact observation only with explicit source kind, one company and cutoff", () => {
+    const p = packet();
+    const targeted = { action: "claim", requestId: p.review.requestId, taskId: "/root/reader", sourceKind: "website",
+      companyIds: [p.snapshot.company.id], observedThrough: "2026-09-29T00:00:00Z", observationId: p.snapshot.observation.id };
+    expect(newsActionSchema.parse(targeted)).toEqual(targeted);
+    for (const key of ["sourceKind", "companyIds", "observedThrough"] as const) {
+      const incomplete = { ...targeted } as Record<string, unknown>; delete incomplete[key];
+      expect(() => newsActionSchema.parse(incomplete)).toThrow();
+    }
+    expect(() => newsActionSchema.parse({ ...targeted, companyIds: [p.snapshot.company.id, "50000000-0000-4000-8000-000000000002"] })).toThrow();
+    for (const observationId of [null, "", "not-a-uuid", [p.snapshot.observation.id]]) {
+      expect(() => newsActionSchema.parse({ ...targeted, observationId })).toThrow();
+    }
+  });
   it.each(["website", "job"])("reviews complete %s sources with truthful provenance and independent validation", kind => {
     const p = packet(), o = p.snapshot.observation; o.source_kind = kind;
     o.metadata = { textTruncated: false, retainedCharacters: o.evidence_text.length, sourceCharacters: o.evidence_text.length,
