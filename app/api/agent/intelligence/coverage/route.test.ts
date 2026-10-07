@@ -101,4 +101,46 @@ describe("read-only canonical coverage", () => {
     const jobs = await (await route.GET(req(`view=jobs&companyId=${id}&observationId=${other}`))).json();
     expect(jobs.rows[0]).toMatchObject({ reviewKind: "codex_source", admissionVerified: false });
   });
+  it("reads exactly one retained registry version with auth, independent TAL scope and no writes/RPC/provider action", async () => {
+    const query = `view=registry-capture&companyId=${id}&sourceKey=fmcsa`;
+    m.auth = false;
+    expect((await route.GET(req(query))).status).toBe(401); expect(m.calls).toEqual([]);
+    m.auth = true;
+    m.rows.companies = [{ id, name: "Removed but claimed TAL", lists: null, status: "removed_from_tam", tal_claimed: true }];
+    m.rows.intelligence_source_state = [{ company_id: id, source_key: "fmcsa", complete: false, coverage_status: "unavailable",
+      last_attempt_at: "2026-10-07T20:00:00Z", last_error: "PRIVATE_ERROR", cursor: null }];
+    const response = await route.GET(req(query)); const body = await response.json();
+    expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(body).toMatchObject({ view: "registry-capture", scope: "all", capture: { retainedCaptureAvailable: false, boundedLookupComplete: false, analysisComplete: false }, page: { partial: false, limit: 1 } });
+    expect(JSON.stringify(body)).not.toContain("PRIVATE_ERROR");
+    expect(m.calls).toContainEqual({ table: "intelligence_source_state", method: "eq", args: ["company_id", id] });
+    expect(m.calls).toContainEqual({ table: "intelligence_source_state", method: "eq", args: ["source_key", "fmcsa"] });
+    expect(m.calls).toContainEqual({ table: "intelligence_source_state", method: "limit", args: [2] });
+    expect(m.calls.every(call => ["select", "or", "eq", "limit"].includes(call.method))).toBe(true);
+  });
+  it("registry read fails closed on a wrong binding, duplicate version or out-of-scope returned account", async () => {
+    const query = `view=registry-capture&companyId=${id}&sourceKey=cosos`;
+    m.rows.companies = [{ id, lists: ["netsuite_tam"], status: "active", tal_claimed: false }];
+    m.rows.intelligence_source_state = [{ company_id: other, source_key: "cosos" }];
+    let response = await route.GET(req(query)); expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ reason: "retained_binding_mismatch", retainedCaptureReturned: false });
+    m.rows.intelligence_source_state = [{ company_id: id }, { company_id: id }];
+    expect((await route.GET(req(query))).status).toBe(503);
+    m.rows.intelligence_source_state = [];
+    expect((await route.GET(req(query))).status).toBe(404);
+    m.calls = []; m.rows.companies = [{ id, lists: ["tam_duplicate"], status: "active", tal_claimed: true }];
+    expect((await route.GET(req(query))).status).toBe(404);
+    expect(m.calls.some(call => call.table === "intelligence_source_state")).toBe(false);
+    m.rows.companies = [{ id: other, lists: ["netsuite_tam"], status: "active" }];
+    expect((await route.GET(req(query))).status).toBe(503);
+  });
+  it("never responds with retained content on malformed registry state", async () => {
+    m.rows.companies = [{ id, lists: ["netsuite_tam"], status: "active" }];
+    m.rows.intelligence_source_state = [{ company_id: id, source_key: "fmcsa", complete: true, coverage_status: "complete",
+      last_attempt_at: "2026-10-07T20:00:00Z", cursor: { unknown: "PRIVATE_CONTENT" } }];
+    const response = await route.GET(req(`view=registry-capture&companyId=${id}&sourceKey=fmcsa`));
+    expect(response.status).toBe(503); const body = await response.json();
+    expect(body).toMatchObject({ reason: "invalid_retained_schema", retainedCaptureReturned: false });
+    expect(JSON.stringify(body)).not.toContain("PRIVATE_CONTENT");
+  });
 });

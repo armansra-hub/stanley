@@ -4,6 +4,7 @@ import { serviceClient } from "@/lib/supabase/server";
 import { buildCompanyIdentityContext } from "@/lib/companyIdentity";
 import { COMPANY_FIELDS, OBSERVATION_FIELDS, JOB_FIELDS, SOURCE_FIELDS, parseCoverageQuery, membershipFilter,
   evidenceProjection, sourceProjection, jobProjection, pick } from "@/lib/intelligence/manualCoverage";
+import { REGISTRY_CAPTURE_FIELDS, RegistryCaptureReadError, registryCompanyInScope, retainedRegistryCapture } from "@/lib/intelligence/retainedRegistryCapture";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -28,6 +29,18 @@ export async function GET(req: Request) {
     if (accountError) throw accountError;
     if (!accounts?.length) return json({ error: "company_not_in_scope" }, 404);
     if (accounts.length !== 1) throw new Error("ambiguous_company");
+    if (q.view === "registry-capture") {
+      if (accounts[0].id !== q.companyId) throw new RegistryCaptureReadError("retained_binding_mismatch");
+      if (!registryCompanyInScope(accounts[0], q.scope)) return json({ error: "company_not_in_scope" }, 404);
+      const { data, error } = await db.from("intelligence_source_state").select(REGISTRY_CAPTURE_FIELDS)
+        .eq("company_id", q.companyId!).eq("source_key", q.sourceKey!).limit(2);
+      if (error) throw error;
+      if (!data?.length) return json({ error: "retained_registry_capture_not_found", coverageVerified: false }, 404);
+      if (data.length !== 1) throw new RegistryCaptureReadError("retained_binding_mismatch");
+      return json({ view: q.view, scope: q.scope, company: pick(accounts[0], "id,name,domain,website_raw,city,state,netsuite_internal_id,status,lists,tal_claimed"),
+        capture: retainedRegistryCapture(data[0], q.companyId!, q.sourceKey!),
+        page: { partial: false, nextAfter: null, limit: 1 }, coverageVerified: false, asOf: new Date().toISOString() });
+    }
     const company = pick(accounts[0], COMPANY_FIELDS);
     let sourceKind: unknown = null;
     if (q.view === "jobs") {
@@ -69,5 +82,8 @@ export async function GET(req: Request) {
     return json({ view: q.view, scope: q.scope, company, identity, rows,
       page: { partial, nextAfter: partial ? page.at(-1)?.[key] : null, limit: q.limit }, coverageVerified: false,
       consistency: "live_keyset_reconcile_membership_and_source_versions_at_end", asOf: new Date().toISOString() });
-  } catch { return json({ error: "coverage_read_unavailable", coverageVerified: false }, 503); }
+  } catch (error) {
+    return json({ error: "coverage_read_unavailable", coverageVerified: false,
+      ...(error instanceof RegistryCaptureReadError ? { reason: error.reason, retainedCaptureReturned: false } : {}) }, 503);
+  }
 }

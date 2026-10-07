@@ -4,19 +4,21 @@ export const OBSERVATION_FIELDS = "id,company_id,source_kind,source_url,title,ev
 export const JOB_FIELDS = "id,observation_id,kind,status,priority,due_at,attempts,lease_until,created_at,finished_at,codex_news_request_id";
 export const SOURCE_FIELDS = "company_id,source_key,complete,last_attempt_at,last_success_at,last_error,coverage_status,next_attempt_at,cursor";
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export type CoverageQuery = { view: "companies" | "evidence" | "sources" | "jobs"; scope: "all" | "tam" | "tal"; limit: number; after: string | null; companyId: string | null; observationId: string | null };
+export type CoverageQuery = { view: "companies" | "evidence" | "sources" | "jobs" | "registry-capture"; scope: "all" | "tam" | "tal"; limit: number; after: string | null; companyId: string | null; observationId: string | null; sourceKey: "fmcsa" | "cosos" | null };
 export function parseCoverageQuery(params: URLSearchParams): CoverageQuery {
-  const allowed = new Set(["view", "scope", "limit", "after", "companyId", "observationId"]);
+  const allowed = new Set(["view", "scope", "limit", "after", "companyId", "observationId", "sourceKey"]);
   for (const key of params.keys()) if (!allowed.has(key) || params.getAll(key).length !== 1) throw new Error("invalid_query");
   const view = params.get("view") ?? "companies", scope = params.get("scope") ?? "all";
-  if (!["companies", "evidence", "sources", "jobs"].includes(view) || !["all", "tam", "tal"].includes(scope)) throw new Error("invalid_query");
-  const rawLimit = params.get("limit") ?? (view === "evidence" ? "5" : "100");
+  if (!["companies", "evidence", "sources", "jobs", "registry-capture"].includes(view) || !["all", "tam", "tal"].includes(scope)) throw new Error("invalid_query");
+  const rawLimit = params.get("limit") ?? (view === "registry-capture" ? "1" : view === "evidence" ? "5" : "100");
   if (!/^[1-9][0-9]*$/.test(rawLimit) || Number(rawLimit) > (view === "evidence" ? 10 : 100)) throw new Error("invalid_query");
   const companyId = params.get("companyId"), observationId = params.get("observationId"), after = params.get("after");
+  const sourceKey = params.get("sourceKey");
+  if (view === "registry-capture" ? !["fmcsa", "cosos"].includes(sourceKey ?? "") || rawLimit !== "1" || after !== null : sourceKey !== null) throw new Error("invalid_query");
   if ((view === "companies" ? companyId !== null : !companyId || !UUID.test(companyId))
     || (view === "jobs" ? !observationId || !UUID.test(observationId) : observationId !== null)
     || (after !== null && (view === "sources" ? !/^[a-zA-Z0-9:._/-]{1,512}$/.test(after) : !UUID.test(after)))) throw new Error("invalid_query");
-  return { view: view as CoverageQuery["view"], scope: scope as CoverageQuery["scope"], limit: Number(rawLimit), companyId, observationId, after };
+  return { view: view as CoverageQuery["view"], scope: scope as CoverageQuery["scope"], limit: Number(rawLimit), companyId, observationId, after, sourceKey: sourceKey as CoverageQuery["sourceKey"] };
 }
 export function membershipFilter(scope: CoverageQuery["scope"]): string {
   const tal = "and(tal_claimed.eq.true,or(lists.is.null,lists.not.cs.{tam_duplicate}))";
