@@ -16,9 +16,16 @@ async function run(req: NextRequest) {
   if (!secret || !((process.env.TAM_GROWTH_SWEEP_SECRET && secret === process.env.TAM_GROWTH_SWEEP_SECRET) || (process.env.CRON_SECRET && secret === process.env.CRON_SECRET))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  if (url.searchParams.has("sourceOnly") && url.searchParams.get("sourceOnly") !== "1") {
+    return NextResponse.json({ error: "sourceOnly must be 1 when supplied" }, { status: 400 });
+  }
+  const sourceOnly = url.searchParams.get("sourceOnly") === "1";
+  if (sourceOnly && url.searchParams.get("finance") === "1") {
+    return NextResponse.json({ error: "sourceOnly cannot be combined with finance" }, { status: 400 });
+  }
   const n = Math.min(Number(url.searchParams.get("n") ?? 50) || 50, 600);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
-  const result = await sweepBase(n, { finance: url.searchParams.get("finance") === "1", offset });
+  const result = await sweepBase(n, { finance: url.searchParams.get("finance") === "1", offset, sourceOnly });
   await logEvent("headhunter", "trigger.sweep", { summary: `Trigger sweep: ${result.companies_triggered}/${result.checked} fired — ${result.finance_triggers} finance, ${result.erp_triggers} ERP-ready, ${result.news_triggers} news`, entity_type: "cron", meta: result });
   return NextResponse.json(result);
 }

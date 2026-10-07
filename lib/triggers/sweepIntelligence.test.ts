@@ -42,6 +42,58 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("broader news observation intake", () => {
+  it("captures broad and executive TAM news without legacy candidates in source-only mode", async () => {
+    mocks.pick.mockResolvedValue([{ ...company, claimable: true }]);
+    mocks.newsItems.mockResolvedValue([{ ...item, raw_excerpt: "Acme Logistics appoints chief financial officer" }]);
+    mocks.classifier.mockReturnValue("press");
+    expect(await sweepBase(1, { sourceOnly: true })).toMatchObject({ sourceOnly: true, succeeded: 1, news_triggers: 0, companies_triggered: 0 });
+    expect(mocks.enqueue).toHaveBeenCalledTimes(2);
+    expect(mocks.newsItemsResult).toHaveBeenCalled();
+    expect(mocks.classifier).not.toHaveBeenCalled();
+    expect(mocks.queue).not.toHaveBeenCalled();
+    expect(mocks.flags).not.toHaveBeenCalled();
+  });
+
+  it("rejects disabled source-only capture or a paid-finance combination before reserving TAM rows", async () => {
+    await expect(sweepBase(1, { sourceOnly: true, finance: true })).rejects.toThrow("legacy paid finance");
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "false");
+    await expect(sweepBase(1, { sourceOnly: true })).rejects.toThrow("requires evidence capture");
+    expect(mocks.pick).not.toHaveBeenCalled();
+  });
+
+  it("does not count an unavailable executive-search body as completed source-only news", async () => {
+    mocks.pick.mockResolvedValue([{ ...company, claimable: true }]);
+    mocks.newsResult.mockResolvedValue({ items: [], status: "empty" });
+    mocks.newsItems.mockResolvedValue([item]);
+    mocks.fetch.mockResolvedValue({ status: 403, finalUrl: item.source_url, body: "Forbidden" });
+    expect(await sweepBase(1, { sourceOnly: true })).toMatchObject({ succeeded: 0, partial: 1 });
+    expect(mocks.checked).toHaveBeenLastCalledWith([]);
+    expect(mocks.queue).not.toHaveBeenCalled();
+  });
+
+  it("captures source-only TAL evidence without any legacy classification, flags or candidates", async () => {
+    mocks.classifier.mockReturnValue("press");
+    const options = { sourceOnly: true, llm: true };
+    expect(await checkCompanyNews(company, options)).toBe(0);
+    expect(mocks.enqueue).toHaveBeenCalled();
+    expect(mocks.classifier).not.toHaveBeenCalled();
+    expect(mocks.flags).not.toHaveBeenCalled();
+    expect(mocks.queue).not.toHaveBeenCalled();
+    expect(await classifyAndRecordHeadline(company, item, options)).toBe(false);
+    expect(mocks.classifier).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for source-only collection when capture is disabled or a feed body is unavailable", async () => {
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "false");
+    await expect(checkCompanyNews(company, { sourceOnly: true })).rejects.toThrow("requires evidence capture");
+    await expect(classifyAndRecordHeadline(company, item, { sourceOnly: true })).rejects.toThrow("requires evidence capture");
+    expect(mocks.newsResult).not.toHaveBeenCalled();
+    expect(mocks.classifier).not.toHaveBeenCalled();
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "true");
+    mocks.fetch.mockResolvedValue({ status: 403, finalUrl: item.source_url, body: "Forbidden" });
+    await expect(classifyAndRecordHeadline(company, item, { sourceOnly: true })).rejects.toThrow("article body unavailable");
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ articleBodyAvailable: false }) }));
+  });
   it("partitions successful, partial, unavailable, and failed attempts from computed collection results", async () => {
     mocks.newsResult.mockResolvedValue({ items: [], status: "empty" });
     expect(await sweepBase(1)).toMatchObject({ checked: 1, attempted: 1, succeeded: 1, partial: 0, unavailable: 0, failed: 0 });

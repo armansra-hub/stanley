@@ -189,7 +189,7 @@ const PE_RE = /\b(private equity|pe firm|portfolio company|portfolio of|backed b
  * NEW trigger landed. opts.llm = use the Opus verifier (budget-gated) on claimable. */
 type NewsCompany = { id: string; name: string; domain?: string | null; netsuite_internal_id?: string | null; publicAliases?: string[]; subindustry?: string | null; city?: string | null; state?: string | null } & FinanceHireCompanyEvidence;
 type HeadlineItem = NewsItem;
-type HeadlineOptions = { llm?: boolean; requireNameMatch?: boolean; classifierDeadlineMs?: number; captureIntelligence?: boolean };
+type HeadlineOptions = { llm?: boolean; requireNameMatch?: boolean; classifierDeadlineMs?: number; captureIntelligence?: boolean; sourceOnly?: boolean };
 
 function headlineKey(item: HeadlineItem): string {
   return createHash("sha256").update(JSON.stringify([item.source_url, item.raw_excerpt, item.signal_date])).digest("hex");
@@ -213,6 +213,12 @@ export async function classifyAndRecordHeadline(
   it: HeadlineItem,
   opts: HeadlineOptions = {},
 ): Promise<boolean> {
+  if (opts.sourceOnly) {
+    if (!intelligenceEnabled() || opts.captureIntelligence === false) throw new Error("Source-only news requires evidence capture");
+    const evidence = await observeHeadline(company, it);
+    if (!evidence.bodyAvailable) throw new Error("Source-only news article body unavailable");
+    return false;
+  }
   if (!intelligenceEnabled() || opts.captureIntelligence === false) return classifyLegacyHeadline(company, it, opts);
   // Capture starts before the old name/type filters, without changing their
   // publication rules or letting an unavailable article erase legacy effects.
@@ -251,9 +257,10 @@ async function classifyLegacyHeadline(
   return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
-export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boolean; classifierDeadlineMs?: number;
+export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boolean; classifierDeadlineMs?: number; sourceOnly?: boolean;
   onOutcome?: (outcome: SweepOutcome) => void; onError?: (stage: string, error: unknown) => void } = {}): Promise<number> {
   let added = 0;
+  if (opts.sourceOnly && !intelligenceEnabled()) throw new Error("Source-only news requires evidence capture");
   if (intelligenceEnabled()) {
     const sourceKey = "news:google";
     const state = await readSourceState(company.id, sourceKey);
@@ -286,7 +293,7 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
         }
         const [capture, legacy] = await Promise.allSettled([
           seen.has(key) ? Promise.resolve(null) : observeHeadline(company, item),
-          classifyLegacyHeadline(company, item, { ...opts, requireNameMatch: true }),
+          opts.sourceOnly ? Promise.resolve(false) : classifyLegacyHeadline(company, item, { ...opts, requireNameMatch: true }),
         ]);
         if (capture.status === "rejected") { storageFailures++; opts.onError?.("observation", capture.reason); throw capture.reason; }
         if (capture.value) {
@@ -340,7 +347,8 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
 const EXEC_HIRE_RE = /\b(names?|appoints?|appointed|hires?|hired|welcomes?|adds?|promotes?|promoted|joins?|joined|taps?|elevates?|announces?)\b/i;
 const FIN_TITLE_RE = /\b(cfo|chief financial officer|controller|comptroller|vp[\s.,-]{0,6}finance|vice president[\s,]+(of\s+)?finance|head of finance|finance director|director of finance|chief accounting officer|chief accountant)\b/i;
 /** Check a (claimable) company for a new finance-leadership hire. Returns new triggers added. */
-export async function checkExecChange(company: { id: string; name: string; netsuite_internal_id?: string | null } & FinanceHireCompanyEvidence): Promise<number> {
+export async function checkExecChange(company: NewsCompany, opts: { sourceOnly?: boolean } = {}): Promise<number> {
+  if (opts.sourceOnly && !intelligenceEnabled()) throw new Error("Source-only news requires evidence capture");
   if (!isFinanceHireEligible(company)) return 0;
   let added = 0;
   const q = `"${company.name}" (CFO OR controller OR "chief financial officer" OR "VP Finance" OR "head of finance" OR "finance director")`;
@@ -348,6 +356,10 @@ export async function checkExecChange(company: { id: string; name: string; netsu
   if (fetched.status === "unavailable") throw new Error(`Executive-change feed unavailable: ${fetched.error ?? "unknown"}`);
   for (const it of fetched.items) {
     if (!isFresh(it.signal_date, 120)) continue;
+    if (opts.sourceOnly) {
+      await classifyAndRecordHeadline(company, it, { sourceOnly: true });
+      continue;
+    }
     const clean = cleanHeadline(it.raw_excerpt);
     if (!headlineIsAboutCompany(company.name, clean)) continue;
     if (!(EXEC_HIRE_RE.test(clean) && FIN_TITLE_RE.test(clean))) continue;
@@ -364,7 +376,9 @@ export async function checkExecChange(company: { id: string; name: string; netsu
  *     domains → finance_hire (in-house-finance confirmation) + erp_tech (QuickBooks,
  *     no ERP, from the JD) triggers. One call per ~50 domains ≈ $0.13.
  */
-export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number } = {}): Promise<SweepOutcomes & { checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number }> {
+export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number; sourceOnly?: boolean } = {}): Promise<SweepOutcomes & { checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number; sourceOnly: boolean }> {
+  if (opts.sourceOnly && !intelligenceEnabled()) throw new Error("Source-only news requires evidence capture");
+  if (opts.sourceOnly && opts.finance) throw new Error("Source-only news cannot run the legacy paid finance collector");
   // The optional paid actor needs one fixed domain list. Normal recurring news
   // reserves only the next immediately attempted micro-batch below.
   const companies = opts.finance ? await pickForRotation(limit, opts.offset ?? 0) : null;
@@ -425,11 +439,11 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
         let n = 0;
-        try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs,
+        try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs, sourceOnly: opts.sourceOnly,
           onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id) }); }
         catch (error) { sweepError(outcomes, "news", "collection", error, c.id); }
         // Exec-change (new finance leader) — claimable NetSuite-TAM leads only.
-        if (claimable) { try { n += await checkExecChange(c); } catch (error) {
+        if (claimable) { try { n += await checkExecChange(c, { sourceOnly: opts.sourceOnly }); } catch (error) {
           sweepError(outcomes, "news:executive-change", "collection", error, c.id);
           if ((outcome as SweepOutcome) === "succeeded") outcome = "partial";
         } }
@@ -448,5 +462,5 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   for (const cid of touched) {
     try { await recomputePriority(cid); } catch (error) { sweepError(outcomes, "news", "priority", error, cid); }
   }
-  return { ...outcomes, checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp };
+  return { ...outcomes, checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp, sourceOnly: opts.sourceOnly === true };
 }

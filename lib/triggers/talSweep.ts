@@ -15,7 +15,7 @@ export const TAL_NEWS_FINAL_BATCH_HEADROOM_MS = 60_000;
  * Persist each finished batch's alerts before admitting more work. Signal
  * identity/publication rules remain in the shared company-news collector.
  */
-export async function sweepTalNews() {
+export async function sweepTalNews(opts: { sourceOnly?: boolean } = {}) {
   const deadline = Date.now() + TAL_NEWS_BUDGET_MS;
   return withServiceDeadline(deadline, async () => {
     const companies = await listTalCompanies();
@@ -34,7 +34,7 @@ export async function sweepTalNews() {
         stats.attempted++;
         stats.checked++;
         try {
-          const n = await checkCompanyNews(c, { llm: true, classifierDeadlineMs,
+          const n = await checkCompanyNews(c, { llm: !opts.sourceOnly, sourceOnly: opts.sourceOnly, classifierDeadlineMs,
             onOutcome: value => { outcome = value; },
             onError: (stage, error) => sweepError(stats, "tal-news", stage, error, c.id),
           });
@@ -65,7 +65,7 @@ export async function sweepTalNews() {
       }
     }
     const remaining = companies.length - stats.attempted;
-    return { ...stats, eligible: companies.length, remaining, failedAlertCompanyIds,
+    return { ...stats, sourceOnly: opts.sourceOnly === true, eligible: companies.length, remaining, failedAlertCompanyIds,
       complete: remaining === 0 && stats.succeeded === stats.attempted && stats.error_count === 0,
       stopReason: remaining ? "budget_reached" : "worklist_exhausted" };
   });

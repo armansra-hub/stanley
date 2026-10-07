@@ -12,7 +12,7 @@ const repair = await readFile(new URL("../supabase/migrations/0138_codex_news_sc
 const scalar = async (sql, values = []) => (await db.query(sql, values)).rows[0]?.value;
 const rpc = (action, payload) => scalar("select intelligence_codex_news($1,$2) value", [action, payload]);
 const checks = [];
-const test = async (name, action) => { await action(); checks.push(name); };
+const test = async (name, action) => { try { await action(); checks.push(name); } catch (error) { error.message = `${name}: ${error.message}`; throw error; } };
 const text = "Acme opened an office. 😀 Exact original article.";
 const company = randomUUID();
 async function seed(options = {}) {
@@ -64,6 +64,7 @@ try {
       assert.ok(!JSON.stringify(plan.rows).includes("q.result"));
     }
   });
+  await db.exec(await readFile(new URL("../supabase/migrations/0143_codex_source_review.sql", import.meta.url), "utf8"));
   await test("scalar TAL-first selection skips many pending paid candidates and large irrelevant bodies, then reaches all-TAM fallback", async () => {
     const tam = randomUUID();
     await db.query("insert into companies(id,name,domain,status,lists,tal_claimed) values($1,'TAM only','tam-only.com','new',array['netsuite_tam'],false)", [tam]);
@@ -151,6 +152,38 @@ try {
     await db.query("update intelligence_jobs set codex_news_request_id=$1 where id=$2", [orphan.requestId, orphaned.id]);
     await seed(); await db.query("update companies set lists=array['tam_duplicate'] where id=$1", [company]); assert.equal(await claim(), null);
     for (const role of ["anon", "authenticated"]) assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value", [role]), false);
+  });
+  await test("nonnews finite selector, complete-body gates, original bindings and canonical publication", async () => {
+    await db.exec("truncate intelligence_jobs,intelligence_observations");
+    await db.query("update companies set lists=array['netsuite_tam'],status='new' where id=$1", [company]);
+    const metadata = { textTruncated: false, retainedCharacters: text.length, sourceCharacters: text.length,
+      discovery: { collector: "website" }, meaningfulContentHash: "a".repeat(64) };
+    const website = await seed({ kind: "website", metadata });
+    const req = { requestId: randomUUID(), taskId: "/root/reader", sourceKind: "website", companyIds: [company], observedThrough: new Date().toISOString() };
+    const p = await rpc("claim", req); assert.equal(p.jobId, website.id); assert.equal(p.snapshot.observation.source_kind, "website");
+    assert.equal((await rpc("claim", req)).jobId, p.jobId);
+    await assert.rejects(rpc("claim", { ...req, sourceKind: "job" }), /selection conflict/);
+    const a = await analyzed(p); const f = finishPayload(a); f.trigger.source_name = "Codex · Independently reviewed public website";
+    const saved = await rpc("finish", f); assert.equal(saved.status, "complete");
+    assert.equal(saved.publication.trigger.id, saved.review.receipt.triggerId);
+    const job = await seed({ kind: "job", metadata: { ...metadata, atsType: "lever", atsToken: "acme", atsJobKey: "1", descriptionAvailable: true, bodySchemaValidated: true, bodySchemaVersion: "ats-body-schema-v1" } });
+    const q = await rpc("claim", { ...req, requestId: randomUUID(), sourceKind: "job", observedThrough: new Date().toISOString() });
+    assert.equal(q.jobId, job.id);
+    assert.equal((await rpc("finish", finishPayload(await analyzed(q, "no_signal")))).review.receipt.triggerId, null);
+    for (const provenance of [{}, { bodySchemaValidated: "true", bodySchemaVersion: "ats-body-schema-v1" }, { bodySchemaValidated: true, bodySchemaVersion: "unknown" }]) {
+      await seed({ kind: "job", metadata: { ...metadata, atsType: "lever", atsToken: "acme", atsJobKey: "1", descriptionAvailable: true, ...provenance } });
+      const incomplete = await rpc("claim", { ...req, requestId: randomUUID(), sourceKind: "job", observedThrough: new Date().toISOString() });
+      await assert.rejects(analyzed(incomplete, "no_signal"), /Job completeness provenance missing/);
+      await rpc("hold", { ...bound(incomplete), taskId: "/root/reader", reason: "Original body schema provenance absent or invalid; retain hold until verified capture exists." });
+    }
+    await seed({ kind: "website", metadata: { ...metadata, textTruncated: true } });
+    const bad = await rpc("claim", { ...req, requestId: randomUUID(), observedThrough: new Date().toISOString() });
+    await assert.rejects(analyzed(bad), /source is incomplete/);
+    await rpc("hold", { ...bound(bad), taskId: "/root/reader", reason: "Original website text incomplete; explicit unresolved hold, no negative completion." });
+    await assert.rejects(rpc("claim", { ...req, requestId: randomUUID(), sourceKind: "federal_award" }), /Unsupported/);
+    await assert.rejects(rpc("claim", { ...req, requestId: randomUUID(), companyIds: [company, company] }), /Duplicate/);
+    await assert.rejects(rpc("claim", { requestId: randomUUID(), taskId: "/root/reader", companyIds: [company] }), /Finite scope/);
+    assert.equal(await rpc("claim", { ...req, requestId: randomUUID(), observedThrough: "2000-01-01T00:00:00Z" }), null);
   });
   console.log(JSON.stringify({ offline: true, passed: checks.length, checks, providerCalls: 0, productionAccess: false }));
 } finally { await db.close(); }

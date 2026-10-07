@@ -1,5 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
+import { validatedAtsBody } from "./atsBodySchema";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { companyPageUrl, discoverSiteLinks, htmlToVisibleText, sameCompanySite } from "./siteDiscovery";
 import { publicResponseOutcome, sourceErrorCode, type SourceUrlOutcome } from "./outcomes";
@@ -21,7 +22,7 @@ import { adpBoardFromHtml, fetchAdpBatch } from "./atsAdp";
  */
 
 export type AtsType = "greenhouse" | "lever" | "ashby" | "smartrecruiters" | "recruitee" | "workable" | "wizehire" | "jazzhr" | "jobvite" | "workday" | "icims" | "adp";
-export interface AtsJob { id?: string; title: string; description: string; url: string; location: string; date: string | null }
+export interface AtsJob { id?: string; title: string; description: string; url: string; location: string; date: string | null; bodySchemaValidated?: boolean }
 
 async function fetchText(url: string, ms = 7000, companyBase?: string): Promise<string | null> {
   try {
@@ -44,7 +45,8 @@ async function fetchJson(url: string, ms = 8000): Promise<any | null> {
   } catch { return null; }
 }
 
-const htmlToText = (s: string) => htmlToVisibleText(String(s ?? ""));
+const htmlToText = (s: string) => htmlToVisibleText(typeof s === "string" ? s : "");
+const sourceString = (value: unknown): string => typeof value === "string" ? value : "";
 
 // URL signatures that reveal the ATS + its slug (token), in priority order.
 const ATS_PATTERNS: { type: AtsType; re: RegExp }[] = [
@@ -126,21 +128,22 @@ export interface AtsJobBatch {
 }
 
 function jobDate(value: unknown): string | null {
-  if (value == null || value === "") return null;
-  const date = typeof value === "number" ? new Date(value) : new Date(String(value));
+  if ((typeof value !== "string" && typeof value !== "number") || value === "") return null;
+  const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function normalizeJob(type: AtsType, token: string, j: any): AtsJob {
+  const body = validatedAtsBody(type, j);
   const id = j.id ?? j.shortcode ?? j.jobId ?? j.slug;
-  const identity = id == null || String(id).length > 250 ? {} : { id: String(id) };
-  if (type === "greenhouse") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.content ?? ""), url: String(j.absolute_url ?? ""), location: String(j.location?.name ?? ""), date: jobDate(j.updated_at) };
-  if (type === "lever") return { ...identity, title: String(j.text ?? ""), description: htmlToText([j.descriptionPlain ?? j.description ?? "", ...(Array.isArray(j.lists) ? j.lists.map((list: any) => `${list.text ?? ""} ${list.content ?? ""}`) : []), j.additionalPlain ?? j.additional ?? ""].join(" ")), url: String(j.hostedUrl ?? ""), location: String(j.categories?.location ?? ""), date: jobDate(j.createdAt) };
-  if (type === "ashby") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.descriptionPlain ?? j.descriptionHtml ?? ""), url: String(j.jobUrl ?? j.applyUrl ?? ""), location: String(j.location ?? j.locationName ?? ""), date: jobDate(j.publishedAt ?? j.updatedAt) };
-  if (type === "smartrecruiters") return { ...identity, title: String(j.name ?? ""), description: htmlToText(Object.values(j.jobAd?.sections ?? {}).map((section: any) => section?.text ?? "").join(" ")), url: `https://jobs.smartrecruiters.com/${token}/${encodeURIComponent(String(j.id ?? ""))}`, location: String(j.location?.city ?? ""), date: jobDate(j.releasedDate ?? j.createdOn) };
-  if (type === "recruitee") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.description ?? ""), url: String(j.careers_url ?? j.url ?? ""), location: String(j.location ?? ""), date: jobDate(j.published_at) };
-  if (type === "workable") return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.description ?? ""), url: String(j.url ?? j.shortlink ?? ""), location: String(j.location?.location_str ?? j.city ?? ""), date: jobDate(j.published_on ?? j.created_at) };
-  return { ...identity, title: String(j.title ?? ""), description: htmlToText(j.snippet ?? ""), url: String(j.url ?? ""), location: String(j.location ?? ""), date: null };
+  const identity = (typeof id !== "string" && !(typeof id === "number" && Number.isFinite(id))) || String(id).length > 250 ? {} : { id: String(id) };
+  if (type === "greenhouse") return { ...identity, title: sourceString(j.title ?? ""), ...body, url: sourceString(j.absolute_url ?? ""), location: sourceString(j.location?.name ?? ""), date: jobDate(j.updated_at) };
+  if (type === "lever") return { ...identity, title: sourceString(j.text ?? ""), ...body, url: sourceString(j.hostedUrl ?? ""), location: sourceString(j.categories?.location ?? ""), date: jobDate(j.createdAt) };
+  if (type === "ashby") return { ...identity, title: sourceString(j.title ?? ""), ...body, url: sourceString(j.jobUrl ?? j.applyUrl ?? ""), location: sourceString(j.location ?? j.locationName ?? ""), date: jobDate(j.publishedAt ?? j.updatedAt) };
+  if (type === "smartrecruiters") return { ...identity, title: sourceString(j.name ?? ""), ...body, url: `https://jobs.smartrecruiters.com/${token}/${encodeURIComponent(identity.id ?? "")}`, location: sourceString(j.location?.city ?? ""), date: jobDate(j.releasedDate ?? j.createdOn) };
+  if (type === "recruitee") return { ...identity, title: sourceString(j.title ?? ""), ...body, url: sourceString(j.careers_url ?? j.url ?? ""), location: sourceString(j.location ?? ""), date: jobDate(j.published_at) };
+  if (type === "workable") return { ...identity, title: sourceString(j.title ?? ""), ...body, url: sourceString(j.url ?? j.shortlink ?? ""), location: sourceString(j.location?.location_str ?? j.city ?? ""), date: jobDate(j.published_on ?? j.created_at) };
+  return { ...identity, title: sourceString(j.title ?? ""), description: htmlToText(j.snippet ?? ""), url: sourceString(j.url ?? ""), location: sourceString(j.location ?? ""), date: null };
 }
 
 /**
@@ -205,7 +208,11 @@ export async function fetchAtsJobsBatch(type: AtsType, token: string, options: {
         await Promise.all(detailJobs.map(async (job) => {
           const id = new URL(job.url).pathname.split("/").pop();
           const detail = await json(`https://api.smartrecruiters.com/v1/companies/${token}/postings/${id}`);
-          if (detail && String(detail.id ?? "") === decodeURIComponent(id ?? "")) job.description = normalizeJob(type, token, detail).description;
+          if (detail && String(detail.id ?? "") === decodeURIComponent(id ?? "")) {
+            const normalized = normalizeJob(type, token, detail);
+            // Keep validated body and its original identity/date fields together.
+            if (normalized.bodySchemaValidated) Object.assign(job, normalized);
+          }
         }));
       }
     } else {

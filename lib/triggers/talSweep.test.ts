@@ -24,6 +24,12 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("bounded TAL news supplement", () => {
+  it("passes explicit source-only collection without enabling the legacy model", async () => {
+    mocks.collect.mockImplementation(async (_company, options) => { options.onOutcome("succeeded"); return 0; });
+    expect(await sweepTalNews({ sourceOnly: true })).toMatchObject({ sourceOnly: true, succeeded: 1, alerted: 0 });
+    expect(mocks.collect.mock.calls[0][1]).toMatchObject({ sourceOnly: true, llm: false });
+    expect(mocks.priority).not.toHaveBeenCalled();
+  });
   it("stops admitting work with final-batch headroom and retains that batch's alerts", async () => {
     mocks.list.mockResolvedValue(companies(45));
     mocks.collect.mockImplementation(async (_company, options) => {

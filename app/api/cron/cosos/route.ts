@@ -14,9 +14,12 @@ async function run(req: NextRequest) {
   if (!secret || !((process.env.TAM_GROWTH_SWEEP_SECRET && secret === process.env.TAM_GROWTH_SWEEP_SECRET) || (process.env.CRON_SECRET && secret === process.env.CRON_SECRET))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  if (url.searchParams.has("sourceOnly") && url.searchParams.get("sourceOnly") !== "1") {
+    return NextResponse.json({ error: "sourceOnly must be 1 when supplied" }, { status: 400 });
+  }
   const n = Math.min(Number(url.searchParams.get("n") ?? 200) || 200, 400);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
-  const result = await sweepCoSos(n, { offset });
+  const result = await sweepCoSos(n, { offset, sourceOnly: url.searchParams.get("sourceOnly") === "1" });
   await logEvent("headhunter", "cosos.sweep", { summary: `CO registry watch: ${result.triggered} new subsidiaries + ${result.ucc} UCC financings (${result.checked} checked)`, entity_type: "cron", meta: result });
   return NextResponse.json(result);
 }

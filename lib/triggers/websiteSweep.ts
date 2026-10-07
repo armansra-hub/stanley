@@ -32,11 +32,14 @@ export const WEBSITE_ADMISSION_BUDGET_MS = 150_000;
  * Homepage/about-page phrases never publish M&A or expansion triggers. They do not
  * provide a canonical evidence page and previously created fabricated /# links.
  */
-export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail" } = {}): Promise<SweepOutcomes & { checked: number; changed: number; triggered: number; parents: number; dismissed: number }> {
-  const stats = { ...newSweepOutcomes(), checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0 };
+export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail"; sourceOnly?: boolean } = {}): Promise<SweepOutcomes & { checked: number; changed: number; triggered: number; parents: number; dismissed: number; sourceOnly: boolean }> {
+  const stats = { ...newSweepOutcomes(), checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0, sourceOnly: opts.sourceOnly === true };
   const captureEnabled = intelligenceEnabled();
+  if (opts.sourceOnly && !captureEnabled) throw new Error("Source-only website requires evidence capture");
   let autodismiss = true;
-  try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch (error) { sweepError(stats, "website", "config_read", error); }
+  if (!opts.sourceOnly) {
+    try { autodismiss = (await getAppConfig()).parent_autodismiss; } catch (error) { sweepError(stats, "website", "config_read", error); }
+  }
 
   for await (const slice of rotationBatches(
     (n, offset) => pickSitesForRotation(n, offset, opts.scope ?? "claimable"),
@@ -132,7 +135,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         if (!captureEnabled) await setSiteChecked(c.id, fingerprint);
         stats.changed += scan.growth.filter((x) => !priorSet.has(x.label)).length;
 
-        if (scan.parent) {
+        if (scan.parent && !opts.sourceOnly) {
           await setParent(c.id, scan.parent.name, scan.parent.confidence);
           stats.parents++;
           if (scan.parent.confidence === "high" && autodismiss) { await setCompaniesStatus([c.id], "dismissed"); stats.dismissed++; }
@@ -148,9 +151,14 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           const feedItems = feedResult.items.filter(it => fresh(it.signal_date));
           if (captureEnabled) {
             for (let from = 0; from < feedItems.length; from += 4) {
-              const results = await Promise.allSettled(feedItems.slice(from, from + 4).map(it => classifyAndRecordHeadline(c, it, { llm: true, requireNameMatch: false, classifierDeadlineMs })));
+              const results = await Promise.allSettled(feedItems.slice(from, from + 4).map(it => classifyAndRecordHeadline(c, it, { llm: !opts.sourceOnly, sourceOnly: opts.sourceOnly, requireNameMatch: false, classifierDeadlineMs })));
               for (const result of results) {
-                if (result.status === "rejected") { captureFailed = storageFailed = true; sweepError(stats, "website", "headline", result.reason, c.id); }
+                if (result.status === "rejected") {
+                  captureFailed = true;
+                  const bodyUnavailable = opts.sourceOnly && result.reason instanceof Error && result.reason.message === "Source-only news article body unavailable";
+                  if (!bodyUnavailable) storageFailed = true;
+                  sweepError(stats, "website", bodyUnavailable ? "feed_body" : "headline", result.reason, c.id);
+                }
                 else if (result.value) { stats.triggered++; touched = true; }
               }
             }
@@ -161,7 +169,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
           }
         }
 
-        for (const hit of scan.financeRoles) {
+        for (const hit of opts.sourceOnly ? [] : scan.financeRoles) {
           if (!isFinanceHireEligible(c) || !isCareerEvidenceUrl(hit.url)) continue;
           if (await recordTrigger(c.id, {
             type: "finance_hire",

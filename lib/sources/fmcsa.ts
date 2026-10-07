@@ -34,12 +34,26 @@ function domainFromEmail(email?: string): string | undefined {
   return FREE_EMAIL.has(m[1]) ? undefined : m[1];
 }
 
-export interface CarrierRecord { dot: string; legal: string; dba: string; units: number; drivers: number; city: string; state: string; mcs150: string }
+export interface CarrierRecord { dot: string; legal: string; dba: string; units: number | null; drivers: number | null; city: string; state: string; mcs150: string }
+
+const optionalText = (value: unknown) => value == null || typeof value === "string";
+const sourceCount = (value: unknown): number | null => value == null ? null : Number(value);
+const validCount = (value: unknown) => value == null || (typeof value === "number" || typeof value === "string" && /^\d+$/.test(value))
+  && Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+function validCarrierRow(row: Record<string, unknown>): boolean {
+  const dot = row.dot_number;
+  return (typeof dot === "string" && /^[1-9]\d*$/.test(dot) || typeof dot === "number" && Number.isSafeInteger(dot) && dot > 0)
+    && optionalText(row.legal_name) && optionalText(row.dba_name)
+    && [row.legal_name, row.dba_name].some(name => typeof name === "string" && name.trim().length > 0)
+    && validCount(row.nbr_power_unit) && validCount(row.driver_total)
+    && [row.phy_city, row.phy_state, row.mcs150_date].every(optionalText);
+}
 
 /** Look up a specific carrier in the FMCSA census BY NAME (for monitoring a known
  * TAM company, not discovery). Matches the company's core name against legal_name
  * or dba_name; the caller verifies + picks the best match. */
-export async function fetchCarrierByName(name: string, max = 5): Promise<CarrierRecord[]> {
+export type FmcsaSourceCapture = { sourceUrl: string; observedAt: string; rows: Record<string, unknown>[] };
+export async function fetchCarrierByName(name: string, max = 5, opts: { strict?: boolean; onTruncated?: () => void; onCapture?: (capture: FmcsaSourceCapture) => void } = {}): Promise<CarrierRecord[]> {
   const core = name.toUpperCase().replace(/[^A-Z0-9 ]+/g, " ")
     .replace(/\b(LLC|INC|INCORPORATED|CORP|CORPORATION|CO|COMPANY|LTD|LP|LLP|THE)\b/g, " ")
     .replace(/\s+/g, " ").trim();
@@ -51,15 +65,20 @@ export async function fetchCarrierByName(name: string, max = 5): Promise<Carrier
     $where: where, $order: "nbr_power_unit::number DESC", $limit: String(max),
   });
   try {
-    const res = await fetch(`${DATASET}?${params}`, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {} });
-    if (!res.ok) return [];
+    const res = await fetch(`${DATASET}?${params}`, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {}, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`FMCSA source HTTP ${res.status}`);
     const rows = await res.json();
-    return (Array.isArray(rows) ? rows : []).map((r: Record<string, unknown>) => ({
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) throw new Error("FMCSA source invalid response");
+    opts.onCapture?.({ sourceUrl: `${DATASET}?${params}`, observedAt: new Date().toISOString(), rows });
+    if (opts.strict && rows.some(row => !validCarrierRow(row))) throw new Error("FMCSA source invalid record");
+    if (rows.length >= max) opts.onTruncated?.();
+    return rows.map((r: Record<string, unknown>) => ({
       dot: String(r.dot_number ?? ""), legal: String(r.legal_name ?? ""), dba: String(r.dba_name ?? ""),
-      units: parseInt(String(r.nbr_power_unit ?? ""), 10) || 0, drivers: parseInt(String(r.driver_total ?? ""), 10) || 0,
+      units: opts.strict ? sourceCount(r.nbr_power_unit) : parseInt(String(r.nbr_power_unit ?? ""), 10) || 0,
+      drivers: opts.strict ? sourceCount(r.driver_total) : parseInt(String(r.driver_total ?? ""), 10) || 0,
       city: String(r.phy_city ?? ""), state: String(r.phy_state ?? ""), mcs150: String(r.mcs150_date ?? ""),
     }));
-  } catch { return []; }
+  } catch (error) { if (opts.strict) throw error; return []; }
 }
 
 export async function fetchFmcsaCandidates(

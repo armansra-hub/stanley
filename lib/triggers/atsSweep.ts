@@ -22,10 +22,11 @@ import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepOutcomes } f
  * accounting incumbent: QuickBooks-class boosts the readiness score; an existing
  * ERP (NetSuite/Intacct/…) suppresses the lead (not a prospect).
  */
-export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Promise<SweepOutcomes & { checked: number; detected: number; with_board: number; finance_triggers: number; erp_triggers: number; already_on_erp: number }> {
-  const stats = { ...newSweepOutcomes(), checked: 0, detected: 0, with_board: 0, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0 };
+export async function sweepAts(limit = 120, opts: { offset?: number; sourceOnly?: boolean } = {}): Promise<SweepOutcomes & { checked: number; detected: number; with_board: number; finance_triggers: number; erp_triggers: number; already_on_erp: number; sourceOnly: boolean }> {
+  const stats = { ...newSweepOutcomes(), checked: 0, detected: 0, with_board: 0, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0, sourceOnly: opts.sourceOnly === true };
   const touched = new Set<string>();
   const intelligenceEnabled = process.env.STANLEY_INTELLIGENCE_ENABLED === "true";
+  if (opts.sourceOnly && !intelligenceEnabled) throw new Error("Source-only ATS requires evidence capture");
 
   for await (const slice of rotationBatches(pickAtsForRotation, { limit, batchSize: 12, offset: opts.offset })) {
     stats.checked += slice.length;
@@ -66,7 +67,7 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
         // A finance role at a record-dead or finance-services company is not an
         // in-house-finance readiness signal. We still stamp/detect its board, but
         // do not infer triggers or an incumbent from its delivery-team postings.
-        if (c.record_dead === true) { outcome = "skipped"; return; }
+        if (c.record_dead === true && !opts.sourceOnly) { outcome = "skipped"; return; }
         const financeEligible = isFinanceHireEligible(c);
 
         // 2) Poll + scan.
@@ -99,12 +100,16 @@ export async function sweepAts(limit = 120, opts: { offset?: number } = {}): Pro
               eventDate: j.date,
               metadata: { atsType: type, atsToken: token, atsJobKey: prepared.job_key, atsRoleCategories: prepared.categories,
                 listingChange: known ? "changed" : "first_observed", isClientPlacement: scan.isClientPlacement,
-                jobDateKind: type === "greenhouse" ? "updated" : "published_or_created", descriptionAvailable: Boolean(j.description) },
+                ...(opts.sourceOnly ? { collectionMode: "source_only", identityVerified: false } : {}),
+                jobDateKind: type === "greenhouse" ? "updated" : "published_or_created", descriptionAvailable: Boolean(j.description), bodySchemaValidated: j.bodySchemaValidated === true, bodySchemaVersion: "ats-body-schema-v1" },
               });
               if (!stored) throw new Error("ATS observation persistence disabled");
             }
           }
           stage = "signals";
+          // Board discovery is not attribution of every shared-board vacancy.
+          // Source-only collection retains evidence for independent review.
+          if (opts.sourceOnly) continue;
           // Recruiting delivery work and client placements are not an in-house
           // incumbent. New operating-role evidence stays in the research lane.
           if (!financeEligible || scan.isClientPlacement || (["jazzhr", "jobvite", "workday", "icims", "adp"].includes(type) && !j.description.trim())) continue;

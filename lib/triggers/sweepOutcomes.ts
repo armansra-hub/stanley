@@ -1,5 +1,6 @@
 /** Company outcomes, independent of the timestamps used to reserve rotation work. */
 export type SweepOutcome = "succeeded" | "partial" | "unavailable" | "failed" | "unsupported" | "skipped";
+export type SweepCompanyReceipt = { companyId: string; outcome: SweepOutcome; reason: string; captured: boolean; complete: boolean; completionStamped: boolean };
 export type SweepOutcomes = Record<SweepOutcome | "attempted", number> & {
   error_count: number;
   errors: { companyId?: string; source: string; stage: string; code: string; databaseCode?: string }[];

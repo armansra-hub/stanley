@@ -10,6 +10,26 @@ import "server-only";
  */
 const DATASET = "https://data.colorado.gov/resource/4ykn-tg5h.json";
 const APP_TOKEN = process.env.SOCRATA_APP_TOKEN;
+export type ColoradoSourceCapture = { sourceUrl: string; table: "entity" | "debtor" | "filing" | "party"; observedAt: string; rows: Record<string, unknown>[] };
+type CaptureOptions = { strict?: boolean; onTruncated?: () => void; onCapture?: (capture: ColoradoSourceCapture) => void };
+const nonemptyText = (value: unknown) => typeof value === "string" && value.trim().length > 0;
+const optionalText = (value: unknown) => value == null || typeof value === "string";
+const sourceId = (value: unknown) => nonemptyText(value) || typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+function sourceDate(value: unknown): boolean {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}(?:T|$)/.test(value) || !Number.isFinite(Date.parse(value))) return false;
+  const day = value.slice(0, 10), parsedDay = new Date(`${day}T00:00:00Z`);
+  return Number.isFinite(parsedDay.getTime()) && parsedDay.toISOString().slice(0, 10) === day;
+}
+function validEntity(row: Record<string, unknown>): boolean {
+  return sourceId(row.entityid) && nonemptyText(row.entityname) && sourceDate(row.entityformdate)
+    && [row.entitytype, row.entitystatus, row.principalcity].every(optionalText);
+}
+type UccTable = "debtor" | "filing" | "party";
+function validUccRow(row: Record<string, unknown>, table: UccTable): boolean {
+  if (!sourceId(row.fileid)) return false;
+  return table === "filing" ? sourceDate(row.filingdate) && nonemptyText(row.documenttype)
+    : nonemptyText(row.organizationname) && (table !== "debtor" || optionalText(row.city));
+}
 
 export interface SosEntity { name: string; id: string; formed: string; type: string; status: string; city: string }
 
@@ -34,7 +54,7 @@ export function brandKey(name: string): { tokens: string[]; upper: string } | nu
 }
 
 /** Recently-formed CO entities whose name contains `coreUpper`. */
-export async function fetchNewCoEntities(coreUpper: string, sinceISO: string, max = 10): Promise<SosEntity[]> {
+export async function fetchNewCoEntities(coreUpper: string, sinceISO: string, max = 10, opts: CaptureOptions = {}): Promise<SosEntity[]> {
   if (coreUpper.replace(/[^A-Z0-9]/g, "").length < 6) return []; // too short → skip
   const esc = coreUpper.replace(/'/g, "''");
   const where = `upper(entityname) like '%${esc}%' AND entityformdate > '${sinceISO}' AND entitystatus = 'Good Standing'`;
@@ -43,14 +63,18 @@ export async function fetchNewCoEntities(coreUpper: string, sinceISO: string, ma
     $where: where, $order: "entityformdate DESC", $limit: String(max),
   });
   try {
-    const res = await fetch(`${DATASET}?${params}`, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {} });
-    if (!res.ok) return [];
+    const res = await fetch(`${DATASET}?${params}`, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {}, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`Colorado entity source HTTP ${res.status}`);
     const rows = await res.json();
-    return (Array.isArray(rows) ? rows : []).map((r: Record<string, unknown>) => ({
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) throw new Error("Colorado entity source invalid response");
+    opts.onCapture?.({ sourceUrl: `${DATASET}?${params}`, table: "entity", observedAt: new Date().toISOString(), rows });
+    if (opts.strict && rows.some(row => !validEntity(row))) throw new Error("Colorado entity source invalid record");
+    if (rows.length >= max) opts.onTruncated?.();
+    return rows.map((r: Record<string, unknown>) => ({
       name: String(r.entityname ?? ""), id: String(r.entityid ?? ""), formed: String(r.entityformdate ?? ""),
       type: String(r.entitytype ?? ""), status: String(r.entitystatus ?? ""), city: String(r.principalcity ?? ""),
     }));
-  } catch { return []; }
+  } catch (error) { if (opts.strict) throw error; return []; }
 }
 
 // ── CO UCC financing statements (same open-data portal) ─────────────────────────
@@ -69,13 +93,17 @@ export interface UccFiling {
 }
 const UCC_PARTIES = "https://data.colorado.gov/resource/ap62-sav4.json";
 
-async function socrata(url: string): Promise<Record<string, unknown>[]> {
+async function socrata(url: string, opts: CaptureOptions, table: UccTable): Promise<Record<string, unknown>[]> {
   try {
-    const res = await fetch(url, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {} });
-    if (!res.ok) return [];
+    const res = await fetch(url, { headers: APP_TOKEN ? { "X-App-Token": APP_TOKEN } : {}, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`Colorado UCC source HTTP ${res.status}`);
     const rows = await res.json();
-    return Array.isArray(rows) ? rows : [];
-  } catch { return []; }
+    if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== "object" || Array.isArray(row))) throw new Error("Colorado UCC source invalid response");
+    opts.onCapture?.({ sourceUrl: url, table, observedAt: new Date().toISOString(), rows });
+    if (opts.strict && rows.some(row => !validUccRow(row, table))) throw new Error(`Colorado UCC ${table} source invalid record`);
+    if (rows.length >= Number(new URL(url).searchParams.get("$limit"))) opts.onTruncated?.();
+    return rows;
+  } catch (error) { if (opts.strict) throw error; return []; }
 }
 
 /** Recent original UCC financing statements where this company is the DEBTOR.
@@ -83,16 +111,18 @@ async function socrata(url: string): Promise<Record<string, unknown>[]> {
  * names carry suffixes the TAM name may lack; equality avoids substring FPs).
  * Each filing carries evidence: as-filed debtor name + city, and the secured
  * party (the lender) from the parties table. */
-export async function fetchRecentUccFilings(name: string, sinceISO: string): Promise<UccFiling[]> {
+export async function fetchRecentUccFilings(name: string, sinceISO: string, opts: CaptureOptions = {}): Promise<UccFiling[]> {
   const brand = brandKey(name);
   if (!brand) return []; // single-token/generic names: too collision-prone for a registry join
   const esc = brand.upper.replace(/'/g, "''");
   const dq = new URLSearchParams({ $select: "organizationname,city,fileid", $where: `upper(organizationname) like '${esc}%'`, $limit: "25" });
-  const debtors = await socrata(`${UCC_DEBTORS}?${dq}`);
+  const debtors = await socrata(`${UCC_DEBTORS}?${dq}`, opts, "debtor");
   const self = lightNorm(name);
   const mine = debtors.filter((d) => lightNorm(String(d.organizationname ?? "")) === self);
   const byFile = new Map(mine.map((d) => [String(d.fileid ?? ""), d]));
-  const fileIds = [...byFile.keys()].filter(Boolean).slice(0, 10);
+  const allFileIds = [...byFile.keys()].filter(Boolean);
+  if (allFileIds.length > 10) opts.onTruncated?.();
+  const fileIds = allFileIds.slice(0, 10);
   if (fileIds.length === 0) return [];
   const fl = fileIds.map((f) => `'${f.replace(/'/g, "''")}'`).join(",");
   const fq = new URLSearchParams({
@@ -100,11 +130,13 @@ export async function fetchRecentUccFilings(name: string, sinceISO: string): Pro
     $where: `fileid in(${fl}) AND filingdate > '${sinceISO}' AND documenttype = 'UCC financing statement'`,
     $order: "filingdate DESC", $limit: "5",
   });
-  const filings = await socrata(`${UCC_FILINGS}?${fq}`);
+  const filings = await socrata(`${UCC_FILINGS}?${fq}`, opts, "filing");
+  if (opts.strict && filings.some(row => !byFile.has(String(row.fileid)))) throw new Error("Colorado UCC filing source unrelated identity");
   if (filings.length === 0) return [];
   // Secured party (the lender) for the matched filings — active records only.
   const pq = new URLSearchParams({ $select: "fileid,organizationname", $where: `fileid in(${fl}) AND recordstatus = 'active'`, $limit: "20" });
-  const parties = await socrata(`${UCC_PARTIES}?${pq}`);
+  const parties = await socrata(`${UCC_PARTIES}?${pq}`, opts, "party");
+  if (opts.strict && parties.some(row => !byFile.has(String(row.fileid)))) throw new Error("Colorado UCC party source unrelated identity");
   const lenderByFile = new Map<string, string>();
   for (const p of parties) { const f = String(p.fileid ?? ""); if (!lenderByFile.has(f)) lenderByFile.set(f, String(p.organizationname ?? "")); }
   return filings.map((r) => {

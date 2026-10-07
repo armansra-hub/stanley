@@ -15,10 +15,13 @@ async function run(req: NextRequest) {
   if (!secret || !((process.env.TAM_GROWTH_SWEEP_SECRET && secret === process.env.TAM_GROWTH_SWEEP_SECRET) || (process.env.CRON_SECRET && secret === process.env.CRON_SECRET))) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  if (url.searchParams.has("sourceOnly") && url.searchParams.get("sourceOnly") !== "1") {
+    return NextResponse.json({ error: "sourceOnly must be 1 when supplied" }, { status: 400 });
+  }
   const n = Math.min(Number(url.searchParams.get("n") ?? 150) || 150, 250);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
   const scope = url.searchParams.get("scope") === "tail" ? ("tail" as const) : ("claimable" as const);
-  const result = await sweepWebsites(n, { offset, scope });
+  const result = await sweepWebsites(n, { offset, scope, sourceOnly: url.searchParams.get("sourceOnly") === "1" });
   await logEvent("headhunter", "website.sweep", { summary: `Website watch (${scope}): ${result.triggered} new growth signals (${result.changed} sites changed / ${result.checked} checked)`, entity_type: "cron", meta: { ...result, scope } });
   return NextResponse.json(result);
 }

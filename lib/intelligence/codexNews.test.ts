@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => { throw new Error("No database or provider calls permitted"); } }));
-import { validateNewsAnalysis, validateNewsReview, newsDecisionHash, publicNewsPacket, verifyNewsCompletion, type NewsPacket } from "./codexNews";
+import { validateNewsAnalysis, validateNewsReview, newsDecisionHash, publicNewsPacket, verifyNewsCompletion, completeCodexSource, newsActionSchema, type NewsPacket } from "./codexNews";
 import { operatingCriteria } from "./profiles";
 
 const now = Date.parse("2026-09-29T12:00:00Z");
@@ -32,6 +32,47 @@ function review(p: NewsPacket) {
     rationale: "I independently read the full source and verified the identity, date and cited office development.", identityConfirmed: true as const, dateChecked: true as const, sourceLimitationsChecked: true as const };
 }
 describe("Codex canonical news review", () => {
+  it("requires validated adapter body provenance even when legacy metadata claimed availability", () => {
+    const p = packet(), o = p.snapshot.observation; o.source_kind = "job";
+    Object.assign(o.metadata, { textTruncated: false, retainedCharacters: o.evidence_text.length, sourceCharacters: o.evidence_text.length,
+      atsType: "greenhouse", atsToken: "acme", atsJobKey: "1", descriptionAvailable: true });
+    expect(completeCodexSource(p)).toBe(false);
+    Object.assign(o.metadata, { bodySchemaValidated: true, bodySchemaVersion: "wrong" });
+    expect(completeCodexSource(p)).toBe(false);
+    o.metadata.bodySchemaVersion = "ats-body-schema-v1";
+    expect(completeCodexSource(p)).toBe(true);
+    o.metadata.bodySchemaValidated = "true";
+    expect(completeCodexSource(p)).toBe(false);
+  });
+  it("binds finite selectors without broadening default news claims", () => {
+    const claim = { action: "claim", requestId: packet().review.requestId, taskId: "/root/reader" };
+    expect(newsActionSchema.parse(claim)).toEqual(claim);
+    expect(() => newsActionSchema.parse({ ...claim, sourceKind: "federal_award" })).toThrow();
+    expect(() => newsActionSchema.parse({ ...claim, companyIds: [packet().snapshot.company.id] })).toThrow();
+    expect(() => newsActionSchema.parse({ ...claim, companyIds: [packet().snapshot.company.id, packet().snapshot.company.id], observedThrough: "2026-09-29T00:00:00Z" })).toThrow();
+  });
+  it.each(["website", "job"])("reviews complete %s sources with truthful provenance and independent validation", kind => {
+    const p = packet(), o = p.snapshot.observation; o.source_kind = kind;
+    o.metadata = { textTruncated: false, retainedCharacters: o.evidence_text.length, sourceCharacters: o.evidence_text.length,
+      discovery: { collector: "website" }, meaningfulContentHash: "b".repeat(64), atsType: "lever", atsToken: "acme", atsJobKey: "job-1", descriptionAvailable: true, bodySchemaValidated: true, bodySchemaVersion: "ats-body-schema-v1" };
+    const a = analysis(p); a.criteria = Object.fromEntries(operatingCriteria(null, kind).map(c => [c.id, 0]));
+    expect(completeCodexSource(p)).toBe(true);
+    expect(validateNewsAnalysis(p, a, now).trigger?.source_name).toBe(`Codex · Independently reviewed public ${kind}`);
+    p.review.analysis = a; p.review.decisionHash = newsDecisionHash(a);
+    expect(() => validateNewsReview(p, review(p), now)).not.toThrow();
+    o.metadata.sourceCharacters = o.evidence_text.length + 1;
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("hold_required");
+  });
+  it("holds snippet-only or missing completeness provenance and rejects dedicated federal evidence", () => {
+    const p = packet(), a = analysis(p); p.snapshot.observation.source_kind = "job";
+    Object.assign(p.snapshot.observation.metadata, { retainedCharacters: a.reader.readEnd, sourceCharacters: a.reader.readEnd,
+      atsType: "wizehire", atsToken: "acme", atsJobKey: "1", descriptionAvailable: true });
+    expect(completeCodexSource(p)).toBe(false);
+    p.snapshot.observation.source_kind = "website";
+    expect(completeCodexSource(p)).toBe(false);
+    p.snapshot.observation.source_kind = "news"; p.snapshot.observation.metadata.structuredAward = true;
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("dedicated_federal_policy");
+  });
   it("uses original full text, exact spans and existing routing without fabricated Jev provenance", () => {
     const p = packet(), result = validateNewsAnalysis(p, analysis(p), now);
     expect(result.trigger).toMatchObject({ type: "press", strength: 50, source_name: "Codex · Independently reviewed public news" });

@@ -8,14 +8,17 @@ export interface FmcsaSnapshot {
 }
 
 /** Prior fleet snapshot for a carrier, or null (also null if the table doesn't exist yet). */
-export async function getFmcsaSnapshot(dot: string): Promise<FmcsaSnapshot | null> {
+export async function getFmcsaSnapshot(dot: string, opts: { strict?: boolean } = {}): Promise<FmcsaSnapshot | null> {
   const db = serviceClient();
   const { data, error } = await db
     .from("fmcsa_snapshots")
     .select("nbr_power_unit, driver_total, captured_at")
     .eq("dot_number", dot)
     .maybeSingle();
-  if (error) return null; // table missing or error → no delta
+  if (error) {
+    if (opts.strict) throw new Error(`FMCSA snapshot state read failed: ${error.code ?? "database_error"}`);
+    return null;
+  }
   return (data as FmcsaSnapshot | null) ?? null;
 }
 
@@ -24,12 +27,14 @@ export async function upsertFmcsaSnapshot(
   legalName: string,
   units: number,
   drivers: number,
+  opts: { strict?: boolean } = {},
 ): Promise<void> {
   const db = serviceClient();
-  await db
+  const { error } = await db
     .from("fmcsa_snapshots")
     .upsert(
       { dot_number: dot, legal_name: legalName, nbr_power_unit: units, driver_total: drivers, captured_at: new Date().toISOString() },
       { onConflict: "dot_number" },
     );
+  if (error && opts.strict) throw new Error(`FMCSA snapshot state write failed: ${error.code ?? "database_error"}`);
 }

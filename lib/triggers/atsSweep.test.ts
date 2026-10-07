@@ -36,6 +36,32 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("ATS collection integration", () => {
+  it("retains source-only shared-board jobs and lifecycle without publishing or assigning ERP flags", async () => {
+    mocks.fetch.mockResolvedValue({ jobs: [{ ...job, title: "Controller", description: "Lead our NetSuite ERP implementation and month-end close.", location: "Other city" }], nextOffset: null, complete: true, status: "complete" });
+    expect(await sweepAts(1, { sourceOnly: true })).toMatchObject({ sourceOnly: true, succeeded: 1, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0 });
+    expect(mocks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "job", metadata: expect.objectContaining({ collectionMode: "source_only", identityVerified: false }) }));
+    expect(mocks.apply).toHaveBeenCalledOnce();
+    expect(mocks.patterns).toHaveBeenCalledOnce();
+    expect(mocks.write).toHaveBeenCalled();
+    expect(mocks.trigger).not.toHaveBeenCalled();
+    expect(mocks.flags).not.toHaveBeenCalled();
+    expect(mocks.priority).not.toHaveBeenCalled();
+  });
+
+  it("fails before reserving ATS work when source-only capture is disabled", async () => {
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "false");
+    await expect(sweepAts(1, { sourceOnly: true })).rejects.toThrow("requires evidence capture");
+    expect(mocks.pick).not.toHaveBeenCalled();
+    expect(mocks.trigger).not.toHaveBeenCalled();
+  });
+
+  it("can capture record-dead source evidence in source-only mode without changing its record status", async () => {
+    mocks.pick.mockResolvedValue([{ ...company, record_dead: true }]);
+    expect(await sweepAts(1, { sourceOnly: true })).toMatchObject({ succeeded: 1, skipped: 0 });
+    expect(mocks.enqueue).toHaveBeenCalled();
+    expect(mocks.flags).not.toHaveBeenCalled();
+    expect(mocks.trigger).not.toHaveBeenCalled();
+  });
   it("counts complete, paginated, and unavailable board retrievals independently of rotation stamps", async () => {
     expect(await sweepAts(1)).toMatchObject({ checked: 1, attempted: 1, succeeded: 1, partial: 0, unavailable: 0, failed: 0 });
     mocks.fetch.mockResolvedValue({ jobs: [job], nextOffset: 150, complete: false, status: "partial" });

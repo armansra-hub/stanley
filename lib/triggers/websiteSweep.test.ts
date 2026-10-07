@@ -42,6 +42,36 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("website evidence collection integration", () => {
+  it("reports unavailable source-only feed bodies as partial capture rather than storage failure", async () => {
+    mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18" }, lastSuccessAt: null });
+    mocks.site.mockResolvedValue({ ...scan(), feedUrl: "https://acme.com/news.xml" });
+    mocks.feed.mockResolvedValue([{ raw_excerpt: "Acme expands", source_url: articleUrl, source_name: "Company feed", signal_date: new Date().toISOString() }]);
+    mocks.headline.mockRejectedValue(new Error("Source-only news article body unavailable"));
+    const result = await sweepWebsites(1, { sourceOnly: true });
+    expect(result).toMatchObject({ partial: 1, failed: 0, succeeded: 0 });
+    expect(result.errors).toContainEqual(expect.objectContaining({ stage: "feed_body" }));
+  });
+  it("captures source-only pages and feeds without parent, status or legacy trigger mutation", async () => {
+    mocks.config.mockResolvedValue({ parent_autodismiss: true });
+    mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18" }, lastSuccessAt: null });
+    mocks.site.mockResolvedValue({ ...scan(), parent: { name: "Parent Holdings", confidence: "high" },
+      feedUrl: "https://acme.com/news.xml", financeRoles: [{ role: "Controller", snippet: "Controller vacancy", url: "https://acme.com/careers" }] });
+    mocks.feed.mockResolvedValue([{ raw_excerpt: "Acme expands", source_url: articleUrl, source_name: "Company feed", signal_date: new Date().toISOString() }]);
+    expect(await sweepWebsites(1, { sourceOnly: true })).toMatchObject({ sourceOnly: true, succeeded: 1, dismissed: 0, triggered: 0 });
+    expect(mocks.enqueue).toHaveBeenCalled();
+    expect(mocks.headline).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ sourceOnly: true, llm: false }));
+    expect(mocks.parent).not.toHaveBeenCalled();
+    expect(mocks.status).not.toHaveBeenCalled();
+    expect(mocks.trigger).not.toHaveBeenCalled();
+    expect(mocks.config).not.toHaveBeenCalled();
+  });
+
+  it("does not run a legacy website fallback when source-only capture is disabled", async () => {
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "false");
+    await expect(sweepWebsites(1, { sourceOnly: true })).rejects.toThrow("requires evidence capture");
+    expect(mocks.pick).not.toHaveBeenCalled();
+    expect(mocks.status).not.toHaveBeenCalled();
+  });
   it("reports complete, partial, and unavailable page coverage separately from attempts", async () => {
     expect(await sweepWebsites(1)).toMatchObject({ checked: 1, attempted: 1, succeeded: 1, partial: 0, unavailable: 0, failed: 0 });
     const missing = "https://acme.com/news/unavailable";

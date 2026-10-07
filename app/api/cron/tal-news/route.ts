@@ -15,8 +15,11 @@ async function run(req: NextRequest) {
   if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  if (url.searchParams.has("sourceOnly") && url.searchParams.get("sourceOnly") !== "1") {
+    return NextResponse.json({ error: "sourceOnly must be 1 when supplied" }, { status: 400 });
+  }
   try {
-    const result = await sweepTalNews();
+    const result = await sweepTalNews({ sourceOnly: url.searchParams.get("sourceOnly") === "1" });
     await logEvent("headhunter", "tal.news_sweep", {
       summary: `TAL news: ${result.checked}/${result.eligible} attempted, ${result.succeeded} succeeded, ${result.partial} partial, ${result.unavailable + result.failed} failed/unavailable, ${result.remaining} deferred; ${result.alerted} alerts saved`,
       entity_type: "cron", meta: result,

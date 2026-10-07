@@ -3,8 +3,10 @@ import { rotationBatches } from "./rotationBatches";
 import { pickCarriersForRotation, markFmcsaChecked, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
 import { isGenericName } from "@/lib/triggers/sweep";
-import { fetchCarrierByName } from "@/lib/sources/fmcsa";
-import { getFmcsaSnapshot, upsertFmcsaSnapshot } from "@/lib/db/fmcsa";
+import { fetchCarrierByName, type CarrierRecord, type FmcsaSourceCapture } from "@/lib/sources/fmcsa";
+import { getFmcsaSnapshot, upsertFmcsaSnapshot, type FmcsaSnapshot } from "@/lib/db/fmcsa";
+import { writeSourceState } from "@/lib/intelligence/sourceState";
+import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepCompanyReceipt } from "./sweepOutcomes";
 
 /**
  * FMCSA fleet-growth monitor (FREE) — watches the TAM's TRANSPORTATION companies.
@@ -14,23 +16,45 @@ import { getFmcsaSnapshot, upsertFmcsaSnapshot } from "@/lib/db/fmcsa";
  * → `fleet_expansion` trigger. First sight = baseline (store, no trigger); deltas
  * fire on later runs. Boost-only; never creates a company.
  */
-export async function sweepFmcsaTam(limit = 150, opts: { offset?: number } = {}): Promise<{ checked: number; matched: number; fleet_growth: number }> {
-  const stats = { checked: 0, matched: 0, fleet_growth: 0 };
+export async function sweepFmcsaTam(limit = 150, opts: { offset?: number; sourceOnly?: boolean } = {}) {
+  if (opts.sourceOnly && process.env.STANLEY_INTELLIGENCE_ENABLED !== "true") throw new Error("Source-only FMCSA requires evidence capture");
+  const stats = { ...newSweepOutcomes(), checked: 0, matched: 0, fleet_growth: 0, sourceOnly: opts.sourceOnly === true, receipts: [] as SweepCompanyReceipt[] };
   const touched = new Set<string>();
 
   for await (const slice of rotationBatches(pickCarriersForRotation, { limit, batchSize: 8, offset: opts.offset })) {
     await Promise.all(slice.map(async (c) => {
+      let outcome: SweepOutcome = "failed", reason = "collection_failed", stage = "lookup";
+      let captured = false, truncated = false, completionStamped = false;
+      let records: CarrierRecord[] = [];
+      const rawCaptures: FmcsaSourceCapture[] = [];
+      let prior: FmcsaSnapshot | null = null, priorSnapshotRead = false;
+      let matchedDot: string | null = null;
+      stats.attempted++;
       try {
         const cn = normalizeCompanyName(c.name);
-        if (!cn || cn.length < 4 || isGenericName(cn)) return;
-        const recs = await fetchCarrierByName(c.name);
-        const m = recs.find((r) => {
+        if (!cn || cn.length < 4 || isGenericName(cn)) { outcome = "skipped"; reason = "name_not_safe_for_lookup"; return; }
+        records = await fetchCarrierByName(c.name, 5, { strict: true, onTruncated: () => { truncated = true; },
+          ...(opts.sourceOnly ? { onCapture: (capture: FmcsaSourceCapture) => { rawCaptures.push(capture); } } : {}) });
+        captured = true;
+        const m = records.find((r) => {
           const a = normalizeCompanyName(r.dba || r.legal);
           return a && (a.includes(cn) || cn.includes(a));
         });
-        if (!m || !m.dot) return;
+        if (!m || !m.dot) { outcome = truncated ? "partial" : "succeeded"; reason = truncated ? "result_limit_reached" : "no_candidate_in_name_lookup"; return; }
+        matchedDot = m.dot;
         stats.matched++;
-        const prior = await getFmcsaSnapshot(m.dot).catch(() => null);
+        if (m.units === null || m.drivers === null) { outcome = "partial"; reason = "fleet_metrics_unavailable"; return; }
+        stage = "snapshot_read";
+        prior = await getFmcsaSnapshot(m.dot, { strict: true });
+        priorSnapshotRead = true;
+        if (opts.sourceOnly) {
+          // Retain the prior comparison baseline; advancing it here would consume
+          // an unreviewed growth delta before independent interpretation.
+          outcome = truncated ? "partial" : "succeeded";
+          reason = truncated ? "result_limit_reached" : "comparison_captured_for_review";
+          return;
+        }
+        stage = "trigger_write";
         const url = `https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY&query_type=queryCarrierSnapshot&query_param=USDOT&query_string=${m.dot}`;
         if (prior && prior.nbr_power_unit > 0 && m.units >= Math.ceil(prior.nbr_power_unit * 1.15)) {
           if (await recordTrigger(c.id, {
@@ -51,13 +75,37 @@ export async function sweepFmcsaTam(limit = 150, opts: { offset?: number } = {})
             signal_date: new Date().toISOString(),
           })) { stats.fleet_growth++; touched.add(c.id); }
         }
-        await upsertFmcsaSnapshot(m.dot, c.name, m.units, m.drivers).catch(() => {});
-      } catch { /* per-company isolated */ }
+        stage = "snapshot_write";
+        await upsertFmcsaSnapshot(m.dot, c.name, m.units, m.drivers, { strict: true });
+        outcome = truncated ? "partial" : "succeeded";
+        reason = truncated ? "result_limit_reached" : prior ? "comparison_captured" : "baseline_captured";
+      } catch (error) {
+        outcome = stage === "lookup" ? "unavailable" : "failed";
+        reason = `${stage}_failed`;
+        sweepError(stats, "fmcsa", stage, error, c.id);
+      } finally {
+        try {
+          await writeSourceState(c.id, "fmcsa", {
+            cursor: { records, rawCaptures, truncated, observedAt: new Date().toISOString(), query: c.name,
+              matchedDot, priorSnapshot: prior, priorSnapshotRead,
+              collectionMode: opts.sourceOnly ? "source_only" : "legacy", comparisonBaselinePreserved: opts.sourceOnly === true },
+            complete: outcome === "succeeded", successful: captured,
+            status: outcome === "succeeded" ? (records.length ? "complete" : "empty") : outcome === "partial" ? "partial" : outcome === "skipped" ? "unsupported" : "unavailable",
+            details: { reason, captured, truncated }, ...(outcome === "succeeded" ? {} : { error: reason }),
+          });
+          // Reservations already advance attempted rows. Never stamp a skipped,
+          // partial, failed or unavailable lookup as completed.
+          if (outcome === "succeeded") { await markFmcsaChecked([c.id]); completionStamped = true; }
+        } catch (error) { outcome = "failed"; reason = "checkpoint_failed"; sweepError(stats, "fmcsa", "checkpoint", error, c.id); }
+        stats[outcome]++;
+        stats.receipts.push({ companyId: c.id, outcome, reason, captured, complete: outcome === "succeeded", completionStamped });
+      }
     }));
-    await markFmcsaChecked(slice.map((c) => c.id)); // commit source-specific progress batch-by-batch
     stats.checked += slice.length;
   }
 
-  for (const id of touched) await recomputePriority(id);
+  for (const id of touched) {
+    try { await recomputePriority(id); } catch (error) { sweepError(stats, "fmcsa", "priority", error, id); }
+  }
   return stats;
 }
