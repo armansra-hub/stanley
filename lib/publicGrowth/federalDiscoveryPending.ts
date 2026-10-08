@@ -60,7 +60,7 @@ function assertAdmission(cursor: Record<string, unknown>, request: Request) {
   return parsed;
 }
 async function readEvent(operationId: string) {
-  const { data, error } = await serviceClient().from("app_events").select("id,module,kind,entity_type,entity_id,meta").eq("id", operationId).maybeSingle();
+  const { data, error } = await serviceClient().from("app_events").select("id,module,kind,entity_type,entity_id,summary,meta").eq("id", operationId).maybeSingle();
   if (error) throw new Error("source-only operation readback unavailable");
   return data;
 }
@@ -127,7 +127,8 @@ export async function continueFederalPendingSources(request: Request) {
       captured: outcomes.filter(row => row.sourceCaptured).length, reusedCaptures: outcomes.filter(row => row.reusedCapture).length,
       operatorHoldRetained: true, analysisComplete: false, historyComplete: false, coverageVerified: false,
       mainSelections: 0, retrySelections: 0, keysetAdvanced: false, attemptsCredited: 0, triggers: 0 };
-    const event = { id: request.operationId, module: "headhunter", kind: "federal.discovery.source_only", entity_type: "cron", entity_id: SOURCE, meta };
+    const event = { id: request.operationId, module: "headhunter", kind: "federal.discovery.source_only", entity_type: "cron", entity_id: SOURCE,
+      summary: "Captured bounded federal originals; independent source review remains incomplete", meta };
     const { error } = await serviceClient().from("app_events").insert(event);
     if (error || !isDeepStrictEqual(await readEvent(request.operationId), event)) throw new Error("source-only journal requires readback");
     await checkpointPublicGrowthSweep(lease, { discoveryContinuations: next, discoveryInFlight: [], discoveryInFlightEventId: null,
@@ -269,7 +270,8 @@ export async function reconcileFederalPendingSource(request: RecoveryRequest) {
       sourceRequests: 0, historicalSourceRequests: 1, historicalSourceRequestCompanyId: firstId, remainingHistoricalSourceRequests: 0,
       retainedCapturesRecovered: 1, unattemptedIncomplete: 3, operatorHoldRetained: true, analysisComplete: false, historyComplete: false, coverageVerified: false,
       mainSelections: 0, retrySelections: 0, keysetAdvanced: false, attemptsCredited: 0, triggers: 0 };
-    const event = { id: request.operationId, module: "headhunter", kind: "federal.discovery.source_only_reconciled", entity_type: "cron", entity_id: SOURCE, meta };
+    const event = { id: request.operationId, module: "headhunter", kind: "federal.discovery.source_only_reconciled", entity_type: "cron", entity_id: SOURCE,
+      summary: "Recovered one retained federal source; three unattempted continuations preserved", meta };
     const { error } = await serviceClient().from("app_events").insert(event);
     if (error || !isDeepStrictEqual(await readEvent(request.operationId), event)) throw new Error("source recovery journal requires readback");
     // Exact lease + original cursor assertion retain the fence until all source

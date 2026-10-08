@@ -20,17 +20,18 @@ const request = (ns = [1]) => ({ operationId: id(9002), holdOperationId: hold.op
   continuations: ns.map(n => ({ companyId: id(n), expectedSha256: federalSourceOnlyHash(state.cursor.discoveryContinuations[id(n)]) })) });
 function query(table: string) {
   if (!["public_growth_sweep_state", "app_events"].includes(table)) throw new Error(`Forbidden table ${table}`);
-  const filters: Record<string, unknown> = {}; let payload: any;
-  const q: any = { select: () => q, eq: (key: string, value: unknown) => { filters[key] = value; return q; }, maybeSingle: () => q,
+  const filters: Record<string, unknown> = {}; let payload: any, columns: string;
+  const q: any = { select: (value: string) => { columns = value; return q; }, eq: (key: string, value: unknown) => { filters[key] = value; return q; }, maybeSingle: () => q,
     insert: (row: any) => { payload = structuredClone(row); return q; },
     then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve().then(() => {
       if (payload) {
+        if (typeof payload.summary !== "string" || !payload.summary.trim()) return { data: null, error: { code: "23502", column: "summary" } };
         events.push(payload);
         return { data: null, error: failures.has("event-write") ? { code: "uncertain" } : null };
       }
       if (table === "public_growth_sweep_state") return { data: structuredClone(state), error: null };
       const event = events.find(row => Object.entries(filters).every(([key, value]) => row[key] === value));
-      return { data: structuredClone(event ?? null), error: event && failures.has("event-read") ? { code: "unavailable" } : null };
+      return { data: event ? structuredClone(Object.fromEntries(columns.split(",").map(key => [key, event[key]]))) : null, error: event && failures.has("event-read") ? { code: "unavailable" } : null };
     }).then(resolve, reject) };
   return q;
 }
