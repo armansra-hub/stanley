@@ -36,6 +36,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("ATS collection integration", () => {
+  it("retains a partial exact board attempt without claiming capture completion for other requested IDs", async () => {
+    const ids = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"];
+    const collection = { companyIds: ids, runCutoff: "2026-01-01T00:00:00Z" };
+    mocks.pick.mockResolvedValue([{ ...company, id: ids[0] }]);
+    mocks.fetch.mockResolvedValue({ jobs: [job], nextOffset: 1, complete: false, status: "partial" });
+    expect(await sweepAts(2, { sourceOnly: true, collection })).toMatchObject({ attempted: 1, partial: 1,
+      collection: { analysisCompleted: false, outcomes: [
+        { companyId: ids[0], admission: "attempted", collectorOutcome: "partial" },
+        { companyId: ids[1], admission: "not_reserved", reason: "unknown" },
+      ] } });
+    expect(mocks.pick).toHaveBeenCalledWith(12, undefined, collection);
+    expect(mocks.trigger).not.toHaveBeenCalled(); expect(mocks.flags).not.toHaveBeenCalled();
+  });
+
   it("retains source-only shared-board jobs and lifecycle without publishing or assigning ERP flags", async () => {
     mocks.fetch.mockResolvedValue({ jobs: [{ ...job, title: "Controller", description: "Lead our NetSuite ERP implementation and month-end close.", location: "Other city" }], nextOffset: null, complete: true, status: "complete" });
     expect(await sweepAts(1, { sourceOnly: true })).toMatchObject({ sourceOnly: true, succeeded: 1, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0 });

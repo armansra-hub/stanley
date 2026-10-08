@@ -1,3 +1,4 @@
+import { validateFiniteScope, type FiniteCollectionScope } from "@/lib/triggers/finiteCollection";
 import "server-only";
 import { normalizeDomain } from "@/lib/domain";
 import { serviceClient } from "@/lib/supabase/server";
@@ -305,6 +306,25 @@ async function reserveRotation<T>(source: string, limit: number, scope: string |
   return (data ?? []) as T[];
 }
 
+/** Opt-in exact selection uses the existing reservation RPC overload and never falls back. */
+async function reserveFiniteRotation<T>(source: string, limit: number, offset: number, scope: string | null, collection: FiniteCollectionScope): Promise<T[]> {
+  validateFiniteScope(collection);
+  if (offset !== 0 || scope === "tail" || !Number.isInteger(limit) || limit < 1 || limit > Math.min(100, collection.companyIds.length)) {
+    throw new Error("Invalid finite rotation reservation");
+  }
+  const { data, error } = await serviceClient().rpc("reserve_company_rotation", {
+    p_source: source, p_limit: limit, p_epoch: collection.runCutoff, p_scope: scope, p_company_ids: collection.companyIds,
+  });
+  if (error) throw new Error(`${source} exact rotation reservation failed: ${error.message}`);
+  const rows = data ?? [];
+  const requested = new Set(collection.companyIds.map(id => id.toLowerCase()));
+  if (!Array.isArray(rows) || rows.length > limit || rows.some(row => !row || typeof row.id !== "string" || !requested.has(row.id.toLowerCase()))
+    || new Set(rows.map(row => row.id.toLowerCase())).size !== rows.length) {
+    throw new Error(`${source} exact rotation returned invalid company bindings`);
+  }
+  return rows as T[];
+}
+
 export interface PriorityRecomputeReservation {
   company_id: string;
   reservation_kind: "ghost" | "zombie";
@@ -325,7 +345,8 @@ export async function reservePriorityRecompute(
   return (data ?? []) as PriorityRecomputeReservation[];
 }
 
-export async function pickForRotation(limit: number, offset = 0): Promise<Array<{ id: string; name: string; domain: string | null; claimable: boolean } & RotationSignalContext>> {
+export async function pickForRotation(limit: number, offset = 0, collection?: FiniteCollectionScope): Promise<Array<{ id: string; name: string; domain: string | null; claimable: boolean } & RotationSignalContext>> {
+  if (collection) return reserveFiniteRotation("trigger", limit, offset, null, collection);
   if (offset === 0) return reserveRotation("trigger", limit);
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name, domain, claimable, record_dead, description, subindustry, ns_industry")
@@ -351,7 +372,9 @@ function rotationCheckpointError(source: string, error: { code?: string }, opera
 
 /** The next batch of base companies to ATS-check — must have a domain; longest-since
  * (or never) ats-checked first. Positive offsets are manual recovery only. */
-export async function pickAtsForRotation(limit: number, offset = 0): Promise<Array<{ id: string; name: string; domain: string; ats_type: string | null; ats_token: string | null } & RotationSignalContext>> {
+export async function pickAtsForRotation(limit: number, offset = 0, collection?: FiniteCollectionScope): Promise<Array<{ id: string; name: string; domain: string; ats_type: string | null; ats_token: string | null } & RotationSignalContext>> {
+  if (collection) return (await reserveFiniteRotation<any>("ats", limit, offset, null, collection))
+    .map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) }));
   if (offset === 0) return (await reserveRotation<any>("ats", limit))
     .map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) }));
   const db = serviceClient();
@@ -464,7 +487,9 @@ export async function listTalAlerts(): Promise<TriggeredCompany[]> {
  * scope: "claimable" = NetSuite TAM (the priority set, refreshed fastest);
  *        "tail" = the monitored non-claimable base (ZoomInfo-only leads) — the AE
  *        mainly works claimable but still wants the ZoomInfo TAM watched. */
-export async function pickSitesForRotation(limit: number, offset = 0, scope: "claimable" | "tail" = "claimable"): Promise<Array<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null } & RotationSignalContext>> {
+export async function pickSitesForRotation(limit: number, offset = 0, scope: "claimable" | "tail" = "claimable", collection?: FiniteCollectionScope): Promise<Array<{ id: string; name: string; domain: string; site_hash: string | null; site_checked_at: string | null } & RotationSignalContext>> {
+  if (collection) return (await reserveFiniteRotation<any>("site", limit, offset, scope, collection))
+    .map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) }));
   if (offset === 0) return (await reserveRotation<any>("site", limit, scope))
     .map((row) => ({ ...row, domain: normalizeDomain(row.domain || row.website_raw) }));
   const db = serviceClient();
@@ -505,7 +530,8 @@ export async function markSiteAttempted(id: string): Promise<void> {
 }
 
 /** TAM carriers for the FMCSA fleet-growth monitor, oldest FMCSA check first. */
-export async function pickCarriersForRotation(limit: number, offset = 0): Promise<{ id: string; name: string }[]> {
+export async function pickCarriersForRotation(limit: number, offset = 0, collection?: FiniteCollectionScope): Promise<{ id: string; name: string }[]> {
+  if (collection) return reserveFiniteRotation("fmcsa", limit, offset, null, collection);
   if (offset === 0) return reserveRotation("fmcsa", limit);
   const db = serviceClient();
   const { data, error } = await db.from("companies").select("id, name")
@@ -529,7 +555,8 @@ export async function markFmcsaChecked(ids: string[]): Promise<void> {
 
 /** Base companies in a given state (for the state-registry watch: new entities + UCC).
  * Whole monitored base, claimable first — the AE watches the ZoomInfo tail too. */
-export async function pickSosCompaniesForRotation(state: string, limit: number, offset = 0): Promise<{ id: string; name: string; city: string | null }[]> {
+export async function pickSosCompaniesForRotation(state: string, limit: number, offset = 0, collection?: FiniteCollectionScope): Promise<{ id: string; name: string; city: string | null }[]> {
+  if (collection) return reserveFiniteRotation("sos", limit, offset, state, collection);
   if (offset === 0) return reserveRotation("sos", limit, state);
   const db = serviceClient();
   const { data, error } = await db.from("companies").select("id, name, city")

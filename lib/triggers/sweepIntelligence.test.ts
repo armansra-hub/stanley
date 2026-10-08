@@ -42,6 +42,21 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("broader news observation intake", () => {
+  it("accounts for exact source-only news IDs and completion-stamp failures without claiming unreserved work", async () => {
+    const ids = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"];
+    const collection = { companyIds: ids, runCutoff: "2026-01-01T00:00:00Z" };
+    mocks.pick.mockResolvedValue([{ ...company, id: ids[0] }]);
+    mocks.newsResult.mockResolvedValue({ items: [], status: "empty" });
+    mocks.checked.mockRejectedValue(new Error("checkpoint failed"));
+    expect(await sweepBase(2, { sourceOnly: true, collection })).toMatchObject({ attempted: 1, succeeded: 0, failed: 1,
+      collection: { runCutoff: collection.runCutoff, analysisCompleted: false, outcomes: [
+        { companyId: ids[0], admission: "attempted", collectorOutcome: "failed" },
+        { companyId: ids[1], admission: "not_reserved", reason: "unknown" },
+      ] } });
+    expect(mocks.pick).toHaveBeenCalledWith(20, undefined, collection);
+    expect(mocks.classifier).not.toHaveBeenCalled(); expect(mocks.queue).not.toHaveBeenCalled();
+  });
+
   it("captures broad and executive TAM news without legacy candidates in source-only mode", async () => {
     mocks.pick.mockResolvedValue([{ ...company, claimable: true }]);
     mocks.newsItems.mockResolvedValue([{ ...item, raw_excerpt: "Acme Logistics appoints chief financial officer" }]);

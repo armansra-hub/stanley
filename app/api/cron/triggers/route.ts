@@ -1,3 +1,4 @@
+import { parseFiniteCollection } from "@/lib/triggers/finiteCollection";
 import { NextRequest, NextResponse } from "next/server";
 import { sweepBase } from "@/lib/triggers/sweep";
 import { logEvent } from "@/lib/db/events";
@@ -23,9 +24,12 @@ async function run(req: NextRequest) {
   if (sourceOnly && url.searchParams.get("finance") === "1") {
     return NextResponse.json({ error: "sourceOnly cannot be combined with finance" }, { status: 400 });
   }
-  const n = Math.min(Number(url.searchParams.get("n") ?? 50) || 50, 600);
+  let finite: ReturnType<typeof parseFiniteCollection>;
+  try { finite = parseFiniteCollection(url.searchParams); }
+  catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
+  const n = finite?.limit ?? Math.min(Number(url.searchParams.get("n") ?? 50) || 50, 600);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
-  const result = await sweepBase(n, { finance: url.searchParams.get("finance") === "1", offset, sourceOnly });
+  const result = await sweepBase(n, { finance: url.searchParams.get("finance") === "1", offset, sourceOnly, ...(finite ? { collection: finite.collection } : {}) });
   await logEvent("headhunter", "trigger.sweep", { summary: `Trigger sweep: ${result.companies_triggered}/${result.checked} fired — ${result.finance_triggers} finance, ${result.erp_triggers} ERP-ready, ${result.news_triggers} news`, entity_type: "cron", meta: result });
   return NextResponse.json(result);
 }

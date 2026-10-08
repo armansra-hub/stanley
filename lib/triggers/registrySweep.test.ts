@@ -27,6 +27,24 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("registry capture receipts", () => {
+  it("adds finite admission accounting while retaining exact unavailable registry capture receipts", async () => {
+    const ids = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"];
+    const collection = { companyIds: ids, runCutoff: "2026-01-01T00:00:00Z" };
+    mocks.pick.mockResolvedValue([{ ...company, id: ids[0] }]);
+    mocks.carrier.mockRejectedValue(new Error("network failed")); mocks.entities.mockRejectedValue(new Error("network failed"));
+    for (const collect of [sweepFmcsaTam, sweepCoSos]) {
+      expect(await collect(2, { sourceOnly: true, collection })).toMatchObject({ attempted: 1, unavailable: 1,
+        receipts: [{ companyId: ids[0], captured: false, complete: false, completionStamped: false }],
+        collection: { analysisCompleted: false, outcomes: [
+          { companyId: ids[0], admission: "attempted", collectorOutcome: "unavailable" },
+          { companyId: ids[1], admission: "not_reserved", reason: "unknown" },
+        ] } });
+    }
+    expect(mocks.pick).toHaveBeenCalledWith(8, undefined, collection);
+    expect(mocks.pick).toHaveBeenCalledWith("CO", 8, undefined, collection);
+    expect(mocks.trigger).not.toHaveBeenCalled(); expect(mocks.snapshot).not.toHaveBeenCalled();
+  });
+
   it("refuses source-only collection before reservations when evidence capture is disabled", async () => {
     vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "false");
     await expect(sweepFmcsaTam(1, { sourceOnly: true })).rejects.toThrow("requires evidence capture");

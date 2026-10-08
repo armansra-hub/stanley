@@ -1,3 +1,4 @@
+import { assertFiniteCollection, finiteCollectionAccounting, type FiniteCollectionScope, type FiniteCollectionResult } from "./finiteCollection";
 import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { pickAtsForRotation, setAtsChecked, setErpFlags, recordTrigger, recomputePriority } from "@/lib/db/triggers";
@@ -22,13 +23,15 @@ import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepOutcomes } f
  * accounting incumbent: QuickBooks-class boosts the readiness score; an existing
  * ERP (NetSuite/Intacct/…) suppresses the lead (not a prospect).
  */
-export async function sweepAts(limit = 120, opts: { offset?: number; sourceOnly?: boolean } = {}): Promise<SweepOutcomes & { checked: number; detected: number; with_board: number; finance_triggers: number; erp_triggers: number; already_on_erp: number; sourceOnly: boolean }> {
+export async function sweepAts(limit = 120, opts: { offset?: number; sourceOnly?: boolean; collection?: FiniteCollectionScope } = {}): Promise<FiniteCollectionResult & SweepOutcomes & { checked: number; detected: number; with_board: number; finance_triggers: number; erp_triggers: number; already_on_erp: number; sourceOnly: boolean }> {
+  assertFiniteCollection(opts.collection, { ...opts, limit });
+  const accounting = finiteCollectionAccounting(opts.collection);
   const stats = { ...newSweepOutcomes(), checked: 0, detected: 0, with_board: 0, finance_triggers: 0, erp_triggers: 0, already_on_erp: 0, sourceOnly: opts.sourceOnly === true };
   const touched = new Set<string>();
   const intelligenceEnabled = process.env.STANLEY_INTELLIGENCE_ENABLED === "true";
   if (opts.sourceOnly && !intelligenceEnabled) throw new Error("Source-only ATS requires evidence capture");
 
-  for await (const slice of rotationBatches(pickAtsForRotation, { limit, batchSize: 12, offset: opts.offset })) {
+  for await (const slice of rotationBatches(opts.collection ? (n, offset) => pickAtsForRotation(n, offset, opts.collection) : pickAtsForRotation, { limit, batchSize: 12, offset: opts.offset })) {
     stats.checked += slice.length;
     await Promise.all(slice.map(async (c) => {
       let outcome: SweepOutcome = "failed";
@@ -163,6 +166,7 @@ export async function sweepAts(limit = 120, opts: { offset?: number; sourceOnly?
         try { await setAtsChecked(c.id, {}); }
         catch (error) { outcome = "failed"; sweepError(stats, "ats", "attempt_stamp", error, c.id); }
         stats[outcome]++;
+        accounting.record(c.id, outcome);
       }
     }));
   }
@@ -170,5 +174,5 @@ export async function sweepAts(limit = 120, opts: { offset?: number; sourceOnly?
   for (const id of touched) {
     try { await recomputePriority(id); } catch (error) { sweepError(stats, "ats", "priority", error, id); }
   }
-  return stats;
+  return { ...stats, ...accounting.result() };
 }

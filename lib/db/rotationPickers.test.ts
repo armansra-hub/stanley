@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const state = vi.hoisted(() => ({ calls: [] as Array<[string, ...unknown[]]> }));
+const state = vi.hoisted(() => ({ calls: [] as Array<[string, ...unknown[]]>, rows: [{ id: "reserved" }] as Array<Record<string, unknown>>, error: null as null | { message: string } }));
 
 vi.mock("@/lib/supabase/server", () => ({
   serviceClient: () => ({
     rpc: (name: string, args: Record<string, unknown>) => {
       state.calls.push(["rpc", name, args]);
-      return Promise.resolve({ data: [{ id: "reserved" }], error: null });
+      return Promise.resolve({ data: state.rows, error: state.error });
     },
     from: (table: string) => {
       state.calls.push(["from", table]);
@@ -43,6 +43,7 @@ import {
 describe("durable source rotation pickers", () => {
   beforeEach(() => {
     state.calls.length = 0;
+    state.rows = [{ id: "reserved" }]; state.error = null;
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-10T01:02:03.000Z"));
   });
@@ -84,6 +85,35 @@ describe("durable source rotation pickers", () => {
     state.calls.length = 0;
     await pickSignalsForRotation(10, 10);
     expect(state.calls).toContainEqual(["order", "signals_checked_at", { ascending: true, nullsFirst: true }]);
+  });
+
+  it("uses only the exact overload with the same fixed cutoff after an hourly boundary", async () => {
+    const collection = { companyIds: ["00000000-0000-0000-0000-000000000001"], runCutoff: "2026-08-10T00:42:00Z" };
+    state.rows = [{ id: collection.companyIds[0], website_raw: "https://example.com" }];
+    await pickForRotation(1, 0, collection);
+    vi.setSystemTime(new Date("2026-08-10T04:02:03Z"));
+    await pickAtsForRotation(1, 0, collection);
+    await pickSitesForRotation(1, 0, "claimable", collection);
+    await pickCarriersForRotation(1, 0, collection);
+    await pickSosCompaniesForRotation("CO", 1, 0, collection);
+    expect(state.calls).toEqual(["trigger", "ats", "site", "fmcsa", "sos"].map(source => ["rpc", "reserve_company_rotation", {
+      p_source: source, p_limit: 1, p_epoch: collection.runCutoff, p_scope: source === "site" ? "claimable" : source === "sos" ? "CO" : null,
+      p_company_ids: collection.companyIds,
+    }]));
+  });
+
+  it("never falls back after empty/error/foreign exact reservation results", async () => {
+    const collection = { companyIds: ["00000000-0000-0000-0000-000000000001"], runCutoff: "2026-08-10T00:42:00Z" };
+    state.rows = [];
+    expect(await pickForRotation(1, 0, collection)).toEqual([]);
+    state.error = { message: "reservation failed" };
+    await expect(pickForRotation(1, 0, collection)).rejects.toThrow("reservation failed");
+    state.error = null; state.rows = [{ id: "outside-scope" }];
+    await expect(pickForRotation(1, 0, collection)).rejects.toThrow("invalid company bindings");
+    await expect(pickForRotation(1, 1, collection)).rejects.toThrow("Invalid finite rotation");
+    await expect(pickSitesForRotation(1, 0, "tail", collection)).rejects.toThrow("Invalid finite rotation");
+    expect(state.calls.every(call => call[0] === "rpc")).toBe(true);
+    expect(state.calls).toHaveLength(3);
   });
 
   it("executes a real tail query instead of returning an empty slot", async () => {

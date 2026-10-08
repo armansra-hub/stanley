@@ -1,3 +1,4 @@
+import { assertFiniteCollection, finiteCollectionAccounting, type FiniteCollectionScope } from "./finiteCollection";
 import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { pickCarriersForRotation, markFmcsaChecked, recordTrigger, recomputePriority } from "@/lib/db/triggers";
@@ -16,12 +17,14 @@ import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepCompanyRecei
  * → `fleet_expansion` trigger. First sight = baseline (store, no trigger); deltas
  * fire on later runs. Boost-only; never creates a company.
  */
-export async function sweepFmcsaTam(limit = 150, opts: { offset?: number; sourceOnly?: boolean } = {}) {
+export async function sweepFmcsaTam(limit = 150, opts: { offset?: number; sourceOnly?: boolean; collection?: FiniteCollectionScope } = {}) {
+  assertFiniteCollection(opts.collection, { ...opts, limit });
+  const accounting = finiteCollectionAccounting(opts.collection);
   if (opts.sourceOnly && process.env.STANLEY_INTELLIGENCE_ENABLED !== "true") throw new Error("Source-only FMCSA requires evidence capture");
   const stats = { ...newSweepOutcomes(), checked: 0, matched: 0, fleet_growth: 0, sourceOnly: opts.sourceOnly === true, receipts: [] as SweepCompanyReceipt[] };
   const touched = new Set<string>();
 
-  for await (const slice of rotationBatches(pickCarriersForRotation, { limit, batchSize: 8, offset: opts.offset })) {
+  for await (const slice of rotationBatches(opts.collection ? (n, offset) => pickCarriersForRotation(n, offset, opts.collection) : pickCarriersForRotation, { limit, batchSize: 8, offset: opts.offset })) {
     await Promise.all(slice.map(async (c) => {
       let outcome: SweepOutcome = "failed", reason = "collection_failed", stage = "lookup";
       let captured = false, truncated = false, completionStamped = false;
@@ -98,6 +101,7 @@ export async function sweepFmcsaTam(limit = 150, opts: { offset?: number; source
           if (outcome === "succeeded") { await markFmcsaChecked([c.id]); completionStamped = true; }
         } catch (error) { outcome = "failed"; reason = "checkpoint_failed"; sweepError(stats, "fmcsa", "checkpoint", error, c.id); }
         stats[outcome]++;
+        accounting.record(c.id, outcome);
         stats.receipts.push({ companyId: c.id, outcome, reason, captured, complete: outcome === "succeeded", completionStamped });
       }
     }));
@@ -107,5 +111,5 @@ export async function sweepFmcsaTam(limit = 150, opts: { offset?: number; source
   for (const id of touched) {
     try { await recomputePriority(id); } catch (error) { sweepError(stats, "fmcsa", "priority", error, id); }
   }
-  return stats;
+  return { ...stats, ...accounting.result() };
 }

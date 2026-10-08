@@ -1,3 +1,4 @@
+import { assertFiniteCollection, finiteCollectionAccounting, type FiniteCollectionScope } from "./finiteCollection";
 import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { markSosChecked, pickSosCompaniesForRotation, recordTrigger, recomputePriority } from "@/lib/db/triggers";
@@ -17,7 +18,9 @@ import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepCompanyRecei
 const LOOKBACK_DAYS = 150;
 const UCC_LOOKBACK_DAYS = 365;
 
-export async function sweepCoSos(limit = 200, opts: { offset?: number; sourceOnly?: boolean } = {}) {
+export async function sweepCoSos(limit = 200, opts: { offset?: number; sourceOnly?: boolean; collection?: FiniteCollectionScope } = {}) {
+  assertFiniteCollection(opts.collection, { ...opts, limit });
+  const accounting = finiteCollectionAccounting(opts.collection);
   if (opts.sourceOnly && process.env.STANLEY_INTELLIGENCE_ENABLED !== "true") throw new Error("Source-only Colorado registry requires evidence capture");
   const stats = { ...newSweepOutcomes(), checked: 0, matched: 0, triggered: 0, ucc: 0, sourceOnly: opts.sourceOnly === true, receipts: [] as SweepCompanyReceipt[] };
   const sinceISO = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 19);
@@ -25,7 +28,7 @@ export async function sweepCoSos(limit = 200, opts: { offset?: number; sourceOnl
   const touched = new Set<string>();
 
   for await (const slice of rotationBatches(
-    (n, offset) => pickSosCompaniesForRotation("CO", n, offset),
+    (n, offset) => opts.collection ? pickSosCompaniesForRotation("CO", n, offset, opts.collection) : pickSosCompaniesForRotation("CO", n, offset),
     { limit, batchSize: 6, offset: opts.offset },
   )) {
     stats.checked += slice.length;
@@ -102,6 +105,7 @@ export async function sweepCoSos(limit = 200, opts: { offset?: number; sourceOnl
           if (outcome === "succeeded") { await markSosChecked([c.id]); completionStamped = true; }
         } catch (error) { outcome = "failed"; reason = "checkpoint_failed"; sweepError(stats, "cosos", "checkpoint", error, c.id); }
         stats[outcome]++;
+        accounting.record(c.id, outcome);
         stats.receipts.push({ companyId: c.id, outcome, reason, captured, complete: outcome === "succeeded", completionStamped });
       }
     }));
@@ -110,5 +114,5 @@ export async function sweepCoSos(limit = 200, opts: { offset?: number; sourceOnl
   for (const id of touched) {
     try { await recomputePriority(id); } catch (error) { sweepError(stats, "cosos", "priority", error, id); }
   }
-  return stats;
+  return { ...stats, ...accounting.result() };
 }

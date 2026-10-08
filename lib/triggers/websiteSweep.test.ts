@@ -42,6 +42,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("website evidence collection integration", () => {
+  it("reports failed exact page capture separately from unreserved company IDs", async () => {
+    const ids = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"];
+    const collection = { companyIds: ids, runCutoff: "2026-01-01T00:00:00Z" };
+    mocks.pick.mockResolvedValue([{ ...company, id: ids[0] }]);
+    mocks.site.mockRejectedValue(new Error("network failed"));
+    expect(await sweepWebsites(2, { sourceOnly: true, collection })).toMatchObject({ attempted: 1, failed: 1,
+      collection: { analysisCompleted: false, outcomes: [
+        { companyId: ids[0], admission: "attempted", collectorOutcome: "failed" },
+        { companyId: ids[1], admission: "not_reserved", reason: "unknown" },
+      ] } });
+    expect(mocks.pick).toHaveBeenCalledWith(12, undefined, "claimable", collection);
+    expect(mocks.trigger).not.toHaveBeenCalled(); expect(mocks.status).not.toHaveBeenCalled();
+  });
+
   it("reports unavailable source-only feed bodies as partial capture rather than storage failure", async () => {
     mocks.read.mockResolvedValue({ cursor: { baselineCapturedAt: "2026-09-18" }, lastSuccessAt: null });
     mocks.site.mockResolvedValue({ ...scan(), feedUrl: "https://acme.com/news.xml" });

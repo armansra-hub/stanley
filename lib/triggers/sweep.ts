@@ -1,3 +1,4 @@
+import { assertFiniteCollection, finiteCollectionAccounting, type FiniteCollectionScope, type FiniteCollectionResult } from "./finiteCollection";
 import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate, headlineCandidateSeen } from "@/lib/db/triggers";
@@ -376,7 +377,9 @@ export async function checkExecChange(company: NewsCompany, opts: { sourceOnly?:
  *     domains → finance_hire (in-house-finance confirmation) + erp_tech (QuickBooks,
  *     no ERP, from the JD) triggers. One call per ~50 domains ≈ $0.13.
  */
-export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number; sourceOnly?: boolean } = {}): Promise<SweepOutcomes & { checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number; sourceOnly: boolean }> {
+export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number; sourceOnly?: boolean; collection?: FiniteCollectionScope } = {}): Promise<FiniteCollectionResult & SweepOutcomes & { checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number; sourceOnly: boolean }> {
+  assertFiniteCollection(opts.collection, { ...opts, limit });
+  const accounting = finiteCollectionAccounting(opts.collection);
   if (opts.sourceOnly && !intelligenceEnabled()) throw new Error("Source-only news requires evidence capture");
   if (opts.sourceOnly && opts.finance) throw new Error("Source-only news cannot run the legacy paid finance collector");
   // The optional paid actor needs one fixed domain list. Normal recurring news
@@ -428,7 +431,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   // Reserve immediately attempted batches and leave untouched rows oldest when
   // the 240-second source budget ends.
   let processed = 0;
-  for await (const slice of rotationBatches(pickForRotation, {
+  for await (const slice of rotationBatches(opts.collection ? (n, offset) => pickForRotation(n, offset, opts.collection) : pickForRotation, {
     limit, batchSize: 4, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
   })) {
     const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
@@ -450,17 +453,17 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
         if (n > 0) { news += n; touched.add(c.id); }
         if ((outcome as SweepOutcome) === "succeeded") completed.push(c.id);
       } catch (error) { outcome = "failed"; sweepError(outcomes, "news", "collection", error, c.id); }
-      finally { outcomes[outcome]++; }
+      finally { outcomes[outcome]++; accounting.record(c.id, outcome); }
     }));
     // Rotation reservations already record attempts. Only successful new-lane
     // persistence receives this completion stamp; failures retain retry state.
     try { await markChecked(completed); }
-    catch (error) { outcomes.succeeded -= completed.length; outcomes.failed += completed.length; sweepError(outcomes, "news", "completion_stamp", error); }
+    catch (error) { for (const id of completed) accounting.record(id, "failed"); outcomes.succeeded -= completed.length; outcomes.failed += completed.length; sweepError(outcomes, "news", "completion_stamp", error); }
     processed += slice.length;
   }
 
   for (const cid of touched) {
     try { await recomputePriority(cid); } catch (error) { sweepError(outcomes, "news", "priority", error, cid); }
   }
-  return { ...outcomes, checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp, sourceOnly: opts.sourceOnly === true };
+  return { ...outcomes, ...accounting.result(), checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp, sourceOnly: opts.sourceOnly === true };
 }

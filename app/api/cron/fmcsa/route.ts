@@ -1,3 +1,4 @@
+import { parseFiniteCollection } from "@/lib/triggers/finiteCollection";
 import { NextRequest, NextResponse } from "next/server";
 import { sweepFmcsaTam } from "@/lib/triggers/fmcsaSweep";
 import { logEvent } from "@/lib/db/events";
@@ -22,9 +23,12 @@ async function run(req: NextRequest) {
   if (url.searchParams.has("sourceOnly") && url.searchParams.get("sourceOnly") !== "1") {
     return NextResponse.json({ error: "sourceOnly must be 1 when supplied" }, { status: 400 });
   }
-  const n = Math.min(Number(url.searchParams.get("n") ?? 150) || 150, 250);
+  let finite: ReturnType<typeof parseFiniteCollection>;
+  try { finite = parseFiniteCollection(url.searchParams); }
+  catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
+  const n = finite?.limit ?? Math.min(Number(url.searchParams.get("n") ?? 150) || 150, 250);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
-  const result = await sweepFmcsaTam(n, { offset, sourceOnly: url.searchParams.get("sourceOnly") === "1" });
+  const result = await sweepFmcsaTam(n, { offset, sourceOnly: url.searchParams.get("sourceOnly") === "1", ...(finite ? { collection: finite.collection } : {}) });
   await logEvent("headhunter", "fmcsa.sweep", { summary: `FMCSA monitor: ${result.fleet_growth} fleet-growth triggers (${result.matched}/${result.checked} matched a carrier record)`, entity_type: "cron", meta: result });
   return NextResponse.json(result);
 }

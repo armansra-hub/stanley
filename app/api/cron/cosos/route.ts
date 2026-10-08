@@ -1,3 +1,4 @@
+import { parseFiniteCollection } from "@/lib/triggers/finiteCollection";
 import { NextRequest, NextResponse } from "next/server";
 import { sweepCoSos } from "@/lib/triggers/coSosSweep";
 import { logEvent } from "@/lib/db/events";
@@ -17,9 +18,12 @@ async function run(req: NextRequest) {
   if (url.searchParams.has("sourceOnly") && url.searchParams.get("sourceOnly") !== "1") {
     return NextResponse.json({ error: "sourceOnly must be 1 when supplied" }, { status: 400 });
   }
-  const n = Math.min(Number(url.searchParams.get("n") ?? 200) || 200, 400);
+  let finite: ReturnType<typeof parseFiniteCollection>;
+  try { finite = parseFiniteCollection(url.searchParams); }
+  catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
+  const n = finite?.limit ?? Math.min(Number(url.searchParams.get("n") ?? 200) || 200, 400);
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
-  const result = await sweepCoSos(n, { offset, sourceOnly: url.searchParams.get("sourceOnly") === "1" });
+  const result = await sweepCoSos(n, { offset, sourceOnly: url.searchParams.get("sourceOnly") === "1", ...(finite ? { collection: finite.collection } : {}) });
   await logEvent("headhunter", "cosos.sweep", { summary: `CO registry watch: ${result.triggered} new subsidiaries + ${result.ucc} UCC financings (${result.checked} checked)`, entity_type: "cron", meta: result });
   return NextResponse.json(result);
 }

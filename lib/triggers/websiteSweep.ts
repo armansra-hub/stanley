@@ -1,3 +1,4 @@
+import { assertFiniteCollection, finiteCollectionAccounting, type FiniteCollectionScope, type FiniteCollectionResult } from "./finiteCollection";
 import "server-only";
 import { markSiteAttempted, pickSitesForRotation, setSiteChecked, setParent, recordTrigger, recomputePriority } from "@/lib/db/triggers";
 import { setCompaniesStatus } from "@/lib/db/companies";
@@ -32,7 +33,9 @@ export const WEBSITE_ADMISSION_BUDGET_MS = 150_000;
  * Homepage/about-page phrases never publish M&A or expansion triggers. They do not
  * provide a canonical evidence page and previously created fabricated /# links.
  */
-export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail"; sourceOnly?: boolean } = {}): Promise<SweepOutcomes & { checked: number; changed: number; triggered: number; parents: number; dismissed: number; sourceOnly: boolean }> {
+export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?: "claimable" | "tail"; sourceOnly?: boolean; collection?: FiniteCollectionScope } = {}): Promise<FiniteCollectionResult & SweepOutcomes & { checked: number; changed: number; triggered: number; parents: number; dismissed: number; sourceOnly: boolean }> {
+  assertFiniteCollection(opts.collection, { ...opts, limit });
+  const accounting = finiteCollectionAccounting(opts.collection);
   const stats = { ...newSweepOutcomes(), checked: 0, changed: 0, triggered: 0, parents: 0, dismissed: 0, sourceOnly: opts.sourceOnly === true };
   const captureEnabled = intelligenceEnabled();
   if (opts.sourceOnly && !captureEnabled) throw new Error("Source-only website requires evidence capture");
@@ -42,7 +45,7 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
   }
 
   for await (const slice of rotationBatches(
-    (n, offset) => pickSitesForRotation(n, offset, opts.scope ?? "claimable"),
+    (n, offset) => opts.collection ? pickSitesForRotation(n, offset, opts.scope ?? "claimable", opts.collection) : pickSitesForRotation(n, offset, opts.scope ?? "claimable"),
     { limit, batchSize: 12, offset: opts.offset, budgetMs: WEBSITE_ADMISSION_BUDGET_MS },
   )) {
     // This includes the site's/feed's fetch time. Sequential headline verifier
@@ -231,8 +234,9 @@ export async function sweepWebsites(limit = 120, opts: { offset?: number; scope?
         try { await markSiteAttempted(c.id); }
         catch (error) { outcome = "failed"; sweepError(stats, "website", "attempt_stamp", error, c.id); }
         stats[outcome]++;
+        accounting.record(c.id, outcome);
       }
     }));
   }
-  return stats;
+  return { ...stats, ...accounting.result() };
 }
