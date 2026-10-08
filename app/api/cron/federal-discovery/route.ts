@@ -5,7 +5,9 @@ import { isDeepStrictEqual } from "node:util";
 import { serviceClient } from "@/lib/supabase/server";
 import { discoverFederalCompany } from "@/lib/publicGrowth/federalDiscovery";
 import { parseFederalDiscoveryContinuation, readFederalDiscoveryContinuations,
-  type FederalDiscoveryContinuation } from "@/lib/publicGrowth/federalDiscoveryState";
+  readFederalDiscoveryCapacityHold, FEDERAL_DISCOVERY_CONTINUATION_LIMIT,
+  type FederalDiscoveryContinuation, type FederalDiscoveryCapacityHold } from "@/lib/publicGrowth/federalDiscoveryState";
+import { federalCapacityReconciliationSchema, reconcileFederalDiscoveryCapacity } from "@/lib/publicGrowth/federalDiscoveryReconciliation";
 import {
   applyPublicGrowthRetryOutcomes, beginPublicGrowthSweep, checkpointPublicGrowthSweep,
   completePublicGrowthSweep, failPublicGrowthSweep,
@@ -365,7 +367,7 @@ async function inspectState() {
       strategyTimeoutCounts: timeouts.filter((row) => row.strategy === REQUEST_STRATEGY).map((row) => ({
         companyId: row.companyId, stage: row.stage, timeoutCount: row.timeoutCount, heldAt: row.heldAt,
       })),
-      inFlightCompanyIds: inFlight, errorPresent: data?.last_error != null,
+      inFlightCompanyIds: inFlight, capacityHold: readFederalDiscoveryCapacityHold(cursor), errorPresent: data?.last_error != null,
       lastStartedAt: safeTimestamp(data?.last_started_at), lastSucceededAt: safeTimestamp(data?.last_succeeded_at),
       leaseUntil: safeTimestamp(data?.lease_until), backoffUntil: safeTimestamp(cursor.discoveryBackoffUntil), coverageVerified: false });
   } catch {
@@ -377,6 +379,20 @@ async function inspectState() {
 async function run(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const url = new URL(req.url);
+  if (url.searchParams.has("action")) {
+    if (req.method !== "POST" || url.searchParams.get("action") !== "reconcile_capacity_hold"
+      || [...url.searchParams.keys()].length !== 1) return NextResponse.json({ error: "Use exclusive POST action=reconcile_capacity_hold" }, { status: 400 });
+    let input;
+    try {
+      const text = await req.text();
+      if (text.length > 8000) throw new Error("oversized request");
+      input = federalCapacityReconciliationSchema.safeParse(JSON.parse(text));
+    } catch { return NextResponse.json({ error: "Invalid exact capacity reconciliation request" }, { status: 400 }); }
+    if (!input.success) return NextResponse.json({ error: "Invalid exact capacity reconciliation request" }, { status: 400 });
+    try { return NextResponse.json(await reconcileFederalDiscoveryCapacity(input.data)); }
+    catch { return NextResponse.json({ source: SOURCE, status: "reconciliation_requires_readback", providerReplay: false,
+      coverageVerified: false, historyComplete: false }, { status: 409 }); }
+  }
   if (url.searchParams.has("inspect")) {
     if (url.searchParams.get("inspect") !== "1" || [...url.searchParams.keys()].length !== 1) {
       return NextResponse.json({ error: "Only exclusive inspect=1 is supported" }, { status: 400 });
@@ -389,7 +405,20 @@ async function run(req: NextRequest) {
   }
   let lease: PublicGrowthSweepLease | null = null;
   try {
+    const heldResponse = (hold: FederalDiscoveryCapacityHold) => NextResponse.json({ source: SOURCE, status: "operator_hold",
+      capacityHold: hold, checked: 0, sourceRequests: 0, providerReplay: false, coverageVerified: false, historyComplete: false }, { status: 409 });
+    // Unchanged scheduled calls observe this stop without acquiring another lease.
+    const { data: holdState, error: stateError } = await serviceClient().from("public_growth_sweep_state")
+      .select("cursor").eq("source", SOURCE).maybeSingle();
+    if (stateError) throw new Error("discovery hold read unavailable");
+    const priorHold = readFederalDiscoveryCapacityHold(holdState?.cursor ?? {});
+    if (priorHold) return heldResponse(priorHold);
     lease = await beginPublicGrowthSweep(SOURCE, limit, null);
+    const acquiredHold = readFederalDiscoveryCapacityHold(lease.cursor);
+    if (acquiredHold) {
+      await failPublicGrowthSweep(lease, new Error("federal_discovery_operator_hold"));
+      return heldResponse(acquiredHold);
+    }
     const after = publicGrowthAfterCompanyId(lease.cursor);
     const unresolvedHold = readbackHold(lease.cursor);
     const readbackHeld = new Set(unresolvedHold?.companyIds ?? []);
@@ -424,10 +453,22 @@ async function run(req: NextRequest) {
       ...retryState.deadLetters.filter((row) => row.resolvedAt === null).map((row) => row.companyId)]);
     const pendingIds = Object.keys(continuations).filter((id) => !heldAtStart.has(id.toLowerCase()) && !failedIds.has(id))
       .sort().slice(0, Math.min(CONCURRENCY, limit));
-    const retries = retryState.retryQueue.filter((row) => !heldAtStart.has(row.companyId.toLowerCase()))
-      .slice(0, Math.min(CONCURRENCY, limit - pendingIds.length));
+    // Every newly admitted ID may return an unfinished search. Reserve that
+    // worst-case space before dispatch; existing pending searches consume none.
+    let newSlots = Math.max(0, FEDERAL_DISCOVERY_CONTINUATION_LIMIT - Object.keys(continuations).length);
+    const capacityDeferredRetryIds = new Set<string>();
+    const retries: typeof retryState.retryQueue = [];
+    for (const row of retryState.retryQueue) {
+      if (retries.length >= Math.min(CONCURRENCY, limit - pendingIds.length)) break;
+      if (heldAtStart.has(row.companyId.toLowerCase())) continue;
+      if (!continuations[row.companyId]) {
+        if (newSlots === 0) { capacityDeferredRetryIds.add(row.companyId); continue; }
+        newSlots--;
+      }
+      retries.push(row);
+    }
     const retryIds = new Set(retries.map((row) => row.companyId));
-    const mainLimit = limit - retries.length - pendingIds.length;
+    const mainLimit = Math.min(limit - retries.length - pendingIds.length, newSlots);
     const { data, error } = mainLimit > 0
       ? await serviceClient().rpc("list_federal_discovery_tam_batch", { p_limit: mainLimit + 1, p_after_company_id: after })
       : { data: [], error: null };
@@ -553,7 +594,8 @@ async function run(req: NextRequest) {
       for (const key of ["retryQueue", "deadLetters"] as const) {
         if (patch[key] === undefined) continue;
         const priorRows = (lease.cursor[key] ?? []) as { companyId: string }[];
-        const heldRows = priorRows.filter((row) => heldAtStart.has(String(row.companyId).toLowerCase()));
+        const heldRows = priorRows.filter((row) => heldAtStart.has(String(row.companyId).toLowerCase())
+          || capacityDeferredRetryIds.has(row.companyId));
         const nextRows = patch[key] as { companyId: string }[];
         for (const held of heldRows) {
           const positions = nextRows.flatMap((row, index) => row.companyId === held.companyId ? [index] : []);

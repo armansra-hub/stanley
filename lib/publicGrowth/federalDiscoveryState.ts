@@ -21,6 +21,38 @@ export interface FederalDiscoveryContinuation {
   foundVerified?: boolean;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const FEDERAL_DISCOVERY_CONTINUATION_LIMIT = 1000;
+export interface FederalDiscoveryCapacityHold {
+  version: 1;
+  status: "held";
+  reason: "reviewed_journal_capacity_recovery_requires_manual_resume";
+  operationId: string;
+  journalId: string;
+  companyIds: string[];
+  evidenceSha256: string;
+  readerTaskId: string;
+  reviewerTaskId: string;
+  heldAt: string;
+}
+/** Only the audited capacity-reconciliation transaction creates this stop. */
+export function readFederalDiscoveryCapacityHold(cursor: Record<string, unknown>): FederalDiscoveryCapacityHold | null {
+  const value = cursor.discoveryCapacityHold;
+  if (value === undefined) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid discovery capacity hold");
+  const row = value as FederalDiscoveryCapacityHold;
+  const fields = ["version", "status", "reason", "operationId", "journalId", "companyIds", "evidenceSha256", "readerTaskId", "reviewerTaskId", "heldAt"];
+  if (Object.keys(row).length !== fields.length || Object.keys(row).some(key => !fields.includes(key))
+    || row.version !== 1 || row.status !== "held" || row.reason !== "reviewed_journal_capacity_recovery_requires_manual_resume"
+    || !UUID.test(row.operationId) || !UUID.test(row.journalId) || row.operationId === row.journalId
+    || !Array.isArray(row.companyIds) || row.companyIds.length < 1 || row.companyIds.length > 4
+    || row.companyIds.some(id => typeof id !== "string" || !UUID.test(id)) || new Set(row.companyIds).size !== row.companyIds.length
+    || !/^[0-9a-f]{64}$/.test(row.evidenceSha256)
+    || ![row.readerTaskId, row.reviewerTaskId].every(value => typeof value === "string" && value.trim() && value.length <= 200)
+    || row.readerTaskId === row.reviewerTaskId || typeof row.heldAt !== "string" || !Number.isFinite(Date.parse(row.heldAt))) {
+    throw new Error("invalid discovery capacity hold fields");
+  }
+  return structuredClone(row);
+}
 const text = (value: unknown, max: number): value is string => typeof value === "string" && Boolean(value.trim()) && value.length <= max;
 const nullableText = (value: unknown, max: number) => value === null || text(value, max);
 function parseCandidate(value: unknown): FederalDiscoveryCandidate {
@@ -82,6 +114,9 @@ export function parseFederalDiscoveryContinuation(value: unknown, companyId: str
 
 export function readFederalDiscoveryContinuations(cursor: Record<string, unknown>): Record<string, FederalDiscoveryContinuation> {
   const raw = cursor.discoveryContinuations ?? {};
-  if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length > 1000) throw new Error("invalid discovery continuation queue");
+  const hold = readFederalDiscoveryCapacityHold(cursor);
+  const bound = FEDERAL_DISCOVERY_CONTINUATION_LIMIT + (hold?.companyIds.length ?? 0);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length > bound
+    || hold?.companyIds.some(id => !Object.prototype.hasOwnProperty.call(raw, id))) throw new Error("invalid discovery continuation queue");
   return Object.fromEntries(Object.entries(raw).map(([id, value]) => [id, parseFederalDiscoveryContinuation(value, id)]));
 }

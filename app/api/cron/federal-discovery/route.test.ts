@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
 
-const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn() }));
+const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn(), reconcile: vi.fn() }));
+vi.mock("@/lib/publicGrowth/federalDiscoveryReconciliation", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/publicGrowth/federalDiscoveryReconciliation")>(), reconcileFederalDiscoveryCapacity: mocks.reconcile,
+}));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc,
   from: (table: string) => { if (table === "public_growth_sweep_state") return {
       select: (columns: string) => ({ eq: (key: string, value: string) => ({ maybeSingle: () => mocks.inspect(columns, key, value) }) }),
@@ -20,7 +23,7 @@ vi.mock("@/lib/publicGrowth/sweepState", async (importOriginal) => {
   return { ...actual, beginPublicGrowthSweep: mocks.begin, checkpointPublicGrowthSweep: mocks.checkpoint,
     completePublicGrowthSweep: mocks.complete, failPublicGrowthSweep: mocks.fail };
 });
-import { GET } from "./route";
+import { GET, POST } from "./route";
 import { PublicGrowthSweepBusyError } from "@/lib/publicGrowth/sweepState";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -79,6 +82,75 @@ describe("federal discovery managed admission", () => {
     mocks.worker.mockImplementation(async (companyId) => row(Number(companyId.slice(-12))));
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+
+  const capacityHold = () => ({ version: 1, status: "held", reason: "reviewed_journal_capacity_recovery_requires_manual_resume",
+    operationId: id(9000), journalId: id(9001), companyIds: [id(2001), id(2002), id(2003), id(2004)],
+    evidenceSha256: "a".repeat(64), readerTaskId: "reader", reviewerTaskId: "independent-reviewer", heldAt: "2026-09-14T00:00:00Z" });
+  const capacityRequest = () => ({ operationId: id(9000), journalId: id(9001), companyIds: [id(2001), id(2002), id(2003), id(2004)],
+    expectedCursorMd5: "a".repeat(32), expectedJournalMd5: "b".repeat(32), evidenceSha256: "c".repeat(64), readerTaskId: "reader", reviewerTaskId: "independent-reviewer" });
+  const reconcileRequest = (body: unknown, query = "?action=reconcile_capacity_hold") => new NextRequest(`https://example.test/api/cron/federal-discovery${query}`,
+    { method: "POST", headers: { "x-cron-secret": "test-secret" }, body: JSON.stringify(body) });
+
+  it("explicit reconciliation returns before lease, normal selector and every provider worker", async () => {
+    mocks.reconcile.mockResolvedValue({ status: "held", exactEventVerified: true, exactStateVerified: true });
+    expect((await POST(reconcileRequest(capacityRequest()))).status).toBe(200);
+    expect(mocks.reconcile).toHaveBeenCalledWith(capacityRequest());
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it.each(["duplicate-ids", "same-reviewer", "bad-hash", "extra", "missing-proof"])("rejects invalid reconciliation before writes: %s", async kind => {
+    const value: Record<string, unknown> = capacityRequest();
+    if (kind === "duplicate-ids") value.companyIds = [id(2001), id(2001)];
+    if (kind === "same-reviewer") value.reviewerTaskId = value.readerTaskId;
+    if (kind === "bad-hash") value.expectedCursorMd5 = "bad";
+    if (kind === "extra") value.replay = true;
+    if (kind === "missing-proof") delete value.evidenceSha256;
+    expect((await POST(reconcileRequest(value))).status).toBe(400);
+    expect(mocks.reconcile).not.toHaveBeenCalled(); expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it("requires POST and an exclusive action, and preserves a failed transaction as readback-required", async () => {
+    expect((await GET(request("?action=reconcile_capacity_hold"))).status).toBe(400);
+    expect((await POST(reconcileRequest(capacityRequest(), "?action=reconcile_capacity_hold&limit=4"))).status).toBe(400);
+    mocks.reconcile.mockRejectedValue(new Error("uncertain transaction response"));
+    const response = await POST(reconcileRequest(capacityRequest()));
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ status: "reconciliation_requires_readback", providerReplay: false });
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.fail).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it("unchanged scheduled calls stop at the operator hold before acquiring a lease", async () => {
+    mocks.inspect.mockResolvedValue({ data: { cursor: { discoveryCapacityHold: capacityHold() } }, error: null });
+    const response = await GET(request()); expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "operator_hold", checked: 0, sourceRequests: 0 });
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.fail).not.toHaveBeenCalled();
+  });
+  it("a hold installed between the read and lease acquisition still prevents provider work", async () => {
+    lease.cursor.discoveryCapacityHold = capacityHold();
+    expect((await GET(request())).status).toBe(409); expect(mocks.begin).toHaveBeenCalledOnce(); expect(mocks.fail).toHaveBeenCalledOnce();
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("reserves worst-case capacity before admitting a main wave beside 997 unfinished searches", async () => {
+    lease.cursor.discoveryContinuations = Object.fromEntries(Array.from({ length: 997 }, (_, i) => [id(i + 1), searchContinuation(i + 1)]));
+    lease.cursor.afterCompanyId = id(1500);
+    mocks.rpc.mockResolvedValue({ data: [2001, 2002, 2003, 2004].map(n => ({ id: id(n) })), error: null });
+    mocks.worker.mockImplementation(async companyId => ({ ...row(Number(companyId.slice(-12)), "in_progress"), continuation: searchContinuation(Number(companyId.slice(-12))) }));
+    const response = await GET(request()); expect(response.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("list_federal_discovery_tam_batch", { p_limit: 4, p_after_company_id: id(1500) });
+    expect(mocks.worker).toHaveBeenCalledTimes(7); expect(Object.keys(lease.cursor.discoveryContinuations as object)).toHaveLength(1000);
+  });
+  it("a full map processes existing pending work without admitting new main or retry IDs", async () => {
+    lease.cursor.discoveryContinuations = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [id(i + 1), searchContinuation(i + 1)]));
+    lease.cursor.retryQueue = [retry(2001)];
+    mocks.worker.mockImplementation(async companyId => ({ ...row(Number(companyId.slice(-12)), "in_progress"), continuation: searchContinuation(Number(companyId.slice(-12))) }));
+    const response = await GET(request()); expect(response.status).toBe(200); expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.worker).toHaveBeenCalledTimes(4); expect(Object.keys(lease.cursor.discoveryContinuations as object)).toHaveLength(1000);
+    expect(lease.cursor.retryQueue).toEqual([retry(2001)]);
+  });
+  it("new retry IDs consume capacity before main selection and unadmitted debt remains intact", async () => {
+    lease.cursor.discoveryContinuations = Object.fromEntries(Array.from({ length: 997 }, (_, i) => [id(i + 1), searchContinuation(i + 1)]));
+    lease.cursor.retryQueue = [2001, 2002, 2003, 2004].map(retry);
+    mocks.worker.mockImplementation(async companyId => ({ ...row(Number(companyId.slice(-12)), "in_progress"), continuation: searchContinuation(Number(companyId.slice(-12))) }));
+    expect((await GET(request())).status).toBe(200); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.worker).toHaveBeenCalledTimes(7);
+    expect(Object.keys(lease.cursor.discoveryContinuations as object)).toHaveLength(1000);
+    expect((lease.cursor.retryQueue as { companyId: string }[]).some(x => x.companyId === id(2004))).toBe(true);
+  });
 
   it("journals and checkpoints unfinished search pages before resuming their exact query", async () => {
     mocks.rpc.mockResolvedValue({ data: [{ id: id(1) }], error: null });

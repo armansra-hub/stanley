@@ -21,6 +21,19 @@ describe("durable federal discovery candidate state", () => {
     parsed.candidateQueue!.shift(); parsed.evaluatedRecipients!.push("award:changed");
     expect(queued.candidateQueue).toHaveLength(1); expect(queued.evaluatedRecipients).toHaveLength(1);
   });
+  it("permits only held, bounded recovery headroom without changing the ordinary 1000 limit", () => {
+    const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const map = Object.fromEntries(Array.from({ length: 1001 }, (_, n) => [id(n + 1), { ...legacy, companyId: id(n + 1) }]));
+    expect(() => readFederalDiscoveryContinuations({ discoveryContinuations: map })).toThrow("invalid discovery continuation queue");
+    const hold = { version: 1, status: "held", reason: "reviewed_journal_capacity_recovery_requires_manual_resume",
+      operationId: id(8000), journalId: id(8001), companyIds: [id(998), id(999), id(1000), id(1001)],
+      evidenceSha256: "a".repeat(64), readerTaskId: "reader", reviewerTaskId: "reviewer", heldAt: "2026-10-08T00:00:00Z" };
+    expect(Object.keys(readFederalDiscoveryContinuations({ discoveryContinuations: map, discoveryCapacityHold: hold }))).toHaveLength(1001);
+    expect(() => readFederalDiscoveryContinuations({ discoveryContinuations: map, discoveryCapacityHold: { ...hold, reviewerTaskId: "reader" } })).toThrow();
+    expect(() => readFederalDiscoveryContinuations({ discoveryContinuations: map, discoveryCapacityHold: { ...hold, companyIds: [id(9999)] } })).toThrow();
+    for (let n = 1002; n <= 1005; n++) map[id(n)] = { ...legacy, companyId: id(n) };
+    expect(() => readFederalDiscoveryContinuations({ discoveryContinuations: map, discoveryCapacityHold: hold })).toThrow("invalid discovery continuation queue");
+  });
   it.each([
     { candidate: null },
     { pendingPage: undefined },
