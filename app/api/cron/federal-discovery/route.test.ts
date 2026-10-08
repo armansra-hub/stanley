@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
 
-const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn(), reconcile: vi.fn() }));
+const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn(), reconcile: vi.fn(), pending: vi.fn(), inspectPending: vi.fn() }));
+vi.mock("@/lib/publicGrowth/federalDiscoveryPending", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/publicGrowth/federalDiscoveryPending")>(),
+  continueFederalPendingSources: mocks.pending, inspectFederalPendingSources: mocks.inspectPending,
+}));
 vi.mock("@/lib/publicGrowth/federalDiscoveryReconciliation", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/publicGrowth/federalDiscoveryReconciliation")>(), reconcileFederalDiscoveryCapacity: mocks.reconcile,
 }));
@@ -90,6 +94,44 @@ describe("federal discovery managed admission", () => {
     expectedCursorMd5: "a".repeat(32), expectedJournalMd5: "b".repeat(32), evidenceSha256: "c".repeat(64), readerTaskId: "reader", reviewerTaskId: "independent-reviewer" });
   const reconcileRequest = (body: unknown, query = "?action=reconcile_capacity_hold") => new NextRequest(`https://example.test/api/cron/federal-discovery${query}`,
     { method: "POST", headers: { "x-cron-secret": "test-secret" }, body: JSON.stringify(body) });
+
+  const pendingInput = () => ({ operationId: id(9010), holdOperationId: id(9000), sourceOnly: true,
+    continuations: [{ companyId: id(2001), expectedSha256: "a".repeat(64) }] });
+  it("exact source-only action uses its foreground handler before the ordinary selector or worker", async () => {
+    mocks.pending.mockResolvedValue({ analysisComplete: false, exactEventVerified: true });
+    const response = await POST(reconcileRequest(pendingInput(), "?action=continue_pending_source_only"));
+    expect(response.status).toBe(200); expect(mocks.pending).toHaveBeenCalledWith(pendingInput());
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it("source-only mutation and exact inspection require existing authorization", async () => {
+    const req = new NextRequest("https://example.test/api/cron/federal-discovery?action=continue_pending_source_only", { method: "POST", body: JSON.stringify(pendingInput()) });
+    expect((await POST(req)).status).toBe(401);
+    expect((await GET(request(`?inspect_pending=${id(2001)}`, {}))).status).toBe(401);
+    expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.inspectPending).not.toHaveBeenCalled();
+  });
+  it.each(["get", "mixed", "disabled", "missing-hash", "too-many"])("rejects broadened source-only requests: %s", async kind => {
+    const body: any = pendingInput();
+    if (kind === "disabled") body.sourceOnly = false;
+    if (kind === "missing-hash") delete body.continuations[0].expectedSha256;
+    if (kind === "too-many") body.continuations = Array.from({ length: 5 }, (_, n) => ({ companyId: id(n + 1), expectedSha256: "a".repeat(64) }));
+    const response = kind === "get" ? await GET(request("?action=continue_pending_source_only"))
+      : await POST(reconcileRequest(body, `?action=continue_pending_source_only${kind === "mixed" ? "&limit=4" : ""}`));
+    expect(response.status).toBe(400); expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it("uncertain source-only action is an incomplete readback hold, never retried by the route", async () => {
+    mocks.pending.mockRejectedValue(new Error("unknown write"));
+    const response = await POST(reconcileRequest(pendingInput(), "?action=continue_pending_source_only"));
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ status: "source_only_hold_requires_readback", analysisComplete: false });
+    expect(mocks.pending).toHaveBeenCalledTimes(1); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it("exact bounded inspection is read-only and rejects duplicate or mixed scope", async () => {
+    mocks.inspectPending.mockResolvedValue({ readOnly: true, items: [] });
+    expect((await GET(request(`?inspect_pending=${id(2001)},${id(2002)}`))).status).toBe(200);
+    expect(mocks.inspectPending).toHaveBeenCalledWith([id(2001), id(2002)]);
+    expect((await GET(request(`?inspect_pending=${id(2001)},${id(2001)}`))).status).toBe(400);
+    expect((await GET(request(`?inspect_pending=${id(2001)}&limit=1`))).status).toBe(400);
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.begin).not.toHaveBeenCalled();
+  });
 
   it("explicit reconciliation returns before lease, normal selector and every provider worker", async () => {
     mocks.reconcile.mockResolvedValue({ status: "held", exactEventVerified: true, exactStateVerified: true });

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
 import { canonicalEvidenceUrl, evidenceSections, prepareObservation } from "./observations";
 import { jevCost, secondsUntilNextMonth } from "./budget";
 import { workerEvidenceInput } from "./worker";
@@ -7,6 +9,45 @@ const base = { companyId: "11111111-1111-4111-8111-111111111111", companyName: "
   sourceUrl: "https://example.com/news?utm_source=feed&article=2#main", title: "Operating update", text: "A sourced public update." };
 afterEach(() => vi.unstubAllEnvs());
 describe("durable observation identity", () => {
+  it("retains bounded government JSON verbatim and partitions exact POST requests", () => {
+    const text = JSON.stringify({ description: "two  spaces\n\n\nremain", unknownProviderField: "😀".repeat(20_000) });
+    const input = { ...base, sourceKind: "government" as const, text, governmentJsonCapture: { requestSha256: "a".repeat(64) } };
+    const capture = prepareObservation(input);
+    expect(capture.text).toBe(text);
+    expect(capture.sections.map(section => section.text).join("")).toBe(text);
+    expect(capture.metadata).toMatchObject({ textTruncated: false, sourceRepresentation: "retained_parsed_json", originalHttpBytesRetained: false });
+    expect(capture.sourceKey).not.toBe(prepareObservation({ ...input, governmentJsonCapture: { requestSha256: "b".repeat(64) } }).sourceKey);
+    expect(capture.url).toBe(prepareObservation(base).url);
+  });
+  it.each(["oversize", "db-character-bound", "wrong-kind", "invalid-json", "array", "wrong-hash"])("fails closed for unsafe government capture: %s", kind => {
+    const input = { ...base, sourceKind: "government" as const, text: "{}", governmentJsonCapture: { requestSha256: "a".repeat(64) } };
+    if (kind === "oversize") input.text = JSON.stringify({ text: "😀".repeat(70_000) });
+    if (kind === "db-character-bound") input.text = JSON.stringify({ text: "x".repeat(60_000) });
+    if (kind === "wrong-kind") Object.assign(input, { sourceKind: "news" });
+    if (kind === "invalid-json") input.text = "not JSON";
+    if (kind === "array") input.text = "[]";
+    if (kind === "wrong-hash") input.governmentJsonCapture.requestSha256 = "bad";
+    expect(() => prepareObservation(input)).toThrow();
+  });
+  it("matches the real observation SQL length constraint at ASCII and Unicode boundaries", async () => {
+    const { PGlite } = createRequire(new URL("../../work/intelligence-sql-test/package.json", import.meta.url))("@electric-sql/pglite");
+    const db = await PGlite.create("memory://");
+    try {
+      const migration = await readFile(new URL("../../supabase/migrations/0059_intelligence_evidence_and_work.sql", import.meta.url), "utf8");
+      const column = migration.match(/^\s*(evidence_text text not null check \(length\(evidence_text\) between 1 and 48000\)),?$/m)?.[1];
+      expect(column).toBeTruthy();
+      await db.exec(`create table capture_boundary (${column})`);
+      const input = { ...base, sourceKind: "government" as const, governmentJsonCapture: { requestSha256: "a".repeat(64) } };
+      for (const char of ["a", "😀"]) {
+        const text = JSON.stringify({ text: char.repeat(48_000 - JSON.stringify({ text: "" }).length) });
+        const prepared = prepareObservation({ ...input, text });
+        expect((await db.query("insert into capture_boundary(evidence_text) values ($1) returning length(evidence_text) as length", [prepared.text])).rows[0].length).toBe(48_000);
+        const over = JSON.stringify({ text: char.repeat(48_001 - JSON.stringify({ text: "" }).length) });
+        expect(() => prepareObservation({ ...input, text: over })).toThrow();
+        await expect(db.query("insert into capture_boundary(evidence_text) values ($1)", [over])).rejects.toThrow();
+      }
+    } finally { await db.close(); }
+  });
   it.each(["Management Consulting", "Operational Support Services", "Media & Publishing", null])("describes the actual worker's ordinary questions for %s without changing document identity", subindustry => {
     vi.stubEnv("TYPESAFE_MODEL", "jev-1.13.0");
     const prepared = prepareObservation({ ...base, companySubindustry: subindustry });

@@ -8,6 +8,7 @@ import { parseFederalDiscoveryContinuation, readFederalDiscoveryContinuations,
   readFederalDiscoveryCapacityHold, FEDERAL_DISCOVERY_CONTINUATION_LIMIT,
   type FederalDiscoveryContinuation, type FederalDiscoveryCapacityHold } from "@/lib/publicGrowth/federalDiscoveryState";
 import { federalCapacityReconciliationSchema, reconcileFederalDiscoveryCapacity } from "@/lib/publicGrowth/federalDiscoveryReconciliation";
+import { federalPendingSourceSchema, federalPendingInspectSchema, continueFederalPendingSources, inspectFederalPendingSources } from "@/lib/publicGrowth/federalDiscoveryPending";
 import {
   applyPublicGrowthRetryOutcomes, beginPublicGrowthSweep, checkpointPublicGrowthSweep,
   completePublicGrowthSweep, failPublicGrowthSweep,
@@ -379,6 +380,22 @@ async function inspectState() {
 async function run(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const url = new URL(req.url);
+  if (url.searchParams.get("action") === "continue_pending_source_only") {
+    if (req.method !== "POST" || [...url.searchParams.keys()].length !== 1) return NextResponse.json({ error: "Use exclusive POST action=continue_pending_source_only" }, { status: 400 });
+    let input;
+    try { const text = await req.text(); if (text.length > 8000) throw new Error("oversized request"); input = federalPendingSourceSchema.safeParse(JSON.parse(text)); }
+    catch { return NextResponse.json({ error: "Invalid exact pending source request" }, { status: 400 }); }
+    if (!input.success) return NextResponse.json({ error: "Invalid exact pending source request" }, { status: 400 });
+    try { return NextResponse.json(await continueFederalPendingSources(input.data)); }
+    catch { return NextResponse.json({ source: SOURCE, status: "source_only_hold_requires_readback", providerReplay: false,
+      analysisComplete: false, historyComplete: false, coverageVerified: false }, { status: 409 }); }
+  }
+  if (url.searchParams.has("inspect_pending")) {
+    const input = federalPendingInspectSchema.safeParse(url.searchParams.get("inspect_pending")?.split(","));
+    if (req.method !== "GET" || [...url.searchParams.keys()].length !== 1 || !input.success) return NextResponse.json({ error: "Use exclusive GET inspect_pending=1..4 exact UUIDs" }, { status: 400 });
+    try { return NextResponse.json(await inspectFederalPendingSources(input.data)); }
+    catch { return NextResponse.json({ source: SOURCE, status: "inspection_failed", readOnly: true }, { status: 500 }); }
+  }
   if (url.searchParams.has("action")) {
     if (req.method !== "POST" || url.searchParams.get("action") !== "reconcile_capacity_hold"
       || [...url.searchParams.keys()].length !== 1) return NextResponse.json({ error: "Use exclusive POST action=reconcile_capacity_hold" }, { status: 400 });

@@ -8,6 +8,8 @@ import { splitsSurrogatePair, unicodePrefix } from "@/lib/textBounds";
 
 export const INTELLIGENCE_VERSION = "evidence-v2";
 export const intelligenceEnabled = () => process.env.STANLEY_INTELLIGENCE_ENABLED === "true";
+/** PostgreSQL length(text) counts Unicode code points, not UTF-16 units. */
+export const governmentJsonWithinBounds = (text: string) => Buffer.byteLength(text, "utf8") <= 262_144 && [...text].length <= 48_000;
 
 export type EvidenceSection = { id: string; start: number; end: number; text: string };
 export type ObservationInput = {
@@ -17,6 +19,8 @@ export type ObservationInput = {
   sourceKind: "news" | "website" | "job" | "government";
   sourceUrl: string; title: string; text: string; eventDate?: string | null; observedAt?: string;
   metadata?: Record<string, unknown>;
+  /** Parsed public government response, retained whole or rejected; never wire-byte proof. */
+  governmentJsonCapture?: { requestSha256: string };
 };
 
 export function canonicalEvidenceUrl(raw: string): string {
@@ -52,11 +56,20 @@ export function evidenceSections(text: string, maxLength = 3000): EvidenceSectio
 export function prepareObservation(input: ObservationInput) {
   if (!/^[a-f0-9-]{36}$/i.test(input.companyId) || !input.companyName.trim()) throw new Error("Invalid observation account");
   const url = canonicalEvidenceUrl(input.sourceUrl);
-  const normalized = input.text.replace(/\r\n/g, "\n").replace(/[\t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  const capture = input.governmentJsonCapture;
+  if (capture) {
+    if (input.sourceKind !== "government" || !/^[0-9a-f]{64}$/.test(capture.requestSha256)
+      || Object.keys(capture).some(key => key !== "requestSha256") || !governmentJsonWithinBounds(input.text)) {
+      throw new Error("Invalid bounded government capture");
+    }
+    const parsed = JSON.parse(input.text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid government response object");
+  }
+  const normalized = capture ? input.text : input.text.replace(/\r\n/g, "\n").replace(/[\t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
   if (!normalized) throw new Error("Empty evidence");
   // Public source capture is explicitly bounded. Private full-record indexing
   // uses a separate local path and must never use this clipping behavior.
-  const text = unicodePrefix(normalized, 48_000);
+  const text = capture ? normalized : unicodePrefix(normalized, 48_000);
   const observed = new Date(input.observedAt ?? Date.now());
   if (!Number.isFinite(observed.getTime())) throw new Error("Invalid observation time");
   const event = input.eventDate ? new Date(input.eventDate) : null;
@@ -75,7 +88,7 @@ export function prepareObservation(input: ObservationInput) {
     url, text, sections: evidenceSections(text), observedAt: observed.toISOString(), eventDate: event?.toISOString() ?? null,
     // A publisher page found through a feed and through site discovery is one
     // source. Context/date/body changes still produce a new observation version.
-    sourceKey: createHash("sha256").update(url).digest("hex"),
+    sourceKey: createHash("sha256").update(capture ? JSON.stringify(["government-json-v1", url, capture.requestSha256]) : url).digest("hex"),
     // This legacy base identity remains stable. The observation RPC separately
     // compares material question/date/identity metadata before semantic reuse.
     // The public company ID is already the database partition. An optional CRM
@@ -84,6 +97,9 @@ export function prepareObservation(input: ObservationInput) {
     contentHash: createHash("sha256").update(JSON.stringify([text, input.title, event?.toISOString(),
       { companyName: context.companyName, companyDomain: context.companyDomain }])).digest("hex"),
     metadata: { ...input.metadata, ...context, ...criteria,
+      ...(capture ? { sourceRepresentation: "retained_parsed_json", governmentJsonCaptureVersion: 1,
+        requestSha256: capture.requestSha256, retainedJsonSha256: createHash("sha256").update(text).digest("hex"),
+        originalHttpBytesRetained: false } : {}),
       // Collector provenance is persisted independently from semantic document
       // identity; rediscovery must not erase the first collector's evidence.
       discovery: input.metadata?.discovery ?? { collector: input.sourceKind, url: input.sourceUrl, title: input.title, eventDate: event?.toISOString() ?? null },

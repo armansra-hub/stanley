@@ -60,17 +60,25 @@ async function currentCompany(id: string) {
   }
   return company;
 }
-const companyIdentity = (c: any) => stableHash([c.id, c.name, c.domain, c.website_raw, c.city, c.state, c.netsuite_internal_id]);
+export const federalDiscoveryCompanyIdentity = (c: any) => stableHash([c.id, c.name, c.domain, c.website_raw, c.city, c.state, c.netsuite_internal_id]);
+const companyIdentity = federalDiscoveryCompanyIdentity;
+
+export function federalDiscoverySearchBody(name: string, page: number, endDate: string, searchAfter?: UsaspendingSearchAfter, collection: FederalAwardCollection = "contracts") {
+  return { filters: { recipient_search_text: [name], award_type_codes: collection === "idvs" ? IDV_CODES : ["A", "B", "C", "D"],
+    time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
+    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page, sort: "Start Date", order: "desc",
+    ...usaspendingCursorRequest(searchAfter) };
+}
 
 // A bounded discovery read validates source shape and paired sequential cursors.
 async function searchPage(name: string, page: number, endDate: string, deadlineMs: number, searchAfter?: UsaspendingSearchAfter, collection: FederalAwardCollection = "contracts") {
   const data = await fetchJson<any>(SEARCH_URL, {
     method: "POST", redirect: "error", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ filters: { recipient_search_text: [name], award_type_codes: collection === "idvs" ? IDV_CODES : ["A", "B", "C", "D"],
-      time_period: [{ start_date: "2007-10-01", end_date: endDate }] },
-    fields: ["Award ID", "Recipient Name", "Recipient UEI", "Start Date"], limit: 100, page, sort: "Start Date", order: "desc",
-    ...usaspendingCursorRequest(searchAfter) }),
+    body: JSON.stringify(federalDiscoverySearchBody(name, page, endDate, searchAfter, collection)),
   }, 20_000, 1, deadlineMs);
+  return parseFederalDiscoverySearchPage(data, searchAfter);
+}
+export function parseFederalDiscoverySearchPage(data: any, searchAfter?: UsaspendingSearchAfter) {
   if (!data || !Array.isArray(data.results) || data.results.length > 100 || typeof data.page_metadata?.hasNext !== "boolean") {
     fail("invalid_search_response");
   }
@@ -141,7 +149,7 @@ async function insertPreserving(table: string, payload: any, onConflict: string)
 const candidateKey = (candidate: FederalDiscoveryCandidate) => candidate.uei ? `uei:${candidate.uei.toUpperCase()}` : `award:${candidate.id}`;
 /** Move only after every selected candidate on this exact page has a durable
  * decision/enrollment receipt. A legacy candidate leaves its next page intact. */
-function advanceDiscovery(state: FederalDiscoveryContinuation): boolean {
+export function advanceDiscovery(state: FederalDiscoveryContinuation): boolean {
   if (state.candidateQueue?.length) {
     state.candidate = state.candidateQueue.shift()!;
     return true;

@@ -2,6 +2,16 @@ import type { FederalSearchTarget, VerifiedFederalIdentity } from "./federalIden
 import { parseUsaspendingSearchAfter, usaspendingCursorField, type UsaspendingSearchCursor } from "./usaspendingCursor";
 
 export type FederalDiscoveryCandidate = { id: string; name: string; uei: string | null };
+export interface FederalDiscoverySourceCapture {
+  version: 1;
+  status: "pending" | "held";
+  stage: "search" | "detail";
+  reason: string;
+  observationId: string | null;
+  requestSha256: string | null;
+  retainedJsonSha256: string | null;
+  capturedAt: string | null;
+}
 
 export interface FederalDiscoveryContinuation {
   searchAfter?: UsaspendingSearchCursor | null;
@@ -19,6 +29,8 @@ export interface FederalDiscoveryContinuation {
   pendingPage?: { hasNext: boolean; pageHash: string; nextCursor?: UsaspendingSearchCursor };
   evaluatedRecipients?: string[];
   foundVerified?: boolean;
+  /** Collection progress only. A hold is never a completed interpretation. */
+  sourceCapture?: FederalDiscoverySourceCapture;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const FEDERAL_DISCOVERY_CONTINUATION_LIMIT = 1000;
@@ -102,12 +114,27 @@ export function parseFederalDiscoveryContinuation(value: unknown, companyId: str
     || row.evaluatedRecipients.some(key => !text(key, 510) || !/^(uei:|award:)/.test(key))
     || new Set(row.evaluatedRecipients).size !== row.evaluatedRecipients.length)) throw new Error("invalid discovery evaluated recipients");
   if (row.foundVerified !== undefined && typeof row.foundVerified !== "boolean") throw new Error("invalid discovery verified progress");
+  const capture = row.sourceCapture;
+  if (capture !== undefined) {
+    const fields = ["version", "status", "stage", "reason", "observationId", "requestSha256", "retainedJsonSha256", "capturedAt"];
+    if (!capture || typeof capture !== "object" || Array.isArray(capture) || Object.keys(capture).length !== fields.length
+      || Object.keys(capture).some(key => !fields.includes(key)) || capture.version !== 1
+      || !["pending", "held"].includes(capture.status) || !["search", "detail"].includes(capture.stage)
+      || !text(capture.reason, 120) || (capture.observationId !== null && !UUID.test(capture.observationId))
+      || [capture.requestSha256, capture.retainedJsonSha256].some(value => value !== null && !/^[0-9a-f]{64}$/.test(value))
+      || (capture.capturedAt !== null && (!text(capture.capturedAt, 40) || !Number.isFinite(Date.parse(capture.capturedAt))))
+      || ([capture.observationId, capture.requestSha256, capture.retainedJsonSha256, capture.capturedAt].filter(value => value === null).length % 4 !== 0)
+      || (capture.status === "pending" && (!capture.observationId || capture.stage !== "search"))) {
+      throw new Error("invalid discovery source capture");
+    }
+  }
   return { version: 1, companyId, companyIdentity: row.companyIdentity, searchEndDate: row.searchEndDate,
     targets, targetIndex: row.targetIndex, page: row.page, candidate: candidate === null ? null : parseCandidate(candidate), lastPageHash: row.lastPageHash,
     ...(candidates === undefined ? {} : { candidateQueue: candidates }),
     ...(pending === undefined ? {} : { pendingPage: { hasNext: pending.hasNext, pageHash: pending.pageHash, ...(nextCursor ? { nextCursor } : {}) } }),
     ...(row.evaluatedRecipients === undefined ? {} : { evaluatedRecipients: [...row.evaluatedRecipients] }),
     ...(row.foundVerified === undefined ? {} : { foundVerified: row.foundVerified }),
+    ...(capture === undefined ? {} : { sourceCapture: { ...capture } }),
     ...(row.collection === undefined ? {} : { collection: row.collection }),
     ...usaspendingCursorField(row) };
 }
