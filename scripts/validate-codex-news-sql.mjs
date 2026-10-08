@@ -11,6 +11,7 @@ const source = await readFile(new URL("../supabase/migrations/0137_codex_news_an
 const repair = await readFile(new URL("../supabase/migrations/0138_codex_news_scalar_claim.sql", import.meta.url), "utf8");
 const sourceReview = await readFile(new URL("../supabase/migrations/0143_codex_source_review.sql", import.meta.url), "utf8");
 const exactSource = await readFile(new URL("../supabase/migrations/0144_codex_exact_source_claim.sql", import.meta.url), "utf8");
+const staleHold = await readFile(new URL("../supabase/migrations/0146_codex_stale_claim_hold.sql", import.meta.url), "utf8");
 const scalar = async (sql, values = []) => (await db.query(sql, values)).rows[0]?.value;
 const rpc = (action, payload) => scalar("select intelligence_codex_news($1,$2) value", [action, payload]);
 const checks = [];
@@ -330,6 +331,63 @@ try {
       finally { await db.exec("reset role"); }
     }
     assert.equal(await scalar("select has_function_privilege('service_role','intelligence_codex_news(text,jsonb)','EXECUTE') value"), true);
+  });
+  await db.exec(staleHold);
+  await test("stale hold migration preserves the existing function branches and rejects completed, held, unchanged or paid work", async () => {
+    const marker=" if p_action='reconcile_hold' then", end=" if p_action='status' then";
+    const oldBody=exactSource.slice(exactSource.indexOf("create or replace function")).replaceAll("\r\n","\n");
+    const newBody=staleHold.slice(staleHold.indexOf("create or replace function")).replaceAll("\r\n","\n");
+    assert.equal(newBody.slice(0,newBody.indexOf(marker))+newBody.slice(newBody.indexOf(end)),oldBody);
+    for(const mode of ["unchanged","complete","hold","paid_pending"]){
+      await resetExact(); const target=await seedExact(); const p=await rpc("claim",exactRequest(target.observation));
+      if(mode==="complete"){const a=await analyzed(p,"no_signal");await rpc("finish",finishPayload(a));}
+      if(mode==="hold")await rpc("hold",{...bound(p),taskId:"/root/reader",reason:"The original source has an unresolved limitation; it must remain explicitly held without reconciliation."});
+      if(mode!=="unchanged")await db.query("update intelligence_observations set title='Changed' where id=$1",[target.observation]);
+      if(mode==="paid_pending")await db.query("update intelligence_jobs set result=result||'{\"pendingRequest\":{\"unresolved\":true}}'::jsonb where id=$1",[p.jobId]);
+      if(mode!=="complete"&&mode!=="hold")await db.query("update intelligence_jobs set lease_until=now()-interval '1 minute' where id=$1",[p.jobId]);
+      const now=await rpc("status",{jobId:p.jobId});
+      const req={action:"reconcile_hold",...bound(p),requestId:p.review.requestId,currentSnapshotHash:now.snapshotHash,taskId:"/root/coordinator",reviewerTaskId:"/root/reviewer",incidentId:randomUUID(),evidenceSha256:"e".repeat(64),reason:"This fixture must not be mutated by incident reconciliation; the existing ordinary completion and hold gates remain binding."};
+      const before=await savedJobs();await assert.rejects(rpc("reconcile_hold",req));assert.deepEqual(await savedJobs(),before);
+    }
+  });
+  await test("expired changed snapshot retires to an explicit held incident with complete preservation and exact idempotent event", async () => {
+    await resetExact(); const target=await seedExact(); const p=await rpc("claim",exactRequest(target.observation));
+    const a=await analyzed(p,"no_signal");
+    await db.query("update intelligence_jobs set lease_until=now()-interval '1 minute' where id=$1",[p.jobId]);
+    await db.query("update companies set status='new' where id=$1",[p.snapshot.company.id]);
+    // Ensure changed source even when the fixture already used status=new.
+    await db.query("update intelligence_observations set title='Changed title after claim' where id=$1",[target.observation]);
+    const current=await rpc("status",{jobId:p.jobId});
+    const req={action:"reconcile_hold",...bound(p),requestId:p.review.requestId,currentSnapshotHash:current.snapshotHash,taskId:"/root/coordinator",
+      reviewerTaskId:"/root/incident_reviewer",incidentId:randomUUID(),evidenceSha256:"e".repeat(64),reason:"Independently reconciled immutable prior and current snapshots and failed requests. Retain an explicit incomplete hold without completion."};
+    const before=await scalar("select to_jsonb(j) value from intelligence_jobs j where id=$1",[p.jobId]);
+    const otherBefore=await scalar("select jsonb_build_object('companies',(select jsonb_agg(c) from companies c),'observations',(select jsonb_agg(o) from intelligence_observations o),'triggers',(select jsonb_agg(t) from triggers t),'jev',(select jsonb_agg(b) from intelligence_jev_budget_policy b)) value");
+    for(const mutation of [{jobId:randomUUID()},{requestId:randomUUID()},{lease:randomUUID()},{snapshotHash:"f".repeat(64)},
+      {currentSnapshotHash:p.snapshotHash},{reviewerTaskId:req.taskId},{evidenceSha256:"bad"},{reason:"short"},{force:true}]){
+      await assert.rejects(rpc("reconcile_hold",{...req,...mutation}));
+      assert.deepEqual(await scalar("select to_jsonb(j) value from intelligence_jobs j where id=$1",[p.jobId]),before);
+    }
+    await db.query("update intelligence_jobs set lease_until=now()+interval '1 minute' where id=$1",[p.jobId]);
+    await assert.rejects(rpc("reconcile_hold",req),/expired/);
+    await db.query("update intelligence_jobs set lease_until=$2 where id=$1",[p.jobId,before.lease_until]);
+    await db.query("update intelligence_jobs set result=result||'{\"pendingRequest\":{\"unresolved\":true}}'::jsonb where id=$1",[p.jobId]);
+    await assert.rejects(rpc("reconcile_hold",req),/expired/);
+    await db.query("update intelligence_jobs set result=result-'pendingRequest' where id=$1",[p.jobId]);
+    const held=await rpc("reconcile_hold",req), rec=held.review.reconciliation;
+    assert.equal(held.status,"queued");assert.equal(held.lease,null);assert.equal(held.leaseUntil,null);assert.equal(held.review.receipt,undefined);
+    assert.equal(held.review.hold,req.reason);assert.deepEqual(held.review.analysis,a.review.analysis);assert.equal(held.review.decisionHash,a.review.decisionHash);
+    assert.equal(held.review.snapshotHash,p.snapshotHash);assert.deepEqual(rec.currentSnapshot,current.snapshot);assert.deepEqual(rec.request,req);
+    assert.equal(rec.receipt.analysisCompleted,false);assert.equal(rec.receipt.triggerId,null);
+    const after=await scalar("select to_jsonb(j) value from intelligence_jobs j where id=$1",[p.jobId]);
+    assert.deepEqual(after.result.parts,before.result.parts);assert.equal(after.attempts,before.attempts);assert.equal(after.finished_at,before.finished_at);
+    const event=await scalar("select to_jsonb(e) value from app_events e where id=$1",[rec.receipt.eventId]);
+    const {eventId,...meta}=rec.receipt;assert.deepEqual(event.meta,meta);assert.equal(event.kind,"intelligence.codex_news_held");
+    assert.deepEqual(await rpc("reconcile_hold",req),held);assert.deepEqual(await rpc("status",{jobId:p.jobId}),held);
+    await assert.rejects(rpc("reconcile_hold",{...req,incidentId:randomUUID()}),/retry differs/);
+    assert.equal(await scalar("select count(*)::int value from app_events where entity_id=$1 and kind='intelligence.codex_news_held'",[p.jobId]),1);
+    assert.deepEqual(await scalar("select jsonb_build_object('companies',(select jsonb_agg(c) from companies c),'observations',(select jsonb_agg(o) from intelligence_observations o),'triggers',(select jsonb_agg(t) from triggers t),'jev',(select jsonb_agg(b) from intelligence_jev_budget_policy b)) value"),otherBefore);
+    assert.equal(await rpc("claim",exactRequest(target.observation)),null);
+    for(const role of ["anon","authenticated"])assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value",[role]),false);
   });
   console.log(JSON.stringify({ offline: true, passed: checks.length, checks, providerCalls: 0, productionAccess: false }));
 } finally { await db.close(); }

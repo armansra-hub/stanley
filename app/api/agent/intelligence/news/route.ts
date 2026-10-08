@@ -42,6 +42,23 @@ export async function POST(req: Request) {
     const body = newsActionSchema.parse(JSON.parse(text));
     if (body.action === "claim") return json({ job: publicNewsPacket(await newsRpc("claim", body)) });
     if (body.action === "renew") return json({ job: publicNewsPacket(await newsRpc("renew", body)) });
+    if (body.action === "reconcile_hold") {
+      const saved = await newsRpc("reconcile_hold", body);
+      const readback = await newsRpc("status", { jobId: body.jobId, requestId: body.requestId });
+      const reconciliation = readback?.review.reconciliation;
+      if (!saved || !readback || readback.jobId !== body.jobId || readback.review.requestId !== body.requestId
+        || readback.review.snapshotHash !== body.snapshotHash || readback.status !== "queued" || readback.lease !== null || readback.leaseUntil !== null
+        || readback.review.receipt || readback.review.hold !== body.reason || !reconciliation
+        || !isDeepStrictEqual(reconciliation.request, body) || !isDeepStrictEqual(saved.review.reconciliation, reconciliation)
+        || reconciliation.receipt.disposition !== "incomplete_hold" || reconciliation.receipt.analysisCompleted !== false
+        || reconciliation.receipt.triggerId !== null || typeof reconciliation.receipt.eventId !== "string"
+        || reconciliation.receipt.jobId !== body.jobId || reconciliation.receipt.incidentId !== body.incidentId
+        || reconciliation.receipt.originalSnapshotHash !== body.snapshotHash || reconciliation.receipt.currentSnapshotHash !== body.currentSnapshotHash
+        || reconciliation.receipt.evidenceSha256 !== body.evidenceSha256) {
+        throw new NewsReviewError("news_hold_reconciliation_readback_unconfirmed");
+      }
+      return json({ job: publicNewsPacket(readback) });
+    }
     const packet = await newsRpc("read", body);
     if (!packet) return json({ error: "news_job_not_found" }, 404);
     if (body.action === "finish" && packet.status === "complete") {

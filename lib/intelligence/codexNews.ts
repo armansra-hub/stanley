@@ -41,7 +41,14 @@ export const newsActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("finish"), ...bound, review: newsReviewSchema }).strict(),
   z.object({ action: z.literal("hold"), ...bound, taskId: actor, reason }).strict(),
   z.object({ action: z.literal("renew"), ...bound, taskId: actor }).strict(),
+  z.object({ action: z.literal("reconcile_hold"), ...bound, requestId: uuid, currentSnapshotHash: hash,
+    taskId: actor, reviewerTaskId: actor, incidentId: uuid, evidenceSha256: hash, reason }).strict(),
 ]).superRefine((value, ctx) => {
+  if (value.action === "reconcile_hold") {
+    if (value.taskId === value.reviewerTaskId) ctx.addIssue({ code: "custom", message: "independent incident reviewer required" });
+    if (value.snapshotHash === value.currentSnapshotHash) ctx.addIssue({ code: "custom", message: "changed snapshot required" });
+    return;
+  }
   if (value.action !== "claim") return;
   if (Boolean(value.companyIds) !== Boolean(value.observedThrough)) ctx.addIssue({ code: "custom", message: "companyIds and observedThrough must be supplied together" });
   if (value.companyIds && new Set(value.companyIds).size !== value.companyIds.length) ctx.addIssue({ code: "custom", message: "duplicate companyIds" });
@@ -54,7 +61,8 @@ type Review = z.infer<typeof newsReviewSchema>;
 export type NewsPacket = {
   jobId: string; status: string; lease: string | null; leaseUntil: string | null; snapshotHash: string;
   publication?: { event: { id: string; meta: Record<string, unknown> } | null; trigger: { id: string; company_id: string; type: string; signal_date: string | null; source_url: string; metadata: Record<string, unknown> } | null };
-  review: { actor: string; requestId: string; snapshotHash: string; analysis?: Analysis; independentReview?: Review; decisionHash?: string; receipt?: Record<string, unknown> };
+  review: { actor: string; requestId: string; snapshotHash: string; analysis?: Analysis; independentReview?: Review; decisionHash?: string; receipt?: Record<string, unknown>;
+    hold?: string; heldAt?: string; reconciliation?: { request: Record<string, unknown>; receipt: Record<string, unknown>; currentSnapshot: unknown } };
   snapshot: {
     observation: { id: string; company_id: string; source_kind: string; source_url: string; title: string; evidence_text: string;
       content_hash: string; event_date: string | null; observed_at: string; is_current: boolean; feedback_excluded: boolean; metadata: Record<string, unknown>; sections: unknown[] };
