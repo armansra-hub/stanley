@@ -16,6 +16,47 @@ export async function GET(req: Request) {
   try { q = parseCoverageQuery(new URL(req.url).searchParams); } catch { return json({ error: "invalid_coverage_query" }, 400); }
   try {
     const db = serviceClient();
+    if (q.companyIds) {
+      // Exact-count reads must fit in full. A backend row cap must never become a false missing checkpoint.
+      const { data: accounts, error: accountError, count: accountCount } = await db.from("companies")
+        .select(COMPANY_FIELDS, { count: "exact" }).or(membershipFilter(q.scope)).in("id", q.companyIds).limit(q.companyIds.length);
+      if (accountError || !Array.isArray(accounts) || !Number.isSafeInteger(accountCount) || accountCount !== accounts.length) throw new Error("bulk_company_read_incomplete");
+      const requested = new Set(q.companyIds), byId = new Map<string, Record<string, unknown>>();
+      for (const account of accounts) {
+        if (typeof account.id !== "string" || !requested.has(account.id) || byId.has(account.id) || !registryCompanyInScope(account, q.scope)) throw new Error("bulk_company_binding_mismatch");
+        byId.set(account.id, account);
+      }
+      const byCompany = new Map<string, ReturnType<typeof sourceProjection>[]>();
+      let sourceCount = 0;
+      if (byId.size) {
+        const { data: sources, error, count } = await db.from("intelligence_source_state")
+          .select(SOURCE_FIELDS, { count: "exact" }).in("company_id", [...byId.keys()])
+          .order("company_id").order("source_key").limit(q.limit);
+        if (error || !Array.isArray(sources) || !Number.isSafeInteger(count) || count === null || count < 0) throw new Error("bulk_source_read_unavailable");
+        if (count > q.limit) return json({ error: "bulk_source_limit_exceeded", sourceRowsReturned: false, coverageVerified: false,
+          sourceCount: count, limit: q.limit, action: "Use smaller exact companyIds batches or the existing singleton sources view." }, 413);
+        if (count !== sources.length) throw new Error("bulk_source_read_incomplete");
+        sourceCount = count;
+        const keys = new Set<string>();
+        for (const source of sources) {
+          if (typeof source.company_id !== "string" || !byId.has(source.company_id) || typeof source.source_key !== "string" || !source.source_key.length) throw new Error("bulk_source_binding_mismatch");
+          const key = `${source.company_id}\n${source.source_key}`;
+          if (keys.has(key)) throw new Error("bulk_source_duplicate");
+          keys.add(key);
+          const rows = byCompany.get(source.company_id) ?? [];
+          rows.push(sourceProjection(source));
+          byCompany.set(source.company_id, rows);
+        }
+      }
+      return json({ view: "sources", scope: q.scope, requestedCompanyIds: q.companyIds,
+        accounts: q.companyIds.map(companyId => {
+          const company = byId.get(companyId);
+          return company ? { companyId, inScope: true, company: pick(company, COMPANY_FIELDS), rows: byCompany.get(companyId) ?? [],
+            page: { partial: false, nextAfter: null }, checkpointPageComplete: true }
+            : { companyId, inScope: false, reason: "company_not_in_scope", company: null, rows: null, page: null, checkpointPageComplete: false };
+        }), sourceCount, page: { partial: false, nextAfter: null, limit: q.limit }, coverageVerified: false,
+        consistency: "live_exact_ids_reconcile_membership_and_source_versions_at_end", asOf: new Date().toISOString() });
+    }
     let companies = db.from("companies").select(COMPANY_FIELDS).or(membershipFilter(q.scope));
     if (q.view === "companies") {
       if (q.after) companies = companies.gt("id", q.after);

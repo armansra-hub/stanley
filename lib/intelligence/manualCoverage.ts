@@ -4,21 +4,24 @@ export const OBSERVATION_FIELDS = "id,company_id,source_kind,source_url,title,ev
 export const JOB_FIELDS = "id,observation_id,kind,status,priority,due_at,attempts,lease_until,created_at,finished_at,codex_news_request_id";
 export const SOURCE_FIELDS = "company_id,source_key,complete,last_attempt_at,last_success_at,last_error,coverage_status,next_attempt_at,cursor";
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export type CoverageQuery = { view: "companies" | "evidence" | "sources" | "jobs" | "registry-capture"; scope: "all" | "tam" | "tal"; limit: number; after: string | null; companyId: string | null; observationId: string | null; sourceKey: "fmcsa" | "cosos" | null };
+export type CoverageQuery = { view: "companies" | "evidence" | "sources" | "jobs" | "registry-capture"; scope: "all" | "tam" | "tal"; limit: number; after: string | null; companyId: string | null; companyIds?: string[]; observationId: string | null; sourceKey: "fmcsa" | "cosos" | null };
 export function parseCoverageQuery(params: URLSearchParams): CoverageQuery {
-  const allowed = new Set(["view", "scope", "limit", "after", "companyId", "observationId", "sourceKey"]);
+  const allowed = new Set(["view", "scope", "limit", "after", "companyId", "companyIds", "observationId", "sourceKey"]);
   for (const key of params.keys()) if (!allowed.has(key) || params.getAll(key).length !== 1) throw new Error("invalid_query");
   const view = params.get("view") ?? "companies", scope = params.get("scope") ?? "all";
   if (!["companies", "evidence", "sources", "jobs", "registry-capture"].includes(view) || !["all", "tam", "tal"].includes(scope)) throw new Error("invalid_query");
-  const rawLimit = params.get("limit") ?? (view === "registry-capture" ? "1" : view === "evidence" ? "5" : "100");
-  if (!/^[1-9][0-9]*$/.test(rawLimit) || Number(rawLimit) > (view === "evidence" ? 10 : 100)) throw new Error("invalid_query");
+  const rawIds = params.get("companyIds"), companyIds = rawIds === null ? undefined : rawIds.split(",").map(id => id.toLowerCase());
+  if (companyIds && (view !== "sources" || companyIds.length > 100 || companyIds.some(id => !UUID.test(id))
+    || new Set(companyIds).size !== companyIds.length || params.has("companyId") || params.has("after"))) throw new Error("invalid_query");
+  const rawLimit = params.get("limit") ?? (companyIds ? "1000" : view === "registry-capture" ? "1" : view === "evidence" ? "5" : "100");
+  if (!/^[1-9][0-9]*$/.test(rawLimit) || Number(rawLimit) > (companyIds ? 1000 : view === "evidence" ? 10 : 100)) throw new Error("invalid_query");
   const companyId = params.get("companyId"), observationId = params.get("observationId"), after = params.get("after");
   const sourceKey = params.get("sourceKey");
   if (view === "registry-capture" ? !["fmcsa", "cosos"].includes(sourceKey ?? "") || rawLimit !== "1" || after !== null : sourceKey !== null) throw new Error("invalid_query");
-  if ((view === "companies" ? companyId !== null : !companyId || !UUID.test(companyId))
+  if ((view === "companies" ? companyId !== null : !companyIds && (!companyId || !UUID.test(companyId)))
     || (view === "jobs" ? !observationId || !UUID.test(observationId) : observationId !== null)
     || (after !== null && (view === "sources" ? !/^[a-zA-Z0-9:._/-]{1,512}$/.test(after) : !UUID.test(after)))) throw new Error("invalid_query");
-  return { view: view as CoverageQuery["view"], scope: scope as CoverageQuery["scope"], limit: Number(rawLimit), companyId, observationId, after, sourceKey: sourceKey as CoverageQuery["sourceKey"] };
+  return { view: view as CoverageQuery["view"], scope: scope as CoverageQuery["scope"], limit: Number(rawLimit), companyId, ...(companyIds ? { companyIds } : {}), observationId, after, sourceKey: sourceKey as CoverageQuery["sourceKey"] };
 }
 export function membershipFilter(scope: CoverageQuery["scope"]): string {
   const tal = "and(tal_claimed.eq.true,or(lists.is.null,lists.not.cs.{tam_duplicate}))";
@@ -51,6 +54,9 @@ export function evidenceProjection(row: Record<string, unknown>) {
 }
 export function sourceProjection(row: Record<string, unknown>) {
   const cursor = record(row.cursor);
+  const revisit = record(cursor.revisit);
+  const revisitCount = (key: string) => typeof revisit[key] === "number" && Number.isSafeInteger(revisit[key]) && (revisit[key] as number) >= 0 ? revisit[key] : null;
+  const revisitDate = (key: string) => typeof revisit[key] === "string" && /^\d{4}-\d{2}-\d{2}T/.test(revisit[key]) && Number.isFinite(Date.parse(revisit[key])) ? revisit[key] : null;
   const counts: Record<string, number> = {};
   for (const key of ["pending", "pendingUrls", "failedUrls", "retryQueue", "deadLetters", "knownUrls", "verifiedUrls", "seen"]) {
     if (Array.isArray(cursor[key])) counts[key] = cursor[key].length;
@@ -65,7 +71,7 @@ export function sourceProjection(row: Record<string, unknown>) {
     continuation: { atsScanActive: typeof cursor.scanId === "string" && !!cursor.scanId,
       websiteChangedSinceComplete: typeof cursor.changedSinceComplete === "boolean" ? cursor.changedSinceComplete : null,
       consecutiveFailures: typeof cursor.consecutiveFailures === "number" ? cursor.consecutiveFailures : null,
-      revisit: pick(record(cursor.revisit), "quietRuns,intervalHours,nextDueAt,lastChangedAt"),
+      revisit: { quietRuns: revisitCount("quietRuns"), intervalHours: revisitCount("intervalHours"), nextDueAt: revisitDate("nextDueAt"), lastChangedAt: revisitDate("lastChangedAt") },
       mappedFields: Object.keys(cursor).filter(key => ["pending", "pendingUrls", "failedUrls", "retryQueue", "deadLetters", "knownUrls", "verifiedUrls", "seen", "retries", "offset", "queryCycle", "attemptedPages", "retainedPages", "complete", "scanId", "changedSinceComplete", "consecutiveFailures", "revisit"].includes(key)),
       otherCursorFieldsPresent: Object.keys(cursor).some(key => !["pending", "pendingUrls", "failedUrls", "retryQueue", "deadLetters", "knownUrls", "verifiedUrls", "seen", "retries", "offset", "queryCycle", "attemptedPages", "retainedPages", "complete", "scanId", "changedSinceComplete", "consecutiveFailures", "revisit"].includes(key)) },
     debtAssessment: "partial_projection_not_proof_of_no_debt" };
