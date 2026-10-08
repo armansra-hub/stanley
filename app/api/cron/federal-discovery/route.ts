@@ -8,7 +8,7 @@ import { parseFederalDiscoveryContinuation, readFederalDiscoveryContinuations,
   readFederalDiscoveryCapacityHold, FEDERAL_DISCOVERY_CONTINUATION_LIMIT,
   type FederalDiscoveryContinuation, type FederalDiscoveryCapacityHold } from "@/lib/publicGrowth/federalDiscoveryState";
 import { federalCapacityReconciliationSchema, reconcileFederalDiscoveryCapacity } from "@/lib/publicGrowth/federalDiscoveryReconciliation";
-import { federalPendingSourceSchema, federalPendingInspectSchema, continueFederalPendingSources, inspectFederalPendingSources } from "@/lib/publicGrowth/federalDiscoveryPending";
+import { federalPendingSourceSchema, federalPendingInspectSchema, continueFederalPendingSources, inspectFederalPendingSources, federalPendingRecoverySchema, reconcileFederalPendingSource } from "@/lib/publicGrowth/federalDiscoveryPending";
 import {
   applyPublicGrowthRetryOutcomes, beginPublicGrowthSweep, checkpointPublicGrowthSweep,
   completePublicGrowthSweep, failPublicGrowthSweep,
@@ -380,6 +380,16 @@ async function inspectState() {
 async function run(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const url = new URL(req.url);
+  if (url.searchParams.get("action") === "reconcile_pending_source_only") {
+    if (req.method !== "POST" || [...url.searchParams.keys()].length !== 1) return NextResponse.json({ error: "Use exclusive POST action=reconcile_pending_source_only" }, { status: 400 });
+    const text = await req.text();
+    let raw: unknown; try { raw = text.length <= 8000 ? JSON.parse(text) : null; } catch { raw = null; }
+    const input = federalPendingRecoverySchema.safeParse(raw);
+    if (!input.success) return NextResponse.json({ error: "Exact reviewed source recovery proof required" }, { status: 400 });
+    try { return NextResponse.json(await reconcileFederalPendingSource(input.data)); }
+    catch { return NextResponse.json({ source: SOURCE, status: "source_recovery_requires_readback", sourceRequests: 0,
+      providerReplay: false, analysisComplete: false, historyComplete: false, coverageVerified: false }, { status: 409 }); }
+  }
   if (url.searchParams.get("action") === "continue_pending_source_only") {
     if (req.method !== "POST" || [...url.searchParams.keys()].length !== 1) return NextResponse.json({ error: "Use exclusive POST action=continue_pending_source_only" }, { status: 400 });
     let input;

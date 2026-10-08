@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
 const mocks = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), fetch: vi.fn(), resolve: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: mocks.from, rpc: mocks.rpc }), withServiceDeadline: (_: number, fn: () => unknown) => fn() }));
 vi.mock("@/lib/companyIdentity", () => ({ enrichCompanyIdentity: async (company: object) => ({ ...company, legalNames: [], addresses: [] }) }));
@@ -29,7 +31,13 @@ function query(table: string) {
   if (!["companies", "company_government_matches", "intelligence_observations", "intelligence_jobs"].includes(table)) throw new Error(`Forbidden table ${table}`);
   const filters: Record<string, unknown> = {};
   let single = false, cap = Infinity;
-  const q: any = { select: () => q, eq: (key: string, value: unknown) => { filters[key] = value; return q; },
+  const q: any = { select: (columns: string) => {
+      if (table === "intelligence_jobs" && columns.split(",").includes("company_id")) throw new Error("column intelligence_jobs.company_id does not exist");
+      return q;
+    }, eq: (key: string, value: unknown) => {
+      if (table === "intelligence_jobs" && key === "company_id") throw new Error("column intelligence_jobs.company_id does not exist");
+      filters[key] = value; return q;
+    },
     limit: (value: number) => { cap = value; return q; }, maybeSingle: () => { single = true; return q; },
     then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve().then(() => {
       let rows = tables[table].filter(row => Object.entries(filters).every(([key, value]) => row[key] === value)).slice(0, cap);
@@ -49,14 +57,30 @@ beforeEach(() => {
     tables.intelligence_observations.push({ id: observationId, company_id: args.p_company, source_key: args.p_source_key,
       source_kind: args.p_source_kind, source_url: args.p_url, evidence_text: args.p_text, metadata: args.p_metadata,
       observed_at: args.p_observed_at, is_current: true });
-    tables.intelligence_jobs.push({ id: id(200 + tables.intelligence_jobs.length), company_id: args.p_company,
-      observation_id: observationId, kind: "interpret", status: "queued" });
+    tables.intelligence_jobs.push({ id: id(200 + tables.intelligence_jobs.length),
+      observation_id: observationId, kind: "interpret", status: "queued", attempts: 0, lease_token: null, lease_until: null, finished_at: null, codex_news_request_id: null });
     return rpcUncertain ? { data: null, error: { code: "timeout_after_write" } } : { data: { id: observationId, queued: true }, error: null };
   });
 });
 afterEach(() => { expect(mocks.resolve).not.toHaveBeenCalled(); vi.unstubAllEnvs(); });
 
 describe("federal pending source-only collection", () => {
+  it("binds jobs through the real0059 observation FK; the deployed erroneous company column is rejected by PostgreSQL", async () => {
+    const { PGlite } = createRequire(new URL("../../work/intelligence-sql-test/package.json", import.meta.url))("@electric-sql/pglite");
+    const db = await PGlite.create("memory://");
+    try {
+      const migration = await readFile(new URL("../../supabase/migrations/0059_intelligence_evidence_and_work.sql", import.meta.url), "utf8");
+      const jobDefinition = migration.match(/create table public\.intelligence_jobs \([\s\S]*?\n\);/)?.[0];
+      expect(jobDefinition).toBeTruthy();
+      await db.exec("create table public.intelligence_observations(id uuid primary key,company_id uuid not null); create table public.intelligence_views(id uuid primary key);");
+      await db.exec(jobDefinition!);
+      await db.query("insert into intelligence_observations(id,company_id) values($1,$2)", [id(100),id(1)]);
+      await db.query("insert into intelligence_jobs(id,observation_id,operation_key,kind) values($1,$2,'known-original','interpret')", [id(200),id(100)]);
+      await expect(db.query("select id,company_id,observation_id,kind,status from intelligence_jobs where company_id=$1 and observation_id=$2", [id(1),id(100)])).rejects.toThrow(/company_id/);
+      const result = await db.query("select id,observation_id,kind,status from intelligence_jobs where observation_id=$1 and kind='interpret' limit 2", [id(100)]);
+      expect(result.rows).toEqual([{ id:id(200),observation_id:id(100),kind:"interpret",status:"queued" }]);
+    } finally { await db.close(); }
+  });
   it("captures one full search original and canonical job, preserving candidate identity/date/unknown fields", async () => {
     const result = await captureFederalPendingSource(id(1), state(), id(10));
     expect(result).toMatchObject({ status: "incomplete", sourceRequests: 1, sourceCaptured: true, analysisComplete: false,
@@ -75,6 +99,36 @@ describe("federal pending source-only collection", () => {
     mocks.fetch.mockClear(); mocks.rpc.mockClear();
     const reused = await captureFederalPendingSource(id(1), state(), id(11));
     expect(reused).toMatchObject({ sourceRequests: 0, reusedCapture: true, observationId: first.observationId, jobId: first.jobId });
+    expect(mocks.fetch).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("retained-only recovery reads the exact operation/source/job with no provider or observation write", async () => {
+    await captureFederalPendingSource(id(1), state(), id(10));
+    const original = tables.intelligence_observations[0], job = tables.intelligence_jobs[0];
+    const binding = { observationId: original.id, jobId: job.id, sourceKey: original.source_key,
+      requestSha256: original.metadata.requestSha256, retainedJsonSha256: original.metadata.retainedJsonSha256 };
+    mocks.fetch.mockClear(); mocks.rpc.mockClear();
+    const outcome = await captureFederalPendingSource(id(1), state(), id(10), Date.now() + 60_000, binding);
+    expect(outcome).toMatchObject({ sourceRequests: 0, sourceCaptured: true, reusedCapture: true, observationId: original.id, jobId: job.id });
+    expect(mocks.fetch).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it.each(["missing", "wrong-operation", "body", "source-key", "request", "before", "observation", "job", "attempted", "leased", "codex-claimed"])("retained-only mismatches never fall back to provider or storage writes: %s", async kind => {
+    await captureFederalPendingSource(id(1), state(), id(10));
+    const original = tables.intelligence_observations[0], job = tables.intelligence_jobs[0];
+    const binding = { observationId: original.id, jobId: job.id, sourceKey: original.source_key,
+      requestSha256: original.metadata.requestSha256, retainedJsonSha256: original.metadata.retainedJsonSha256 };
+    if (kind === "missing") tables.intelligence_observations = [];
+    if (kind === "wrong-operation") original.metadata.operationId = id(11);
+    if (kind === "body") original.evidence_text = "{}";
+    if (kind === "source-key") binding.sourceKey = "c".repeat(64);
+    if (kind === "request") binding.requestSha256 = "c".repeat(64);
+    if (kind === "before") original.metadata.continuationBefore.page++;
+    if (kind === "observation") binding.observationId = id(999);
+    if (kind === "job") binding.jobId = id(999);
+    if (kind === "attempted") job.attempts = 1;
+    if (kind === "leased") job.lease_token = id(999);
+    if (kind === "codex-claimed") job.codex_news_request_id = id(999);
+    mocks.fetch.mockClear(); mocks.rpc.mockClear();
+    await expect(captureFederalPendingSource(id(1), state(), id(10), Date.now() + 60_000, binding)).rejects.toBeInstanceOf(FederalCaptureReadbackRequired);
     expect(mocks.fetch).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
   });
   it("fetches only one detail after its intact original search, then holds for actual independent review", async () => {

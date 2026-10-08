@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
 
-const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn(), reconcile: vi.fn(), pending: vi.fn(), inspectPending: vi.fn() }));
+const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn(), reconcile: vi.fn(), pending: vi.fn(), inspectPending: vi.fn(), recoverPending: vi.fn() }));
 vi.mock("@/lib/publicGrowth/federalDiscoveryPending", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/publicGrowth/federalDiscoveryPending")>(),
-  continueFederalPendingSources: mocks.pending, inspectFederalPendingSources: mocks.inspectPending,
+  continueFederalPendingSources: mocks.pending, inspectFederalPendingSources: mocks.inspectPending, reconcileFederalPendingSource: mocks.recoverPending,
 }));
 vi.mock("@/lib/publicGrowth/federalDiscoveryReconciliation", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/publicGrowth/federalDiscoveryReconciliation")>(), reconcileFederalDiscoveryCapacity: mocks.reconcile,
@@ -97,6 +97,32 @@ describe("federal discovery managed admission", () => {
 
   const pendingInput = () => ({ operationId: id(9010), holdOperationId: id(9000), sourceOnly: true,
     continuations: [{ companyId: id(2001), expectedSha256: "a".repeat(64) }] });
+  const recoveryInput = () => ({ operationId: id(9011), expectedCursorSha256: "a".repeat(64),
+    originalRequest: {"sourceOnly": true, "operationId": "624f17f4-41e5-487c-a47c-ee785fafd2b8", "continuations": [{"companyId": "5cb49e88-b779-467a-aa28-cb704eb4b808", "expectedSha256": "70af63a1ffbc568f7ee1869390a01cedef2e8b683d041307bc44e6d32ec7f452"}, {"companyId": "5cb653c0-93c5-483a-a63d-4266c264a77b", "expectedSha256": "c42a329dd366fcf1f47cf15cb9bbf6bd576fb7b4c5fde801451c3900c1d5cb3d"}, {"companyId": "5cb968f7-e56a-4b71-b6a5-a70846949aa3", "expectedSha256": "e5c25473f3391ae43dee4851911ceca7afcf985ed726fb47b6dc57635d67426b"}, {"companyId": "5cbdb11f-d241-46e8-a3da-92f213378498", "expectedSha256": "bd4c5d7f902d7f327ba03d7acc89941a939e69eab97f59275be387b6161031e5"}], "holdOperationId": "4a173495-2b1d-41d4-966d-cba64832fcc9"},
+    retainedSource: {"observationId": "dfffb638-5c44-472f-b0b6-cac340530ef0", "jobId": "db64a7e3-2607-4cc2-a0ae-8119fab094b7", "sourceKey": "66b77c52cbe91eec136e963894ead8a2d016b18646349cb00ef126c02265ee49", "requestSha256": "c1243ac35ad4efcfe72083cca6217383da08724da4624b517b1d315532b1a030", "retainedJsonSha256": "fc757405485bafe627208795a5010df673f1db91aef27d86e0699fc9879b142a"},
+    incidentProof: { kind: "first_job_read_missing_company_column_before_serial_checkpoint", deployedCommit: "d4cb26f96eb37ab3c2d5e199629b0974809a88de",
+      readerTaskId: "/reader", reviewerTaskId: "/reviewer", evidenceSha256: "b".repeat(64), reviewSha256: "c".repeat(64), historicalSourceRequests: 1, remainingSourceRequests: 0 } });
+  it("explicit incident recovery exits before ordinary lease, selector, provider or pending collection", async () => {
+    mocks.recoverPending.mockResolvedValue({ sourceRequests: 0, exactEventVerified: true, analysisComplete: false });
+    expect((await POST(reconcileRequest(recoveryInput(), "?action=reconcile_pending_source_only"))).status).toBe(200);
+    expect(mocks.recoverPending).toHaveBeenCalledWith(recoveryInput());
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.pending).not.toHaveBeenCalled();
+  });
+  it("incident recovery requires authentication, exclusive POST and exact immutable incident pins", async () => {
+    const noAuth = new NextRequest("https://example.test/api/cron/federal-discovery?action=reconcile_pending_source_only", { method: "POST", body: JSON.stringify(recoveryInput()) });
+    expect((await POST(noAuth)).status).toBe(401);
+    expect((await GET(request("?action=reconcile_pending_source_only"))).status).toBe(400);
+    expect((await POST(reconcileRequest(recoveryInput(), "?action=reconcile_pending_source_only&limit=4"))).status).toBe(400);
+    const changed = recoveryInput(); changed.originalRequest.operationId = id(9015);
+    expect((await POST(reconcileRequest(changed, "?action=reconcile_pending_source_only"))).status).toBe(400);
+    expect(mocks.recoverPending).not.toHaveBeenCalled(); expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it("uncertain recovery preserves explicit readback-required with zero provider attempts and no retry", async () => {
+    mocks.recoverPending.mockRejectedValue(new Error("uncertain checkpoint"));
+    const response = await POST(reconcileRequest(recoveryInput(), "?action=reconcile_pending_source_only"));
+    expect(response.status).toBe(409); expect(await response.json()).toMatchObject({ status: "source_recovery_requires_readback", sourceRequests: 0, providerReplay: false, analysisComplete: false });
+    expect(mocks.recoverPending).toHaveBeenCalledTimes(1); expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
   it("exact source-only action uses its foreground handler before the ordinary selector or worker", async () => {
     mocks.pending.mockResolvedValue({ analysisComplete: false, exactEventVerified: true });
     const response = await POST(reconcileRequest(pendingInput(), "?action=continue_pending_source_only"));

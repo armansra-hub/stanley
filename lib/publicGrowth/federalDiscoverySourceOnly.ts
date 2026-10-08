@@ -38,11 +38,18 @@ async function readObservation(companyId: string, sourceKey: string) {
   if (error) throw new FederalCaptureReadbackRequired();
   return data;
 }
-async function exactJob(companyId: string, observationId: string) {
-  const { data, error } = await serviceClient().from("intelligence_jobs").select("id,company_id,observation_id,kind,status")
-    .eq("company_id", companyId).eq("observation_id", observationId).eq("kind", "interpret").limit(2);
-  if (error || !Array.isArray(data) || data.length !== 1 || data[0].company_id !== companyId
+export type FederalRetainedSourceBinding = { observationId: string; jobId: string; sourceKey: string; requestSha256: string; retainedJsonSha256: string };
+async function exactJob(observationId: string, retainedOnly?: FederalRetainedSourceBinding) {
+  // jobs owns an observation FK, not a company_id column. The caller has
+  // already verified this exact observation's company/source/body binding.
+  const { data, error } = await serviceClient().from("intelligence_jobs").select("id,observation_id,kind,status,attempts,lease_token,lease_until,finished_at,codex_news_request_id")
+    .eq("observation_id", observationId).eq("kind", "interpret").limit(2);
+  if (error || !Array.isArray(data) || data.length !== 1
     || data[0].observation_id !== observationId || data[0].kind !== "interpret" || typeof data[0].id !== "string") {
+    throw new FederalCaptureReadbackRequired();
+  }
+  if (retainedOnly && (data[0].id !== retainedOnly.jobId || data[0].status !== "queued" || data[0].attempts !== 0
+    || data[0].lease_token != null || data[0].lease_until != null || data[0].finished_at != null || data[0].codex_news_request_id != null)) {
     throw new FederalCaptureReadbackRequired();
   }
   return data[0].id as string;
@@ -51,7 +58,7 @@ async function exactJob(companyId: string, observationId: string) {
 /** One exact existing search/detail step. No classifier, enrollment, match,
  * award, metric, trigger, grade or membership writes occur in this path. */
 export async function captureFederalPendingSource(companyId: string, raw: FederalDiscoveryContinuation,
-  operationId: string, deadlineMs = Date.now() + 60_000): Promise<FederalSourceOnlyOutcome> {
+  operationId: string, deadlineMs = Date.now() + 60_000, retainedOnly?: FederalRetainedSourceBinding): Promise<FederalSourceOnlyOutcome> {
   const state = parseFederalDiscoveryContinuation(raw, companyId);
   let sourceRequests = 0, reusedCapture = false, jobId: string | null = null;
   let captured: FederalDiscoverySourceCapture | undefined;
@@ -113,6 +120,13 @@ export async function captureFederalPendingSource(companyId: string, raw: Federa
       const sourceKey = prepareObservation(base).sourceKey;
       let retained = await readObservation(companyId, sourceKey);
       let body: unknown;
+      // Recovery may only consume the independently bound original from this
+      // exact interrupted operation. Missing or changed storage never fetches.
+      if (retainedOnly && (!retained || retained.id !== retainedOnly.observationId || sourceKey !== retainedOnly.sourceKey
+        || requestSha256 !== retainedOnly.requestSha256 || retained.metadata?.operationId !== operationId
+        || retained.metadata?.retainedJsonSha256 !== retainedOnly.retainedJsonSha256
+        || retained.metadata?.fullResponseCaptured !== true || retained.metadata?.sourceStage !== stage
+        || !isDeepStrictEqual(retained.metadata?.continuationBefore, raw))) throw new FederalCaptureReadbackRequired();
       if (retained) {
         if (retained.company_id !== companyId || retained.source_key !== sourceKey || retained.source_kind !== "government"
           || retained.source_url !== request.url || retained.metadata?.governmentJsonCaptureVersion !== 1
@@ -151,7 +165,7 @@ export async function captureFederalPendingSource(companyId: string, raw: Federa
           }
         } catch { throw new FederalCaptureReadbackRequired(); }
       }
-      jobId = await exactJob(companyId, retained.id);
+      jobId = await exactJob(retained.id, retainedOnly);
       captured = { version: 1, status: "held", stage, reason: "awaiting_independent_review", observationId: retained.id,
         requestSha256, retainedJsonSha256: sha(retained.evidence_text), capturedAt: retained.observed_at };
       if (stage === "detail") {
