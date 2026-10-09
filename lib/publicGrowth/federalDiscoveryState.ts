@@ -46,6 +46,31 @@ export interface FederalDiscoveryCapacityHold {
   reviewerTaskId: string;
   heldAt: string;
 }
+export interface FederalDiscoveryManualSourceOnly {
+  version: 1;
+  status: "manual_source_only";
+  holdOperationId: string;
+  establishedEventId: string;
+  manualRunCutoff: string;
+  retiredCapacityCompanyIds: string[];
+}
+/** The original hold remains the scheduling fence and immutable evidence.
+ * Only the atomic completed-review consumer may retire its active positions. */
+export function readFederalDiscoveryManualSourceOnly(cursor: Record<string, unknown>): FederalDiscoveryManualSourceOnly | null {
+  const value = cursor.discoveryManualSourceOnly;
+  if (value === undefined) return null;
+  const hold = readFederalDiscoveryCapacityHold(cursor), row = value as FederalDiscoveryManualSourceOnly;
+  const fields = ["version", "status", "holdOperationId", "establishedEventId", "manualRunCutoff", "retiredCapacityCompanyIds"];
+  if (!row || typeof row !== "object" || Array.isArray(row) || !hold || Object.keys(row).length !== fields.length
+    || Object.keys(row).some(key => !fields.includes(key)) || row.version !== 1 || row.status !== "manual_source_only"
+    || row.holdOperationId !== hold.operationId || !UUID.test(row.establishedEventId)
+    || typeof row.manualRunCutoff !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.manualRunCutoff)
+    || !Number.isFinite(Date.parse(row.manualRunCutoff)) || new Date(row.manualRunCutoff).toISOString().slice(0, 10) !== row.manualRunCutoff
+    || !Array.isArray(row.retiredCapacityCompanyIds) || row.retiredCapacityCompanyIds.length > hold.companyIds.length
+    || new Set(row.retiredCapacityCompanyIds).size !== row.retiredCapacityCompanyIds.length
+    || row.retiredCapacityCompanyIds.some(id => !hold.companyIds.includes(id))) throw new Error("invalid manual source-only mode");
+  return structuredClone(row);
+}
 /** Only the audited capacity-reconciliation transaction creates this stop. */
 export function readFederalDiscoveryCapacityHold(cursor: Record<string, unknown>): FederalDiscoveryCapacityHold | null {
   const value = cursor.discoveryCapacityHold;
@@ -142,8 +167,11 @@ export function parseFederalDiscoveryContinuation(value: unknown, companyId: str
 export function readFederalDiscoveryContinuations(cursor: Record<string, unknown>): Record<string, FederalDiscoveryContinuation> {
   const raw = cursor.discoveryContinuations ?? {};
   const hold = readFederalDiscoveryCapacityHold(cursor);
-  const bound = FEDERAL_DISCOVERY_CONTINUATION_LIMIT + (hold?.companyIds.length ?? 0);
+  const manual = readFederalDiscoveryManualSourceOnly(cursor);
+  const retired = manual?.retiredCapacityCompanyIds ?? [];
+  const bound = FEDERAL_DISCOVERY_CONTINUATION_LIMIT + (hold?.companyIds.length ?? 0) - retired.length;
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length > bound
-    || hold?.companyIds.some(id => !Object.prototype.hasOwnProperty.call(raw, id))) throw new Error("invalid discovery continuation queue");
+    || retired.some(id => Object.prototype.hasOwnProperty.call(raw, id))
+    || hold?.companyIds.some(id => !retired.includes(id) && !Object.prototype.hasOwnProperty.call(raw, id))) throw new Error("invalid discovery continuation queue");
   return Object.fromEntries(Object.entries(raw).map(([id, value]) => [id, parseFederalDiscoveryContinuation(value, id)]));
 }

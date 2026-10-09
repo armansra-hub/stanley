@@ -61,6 +61,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("exact held federal foreground admission", () => {
+  it("manual source-only mode requires a completed capture receipt to be consumed before the next provider step", async () => {
+    state.cursor.discoveryManualSourceOnly = { version: 1, status: "manual_source_only", holdOperationId: hold.operationId,
+      establishedEventId: id(8002), manualRunCutoff: "2026-10-08", retiredCapacityCompanyIds: [] };
+    state.cursor.discoveryContinuations[id(1)].sourceCapture = { version: 1, status: "pending", stage: "search",
+      reason: "search_page_captured_continuation_pending", observationId: id(7000), requestSha256: "c".repeat(64), retainedJsonSha256: "d".repeat(64), capturedAt: "2026-10-08T00:00:00Z" };
+    await expect(continueFederalPendingSources(request())).rejects.toThrow("held or changed");
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.capture).not.toHaveBeenCalled();
+  });
   it("inspects only exact bounded retained originals and stable hashes without a lease or provider", async () => {
     const result = await inspectFederalPendingSources([id(1), id(2000)]);
     expect(result.items).toEqual([{ companyId: id(1), present: true, expectedSha256: request().continuations[0].expectedSha256,

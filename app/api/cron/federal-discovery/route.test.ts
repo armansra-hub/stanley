@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
 
-const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn(), reconcile: vi.fn(), pending: vi.fn(), inspectPending: vi.fn(), recoverPending: vi.fn() }));
+const mocks = vi.hoisted(() => ({ begin: vi.fn(), checkpoint: vi.fn(), complete: vi.fn(), fail: vi.fn(), rpc: vi.fn(), worker: vi.fn(), event: vi.fn(), inspect: vi.fn(), journal: vi.fn(), reconcile: vi.fn(), pending: vi.fn(), inspectPending: vi.fn(), recoverPending: vi.fn(), consumeReview: vi.fn(), inspectReview: vi.fn() }));
+vi.mock("@/lib/publicGrowth/federalReviewedCapture", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/publicGrowth/federalReviewedCapture")>(), consumeFederalReviewedCapture: mocks.consumeReview, inspectFederalReviewedCapture: mocks.inspectReview,
+}));
 vi.mock("@/lib/publicGrowth/federalDiscoveryPending", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/publicGrowth/federalDiscoveryPending")>(),
   continueFederalPendingSources: mocks.pending, inspectFederalPendingSources: mocks.inspectPending, reconcileFederalPendingSource: mocks.recoverPending,
@@ -92,6 +95,30 @@ describe("federal discovery managed admission", () => {
     evidenceSha256: "a".repeat(64), readerTaskId: "reader", reviewerTaskId: "independent-reviewer", heldAt: "2026-09-14T00:00:00Z" });
   const capacityRequest = () => ({ operationId: id(9000), journalId: id(9001), companyIds: [id(2001), id(2002), id(2003), id(2004)],
     expectedCursorMd5: "a".repeat(32), expectedJournalMd5: "b".repeat(32), evidenceSha256: "c".repeat(64), readerTaskId: "reader", reviewerTaskId: "independent-reviewer" });
+  const reviewInput = () => ({ operationId: id(9002), companyId: id(1), expectedContinuationSha256: "a".repeat(64), jobId: id(2),
+    finishEventId: id(3), snapshotHash: "b".repeat(64), decisionHash: "c".repeat(64), manualRunCutoff: "2026-09-15" });
+  it("exact completed-review action routes directly to the provider-free consumer", async () => {
+    mocks.consumeReview.mockResolvedValue({ eventId: id(9002), historyComplete: false, sourceRequests: 0 });
+    const req = new NextRequest("https://example.test/api/cron/federal-discovery?action=consume_reviewed_capture", { method: "POST", headers: { "x-cron-secret": "test-secret" }, body: JSON.stringify(reviewInput()) });
+    expect((await POST(req)).status).toBe(200); expect(mocks.consumeReview).toHaveBeenCalledWith(reviewInput());
+    expect(mocks.worker).not.toHaveBeenCalled(); expect(mocks.begin).not.toHaveBeenCalled();
+  });
+  it("completed-review mutation enforces authorization, exclusive POST and exact schema without fallback", async () => {
+    const req = new NextRequest("https://example.test/api/cron/federal-discovery?action=consume_reviewed_capture", { method: "POST", body: JSON.stringify(reviewInput()) });
+    expect((await POST(req)).status).toBe(401);
+    expect((await GET(request("?action=consume_reviewed_capture"))).status).toBe(400);
+    for (const [query, body] of [["?action=consume_reviewed_capture&limit=4", reviewInput()], ["?action=consume_reviewed_capture", { ...reviewInput(), replacementCursor: {} }]] as const) {
+      expect((await POST(new NextRequest(`https://example.test/api/cron/federal-discovery${query}`, { method: "POST", headers: { "x-cron-secret": "test-secret" }, body: JSON.stringify(body) }))).status).toBe(400);
+    }
+    expect(mocks.consumeReview).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
+  it("exact review inspection is bounded and read only", async () => {
+    mocks.inspectReview.mockResolvedValue({ companyId: id(1), hashEncoding: "postgres-jsonb-text-v1" });
+    expect((await GET(request(`?inspect_reviewed_capture=${id(1)}`))).status).toBe(200);
+    expect(mocks.inspectReview).toHaveBeenCalledWith(id(1));
+    expect((await GET(request(`?inspect_reviewed_capture=${id(1)},${id(2)}`))).status).toBe(400);
+    expect(mocks.begin).not.toHaveBeenCalled(); expect(mocks.worker).not.toHaveBeenCalled();
+  });
   const reconcileRequest = (body: unknown, query = "?action=reconcile_capacity_hold") => new NextRequest(`https://example.test/api/cron/federal-discovery${query}`,
     { method: "POST", headers: { "x-cron-secret": "test-secret" }, body: JSON.stringify(body) });
 

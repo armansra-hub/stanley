@@ -9,6 +9,7 @@ import { parseFederalDiscoveryContinuation, readFederalDiscoveryContinuations,
   type FederalDiscoveryContinuation, type FederalDiscoveryCapacityHold } from "@/lib/publicGrowth/federalDiscoveryState";
 import { federalCapacityReconciliationSchema, reconcileFederalDiscoveryCapacity } from "@/lib/publicGrowth/federalDiscoveryReconciliation";
 import { federalPendingSourceSchema, federalPendingInspectSchema, continueFederalPendingSources, inspectFederalPendingSources, federalPendingRecoverySchema, reconcileFederalPendingSource } from "@/lib/publicGrowth/federalDiscoveryPending";
+import { consumeFederalReviewedCapture, federalReviewedCaptureSchema, inspectFederalReviewedCapture } from "@/lib/publicGrowth/federalReviewedCapture";
 import {
   applyPublicGrowthRetryOutcomes, beginPublicGrowthSweep, checkpointPublicGrowthSweep,
   completePublicGrowthSweep, failPublicGrowthSweep,
@@ -380,6 +381,22 @@ async function inspectState() {
 async function run(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const url = new URL(req.url);
+  if (url.searchParams.get("action") === "consume_reviewed_capture") {
+    if (req.method !== "POST" || [...url.searchParams.keys()].length !== 1) return NextResponse.json({ error: "Use exclusive POST action=consume_reviewed_capture" }, { status: 400 });
+    let raw: unknown;
+    try { const text = await req.text(); raw = text.length <= 3000 ? JSON.parse(text) : null; } catch { raw = null; }
+    const input = federalReviewedCaptureSchema.safeParse(raw);
+    if (!input.success) return NextResponse.json({ error: "Exact completed source review required" }, { status: 400 });
+    try { return NextResponse.json(await consumeFederalReviewedCapture(input.data)); }
+    catch { return NextResponse.json({ source: SOURCE, status: "review_consumption_requires_readback", sourceRequests: 0,
+      companyComplete: false, historyComplete: false, coverageVerified: false }, { status: 409 }); }
+  }
+  if (url.searchParams.has("inspect_reviewed_capture")) {
+    const companyId = url.searchParams.get("inspect_reviewed_capture") ?? "";
+    if (req.method !== "GET" || [...url.searchParams.keys()].length !== 1 || !UUID.test(companyId)) return NextResponse.json({ error: "Use exclusive GET inspect_reviewed_capture=exact UUID" }, { status: 400 });
+    try { return NextResponse.json(await inspectFederalReviewedCapture(companyId)); }
+    catch { return NextResponse.json({ source: SOURCE, status: "inspection_failed", readOnly: true }, { status: 500 }); }
+  }
   if (url.searchParams.get("action") === "reconcile_pending_source_only") {
     if (req.method !== "POST" || [...url.searchParams.keys()].length !== 1) return NextResponse.json({ error: "Use exclusive POST action=reconcile_pending_source_only" }, { status: 400 });
     const text = await req.text();

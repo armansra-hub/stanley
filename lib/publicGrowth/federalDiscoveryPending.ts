@@ -3,7 +3,7 @@ import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { serviceClient } from "@/lib/supabase/server";
 import { intelligenceEnabled } from "@/lib/intelligence/observations";
-import { parseFederalDiscoveryContinuation, readFederalDiscoveryCapacityHold, readFederalDiscoveryContinuations } from "./federalDiscoveryState";
+import { parseFederalDiscoveryContinuation, readFederalDiscoveryCapacityHold, readFederalDiscoveryContinuations, readFederalDiscoveryManualSourceOnly } from "./federalDiscoveryState";
 import { beginPublicGrowthSweep, checkpointPublicGrowthSweep, failPublicGrowthSweep, readPublicGrowthRetryState, type PublicGrowthSweepLease } from "./sweepState";
 import { captureFederalPendingSource, federalSourceOnlyHash, type FederalSourceOnlyOutcome } from "./federalDiscoverySourceOnly";
 
@@ -36,6 +36,7 @@ export async function inspectFederalPendingSources(companyIds: string[]) {
 }
 function assertAdmission(cursor: Record<string, unknown>, request: Request) {
   const hold = readFederalDiscoveryCapacityHold(cursor), parsed = readFederalDiscoveryContinuations(cursor);
+  const manual = readFederalDiscoveryManualSourceOnly(cursor);
   const priorOperation = cursor.discoverySourceOnlyOperation as { status?: unknown; eventId?: unknown } | undefined;
   if (!hold || hold.operationId !== request.holdOperationId || !isDeepStrictEqual(cursor.discoveryInFlight ?? [], [])
     || cursor.discoveryInFlightEventId != null || cursor.discoveryReconciliationReason != null
@@ -49,6 +50,7 @@ function assertAdmission(cursor: Record<string, unknown>, request: Request) {
   if (oldHold && !Array.isArray(oldHold.companyIds) || !Array.isArray(timeouts)) throw new Error("invalid federal holds");
   for (const item of request.continuations) {
     if (!parsed[item.companyId] || parsed[item.companyId].sourceCapture?.status === "held"
+      || manual && parsed[item.companyId].sourceCapture !== undefined
       || (oldHold?.companyIds as unknown[] | undefined)?.includes(item.companyId)
       || timeouts.some(row => !row || typeof row !== "object" || row.companyId === item.companyId && (row.heldAt != null || row.timeoutCount !== 0))
       || debt.retryQueue.some(row => row.companyId === item.companyId && row.failureAttempts > 0)
