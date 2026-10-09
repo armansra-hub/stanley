@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { governmentFixture, neutralGovernmentAttributes } from "../test/government-capture-fixture.mjs";
 const require = createRequire(process.env.STANLEY_PGLITE_PACKAGE ?? new URL("../../stanley-jev-intelligence-20260918/work/intelligence-sql-test/package.json", import.meta.url));
 const { PGlite } = require("@electric-sql/pglite");
 const { pgcrypto } = require("@electric-sql/pglite/contrib/pgcrypto");
@@ -12,6 +13,9 @@ const repair = await readFile(new URL("../supabase/migrations/0138_codex_news_sc
 const sourceReview = await readFile(new URL("../supabase/migrations/0143_codex_source_review.sql", import.meta.url), "utf8");
 const exactSource = await readFile(new URL("../supabase/migrations/0144_codex_exact_source_claim.sql", import.meta.url), "utf8");
 const staleHold = await readFile(new URL("../supabase/migrations/0146_codex_stale_claim_hold.sql", import.meta.url), "utf8");
+const governmentCapture = await readFile(new URL("../supabase/migrations/0148_codex_empty_government_capture.sql", import.meta.url), "utf8");
+const foundation = await readFile(new URL("../supabase/migrations/0059_intelligence_evidence_and_work.sql", import.meta.url), "utf8");
+const actualEvents = await readFile(new URL("../supabase/migrations/0014_app_events.sql", import.meta.url), "utf8");
 const scalar = async (sql, values = []) => (await db.query(sql, values)).rows[0]?.value;
 const rpc = (action, payload) => scalar("select intelligence_codex_news($1,$2) value", [action, payload]);
 const checks = [];
@@ -20,7 +24,7 @@ const text = "Acme opened an office. 😀 Exact original article.";
 const company = randomUUID();
 async function seed(options = {}) {
   const id = randomUUID(), observation = randomUUID();
-  await db.query("insert into intelligence_observations(id,company_id,source_kind,source_url,title,evidence_text,content_hash,event_date,metadata) values($1,$2,$3,$4,'Office opening',$5,'sourcehash',now()-interval '1 day',$6)",
+  await db.query("insert into intelligence_observations(id,company_id,source_kind,source_url,title,evidence_text,content_hash,event_date,metadata,source_key) values($1,$2,$3,$4,'Office opening',$5,'sourcehash',now()-interval '1 day',$6,$1::uuid::text)",
     [observation, options.company ?? company, options.kind ?? "news", `https://acme.com/news/${observation}`, text, { articleBodyAvailable: true, evidenceKind: "article_body", textTruncated: false, ...options.metadata }]);
   await db.query("insert into intelligence_jobs(id,operation_key,observation_id,kind,result,priority) values($1,$2,$3,'interpret',$4,$5)", [id, id, observation, { parts: [{ native: "unchanged" }], ...options.result }, options.priority ?? 0]);
   return { id, observation };
@@ -41,17 +45,19 @@ function finishPayload(p) {
 }
 try {
   await db.exec(`create extension pgcrypto; create role anon; create role authenticated; create role service_role;
-    create table intelligence_config(id int primary key,enabled boolean); insert into intelligence_config values(1,true);
     create table intelligence_jev_budget_policy(id text primary key,enabled boolean); insert into intelligence_jev_budget_policy values('jev-rollout-2026-09-24',false);
     create table companies(id uuid primary key,name text,domain text,website_raw text,city text,state text,netsuite_internal_id text,status text,lists text[],tal_claimed boolean,record_dead boolean,description text,subindustry text,ns_industry text,tal_alert boolean);
-    create table intelligence_observations(id uuid primary key,company_id uuid,source_kind text,source_url text,title text,evidence_text text,content_hash text,event_date timestamptz,observed_at timestamptz default now(),is_current boolean default true,feedback_excluded boolean default false,metadata jsonb default '{}',sections jsonb default '[]',attributes jsonb,interpretation_version text,interpreted_at timestamptz);
-    create table intelligence_jobs(id uuid primary key,operation_key text,observation_id uuid,kind text,status text default 'queued',priority int default 0,due_at timestamptz default now(),attempts int default 0,lease_token uuid,lease_until timestamptz,last_error text,result jsonb,created_at timestamptz default now(),finished_at timestamptz);
     create table triggers(id uuid primary key default gen_random_uuid(),company_id uuid,type text,strength int,half_life_days int,summary text,source_name text,source_url text,signal_date timestamptz,metadata jsonb,unique(company_id,source_url));
-    create table app_events(id uuid primary key default gen_random_uuid(),module text,kind text,entity_type text,entity_id text,summary text,meta jsonb);
     create table intelligence_events(id uuid primary key,company_id uuid,trigger_id uuid);
     create table intelligence_event_observations(observation_id uuid primary key,event_id uuid);
     create function company_identity_source_context(uuid) returns jsonb language sql stable as $$select '{}'::jsonb$$;
     create function intelligence_event_bind_trigger(uuid,uuid) returns boolean language sql as $$update intelligence_events set trigger_id=$2 where id=$1 returning true$$;`);
+  // Actual production table DDL, preserving NOT NULL/FK/unique/check constraints.
+  // Unrelated tables/functions are not needed by this focused offline harness.
+  assert.ok(foundation.includes("-- Source-key lock"));
+  await db.exec(foundation.split("-- Source-key lock")[0] + "commit;");
+  await db.exec(actualEvents);
+  await db.exec("alter table intelligence_observations add column feedback_excluded boolean not null default false; update intelligence_config set enabled=true where id=1;");
   await db.query("insert into companies(id,name,domain,status,lists,tal_claimed) values($1,'Acme','acme.com','removed_from_tam',array['tam_removed'],true)", [company]);
   await test("migrations compile/reapply and repair both original and minified production function bodies", async () => {
     await db.exec(source); await db.exec(source); await db.exec(repair); await db.exec(repair);
@@ -84,7 +90,7 @@ try {
     assert.equal((await rpc("claim", scopedRequest)).review.selection.observationId, undefined);
     assert.deepEqual(await scalar("select jsonb_agg(to_jsonb(q) order by id) value from intelligence_jobs q"), before);
     for (const p of [old, scoped]) await rpc("hold", { ...bound(p), taskId: "/root/reader", reason: "Offline migration replay verified; preserve the existing claim receipt and source hold." });
-    await db.exec("truncate intelligence_jobs,intelligence_observations");
+    await db.exec("truncate intelligence_jobs,intelligence_observations cascade");
   });
   await test("scalar TAL-first selection skips many pending paid candidates and large irrelevant bodies, then reaches all-TAM fallback", async () => {
     const tam = randomUUID();
@@ -101,7 +107,7 @@ try {
     const q = await claim(); assert.equal(q.jobId, tamJob.id);
     assert.equal(await scalar("select count(*)::int value from intelligence_jobs where id=any($1::uuid[]) and status='queued' and codex_news_request_id is null and result->'pendingRequest'->>'fingerprint' like 'paid-%'", [pendingIds]), 40);
     // Synthetic fixture cleanup only; no production connection exists.
-    await db.exec("truncate intelligence_jobs,intelligence_observations");
+    await db.exec("truncate intelligence_jobs,intelligence_observations cascade");
   });
   await test("request recovery is idempotent and includes retired canonical TAL", async () => {
     await seed(); const request = { requestId: randomUUID(), taskId: "/root/reader" };
@@ -175,7 +181,7 @@ try {
     for (const role of ["anon", "authenticated"]) assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value", [role]), false);
   });
   await test("nonnews finite selector, complete-body gates, original bindings and canonical publication", async () => {
-    await db.exec("truncate intelligence_jobs,intelligence_observations");
+    await db.exec("truncate intelligence_jobs,intelligence_observations cascade");
     await db.query("update companies set lists=array['netsuite_tam'],status='new' where id=$1", [company]);
     const metadata = { textTruncated: false, retainedCharacters: text.length, sourceCharacters: text.length,
       discovery: { collector: "website" }, meaningfulContentHash: "a".repeat(64) };
@@ -208,7 +214,7 @@ try {
   });
   const exactRequest = (observationId, overrides = {}) => ({ requestId: randomUUID(), taskId: "/root/reader", sourceKind: "news", companyIds: [company], observedThrough: new Date().toISOString(), observationId, ...overrides });
   const resetExact = async () => {
-    await db.exec("truncate intelligence_jobs,intelligence_observations");
+    await db.exec("truncate intelligence_jobs,intelligence_observations cascade");
     await db.query("update companies set lists=array['tam_removed'],status='removed_from_tam',tal_claimed=true where id=$1", [company]);
   };
   const seedExact = async options => {
@@ -271,7 +277,7 @@ try {
       ["complete", async t => { await db.query("update intelligence_jobs set status='complete' where id=$1", [t.id]); }],
       ["running", async t => { await db.query("update intelligence_jobs set status='running',lease_token=$2,lease_until=now()+interval '20 minutes' where id=$1", [t.id, randomUUID()]); }],
       ["not due", async t => { await db.query("update intelligence_jobs set due_at=now()+interval '1 day' where id=$1", [t.id]); }],
-      ["noninterpret", async t => { await db.query("update intelligence_jobs set kind='other' where id=$1", [t.id]); }],
+      ["noninterpret", async t => { const v=randomUUID(); await db.query("insert into intelligence_views(id,name,question) values($1,'Offline fixture','Offline fixture question')",[v]); await db.query("update intelligence_jobs set kind='view',view_id=$2 where id=$1", [t.id,v]); }],
       ["superseded", async t => { await db.query("update intelligence_observations set is_current=false where id=$1", [t.observation]); }],
       ["feedback excluded", async t => { await db.query("update intelligence_observations set feedback_excluded=true where id=$1", [t.observation]); }],
       ["duplicate TAL history", async () => { await db.query("update companies set lists=array['tam_duplicate'] where id=$1", [company]); }],
@@ -389,5 +395,78 @@ try {
     assert.equal(await rpc("claim",exactRequest(target.observation)),null);
     for(const role of ["anon","authenticated"])assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value",[role]),false);
   });
-  console.log(JSON.stringify({ offline: true, passed: checks.length, checks, providerCalls: 0, productionAccess: false }));
+  await test("government migration preserves old snapshots and reapplies without changing rows", async()=>{
+    const before=await scalar("select jsonb_agg(jsonb_build_object('id',j.id,'packet',intelligence_codex_news_packet(j.id)) order by j.id) value from intelligence_jobs j");
+    await db.exec(governmentCapture); await db.exec(governmentCapture);
+    assert.deepEqual(await scalar("select jsonb_agg(jsonb_build_object('id',j.id,'packet',intelligence_codex_news_packet(j.id)) order by j.id) value from intelligence_jobs j"),before);
+  });
+  const gov=governmentFixture();
+  const validGov=(o=gov.observation,c=gov.company)=>scalar("select intelligence_codex_empty_government_capture($1,$2) value",[o,c]);
+  if(process.env.STANLEY_GOVERNMENT_CAPTURE_RECEIPT) await test("saved original validates against its captured identity without provider access",async()=>{
+    const saved=JSON.parse(await readFile(process.env.STANLEY_GOVERNMENT_CAPTURE_RECEIPT,'utf8'));
+    const o=saved.result.observations[0],i=o.metadata.companyIdentity;
+    const c={id:i.id,name:i.name,domain:i.domain,website_raw:i.website,city:i.city,state:i.state,netsuite_internal_id:i.netsuiteInternalId};
+    assert.equal(await validGov(o,c),true);
+    // This replay checks captured identity only. A live claim independently
+    // binds the immutable original to the current canonical company row.
+  });
+  await test("SQL independently validates exact JSON, identity, request/source hashes and empty first-page provenance",async()=>{
+    assert.equal(await validGov(),true);
+    for(const mutate of [o=>o.metadata.requestSha256="f".repeat(64),o=>o.metadata.retainedJsonSha256="f".repeat(64),o=>o.source_key="f".repeat(64),
+      o=>o.metadata.companyIdentity.name="Other",o=>o.metadata.continuationBefore.sourceCapture={},o=>o.metadata.continuationBefore.page=2,
+      o=>o.metadata.continuationBefore.candidate={},o=>o.metadata.sourceStage="detail",o=>o.metadata.structuredAward=true,
+      o=>o.metadata.fullResponseCaptured="true",o=>o.observed_at=null,o=>o.event_date="2026-09-29T00:00:00Z",
+      o=>o.metadata.continuationBefore.searchEndDate="2026-02-30"]){const o=structuredClone(gov.observation);mutate(o);assert.equal(await validGov(o),false);}
+    const {createHash}=await import('node:crypto');
+    for(const mutate of [b=>b.results.push({award:"x"}),b=>b.page_metadata.hasNext=true,b=>delete b.page_metadata,b=>b.status="error",b=>b.messages=[null]]){
+      const o=structuredClone(gov.observation),b=JSON.parse(o.evidence_text);mutate(b);o.evidence_text=JSON.stringify(b);
+      Object.assign(o.metadata,{retainedCharacters:o.evidence_text.length,sourceCharacters:o.evidence_text.length,retainedJsonSha256:createHash('sha256').update(o.evidence_text).digest('hex')});
+      assert.equal(await validGov(o),false);
+    }
+    for(const role of ['anon','authenticated'])assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_empty_government_capture(jsonb,jsonb)','EXECUTE') value",[role]),false);
+  });
+  await db.query("insert into companies select * from jsonb_populate_record(null::companies,$1)",[gov.company]);
+  await db.query("insert into intelligence_observations(id,company_id,source_kind,source_url,source_key,title,evidence_text,content_hash,event_date,observed_at,metadata,sections) select id,company_id,source_kind,source_url,source_key,title,evidence_text,content_hash,event_date,observed_at,metadata,sections from jsonb_populate_record(null::intelligence_observations,$1)",[gov.observation]);
+  const govJob=randomUUID();await db.query("insert into intelligence_jobs(id,operation_key,observation_id,kind,result) values($1,$1::uuid::text,$2,'interpret',$3)",[govJob,gov.observation.id,{parts:[{native:'preserved'}]}]);
+  const govRequest={requestId:randomUUID(),taskId:'/root/reader',sourceKind:'government',companyIds:[gov.company.id],observationId:gov.observation.id,observedThrough:new Date().toISOString()};
+  let gp;
+  await test("government exact claim includes removed canonical TAL but forbids broad selectors and paid pending requests",async()=>{
+    for(const key of ['observationId','companyIds','observedThrough']){const q={...govRequest};delete q[key];await assert.rejects(rpc('claim',q));}
+    await assert.rejects(rpc('claim',{...govRequest,companyIds:[gov.company.id,company]}));
+    await db.query("update intelligence_jobs set result=result||'{\"pendingRequest\":{\"unresolved\":true}}'::jsonb where id=$1",[govJob]);
+    assert.equal(await rpc('claim',govRequest),null);
+    await db.query("update intelligence_jobs set result=result-'pendingRequest' where id=$1",[govJob]);
+    gp=await rpc('claim',govRequest);assert.equal(gp.jobId,govJob);assert.equal(gp.snapshot.company.status,'removed_from_tam');
+    assert.equal(gp.snapshot.observation.source_key,gov.observation.source_key);assert.equal((await rpc('claim',govRequest)).lease,gp.lease);
+  });
+  const scope={version:'government-empty-search-v1',completionScope:'source_capture',historyComplete:false,recipientIdentityVerified:false,requestIdentityConfirmed:true,fullProvenanceRead:true,searchEndDate:gov.observation.metadata.searchEndDate,collection:'idvs',requestSha256:gov.observation.metadata.requestSha256,retainedJsonSha256:gov.observation.metadata.retainedJsonSha256};
+  let ga,gf;
+  await test("government analysis refuses publication, partial reads, company findings and broad completion claims",async()=>{
+    ga={reader:{taskId:'/root/reader',model:'offline-reader',snapshotHash:gp.snapshotHash,readStart:0,readEnd:gov.observation.evidence_text.length,fullTextRead:true},disposition:'no_signal',rationale:'Only this captured empty first page is complete. History and current company coverage remain incomplete.',identityReason:'Company and frozen query binding verified; no recipient identity is established.',dateReason:'Frozen search cutoff only; original event date stays null.',attributes:neutralGovernmentAttributes,criteria:{test:0},passage:null,governmentCapture:scope};
+    for(const a of [{...ga,disposition:'publish'},{...ga,governmentCapture:{...scope,historyComplete:true}},{...ga,attributes:{...ga.attributes,companyRelevance:1}},{...ga,reader:{...ga.reader,readEnd:1}}])await assert.rejects(rpc('analyze',{...bound(gp),analysis:a,decisionHash:'c'.repeat(64)}));
+    gp=await rpc('analyze',{...bound(gp),analysis:ga,decisionHash:'c'.repeat(64)});
+    gf={...bound(gp),review:{reviewer:{...ga.reader,taskId:'/root/reviewer'},approved:true,decisionHash:'c'.repeat(64),rationale:'Independently read every retained character and full request, identity and date provenance.',identityConfirmed:true,dateChecked:true,sourceLimitationsChecked:true,governmentCapture:scope},trigger:null};
+    for(const f of [{...gf,trigger:{}},{...gf,review:{...gf.review,governmentCapture:{...scope,recipientIdentityVerified:true}}},{...gf,review:{...gf.review,reviewer:ga.reader}},{...gf,review:{...gf.review,dateChecked:false}}])await assert.rejects(rpc('finish',f));
+  });
+  await test("actual app-event constraint rolls back government completion, then exact event/receipt replay succeeds",async()=>{
+    const cBefore=await scalar("select to_jsonb(c) value from companies c where id=$1",[gov.company.id]);
+    const triggerCount=await scalar("select count(*)::int value from triggers");
+    await db.exec("alter table app_events add constraint reject_gov_event check(kind<>'intelligence.codex_news_reviewed') not valid");
+    await assert.rejects(rpc('finish',gf),/reject_gov_event/);
+    assert.equal(await scalar("select status value from intelligence_jobs where id=$1",[govJob]),'running');
+    assert.equal(await scalar("select interpreted_at value from intelligence_observations where id=$1",[gov.observation.id]),null);
+    await db.exec("alter table app_events drop constraint reject_gov_event");
+    const saved=await rpc('finish',gf);assert.equal(saved.status,'complete');assert.equal(saved.lease,null);assert.equal(saved.publication.trigger,null);
+    const receipt=saved.review.receipt,event=saved.publication.event;
+    for(const key of ['completionScope','historyComplete','recipientIdentityVerified','searchEndDate','requestSha256','retainedJsonSha256']){assert.equal(receipt[key],scope[key]);assert.equal(event.meta[key],scope[key]);}
+    assert.equal(event.id,receipt.eventId);assert.equal(receipt.triggerId,null);assert.equal(saved.snapshot.observation.event_date,null);
+    assert.equal(await scalar("select summary is not null value from app_events where id=$1",[event.id]),true);
+    assert.equal((await rpc('finish',gf)).review.receipt.eventId,event.id);
+    assert.equal(await scalar("select count(*)::int value from app_events where entity_id=$1 and kind='intelligence.codex_news_reviewed'",[govJob]),1);
+    assert.deepEqual(await scalar("select result->'parts' value from intelligence_jobs where id=$1",[govJob]),[{native:'preserved'}]);
+    assert.deepEqual(await scalar("select to_jsonb(c) value from companies c where id=$1",[gov.company.id]),cBefore);
+    assert.equal(await scalar("select count(*)::int value from triggers"),triggerCount);
+    assert.equal(await scalar("select enabled value from intelligence_jev_budget_policy"),false);
+  });
+  console.log(JSON.stringify({ offline: true, actualTableMigrations:['0014','0059'], passed: checks.length, checks, providerCalls: 0, productionAccess: false }));
 } finally { await db.close(); }
