@@ -143,7 +143,7 @@ export function validateNewsAnalysis(packet: NewsPacket, input: unknown, now = D
   const route = jevPublicationRoute({ attributes: analysis.attributes, criteria: analysis.criteria, questionVersion: "stanley-business-services-v4" }, o.event_date, now);
   if (route.type && !p) fail("eligible_source_passage_required");
   const url = canonicalEvidenceUrl(o.source_url);
-  if (route.type === "oracle_partnership" && (!p || !hasOraclePartnershipPassage(p.text) || !isOraclePartnershipSourceUrl(url))) fail("oracle_partnership_original_evidence_required");
+  if (route.type === "oracle_partnership" && (!p || !hasOraclePartnershipPassage(p.text, analysis.attributes.companyRole) || !isOraclePartnershipSourceUrl(url))) fail("oracle_partnership_original_evidence_required");
   const candidate = { type: route.type ?? "news", source_url: url, source_name: reviewedSourceName(o.source_kind), summary: unicodePrefix(o.title, 280), metadata: o.metadata };
   const eligible = Boolean(route.type && p && o.metadata.structuredAward !== true && isPublishableTriggerForCompany(candidate, c));
   if (analysis.disposition === "publish" && !eligible) fail("publication_policy_rejected");

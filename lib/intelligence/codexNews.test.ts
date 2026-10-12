@@ -48,6 +48,48 @@ describe("Codex canonical news review", () => {
     expect(() => validateNewsReview(p, { ...review(p), reviewer: a.reader }, now)).toThrow("independent_reviewer");
     expect(publicNewsPacket(p)?.contract.signalDefinitions.oracle_partnership).toContain("Oracle product use");
   });
+  const levelTenText = "It has been a pleasure working with Oracle to help them achieve their clean energy goals. Congrats on 1.7GW+ of wind in Texas, Mark Porter, C.E.M., Michael Pariser, and team! ⚡ Let's keep the momentum going in New Mexico! Developers: We're seeking 2GW. Please reach out to our team to learn more. Deadline is Oct. 9, so don't delay! https://lnkd.in/ex9qb8VY";
+  function collaborationFixture(text = levelTenText) {
+    const { p, a } = oracleFixture();
+    Object.assign(p.snapshot.company, { name: "LevelTen Energy", domain: "leveltenenergy.com", status: "removed_from_tam", tal_claimed: true });
+    Object.assign(p.snapshot.observation, { evidence_text: text, title: "Working with Oracle on clean energy goals",
+      event_date: "2026-09-17T19:16:25.419Z", source_url: "https://www.linkedin.com/posts/leveltenenergy_it-has-been-a-pleasure-working-with-oracle-activity-7506430883806240768-STXv" });
+    return { p, a: { ...a, reader: { ...a.reader, readEnd: text.length },
+      rationale: "The company itself describes direct clean-energy work with Oracle and a dated Texas wind milestone; the text does not allocate the entire 1.7GW to LevelTen or establish a legal partnership.",
+      identityReason: "The original post author is LevelTen Energy, matching this exact claimed TAL company.",
+      dateReason: "The original publication timestamp is September 17, 2026; the dated post describes the work and milestone.",
+      attributes: { ...a.attributes, companyRole: "service_provider" as const }, passage: { start: 0, end: text.length, text } } };
+  }
+  it("accepts the complete LevelTen author text with its truthful service-provider role and independent review", () => {
+    const { p, a } = collaborationFixture();
+    expect(validateNewsAnalysis(p, a, now).trigger?.type).toBe("oracle_partnership");
+    expect(a.attributes.companyRole).toBe("service_provider");
+    p.review.analysis = a; p.review.decisionHash = newsDecisionHash(a);
+    expect(validateNewsReview(p, review(p), now).trigger?.type).toBe("oracle_partnership");
+    expect(() => validateNewsReview(p, { ...review(p), reviewer: a.reader }, now)).toThrow("independent_reviewer");
+    p.snapshot.observation.metadata.sourceTruncated = true;
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("hold_required");
+  });
+  it.each([
+    "Our customers include Oracle, Microsoft and Acme.",
+    "We are a supplier and partner to Oracle.",
+    "We are working with Oracle Cloud to improve our reporting system.",
+    "We are working with Oracle Database to organize company records.",
+    "We are working with Oracle partner Acme to deliver a new project.",
+    "We have been working with Oracle.",
+  ])("does not convert a generic supplier/product/third-party reference into collaboration: %s", text => {
+    const { p, a } = collaborationFixture(text);
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("oracle_partnership_original_evidence_required");
+  });
+  it("keeps job skills, third-party coverage and hypothetical work outside publication despite a matching phrase", () => {
+    const { p, a } = collaborationFixture("Candidates need experience working with Oracle to deliver clean energy projects.");
+    expect(() => validateNewsAnalysis(p, { ...a, attributes: { ...a.attributes, contentClass: "promotional_content" } }, now)).toThrow("publication_policy");
+    expect(() => validateNewsAnalysis(p, { ...a, attributes: { ...a.attributes, companyRelationship: "related" } }, now)).toThrow("publication_policy");
+    expect(() => validateNewsAnalysis(p, { ...a, attributes: { ...a.attributes, companyRole: "publisher" } }, now)).toThrow("publication_policy");
+    expect(() => validateNewsAnalysis(p, { ...a, attributes: { ...a.attributes, concreteEvent: .2 } }, now)).toThrow("publication_policy");
+    p.snapshot.observation.event_date = null;
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("publication_policy");
+  });
   it.each(["customer", "publisher", "namesake", "unknown"] as const)("does not treat %s attribution as an Oracle partnership", companyRole => {
     const { p, a } = oracleFixture();
     expect(() => validateNewsAnalysis(p, { ...a, attributes: { ...a.attributes, companyRole } }, now)).toThrow("publication_policy_rejected");

@@ -18,6 +18,7 @@ const foundation = await readFile(new URL("../supabase/migrations/0059_intellige
 const actualEvents = await readFile(new URL("../supabase/migrations/0014_app_events.sql", import.meta.url), "utf8");
 const exactRotation = await readFile(new URL("../supabase/migrations/0145_exact_company_source_rotation.sql", import.meta.url), "utf8");
 const oraclePartnership = await readFile(new URL("../supabase/migrations/0150_oracle_partnership_signal.sql", import.meta.url), "utf8");
+const oracleCollaboration = await readFile(new URL("../supabase/migrations/0151_oracle_direct_collaboration.sql", import.meta.url), "utf8");
 const scalar = async (sql, values = []) => (await db.query(sql, values)).rows[0]?.value;
 const rpc = (action, payload) => scalar("select intelligence_codex_news($1,$2) value", [action, payload]);
 const checks = [];
@@ -482,6 +483,18 @@ try {
     for (const role of ["anon", "authenticated", "service_role"]) assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value", [role]), role === "service_role");
     assert.equal(await scalar("select enabled value from intelligence_jev_budget_policy limit 1"), false);
   });
+  await test("Direct collaboration migration changes only the exact Oracle guard and preserves grants and provider pause", async () => {
+    const before = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
+    const oldGuard = oracleCollaboration.match(/old_guard text := \$old\$([\s\S]*?)\$old\$/)[1];
+    const newGuard = oracleCollaboration.match(/new_guard text := \$new\$([\s\S]*?)\$new\$/)[1];
+    await db.exec(oracleCollaboration);
+    const after = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
+    assert.equal(after, before.replace(oldGuard, newGuard));
+    await db.exec(oracleCollaboration);
+    assert.equal(await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value"), after);
+    for (const role of ["anon", "authenticated", "service_role"]) assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value", [role]), role === "service_role");
+    assert.equal(await scalar("select enabled value from intelligence_jev_budget_policy limit 1"), false);
+  });
   const oracleText = "Acme announced a partnership with Oracle to jointly develop energy procurement services.";
   async function oracleFixture(evidenceText = oracleText, attributes = {}) {
     await resetExact();
@@ -511,6 +524,29 @@ try {
     assert.equal(done.publication.event.meta.jobId, a.jobId);
     assert.deepEqual(await rpc("finish", finish), done);
   });
+  const collaborationText = "It has been a pleasure working with Oracle to help them achieve their clean energy goals. Congrats on 1.7GW+ of wind in Texas, Mark Porter, C.E.M., Michael Pariser, and team! ⚡ Let's keep the momentum going in New Mexico! Developers: We're seeking 2GW. Please reach out to our team to learn more. Deadline is Oct. 9, so don't delay! https://lnkd.in/ex9qb8VY";
+  await test("Direct collaboration publishes the exact retained author passage without changing its service-provider role", async () => {
+    const { finish } = await oracleFixture(collaborationText, { companyRole: "service_provider" });
+    await assert.rejects(rpc("finish", { ...finish, review: { ...finish.review, reviewer: { ...finish.review.reviewer, taskId: "/root/reader" } } }), /Independent review/);
+    const done = await rpc("finish", finish);
+    assert.equal(done.status, "complete"); assert.equal(done.review.analysis.attributes.companyRole, "service_provider");
+    assert.equal(done.publication.trigger.type, "oracle_partnership");
+    assert.equal(done.publication.trigger.metadata.intelligenceEvidence.excerpt, collaborationText);
+    assert.deepEqual(await rpc("finish", finish), done);
+  });
+  await test("Direct collaboration SQL rejects product use, supplier lists, third-party partners and missing outcome wording", async () => {
+    for (const evidenceText of ["Our customers include Oracle, Microsoft and Acme.", "We supply Oracle and other partners.",
+      "We are working with Oracle Cloud to manage our invoices.", "We are working with Oracle Database to organize company records.",
+      "We are working with Oracle partner Acme to deliver a named project.", "We have been working with Oracle."]) {
+      const { finish } = await oracleFixture(evidenceText, { companyRole: "service_provider" });
+      await assert.rejects(rpc("finish", finish), /Oracle partnership evidence required/);
+    }
+    for (const attributes of [{ companyRole: "customer" }, { companyRole: "publisher" }, { companyRole: null },
+      { companyRelationship: "related" }, { contentClass: "promotional_content" }, { contentClass: "client_work" }]) {
+      const { finish } = await oracleFixture(collaborationText, { companyRole: "service_provider", ...attributes });
+      await assert.rejects(rpc("finish", finish), /Oracle partnership evidence required/);
+    }
+  });
   await test("Oracle SQL gate rejects customer/related attribution, evergreen context and unsupported counterparty passages", async () => {
     for (const attrs of [{ companyRole: "customer" }, { companyRelationship: "related" }, { contentClass: "evergreen_profile" }, { signalType: "news" }]) {
       const { finish } = await oracleFixture(oracleText, attrs);
@@ -529,6 +565,8 @@ try {
     await db.exec("create or replace function intelligence_codex_news(p_action text,p_payload jsonb) returns jsonb language plpgsql as $$begin return null; end$$");
     const changed = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
     await assert.rejects(db.exec(oraclePartnership), /Unexpected reviewed publisher definition/);
+    await db.exec("rollback");
+    await assert.rejects(db.exec(oracleCollaboration), /Unexpected Oracle reviewed publisher definition/);
     await db.exec("rollback");
     assert.equal(await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value"), changed);
     await db.exec(good);

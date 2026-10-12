@@ -57,6 +57,22 @@ describe("direct Jev publication", () => {
     expect(await publishJevFinding(request, deps)).toMatchObject({ status: "already_published", triggerId: "trigger1" });
     expect(deps.record).toHaveBeenCalledOnce();
   });
+  it("preserves a supported service-provider collaboration role and rejects a supplier list in the shared publisher", async () => {
+    for (const [evidenceText, eligible] of [
+      ["Blue River Services is working with Oracle to deliver a named clean-energy procurement project.", true],
+      ["Blue River Services supplies Oracle and other partners.", false],
+      ["Blue River Services is working with Oracle Cloud to manage its own invoices.", false],
+    ] as const) {
+      const deps = fixture(), request = input();
+      request.evaluation = classified({ signalType: "oracle_partnership", companyRole: "service_provider" });
+      request.observation.evidence_text = evidenceText;
+      request.passage = { start: 0, end: evidenceText.length, text: evidenceText };
+      const result = await publishJevFinding(request, deps);
+      expect(result.status).toBe(eligible ? "published" : "not_eligible");
+      expect(request.evaluation.attributes.companyRole).toBe("service_provider");
+      expect(deps.record).toHaveBeenCalledTimes(eligible ? 1 : 0);
+    }
+  });
   it("uses native first-pass classes to distinguish holiday/editorial/client coverage from actual company changes", () => {
     for (const contentClass of ["holiday_greeting", "editorial_coverage", "client_work", "promotional_content", "incidental_mention", "evergreen_profile", "unknown"] as const) {
       const result = classified({ contentClass });

@@ -19,7 +19,7 @@ export function jevPublicationRoute(result: VisibilityFinding, eventDate: string
     if (a.operatingChangeType === "contract_award" && !["commercial_award", "government_award"].includes(a.contractActivity ?? ""))
       return { type: null, reason: "contract_award_not_established" };
   }
-  if (a.signalType === "oracle_partnership" && (!classified || a.contentClass !== "actual_company_development" || a.companyRole !== "partner"))
+  if (a.signalType === "oracle_partnership" && (!classified || a.contentClass !== "actual_company_development" || !["partner", "service_provider"].includes(a.companyRole ?? "")))
     return { type: null, reason: "oracle_partnership_not_established" };
   const allowed = new Set(["oracle_partnership", "funding", "ma", "new_entity", "finance_hire", "press", "operating_change", "erp_tech", "hiring_velocity", "employee_growth", "government_announcement"]);
   const relevantChange = ["systems_project", "finance_leadership", "close_reporting", "financial_controls", "cash_working_capital", "investor_reporting", "project_financials", "unbilled_work"].some(id => (result.criteria[id] ?? 0) >= policy.topicProbability);
