@@ -98,6 +98,68 @@ describe("bounded bulk source checkpoint reads", () => {
     expect(JSON.stringify(body)).not.toContain("PRIVATE");
   });
 
+  it("exposes retained feed failures separately from capture debt, including independent Oracle/TAL state", async () => {
+    m.rows.intelligence_source_state = [{ ...source(), complete: false, coverage_status: "partial", last_error: "PRIVATE_BODY",
+      next_attempt_at: "2026-10-13T00:00:00Z", cursor: { seen: ["PRIVATE_URL"], pending: ["PRIVATE_BODY"] },
+      error_details: { feedStatus: "unavailable", feedError: "http_error", httpStatus: 503,
+        queries: [{ query: "PRIVATE_QUERY", status: "unavailable", error: "http_error", httpStatus: 503 },
+          { query: "PRIVATE_QUERY", status: "unavailable", error: "timeout" }],
+        saved: 0, bodyCount: 0, headlineOnly: 0, storageFailures: 0, processingFailures: 0 } },
+    { ...source(talId, "news:oracle_partnership"), complete: false, coverage_status: "partial", last_error: "PRIVATE_BODY",
+      error_details: { feedStatus: "success", feedError: "blocked", httpStatus: 200,
+        queries: [{ query: "PRIVATE_QUERY", status: "success", httpStatus: 200, unchanged: false },
+          { query: "PRIVATE_QUERY", status: "unavailable", error: "blocked", httpStatus: 429 }],
+        saved: 1, bodyCount: 0, headlineOnly: 1, storageFailures: 0, processingFailures: 0, warningCodes: { publisher_unresolved: 1 } } }];
+    const body = await (await route.GET(req(query()))).json();
+    const news = body.accounts[0].rows[0], oracle = body.accounts[1].rows[0];
+    expect(news).toMatchObject({ complete: false, coverage_status: "partial", hasError: true, next_attempt_at: "2026-10-13T00:00:00Z",
+      cursor: { counts: { seen: 1, pending: 1 } }, newsDiagnostics: { retainedDetailsPresent: true,
+        feed: { status: "unavailable", errorCode: "http_error", httpStatus: 503 }, queryCount: 2, queriesTruncated: false,
+        queries: [{ ordinal: 1, status: "unavailable", errorCode: "http_error", httpStatus: 503 },
+          { ordinal: 2, status: "unavailable", errorCode: "timeout", httpStatus: null }],
+        captureCounts: { saved: 0, storageFailures: 0, processingFailures: 0 } } });
+    expect(oracle.newsDiagnostics).toMatchObject({ feed: { status: "success", errorCode: "blocked", httpStatus: 200 },
+      queries: [{ ordinal: 1, status: "success", errorCode: null, httpStatus: 200 },
+        { ordinal: 2, status: "unavailable", errorCode: "blocked", httpStatus: 429 }],
+      captureCounts: { saved: 1, bodyCount: 0, headlineOnly: 1 }, warningCounts: { publisher_unresolved: 1 },
+      scope: "retained_last_source_write_not_live_provider_health", rawDetailsReturned: false });
+    expect(body.accounts[1].company.status).toBe("removed_from_tam");
+    expect(body.coverageVerified).toBe(false); expect(JSON.stringify(body)).not.toContain("PRIVATE");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(m.calls.every(call => ["select", "or", "in", "order", "limit"].includes(call.method))).toBe(true);
+  });
+
+  it("bounds and sanitizes malformed diagnostics without reflecting arbitrary strings or nested objects", async () => {
+    m.rows.intelligence_source_state = [{ ...source(), error_details: {
+      feedStatus: "PRIVATE_STATUS", feedError: "PRIVATE_ERROR", httpStatus: "503",
+      saved: -1, bodyCount: Infinity, headlineOnly: 1.5, storageFailures: { token: "PRIVATE_TOKEN" }, processingFailures: 2,
+      warningCodes: { PRIVATE_KEY: 1, timeout: "PRIVATE_VALUE", storage_error: 2 },
+      queries: [null, { status: "PRIVATE_STATUS", error: { token: "PRIVATE_TOKEN" }, httpStatus: 700 },
+        ...Array.from({ length: 8 }, () => ({ query: "PRIVATE_QUERY", status: "empty", httpStatus: 304, unchanged: true }))],
+      headers: { authorization: "PRIVATE_TOKEN" }, response: "PRIVATE_BODY", url: "PRIVATE_URL",
+    } }];
+    const body = await (await route.GET(req(query()))).json(), diagnostics = body.accounts[0].rows[0].newsDiagnostics;
+    expect(diagnostics.feed).toEqual({ status: null, errorCode: "unknown", httpStatus: null });
+    expect(diagnostics.queries).toHaveLength(8); expect(diagnostics.queryCount).toBe(10); expect(diagnostics.queriesTruncated).toBe(true);
+    expect(diagnostics.queries[1]).toEqual({ ordinal: 2, status: null, errorCode: "unknown", httpStatus: null, unchanged: null });
+    expect(diagnostics.captureCounts).toEqual({ saved: null, bodyCount: null, headlineOnly: null, storageFailures: null, processingFailures: 2 });
+    expect(diagnostics.warningCounts).toEqual({ storage_error: 2 });
+    expect(JSON.stringify(body)).not.toContain("PRIVATE");
+  });
+
+  it("distinguishes absent retained diagnostics from a healthy empty feed and leaves unrelated source schemas unexposed", async () => {
+    m.rows.intelligence_source_state = [source(), { ...source(talId, "news:oracle_partnership"),
+      error_details: { feedStatus: "empty", feedError: null, httpStatus: 304, queries: [{ status: "empty", httpStatus: 304, unchanged: true }] } },
+    { ...source(talId, "website"), error_details: { feedError: "PRIVATE_ERROR", token: "PRIVATE_TOKEN" } }];
+    const body = await (await route.GET(req(query()))).json();
+    expect(body.accounts[0].rows[0].newsDiagnostics).toMatchObject({ retainedDetailsPresent: false,
+      feed: { status: null, errorCode: null, httpStatus: null }, queries: null, queryCount: null });
+    expect(body.accounts[1].rows[0].newsDiagnostics).toMatchObject({ retainedDetailsPresent: true,
+      feed: { status: "empty", errorCode: null, httpStatus: 304 }, queries: [{ status: "empty", unchanged: true }] });
+    expect(body.accounts[1].rows[1]).not.toHaveProperty("newsDiagnostics");
+    expect(JSON.stringify(body)).not.toContain("PRIVATE");
+  });
+
   it("returns explicit overflow without rows or missing-state claims, never silently truncating", async () => {
     m.counts.intelligence_source_state = 1001;
     const response = await route.GET(req(query())); const body = await response.json();

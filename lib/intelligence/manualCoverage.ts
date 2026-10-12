@@ -2,7 +2,7 @@
 export const COMPANY_FIELDS = "id,name,domain,website_raw,city,state,netsuite_internal_id,status,lists,tal_claimed,record_dead,description,subindustry,ns_industry,last_checked_at,ats_checked_at,site_checked_at,fmcsa_checked_at,sos_checked_at";
 export const OBSERVATION_FIELDS = "id,company_id,source_kind,source_url,title,evidence_text,content_hash,event_date,observed_at,is_current,feedback_excluded,metadata,sections";
 export const JOB_FIELDS = "id,observation_id,kind,status,priority,due_at,attempts,lease_until,created_at,finished_at,codex_news_request_id";
-export const SOURCE_FIELDS = "company_id,source_key,complete,last_attempt_at,last_success_at,last_error,coverage_status,next_attempt_at,cursor";
+export const SOURCE_FIELDS = "company_id,source_key,complete,last_attempt_at,last_success_at,last_error,error_details,coverage_status,next_attempt_at,cursor";
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type CoverageQuery = { view: "companies" | "evidence" | "sources" | "jobs" | "registry-capture"; scope: "all" | "tam" | "tal"; limit: number; after: string | null; companyId: string | null; companyIds?: string[]; observationId: string | null; sourceKey: "fmcsa" | "cosos" | null };
 export function parseCoverageQuery(params: URLSearchParams): CoverageQuery {
@@ -52,6 +52,29 @@ export function evidenceProjection(row: Record<string, unknown>) {
     metadataProjection: "public_collector_fields_only", metadataFieldsOmitted: Object.keys(meta).filter(key => !(key in metadata)),
     completenessAuthority: "exact_claim_packet_required_for_review_including_ats_board_identifier" };
 }
+// Retained categories only: never reflect arbitrary error text, query strings, URLs or unknown keys.
+const diagnosticCodes = ["timeout", "dns", "tls", "unsafe_target", "network", "http_error", "blocked", "empty_body", "parse_error", "cross_company_redirect", "publisher_unresolved", "storage_error"];
+const diagnosticCode = (v: unknown) => v == null ? null : typeof v === "string" && diagnosticCodes.includes(v) ? v : "unknown";
+const feedStatus = (v: unknown) => typeof v === "string" && ["success", "empty", "unavailable"].includes(v) ? v : null;
+const httpStatus = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 100 && v <= 599 ? v : null;
+const diagnosticCount = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null;
+function retainedNewsDiagnostics(value: unknown) {
+  const details = record(value), queries = Array.isArray(details.queries) ? details.queries : null;
+  return { schema: "retained-news-diagnostics-v1", retainedDetailsPresent: Object.keys(details).length > 0,
+    feed: { status: feedStatus(details.feedStatus), errorCode: diagnosticCode(details.feedError), httpStatus: httpStatus(details.httpStatus) },
+    // Aggregate error and HTTP status can come from different queries; preserve each retained pair separately.
+    queries: queries?.slice(0, 8).map((value, index) => { const query = record(value); return {
+      ordinal: index + 1, status: feedStatus(query.status), errorCode: diagnosticCode(query.error), httpStatus: httpStatus(query.httpStatus),
+      unchanged: typeof query.unchanged === "boolean" ? query.unchanged : null,
+    }; }) ?? null,
+    queryCount: queries?.length ?? null, queriesTruncated: queries !== null && queries.length > 8,
+    captureCounts: Object.fromEntries(["saved", "bodyCount", "headlineOnly", "storageFailures", "processingFailures"].map(key => [key, diagnosticCount(details[key])])),
+    warningCounts: Object.fromEntries(diagnosticCodes.flatMap(code => {
+      const count = diagnosticCount(record(details.warningCodes)[code]); return count === null ? [] : [[code, count]];
+    })),
+    scope: "retained_last_source_write_not_live_provider_health", rawDetailsReturned: false,
+  };
+}
 export function sourceProjection(row: Record<string, unknown>) {
   const cursor = record(row.cursor);
   const revisit = record(cursor.revisit);
@@ -68,6 +91,7 @@ export function sourceProjection(row: Record<string, unknown>) {
   }
   return { ...pick(row, "company_id,source_key,complete,last_attempt_at,last_success_at,coverage_status,next_attempt_at"),
     hasError: row.last_error != null, cursor: { present: row.cursor != null, projection: "counts_and_positions_only", position, counts },
+    ...(["news:google", "news:oracle_partnership"].includes(String(row.source_key)) ? { newsDiagnostics: retainedNewsDiagnostics(row.error_details) } : {}),
     continuation: { atsScanActive: typeof cursor.scanId === "string" && !!cursor.scanId,
       websiteChangedSinceComplete: typeof cursor.changedSinceComplete === "boolean" ? cursor.changedSinceComplete : null,
       consecutiveFailures: typeof cursor.consecutiveFailures === "number" ? cursor.consecutiveFailures : null,
