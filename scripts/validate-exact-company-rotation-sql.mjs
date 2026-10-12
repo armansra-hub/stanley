@@ -70,14 +70,16 @@ try {
     for(const id of [duplicate,removed,outside,unrequested])assert.equal(await scalar('select count(*)::int value from intelligence_source_state where company_id=$1',[id]),0);
   });
   await test('Oracle reservation preserves prior cursor, failure and success evidence and honors both cutoff fences',async()=>{
-    await reset();const eligible=await company(),sinceRun=await company(),thisHour=await company();
+    await reset();const eligible=await company(),sinceRun=await company(),thisHour=await company(),backoff=await company();
     await state(eligible,'news:oracle_partnership',{last_attempt_at:'2000-01-01',last_success_at:'2000-01-01',complete:false,last_error:'original pending',cursor:{seen:['kept'],pending:[{original:true}]}});
     await state(sinceRun,'news:oracle_partnership',{last_attempt_at:await scalar("select clock_timestamp()-interval '12 hours' value")});
     await state(thisHour,'news:oracle_partnership',{last_attempt_at:await scalar("select date_trunc('hour',clock_timestamp() at time zone 'UTC') at time zone 'UTC' value")});
+    await state(backoff,'news:oracle_partnership',{last_attempt_at:'2000-01-01',next_attempt_at:'2999-01-01',last_error:'retained provider backoff'});
     const prior=await scalar("select to_jsonb(s)-'last_attempt_at' value from intelligence_source_state s where company_id=$1",[eligible]);
     assert.deepEqual((await reserve('oracle_partnership',[eligible,sinceRun])).map(r=>r.id),[eligible]);
     assert.deepEqual(await scalar("select to_jsonb(s)-'last_attempt_at' value from intelligence_source_state s where company_id=$1",[eligible]),prior);
     assert.equal((await reserve('oracle_partnership',[thisHour],{epoch:new Date().toISOString()})).length,0);
+    assert.equal((await reserve('oracle_partnership',[backoff])).length,0);
     await assert.rejects(reserve('oracle_partnership',[eligible],{scope:'claimable'}),/does not accept scope/);
     await db.exec('update intelligence_config set enabled=false');
     await assert.rejects(reserve('oracle_partnership',[eligible]),/requires evidence capture/);

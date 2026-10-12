@@ -73,6 +73,7 @@ begin
         and (c.tal_claimed is true or
           (coalesce(c.lists,'{}'::text[]) @> array['netsuite_tam']::text[] and c.status is distinct from 'removed_from_tam'))
         and (st.last_attempt_at is null or st.last_attempt_at < due_before)
+        and (st.next_attempt_at is null or st.next_attempt_at <= clock_timestamp())
       order by st.last_attempt_at asc nulls first,c.id
       for update of c skip locked limit p_limit
     ), reserved as (
