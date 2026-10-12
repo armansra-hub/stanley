@@ -3,7 +3,7 @@ import "server-only";
 import { rotationBatches } from "./rotationBatches";
 import { pickForRotation, recordTrigger, recomputePriority, markChecked, setErpFlags, queueCandidate, headlineCandidateSeen } from "@/lib/db/triggers";
 import { normalizeCompanyName } from "@/lib/db/companies";
-import { fetchNewsForCompanyResult, fetchNewsItemsResult, type NewsItem } from "@/lib/sources/googleNews";
+import { fetchNewsForCompanyResult, fetchNewsItemsResult, type NewsItem, type NewsFetchResult } from "@/lib/sources/googleNews";
 import { claimClassifierCall } from "@/lib/db/settings";
 import { classifyEventLLM, HEADLINE_CLASSIFIER_BATCH_BUDGET_MS } from "@/lib/triggers/classify";
 import { classifyHeadline } from "@/lib/triggers/config";
@@ -258,8 +258,16 @@ async function classifyLegacyHeadline(
   return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
+type FeedResult = { status: NewsFetchResult["status"]; queries?: Array<Pick<NewsFetchResult, "status" | "error" | "httpStatus">> };
+const accessLimitedFeed = (result: FeedResult) => result.queries?.some(query => query.error === "blocked" || [401, 403, 429].includes(query.httpStatus ?? 0)) ?? false;
+type FiniteNewsControl = { companyConcurrency: 1; feedUnavailableCompanies: number; circuitThreshold: 2;
+  stoppedBeforeNextReservation: boolean; circuitReason: "access_limited" | "systemic_feed_unavailable" | null;
+  affectedFeeds: Array<{ companyId: string; status: FeedResult["status"]; queryCount: number | null; queriesTruncated: boolean;
+    queries: Array<{ status: NewsFetchResult["status"]; errorCode: NewsFetchResult["error"] | null; httpStatus: number | null }> }> };
+
 export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boolean; classifierDeadlineMs?: number; sourceOnly?: boolean; topic?: "oracle_partnership";
-  onOutcome?: (outcome: SweepOutcome) => void; onError?: (stage: string, error: unknown) => void } = {}): Promise<number> {
+  onOutcome?: (outcome: SweepOutcome) => void; onError?: (stage: string, error: unknown) => void; onFeedResult?: (result: FeedResult) => void;
+  deferArticlesOnAccessLimit?: boolean } = {}): Promise<number> {
   let added = 0;
   if (opts.topic && !opts.sourceOnly) throw new Error("Oracle discovery requires source-only capture");
   if (opts.sourceOnly && !intelligenceEnabled()) throw new Error("Source-only news requires evidence capture");
@@ -267,20 +275,30 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
     const sourceKey = opts.topic ? "news:oracle_partnership" : "news:google";
     const state = await readSourceState(company.id, sourceKey);
     const seen = new Set(Array.isArray(state.cursor?.seen) ? state.cursor.seen.filter((value): value is string => typeof value === "string").slice(-128) : []);
-    const pending = Array.isArray(state.cursor?.pending) ? state.cursor.pending.filter((value): value is HeadlineItem => Boolean(value && typeof value === "object" && typeof value.raw_excerpt === "string" && typeof value.source_url === "string" && typeof value.source_name === "string" && (value.signal_date === null || typeof value.signal_date === "string"))).slice(0, 48) : [];
+    const retainedPending = Array.isArray(state.cursor?.pending) ? state.cursor.pending.filter((value): value is HeadlineItem => Boolean(value && typeof value === "object" && typeof value.raw_excerpt === "string" && typeof value.source_url === "string" && typeof value.source_name === "string" && (value.signal_date === null || typeof value.signal_date === "string"))) : [];
+    const pending = retainedPending.slice(0, 48), overflowPending = retainedPending.slice(48);
     const websiteState = await readSourceState(company.id, "website");
     const publicAliases = Array.isArray(websiteState.cursor?.publicAliases) ? websiteState.cursor.publicAliases.filter((alias): alias is string => typeof alias === "string" && alias.length <= 140).slice(0, 3) : company.publicAliases;
     const fetched = await fetchNewsForCompanyResult({ ...company, publicAliases }, 24, {
       ...(opts.topic ? { topic: opts.topic } : {}), cycle: Number(state.cursor?.queryCycle ?? 0), caches: (state.cursor?.queryCaches ?? {}) as Record<string, unknown>,
     });
+    opts.onFeedResult?.(fetched);
+    const deferArticles = opts.deferArticlesOnAccessLimit === true && accessLimitedFeed(fetched);
     const retries = (state.cursor?.retries ?? {}) as Record<string, { attempts?: number; after?: string }>;
-    const nextRetries: typeof retries = {};
-    const items = [...new Map([...pending, ...fetched.items].filter(item => isFresh(item.signal_date)).map(item => [headlineKey(item), item])).values()];
-    const failed: HeadlineItem[] = [];
+    // Overflow is retained debt, not permission to expand this attempt's existing
+    // 48-item processing window. Access limits defer every unread item unchanged.
+    const nextRetries: typeof retries = deferArticles ? { ...retries } : Object.fromEntries(overflowPending.flatMap(item => {
+      const key = headlineKey(item); return retries[key] ? [[key, retries[key]]] : [];
+    }));
+    const deferred = new Map(retainedPending.map(item => [headlineKey(item), item]));
+    if (deferArticles) for (const item of fetched.items) if (!seen.has(headlineKey(item)) && !deferred.has(headlineKey(item))) deferred.set(headlineKey(item), item);
+    const items = deferArticles ? [...deferred.values()] : [...new Map([...pending, ...fetched.items].filter(item => isFresh(item.signal_date)).map(item => [headlineKey(item), item])).values()];
+    const failed: HeadlineItem[] = deferArticles ? [] : [...overflowPending];
     let saved = 0, bodyCount = 0, storageFailures = 0, processingFailures = 0;
     const warningCodes: Record<string, number> = {};
     const articleDeadline = Date.now() + 50_000;
     for (let start = 0; start < items.length; start += 4) {
+      if (deferArticles) { failed.push(...items); break; }
       if (Date.now() >= articleDeadline) {
         for (const item of items.slice(start)) if (!seen.has(headlineKey(item))) { failed.push(item); if (retries[headlineKey(item)]) nextRetries[headlineKey(item)] = retries[headlineKey(item)]; }
         break;
@@ -317,15 +335,16 @@ export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boole
         else failed.push(batch[index]);
       });
     }
-    const incomplete = failed.length > 0 || fetched.status === "unavailable" || fetched.partial;
+    const incomplete = deferArticles || failed.length > 0 || fetched.status === "unavailable" || fetched.partial;
     const status = !incomplete ? (items.length ? "complete" : "empty")
-      : (saved > 0 || seen.size > 0 || failed.some(item => retries[headlineKey(item)])) ? "partial" : "unavailable";
+      : (saved > 0 || seen.size > 0 || overflowPending.length > 0 || failed.some(item => retries[headlineKey(item)])) ? "partial" : "unavailable";
     await writeSourceState(company.id, sourceKey, {
-      cursor: { seen: [...seen].slice(-128), pending: [...new Map(failed.map(item => [headlineKey(item), item])).values()].slice(0, 48), retries: nextRetries,
+      cursor: { seen: [...seen].slice(-128), pending: [...new Map(failed.map(item => [headlineKey(item), item])).values()], retries: nextRetries,
         queryCycle: fetched.nextCycle, queryCaches: fetched.caches, scope: opts.topic ? "oracle_partnership_company_queries_and_pending" : "broad_name_24_plus_rotating_targeted_12_and_pending" },
       complete: !incomplete,
       status, successful: saved > 0 || fetched.status !== "unavailable",
-      details: { feedStatus: fetched.status, feedError: fetched.error ?? null, httpStatus: fetched.httpStatus ?? null, queries: fetched.queries, saved, bodyCount, headlineOnly: saved - bodyCount, storageFailures, processingFailures, warningCodes },
+      details: { feedStatus: fetched.status, feedError: fetched.error ?? null, httpStatus: fetched.httpStatus ?? null, queries: fetched.queries, saved, bodyCount, headlineOnly: saved - bodyCount, storageFailures, processingFailures, warningCodes,
+        ...(deferArticles ? { articleCaptureDeferred: true, deferredArticleCount: items.length } : {}) },
       ...(incomplete ? { error: fetched.error ? `News feed: ${fetched.error}` : storageFailures ? "News storage unavailable" : "Headline evidence saved; publisher bodies pending" } : {}),
     });
     opts.onOutcome?.(storageFailures || processingFailures ? "failed" : fetched.status === "unavailable" ? "unavailable" : incomplete ? "partial" : "succeeded");
@@ -378,7 +397,8 @@ export async function checkExecChange(company: NewsCompany, opts: { sourceOnly?:
  *     domains → finance_hire (in-house-finance confirmation) + erp_tech (QuickBooks,
  *     no ERP, from the JD) triggers. One call per ~50 domains ≈ $0.13.
  */
-export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number; sourceOnly?: boolean; collection?: FiniteCollectionScope; topic?: "oracle_partnership" } = {}): Promise<FiniteCollectionResult & SweepOutcomes & { checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number; sourceOnly: boolean; topic?: "oracle_partnership" }> {
+export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: number; sourceOnly?: boolean; collection?: FiniteCollectionScope; topic?: "oracle_partnership" } = {}): Promise<FiniteCollectionResult & SweepOutcomes & { checked: number; companies_triggered: number; news_triggers: number; finance_triggers: number; erp_triggers: number; sourceOnly: boolean; topic?: "oracle_partnership";
+  finiteNewsControl?: FiniteNewsControl }> {
   assertFiniteCollection(opts.collection, { ...opts, limit });
   if (opts.topic && (!opts.sourceOnly || !opts.collection)) throw new Error("Oracle discovery requires exact source-only collection");
   const accounting = finiteCollectionAccounting(opts.collection);
@@ -432,40 +452,65 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   //      is not a reason to call). Plus freshness.
   // Reserve immediately attempted batches and leave untouched rows oldest when
   // the 240-second source budget ends.
-  let processed = 0;
+  const finiteSourceOnly = opts.sourceOnly === true && opts.collection !== undefined;
+  const finiteNewsControl: FiniteNewsControl = { companyConcurrency: 1, feedUnavailableCompanies: 0, circuitThreshold: 2,
+    stoppedBeforeNextReservation: false, circuitReason: null, affectedFeeds: [] };
+  let processed = 0, accessLimited = false;
   for await (const slice of rotationBatches(opts.collection ? (n, offset) => opts.topic ? pickForRotation(n, offset, opts.collection, opts.topic) : pickForRotation(n, offset, opts.collection) : pickForRotation, {
-    limit, batchSize: 4, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
+    limit, batchSize: finiteSourceOnly ? 1 : 4, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
   })) {
     const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
     const completed: string[] = [];
     await Promise.all(slice.map(async (c) => {
       let outcome: SweepOutcome = "failed";
+      let feedUnavailable = false, feedAccessLimited = false;
       outcomes.attempted++;
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
         let n = 0;
         try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs, sourceOnly: opts.sourceOnly, ...(opts.topic ? { topic: opts.topic } : {}),
-          onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id) }); }
+          ...(finiteSourceOnly ? { deferArticlesOnAccessLimit: true } : {}),
+          onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id),
+          onFeedResult: result => {
+            feedUnavailable = result.status === "unavailable";
+            feedAccessLimited = accessLimitedFeed(result);
+            if (finiteSourceOnly && (feedUnavailable || feedAccessLimited)) finiteNewsControl.affectedFeeds.push({
+              companyId: c.id, status: result.status, queryCount: result.queries?.length ?? null, queriesTruncated: (result.queries?.length ?? 0) > 8,
+              queries: (result.queries ?? []).slice(0, 8).map(query => ({ status: query.status, errorCode: query.error ?? null, httpStatus: query.httpStatus ?? null })),
+            });
+          } }); }
         catch (error) { sweepError(outcomes, "news", "collection", error, c.id); }
         // Exec-change (new finance leader) — claimable NetSuite-TAM leads only.
-        if (claimable && !opts.topic) { try { n += await checkExecChange(c, { sourceOnly: opts.sourceOnly }); } catch (error) {
+        if (claimable && !opts.topic && !(finiteSourceOnly && (feedUnavailable || feedAccessLimited))) { try { n += await checkExecChange(c, { sourceOnly: opts.sourceOnly }); } catch (error) {
           sweepError(outcomes, "news:executive-change", "collection", error, c.id);
           if ((outcome as SweepOutcome) === "succeeded") outcome = "partial";
         } }
         if (n > 0) { news += n; touched.add(c.id); }
         if ((outcome as SweepOutcome) === "succeeded") completed.push(c.id);
       } catch (error) { outcome = "failed"; sweepError(outcomes, "news", "collection", error, c.id); }
-      finally { outcomes[outcome]++; accounting.record(c.id, outcome); }
+      finally {
+        outcomes[outcome]++; accounting.record(c.id, outcome);
+        if (feedUnavailable) finiteNewsControl.feedUnavailableCompanies++;
+        if (feedAccessLimited) accessLimited = true;
+      }
     }));
     // Rotation reservations already record attempts. Only successful new-lane
     // persistence receives this completion stamp; failures retain retry state.
     try { if (!opts.topic) await markChecked(completed); }
     catch (error) { for (const id of completed) accounting.record(id, "failed"); outcomes.succeeded -= completed.length; outcomes.failed += completed.length; sweepError(outcomes, "news", "completion_stamp", error); }
     processed += slice.length;
+    // Close the generator before it can reserve another exact ID. Previously
+    // attempted rows keep their real outcomes; untouched IDs remain not_reserved.
+    if (finiteSourceOnly && (accessLimited || finiteNewsControl.feedUnavailableCompanies >= 2)) {
+      finiteNewsControl.circuitReason = accessLimited ? "access_limited" : "systemic_feed_unavailable";
+      finiteNewsControl.stoppedBeforeNextReservation = processed < limit;
+      break;
+    }
   }
 
   for (const cid of touched) {
     try { await recomputePriority(cid); } catch (error) { sweepError(outcomes, "news", "priority", error, cid); }
   }
-  return { ...outcomes, ...accounting.result(), checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp, sourceOnly: opts.sourceOnly === true, ...(opts.topic ? { topic: opts.topic } : {}) };
+  return { ...outcomes, ...accounting.result(), checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp, sourceOnly: opts.sourceOnly === true, ...(opts.topic ? { topic: opts.topic } : {}),
+    ...(finiteSourceOnly ? { finiteNewsControl } : {}) };
 }
