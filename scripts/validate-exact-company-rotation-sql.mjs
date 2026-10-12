@@ -8,6 +8,8 @@ const { PGlite } = require('@electric-sql/pglite');
 const db = await PGlite.create('memory://');
 const scheduled = await readFile(new URL('../supabase/migrations/0108_intelligence_coverage_priority.sql',import.meta.url),'utf8');
 const migration = await readFile(new URL('../supabase/migrations/0145_exact_company_source_rotation.sql',import.meta.url),'utf8');
+const oracleMigration = await readFile(new URL('../supabase/migrations/0150_oracle_partnership_signal.sql',import.meta.url),'utf8');
+const oracleRotation = oracleMigration.slice(oracleMigration.indexOf('create or replace function public.reserve_company_rotation('), oracleMigration.indexOf("notify pgrst"));
 const scalar = async (sql,values=[]) => (await db.query(sql,values)).rows[0]?.value;
 const checks=[];
 const test=async(name,fn)=>{try{await fn();checks.push(name);}catch(e){e.message=`${name}: ${e.message}`;throw e;}};
@@ -34,7 +36,7 @@ try {
     create table companies(id uuid primary key,name text,lists text[],status text,tal_claimed boolean,domain text,website_raw text,netsuite_internal_id text,
       state text,subindustry text,ats_type text,ats_token text,is_base boolean,claimable boolean,last_checked_at timestamptz,ats_checked_at timestamptz,
       site_checked_at timestamptz,fmcsa_checked_at timestamptz,sos_checked_at timestamptz,signals_checked_at timestamptz);
-    create table intelligence_source_state(company_id uuid,source_key text,next_attempt_at timestamptz,complete boolean,last_error text,last_success_at timestamptz,cursor jsonb,primary key(company_id,source_key));
+    create table intelligence_source_state(company_id uuid,source_key text,last_attempt_at timestamptz not null default now(),next_attempt_at timestamptz,complete boolean,last_error text,last_success_at timestamptz,cursor jsonb,primary key(company_id,source_key));
     create table intelligence_observations(id uuid primary key,company_id uuid,is_current boolean,feedback_excluded boolean,attributes jsonb);
     create table intelligence_jobs(id uuid primary key,observation_id uuid,kind text,status text,priority int,due_at timestamptz,attempts int,lease_token uuid,lease_until timestamptz,last_error text,result jsonb,created_at timestamptz);`);
   await db.exec(scheduled);
@@ -44,10 +46,41 @@ try {
     const config=await scalar('select to_jsonb(c) value from intelligence_config c');
     const tables=await scalar("select array_agg(tablename order by tablename) value from pg_tables where schemaname='public'");
     await db.exec(migration); await db.exec(migration);
+    await db.exec(oracleRotation); await db.exec(oracleRotation);
     assert.equal(await scalar("select pg_get_functiondef('reserve_company_rotation(text,integer,timestamptz,text)'::regprocedure) value"),original);
     assert.equal(await scalar("select pg_get_functiondef('intelligence_claim(integer)'::regprocedure) value"),originalWorker);
     assert.deepEqual(await scalar('select to_jsonb(c) value from intelligence_config c'),config);
     assert.deepEqual(await scalar("select array_agg(tablename order by tablename) value from pg_tables where schemaname='public'"),tables);
+  });
+  await test('Oracle reserves exact current TAM OR independently claimed TAL without altering news or other source state',async()=>{
+    await reset();const tam=await company({last_checked_at:new Date().toISOString()});
+    const tal=await company({lists:['tam_removed'],status:'removed_from_tam',tal_claimed:true,last_checked_at:new Date().toISOString()});
+    const nullTal=await company({lists:null,tal_claimed:true});
+    const duplicate=await company({lists:['netsuite_tam','tam_duplicate'],tal_claimed:true}),removed=await company({status:'removed_from_tam'}),outside=await company({lists:[]});
+    const unrequested=await company();
+    await state(tam,'news:google',{complete:true,cursor:{seen:['general-only'],queryCaches:{keep:true}}});
+    const before=await scalar('select jsonb_agg(to_jsonb(c) order by id) value from companies c');
+    const newsBefore=await scalar("select to_jsonb(s) value from intelligence_source_state s where source_key='news:google'");
+    const ids=[tam,tal,nullTal,duplicate,removed,outside,randomUUID()];
+    const rows=await reserve('oracle_partnership',ids);
+    assert.deepEqual(new Set(rows.map(r=>r.id)),new Set([tam,tal,nullTal]));
+    assert.deepEqual(await scalar('select jsonb_agg(to_jsonb(c) order by id) value from companies c'),before);
+    assert.deepEqual(await scalar("select to_jsonb(s) value from intelligence_source_state s where source_key='news:google'"),newsBefore);
+    assert.equal((await reserve('oracle_partnership',ids)).length,0);
+    for(const id of [duplicate,removed,outside,unrequested])assert.equal(await scalar('select count(*)::int value from intelligence_source_state where company_id=$1',[id]),0);
+  });
+  await test('Oracle reservation preserves prior cursor, failure and success evidence and honors both cutoff fences',async()=>{
+    await reset();const eligible=await company(),sinceRun=await company(),thisHour=await company();
+    await state(eligible,'news:oracle_partnership',{last_attempt_at:'2000-01-01',last_success_at:'2000-01-01',complete:false,last_error:'original pending',cursor:{seen:['kept'],pending:[{original:true}]}});
+    await state(sinceRun,'news:oracle_partnership',{last_attempt_at:await scalar("select clock_timestamp()-interval '12 hours' value")});
+    await state(thisHour,'news:oracle_partnership',{last_attempt_at:await scalar("select date_trunc('hour',clock_timestamp() at time zone 'UTC') at time zone 'UTC' value")});
+    const prior=await scalar("select to_jsonb(s)-'last_attempt_at' value from intelligence_source_state s where company_id=$1",[eligible]);
+    assert.deepEqual((await reserve('oracle_partnership',[eligible,sinceRun])).map(r=>r.id),[eligible]);
+    assert.deepEqual(await scalar("select to_jsonb(s)-'last_attempt_at' value from intelligence_source_state s where company_id=$1",[eligible]),prior);
+    assert.equal((await reserve('oracle_partnership',[thisHour],{epoch:new Date().toISOString()})).length,0);
+    await assert.rejects(reserve('oracle_partnership',[eligible],{scope:'claimable'}),/does not accept scope/);
+    await db.exec('update intelligence_config set enabled=false');
+    await assert.rejects(reserve('oracle_partnership',[eligible]),/requires evidence capture/);
   });
   await test('only service_role can execute the security-definer overload',async()=>{
     const sig='reserve_company_rotation(text,integer,timestamptz,text,uuid[])';

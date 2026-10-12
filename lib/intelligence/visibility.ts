@@ -19,7 +19,9 @@ export function jevPublicationRoute(result: VisibilityFinding, eventDate: string
     if (a.operatingChangeType === "contract_award" && !["commercial_award", "government_award"].includes(a.contractActivity ?? ""))
       return { type: null, reason: "contract_award_not_established" };
   }
-  const allowed = new Set(["funding", "ma", "new_entity", "finance_hire", "press", "operating_change", "erp_tech", "hiring_velocity", "employee_growth", "government_announcement"]);
+  if (a.signalType === "oracle_partnership" && (!classified || a.contentClass !== "actual_company_development" || a.companyRole !== "partner"))
+    return { type: null, reason: "oracle_partnership_not_established" };
+  const allowed = new Set(["oracle_partnership", "funding", "ma", "new_entity", "finance_hire", "press", "operating_change", "erp_tech", "hiring_velocity", "employee_growth", "government_announcement"]);
   const relevantChange = ["systems_project", "finance_leadership", "close_reporting", "financial_controls", "cash_working_capital", "investor_reporting", "project_financials", "unbilled_work"].some(id => (result.criteria[id] ?? 0) >= policy.topicProbability);
   // Keep Jev's news label intact; this only selects an existing worklist category.
   const type = classified && a.contractActivity === "government_award" ? "government_announcement"
@@ -40,6 +42,7 @@ export function visibilityReasonLabel(reason:string):string {
  const labels:Record<string,string>={dated_development:"Eligible dated development",operating_context_only:"Operating context, without a routed event category",not_direct_company:"Jev did not identify the company as the direct subject",
   company_relevance:"Company relevance below 80%",no_concrete_development:"Concrete development below 75%",not_acquirer:"Acquirer probability below 80%",unknown_event_date:"Event date unknown",future_event_date:"Event date is in the future",historical_event:"Event is more than 180 days old",
   no_selected_source_passage:"No selected source passage",structured_award_context:"Structured award uses its source-owned publisher",source_or_company_policy:"Existing company/source publication policy",contract_award_not_established:"Jev did not classify this as an awarded contract",superseded:"Evidence is superseded"};
+ if(reason==='oracle_partnership_not_established')return "A dated direct partnership with Oracle is not established";
  if(labels[reason])return labels[reason];
  if(reason.startsWith('content_'))return `Jev content classification: ${reason.slice(8).replace(/_/g,' ')}`;
  if(reason.startsWith('company_role_'))return `Jev company role: ${reason.slice(13).replace(/_/g,' ')}`;

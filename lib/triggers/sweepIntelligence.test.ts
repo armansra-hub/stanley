@@ -42,6 +42,28 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("broader news observation intake", () => {
+  it("captures Oracle through an independent exact reservation and state key, without general-news completion or executive search", async () => {
+    const id = "00000000-0000-0000-0000-000000000001";
+    const collection = { companyIds: [id], runCutoff: "2026-01-01T00:00:00Z" };
+    mocks.pick.mockResolvedValue([{ ...company, id, claimable: true }]);
+    mocks.newsResult.mockResolvedValue({ items: [item], status: "success", nextCycle: 1, caches: { oracle: { items: [item] } } });
+    expect(await sweepBase(1, { sourceOnly: true, collection, topic: "oracle_partnership" })).toMatchObject({
+      topic: "oracle_partnership", checked: 1, succeeded: 1, news_triggers: 0, collection: { analysisCompleted: false } });
+    expect(mocks.pick).toHaveBeenCalledWith(20, undefined, collection, "oracle_partnership");
+    expect(mocks.read).toHaveBeenCalledWith(id, "news:oracle_partnership");
+    expect(mocks.read).not.toHaveBeenCalledWith(id, "news:google");
+    expect(mocks.newsResult).toHaveBeenCalledWith(expect.objectContaining({ id }), 24, expect.objectContaining({ topic: "oracle_partnership", cycle: 0, caches: {} }));
+    expect(mocks.write).toHaveBeenCalledWith(id, "news:oracle_partnership", expect.objectContaining({ cursor: expect.objectContaining({ scope: "oracle_partnership_company_queries_and_pending" }) }));
+    expect(mocks.checked).not.toHaveBeenCalled(); expect(mocks.newsItemsResult).not.toHaveBeenCalled();
+    expect(mocks.enqueue).toHaveBeenCalledOnce(); expect(mocks.queue).not.toHaveBeenCalled(); expect(mocks.classifier).not.toHaveBeenCalled();
+  });
+
+  it("rejects unscoped or non-source-only Oracle calls before reservation", async () => {
+    await expect(sweepBase(1, { topic: "oracle_partnership", sourceOnly: true })).rejects.toThrow("exact source-only");
+    await expect(checkCompanyNews(company, { topic: "oracle_partnership" })).rejects.toThrow("source-only");
+    expect(mocks.pick).not.toHaveBeenCalled(); expect(mocks.newsResult).not.toHaveBeenCalled();
+  });
+
   it("accounts for exact source-only news IDs and completion-stamp failures without claiming unreserved work", async () => {
     const ids = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"];
     const collection = { companyIds: ids, runCutoff: "2026-01-01T00:00:00Z" };

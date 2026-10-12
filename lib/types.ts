@@ -12,6 +12,7 @@ export type CompanyStatus =
 export type ScoreTier = "A" | "B" | "C";
 
 export type SignalType =
+  | "oracle_partnership"
   | "finance_hire"
   | "pain_job_post"
   | "hiring_velocity"
@@ -121,6 +122,7 @@ export interface Company {
 }
 
 export const SIGNAL_TYPE_LABELS: Record<SignalType, string> = {
+  oracle_partnership: "Partnered with Oracle",
   finance_hire: "Finance hire",
   pain_job_post: "Pain job post",
   hiring_velocity: "Hiring velocity",

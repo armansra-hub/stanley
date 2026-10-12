@@ -462,6 +462,7 @@ export default function Dashboard({
     return () => clearTimeout(t);
   }, [isTriggered, showClosed, search, stateFilter, subindustry, band, claimableOnly, erpOnly, selectedTags, tagMatchAll, selectedSignals, signalMatchAll, signalDateFrom, signalDateTo, minimumEmployees, minimumParticipants]); // eslint-disable-line react-hooks/exhaustive-deps
   const TRIGGER_LABELS: Record<string, string> = {
+    oracle_partnership: "🤝 Partnered with Oracle",
     "2026_inc_5000": "🏅 2026 Inc. 5000",
     erp_tech: "⚡ ERP-ready", funding: "💰 Funding", ma: "🤝 M&A (acquirer)", finance_hire: "🧮 Finance hire",
     new_entity: "🏛 New entity", gov_contract: "📜 Gov contract", fleet_expansion: "🚚 Fleet growth",

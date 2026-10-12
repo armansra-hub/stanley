@@ -19,6 +19,19 @@ const runCutoff = "2026-01-01T00:00:00Z";
 const query = `sourceOnly=1&companyIds=${companyId}&runCutoff=${runCutoff}`;
 beforeEach(() => { vi.stubEnv("CRON_SECRET", "test-cron"); mocks.collect.mockReset().mockResolvedValue({ checked: 0 }); mocks.event.mockReset(); });
 afterEach(() => vi.unstubAllEnvs());
+describe("explicit Oracle discovery", () => {
+  const request = (params: string) => new NextRequest(`http://localhost/api/cron/triggers?${params}`, { headers: { "x-cron-secret": "test-cron" } });
+  it("forwards only the explicit finite source-only Oracle option", async () => {
+    expect((await news.POST(request(`${query}&topic=oracle_partnership`))).status).toBe(200);
+    expect(mocks.collect).toHaveBeenCalledWith(1, expect.objectContaining({ topic: "oracle_partnership", sourceOnly: true,
+      collection: { companyIds: [companyId], runCutoff } }));
+  });
+  it.each(["topic=oracle_partnership", "topic=oracle_partnership&sourceOnly=1", `${query}&topic=other`,
+    `${query}&topic=oracle_partnership&topic=oracle_partnership`, `${query}&topic=`])("rejects unsupported or unscoped topic: %s", async params => {
+    expect((await news.POST(request(params))).status).toBe(400);
+    expect(mocks.collect).not.toHaveBeenCalled(); expect(mocks.event).not.toHaveBeenCalled();
+  });
+});
 describe.each([["ats", ats, 120], ["website", website, 150], ["news", news, 50], ["fmcsa", fmcsa, 150], ["cosos", cosos, 200]] as const)("%s finite route", (_name, route, defaultLimit) => {
   const request = (params: string, authorized = true) => new NextRequest(`http://localhost/api/cron/test?${params}`, { headers: authorized ? { "x-cron-secret": "test-cron" } : {} });
   it("authenticates before interpreting the exact scope", async () => {

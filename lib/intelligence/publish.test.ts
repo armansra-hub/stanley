@@ -33,6 +33,30 @@ describe("direct Jev publication", () => {
     ...evaluation.attributes, signalType: "operating_change" as const, contentClass: "actual_company_development" as const,
     companyRole: "subject" as const, contractActivity: "none" as const, operatingChangeType: "billing_or_finance_process" as const, ...patch,
   } });
+  it("requires original Oracle partnership evidence before any publisher side effect", async () => {
+    for (const [sourceUrl, evidenceText] of [
+      ["https://www.linkedin.com/search/results/content/?keywords=Oracle", "Blue River Services announced a partnership with Oracle Corporation."],
+      [observation.source_url, "Blue River Services uses Oracle accounting software."],
+    ]) {
+      const deps = fixture(); const request = input();
+      request.evaluation = classified({ signalType: "oracle_partnership", companyRole: "partner" });
+      request.observation.source_url = sourceUrl; request.observation.evidence_text = evidenceText;
+      request.passage = { start: 0, end: evidenceText.length, text: evidenceText };
+      expect(await publishJevFinding(request, deps)).toEqual({ status: "not_eligible", reason: "oracle_partnership_original_evidence_required" });
+      expect(deps.record).not.toHaveBeenCalled(); expect(deps.reheat).not.toHaveBeenCalled();
+    }
+  });
+  it("retains exact Oracle partnership type, passage and receipt through the existing publisher", async () => {
+    const deps = fixture(); const request = input();
+    const evidenceText = "Blue River Services announced a partnership with Oracle Corporation.";
+    request.evaluation = classified({ signalType: "oracle_partnership", companyRole: "partner" });
+    request.observation.evidence_text = evidenceText;
+    request.passage = { start: 0, end: evidenceText.length, text: evidenceText };
+    expect(await publishJevFinding(request, deps)).toMatchObject({ status: "published", triggerId: "trigger1" });
+    expect(deps.getSaved()).toMatchObject({ type: "oracle_partnership", metadata: { intelligenceEvidence: { excerpt: evidenceText } } });
+    expect(await publishJevFinding(request, deps)).toMatchObject({ status: "already_published", triggerId: "trigger1" });
+    expect(deps.record).toHaveBeenCalledOnce();
+  });
   it("uses native first-pass classes to distinguish holiday/editorial/client coverage from actual company changes", () => {
     for (const contentClass of ["holiday_greeting", "editorial_coverage", "client_work", "promotional_content", "incidental_mention", "evergreen_profile", "unknown"] as const) {
       const result = classified({ contentClass });

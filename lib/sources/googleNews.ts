@@ -8,6 +8,7 @@ import { publicResponseOutcome, sourceErrorCode, type SourceErrorCode } from "./
 import { fetchConditionalText, responseValidators, retainedValidators, type HttpValidators } from "./conditionalFetch";
 import { normalizeFeedXml } from "./feedXml";
 import { unicodePrefix } from "@/lib/textBounds";
+import { oraclePartnershipSearchPlan } from "./oraclePartnershipQueries";
 
 /**
  * Google News RSS adapter (FREE). Each item becomes a name-only candidate whose
@@ -89,8 +90,10 @@ export function companyNewsQueries(company: CompanyNewsContext): string[] {
   if (context.length) extra.push(`${broad} (${context.map(phrase).join(" OR ")})`);
   return [broad, ...new Set(extra)].slice(0, 6);
 }
-export async function fetchNewsForCompanyResult(company: string | CompanyNewsContext, n = 24, options: { cycle?: number; caches?: Record<string, unknown>; deadlineMs?: number } = {}) {
-  const queries = companyNewsQueries(typeof company === "string" ? { name: company } : company);
+export async function fetchNewsForCompanyResult(company: string | CompanyNewsContext, n = 24, options: { cycle?: number; caches?: Record<string, unknown>; deadlineMs?: number; topic?: "oracle_partnership" } = {}) {
+  const context = typeof company === "string" ? { name: company } : company;
+  // Explicit caller opt-in only. The exact-company source-only route requests it; schedules do not.
+  const queries = options.topic === "oracle_partnership" ? oraclePartnershipSearchPlan(context).news.map(item => item.query) : companyNewsQueries(context);
   const cycle = Number.isSafeInteger(options.cycle) && options.cycle! >= 0 ? options.cycle! : 0;
   const selected = [queries[0], ...(queries.length > 1 ? [queries[1 + cycle % (queries.length - 1)]] : [])];
   const deadlineMs = options.deadlineMs ?? Date.now() + 12000;

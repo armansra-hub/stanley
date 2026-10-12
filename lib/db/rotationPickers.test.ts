@@ -116,6 +116,16 @@ describe("durable source rotation pickers", () => {
     expect(state.calls).toHaveLength(3);
   });
 
+  it("reserves the independent Oracle source only through the exact-company overload", async () => {
+    const collection = { companyIds: ["00000000-0000-0000-0000-000000000001"], runCutoff: "2026-08-10T00:42:00Z" };
+    state.rows = [{ id: collection.companyIds[0] }];
+    await expect(pickForRotation(1, 0, undefined, "oracle_partnership")).rejects.toThrow("exact company scope");
+    expect(state.calls).toEqual([]);
+    await pickForRotation(1, 0, collection, "oracle_partnership");
+    expect(state.calls).toEqual([["rpc", "reserve_company_rotation", { p_source: "oracle_partnership", p_limit: 1,
+      p_epoch: collection.runCutoff, p_scope: null, p_company_ids: collection.companyIds }]]);
+  });
+
   it("executes a real tail query instead of returning an empty slot", async () => {
     const rows = await pickSitesForRotation(30, 30, "tail");
     expect(rows).toHaveLength(1);

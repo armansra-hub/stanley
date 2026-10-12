@@ -26,6 +26,7 @@ export const COMPLEXITY_DRIVERS: Record<ComplexityDriver, string> = {
 
 /** Which complexity driver(s) each signal type is evidence of (for the LLM 'why NetSuite' line + scoring nudges). */
 export const SIGNAL_DRIVERS: Record<SignalType, ComplexityDriver[]> = {
+  oracle_partnership: [], // Relationship context alone does not establish complexity or ERP need.
   new_entity: ["multi_entity"],
   m_and_a: ["multi_entity", "audit_compliance"],
   funding: ["audit_compliance", "revenue_recognition"],
@@ -65,6 +66,15 @@ export interface CatalogEntry {
  * possible)".
  */
 export const SIGNAL_CATALOG: CatalogEntry[] = [
+  {
+    event: "Partnered with Oracle",
+    signal_type: "oracle_partnership",
+    drivers: [],
+    vertical: "cross",
+    how: "Company-specific news and LinkedIn queries, then full original-source identity/date and partnership review. Oracle product use or employee history is insufficient. Discovery is manual-only; this catalog entry starts nothing.",
+    sources: ["google_news", "linkedin_posts"],
+    free: true,
+  },
   // ── Cross-vertical ──────────────────────────────────────────────────────
   {
     event: "New legal entity / subsidiary / DBA formed",

@@ -10,6 +10,7 @@ import type { EvaluateEvidenceResult, EvidenceAttributes, RawEvaluationAnswer } 
 import { readTriggerSourceEvidence, type TriggerSourceEvidence } from "./triggerEvidence";
 import type { IntelligenceEvent } from "./events";
 import { jevPublicationRoute } from "./visibility";
+import { hasOraclePartnershipPassage, isOraclePartnershipSourceUrl } from "./oraclePartnership";
 
 type Evaluation = Extract<EvaluateEvidenceResult, { ok: true }>;
 export type JevPublicationCompany = { id: string; name: string; status?: string; record_dead?: boolean | null; description?: string | null; subindustry?: string | null; ns_industry?: string | null };
@@ -124,6 +125,7 @@ export async function publishJevFinding(input: { company: JevPublicationCompany;
   const evidence: TriggerSourceEvidence = { observationId: observation.id, excerpt: passage.text, start: passage.start, end: passage.end, observedAt: observation.observed_at };
   if (!readTriggerSourceEvidence({ intelligenceEvidence: evidence }) || observation.evidence_text.slice(passage.start, passage.end) !== passage.text) throw new Error("Jev publication source passage mismatch");
   const url = canonicalEvidenceUrl(observation.source_url);
+  if (type === "oracle_partnership" && (!hasOraclePartnershipPassage(passage.text) || !isOraclePartnershipSourceUrl(url))) return { status: "not_eligible", reason: "oracle_partnership_original_evidence_required" };
   const sourceName = type === "government_announcement" ? "Jev · Government award announcement"
     : observation.source_kind === "job" ? "Jev · ATS job posting" : observation.source_kind === "website" ? "Jev · Company website" : "Jev · Public news";
   const finding = findingReceipt({ observation, evaluation, passage, eventId: input.event?.id });

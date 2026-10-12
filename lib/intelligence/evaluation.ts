@@ -2,7 +2,7 @@
 export const EVIDENCE_SIGNAL_TYPES = [
   "funding", "new_entity", "ma", "gov_contract", "finance_hire", "press", "erp_tech",
   "hiring_velocity", "employee_growth", "federal_award", "federal_subaward",
-  "sam_award_notice", "operating_change", "news", "none",
+  "sam_award_notice", "operating_change", "news", "none", "oracle_partnership",
 ] as const;
 
 export type EvidenceSignalType = typeof EVIDENCE_SIGNAL_TYPES[number];

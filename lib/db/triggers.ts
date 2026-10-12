@@ -345,8 +345,9 @@ export async function reservePriorityRecompute(
   return (data ?? []) as PriorityRecomputeReservation[];
 }
 
-export async function pickForRotation(limit: number, offset = 0, collection?: FiniteCollectionScope): Promise<Array<{ id: string; name: string; domain: string | null; claimable: boolean } & RotationSignalContext>> {
-  if (collection) return reserveFiniteRotation("trigger", limit, offset, null, collection);
+export async function pickForRotation(limit: number, offset = 0, collection?: FiniteCollectionScope, topic?: "oracle_partnership"): Promise<Array<{ id: string; name: string; domain: string | null; claimable: boolean } & RotationSignalContext>> {
+  if (topic && !collection) throw new Error("Oracle discovery requires exact company scope");
+  if (collection) return reserveFiniteRotation(topic ?? "trigger", limit, offset, null, collection);
   if (offset === 0) return reserveRotation("trigger", limit);
   const db = serviceClient();
   const { data } = await db.from("companies").select("id, name, domain, claimable, record_dead, description, subindustry, ns_industry")

@@ -6,6 +6,7 @@
 export interface TriggerSpec { strength: number; half_life_days: number }
 
 export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
+  oracle_partnership: { strength: 65, half_life_days: 180 }, // Dated relationship event, not inferred purchase intent.
   "2026_inc_5000": { strength: 90, half_life_days: 730 }, // verified appearance on the 2026 Inc. 5000 growth list
   erp_tech: { strength: 95, half_life_days: 120 }, // runs QuickBooks, no ERP — the strongest, slowest-decaying
   funding: { strength: 90, half_life_days: 90 },   // raised money → ERP budget + growth
@@ -45,6 +46,7 @@ export const TRIGGER_SPEC: Record<string, TriggerSpec> = {
 };
 
 export const TRIGGER_LABEL: Record<string, string> = {
+  oracle_partnership: "Partnered with Oracle",
   "2026_inc_5000": "2026 Inc. 5000",
   erp_tech: "ERP-ready (QuickBooks, no ERP)",
   funding: "Funding",

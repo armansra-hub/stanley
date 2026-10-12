@@ -16,6 +16,8 @@ const staleHold = await readFile(new URL("../supabase/migrations/0146_codex_stal
 const governmentCapture = await readFile(new URL("../supabase/migrations/0148_codex_empty_government_capture.sql", import.meta.url), "utf8");
 const foundation = await readFile(new URL("../supabase/migrations/0059_intelligence_evidence_and_work.sql", import.meta.url), "utf8");
 const actualEvents = await readFile(new URL("../supabase/migrations/0014_app_events.sql", import.meta.url), "utf8");
+const exactRotation = await readFile(new URL("../supabase/migrations/0145_exact_company_source_rotation.sql", import.meta.url), "utf8");
+const oraclePartnership = await readFile(new URL("../supabase/migrations/0150_oracle_partnership_signal.sql", import.meta.url), "utf8");
 const scalar = async (sql, values = []) => (await db.query(sql, values)).rows[0]?.value;
 const rpc = (action, payload) => scalar("select intelligence_codex_news($1,$2) value", [action, payload]);
 const checks = [];
@@ -468,5 +470,68 @@ try {
     assert.equal(await scalar("select count(*)::int value from triggers"),triggerCount);
     assert.equal(await scalar("select enabled value from intelligence_jev_budget_policy"),false);
   });
-  console.log(JSON.stringify({ offline: true, actualTableMigrations:['0014','0059'], passed: checks.length, checks, providerCalls: 0, productionAccess: false }));
+  await test("Oracle migration changes only its reviewed-publication guard, replays safely and preserves roles and Jev pause", async () => {
+    const before = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
+    const oldGuard = oraclePartnership.match(/old_guard text := \$old\$([\s\S]*?)\$old\$/)[1];
+    const newGuard = oraclePartnership.match(/new_guard text := \$new\$([\s\S]*?)\$new\$/)[1];
+    await db.exec(exactRotation); await db.exec(oraclePartnership);
+    const after = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
+    assert.equal(after, before.replace(oldGuard, newGuard));
+    await db.exec(oraclePartnership);
+    assert.equal(await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value"), after);
+    for (const role of ["anon", "authenticated", "service_role"]) assert.equal(await scalar("select has_function_privilege($1,'intelligence_codex_news(text,jsonb)','EXECUTE') value", [role]), role === "service_role");
+    assert.equal(await scalar("select enabled value from intelligence_jev_budget_policy limit 1"), false);
+  });
+  const oracleText = "Acme announced a partnership with Oracle to jointly develop energy procurement services.";
+  async function oracleFixture(evidenceText = oracleText, attributes = {}) {
+    await resetExact();
+    const target = await seedExact();
+    await db.query("update intelligence_observations set evidence_text=$2 where id=$1", [target.observation, evidenceText]);
+    const p = await rpc("claim", exactRequest(target.observation));
+    const a = await rpc("analyze", { ...bound(p), decisionHash: "d".repeat(64), analysis: {
+      reader: { taskId: "/root/reader", model: "offline-fixture", snapshotHash: p.snapshotHash, fullTextRead: true, readStart: 0, readEnd: evidenceText.length },
+      disposition: "publish", rationale: "Synthetic dated Oracle partnership fixture; no actual account was searched.",
+      attributes: { signalType: "oracle_partnership", companyRelationship: "direct", companyRole: "partner", contentClass: "actual_company_development", ...attributes },
+    } });
+    const finish = finishPayload(a);
+    finish.review.reviewer.readEnd = evidenceText.length;
+    Object.assign(finish.trigger, { type: "oracle_partnership", summary: "Partnered with Oracle", evidence: {
+      observationId: target.observation, excerpt: evidenceText, start: 0, end: evidenceText.length, observedAt: p.snapshot.observation.observed_at,
+    }, passageStart: 0, passageLength: evidenceText.length });
+    return { a, finish };
+  }
+  await test("Oracle partnership completes with exact trigger/event, original evidence and independent reviewer", async () => {
+    const { a, finish } = await oracleFixture();
+    await assert.rejects(rpc("finish", { ...finish, review: { ...finish.review, reviewer: { ...finish.review.reviewer, taskId: "/root/reader" } } }), /Independent review/);
+    const done = await rpc("finish", finish);
+    assert.equal(done.status, "complete"); assert.equal(done.lease, null);
+    assert.equal(done.publication.trigger.type, "oracle_partnership");
+    assert.equal(done.publication.trigger.id, done.review.receipt.triggerId);
+    assert.equal(done.publication.event.id, done.review.receipt.eventId);
+    assert.equal(done.publication.event.meta.jobId, a.jobId);
+    assert.deepEqual(await rpc("finish", finish), done);
+  });
+  await test("Oracle SQL gate rejects customer/related attribution, evergreen context and unsupported counterparty passages", async () => {
+    for (const attrs of [{ companyRole: "customer" }, { companyRelationship: "related" }, { contentClass: "evergreen_profile" }, { signalType: "news" }]) {
+      const { finish } = await oracleFixture(oracleText, attrs);
+      await assert.rejects(rpc("finish", finish), /Oracle partnership evidence required/);
+    }
+    for (const evidenceText of ["Acme uses Oracle Cloud software.", "Acme partnered with Microsoft."]) {
+      const { finish } = await oracleFixture(evidenceText);
+      await assert.rejects(rpc("finish", finish), /Oracle partnership evidence required/);
+    }
+    await resetExact(); const target = await seedExact();
+    const p = await rpc("claim", exactRequest(target.observation));
+    assert.equal((await rpc("finish", finishPayload(await analyzed(p)))).publication.trigger.type, "press");
+  });
+  await test("Oracle migration refuses unexpected function definitions without altering them", async () => {
+    const good = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
+    await db.exec("create or replace function intelligence_codex_news(p_action text,p_payload jsonb) returns jsonb language plpgsql as $$begin return null; end$$");
+    const changed = await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value");
+    await assert.rejects(db.exec(oraclePartnership), /Unexpected reviewed publisher definition/);
+    await db.exec("rollback");
+    assert.equal(await scalar("select pg_get_functiondef('intelligence_codex_news(text,jsonb)'::regprocedure) value"), changed);
+    await db.exec(good);
+  });
+  console.log(JSON.stringify({ offline: true, passed: checks.length, checks, providerCalls: 0, productionAccess: false }));
 } finally { await db.close(); }

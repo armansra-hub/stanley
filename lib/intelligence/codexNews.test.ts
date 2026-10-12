@@ -32,6 +32,48 @@ function review(p: NewsPacket) {
     rationale: "I independently read the full source and verified the identity, date and cited office development.", identityConfirmed: true as const, dateChecked: true as const, sourceLimitationsChecked: true as const };
 }
 describe("Codex canonical news review", () => {
+  function oracleFixture() {
+    const p = packet();
+    p.snapshot.observation.evidence_text = "Acme announced a partnership with Oracle on September 20, 2026 to jointly develop energy procurement services.";
+    const base = analysis(p);
+    const a = { ...base, attributes: { ...base.attributes, signalType: "oracle_partnership" as const, companyRole: "partner" as const, operatingChangeType: "other" as const },
+      passage: { start: 0, end: p.snapshot.observation.evidence_text.length, text: p.snapshot.observation.evidence_text } };
+    return { p, a };
+  }
+  it("routes a dated Oracle partnership through the same full-read and independent reviewer gates", () => {
+    const { p, a } = oracleFixture();
+    expect(validateNewsAnalysis(p, a, now).trigger).toMatchObject({ type: "oracle_partnership", strength: 65, half_life_days: 180 });
+    p.review.analysis = a; p.review.decisionHash = newsDecisionHash(a);
+    expect(validateNewsReview(p, review(p), now).trigger?.type).toBe("oracle_partnership");
+    expect(() => validateNewsReview(p, { ...review(p), reviewer: a.reader }, now)).toThrow("independent_reviewer");
+    expect(publicNewsPacket(p)?.contract.signalDefinitions.oracle_partnership).toContain("Oracle product use");
+  });
+  it.each(["customer", "publisher", "namesake", "unknown"] as const)("does not treat %s attribution as an Oracle partnership", companyRole => {
+    const { p, a } = oracleFixture();
+    expect(() => validateNewsAnalysis(p, { ...a, attributes: { ...a.attributes, companyRole } }, now)).toThrow("publication_policy_rejected");
+  });
+  it("rejects missing originals, unknown dates, unrelated identity and product-use-only passages", () => {
+    const { p, a } = oracleFixture();
+    for (const companyRelationship of ["related", "unrelated", "unknown"] as const) expect(() => validateNewsAnalysis(p, { ...a, attributes: { ...a.attributes, companyRelationship } }, now)).toThrow("publication_policy");
+    p.snapshot.observation.event_date = null;
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("publication_policy");
+    p.snapshot.observation.event_date = "2026-09-20T00:00:00Z";
+    p.snapshot.observation.metadata.articleBodyAvailable = false;
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("hold_required");
+    p.snapshot.observation.metadata.articleBodyAvailable = true;
+    p.snapshot.observation.evidence_text = "Acme uses Oracle Cloud software.";
+    const unsupported = { ...a, reader: { ...a.reader, readEnd: p.snapshot.observation.evidence_text.length }, passage: { start: 0, end: p.snapshot.observation.evidence_text.length, text: p.snapshot.observation.evidence_text } };
+    expect(() => validateNewsAnalysis(p, unsupported, now)).toThrow("oracle_partnership_original_evidence_required");
+  });
+  it("rejects LinkedIn search snippets while accepting a fully captured original post", () => {
+    const { p, a } = oracleFixture();
+    p.snapshot.observation.source_url = "https://www.linkedin.com/search/results/content/?keywords=Acme";
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("oracle_partnership_original_evidence_required");
+    p.snapshot.observation.source_url = "https://www.linkedin.com/posts/acme_oracle-partnership-activity-123";
+    expect(validateNewsAnalysis(p, a, now).trigger?.type).toBe("oracle_partnership");
+    p.snapshot.observation.metadata.evidenceKind = "headline_only";
+    expect(() => validateNewsAnalysis(p, a, now)).toThrow("hold_required");
+  });
   it("requires validated adapter body provenance even when legacy metadata claimed availability", () => {
     const p = packet(), o = p.snapshot.observation; o.source_kind = "job";
     Object.assign(o.metadata, { textTruncated: false, retainedCharacters: o.evidence_text.length, sourceCharacters: o.evidence_text.length,

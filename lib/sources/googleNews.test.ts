@@ -11,6 +11,17 @@ const RSS = `<?xml version="1.0"?><rss version="2.0"><channel><item>
 const response = (body: string, status = 200) => ({ body, status, finalUrl: "https://news.google.com/rss/search", contentType: "application/rss+xml" });
 beforeEach(() => { fetch.mockReset(); });
 describe("RSS outcome semantics", () => {
+  it("adds Oracle-specific queries only after explicit opt-in and retains unavailable outcomes", async () => {
+    fetch.mockResolvedValue(response("Blocked", 403));
+    const selected = await fetchNewsForCompanyResult({ name: "Acme", domain: "acme.com" }, 24, { topic: "oracle_partnership" });
+    expect(selected.status).toBe("unavailable");
+    expect(selected.queries).toHaveLength(2);
+    expect(selected.queries.every(item => item.query.includes("Oracle"))).toBe(true);
+    expect(selected.items).toEqual([]);
+    fetch.mockClear();
+    const normal = await fetchNewsForCompanyResult({ name: "Acme", domain: "acme.com" });
+    expect(normal.queries.every(item => !item.query.includes("Oracle"))).toBe(true);
+  });
   it("retains broad name recall while rotating domain, public alias and territory context queries", async () => {
     const company = { name: "Acme Services", domain: "acme.com", publicAliases: ["Acme Consulting"], subindustry: "Consulting", city: "Denver" };
     const queries = companyNewsQueries(company);
