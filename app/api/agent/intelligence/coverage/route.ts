@@ -5,6 +5,7 @@ import { buildCompanyIdentityContext } from "@/lib/companyIdentity";
 import { COMPANY_FIELDS, OBSERVATION_FIELDS, JOB_FIELDS, SOURCE_FIELDS, parseCoverageQuery, membershipFilter,
   evidenceProjection, sourceProjection, jobProjection, pick } from "@/lib/intelligence/manualCoverage";
 import { REGISTRY_CAPTURE_FIELDS, RegistryCaptureReadError, registryCompanyInScope, retainedRegistryCapture } from "@/lib/intelligence/retainedRegistryCapture";
+import { parseReadySourceQuery, readySourceCoverage } from "@/lib/intelligence/readySourceCoverage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -12,10 +13,16 @@ const json = (body: unknown, status = 200) => NextResponse.json(body, { status, 
 /** No claims, reservation stamps, provider calls or worker wakeups. Keyset pages are live, not an immutable membership snapshot. */
 export async function GET(req: Request) {
   if (!agentAuthOk(req)) return unauthorized();
-  let q;
-  try { q = parseCoverageQuery(new URL(req.url).searchParams); } catch { return json({ error: "invalid_coverage_query" }, 400); }
+  let q, ready;
+  try {
+    const params = new URL(req.url).searchParams;
+    if (params.get("view") === "ready-sources") ready = parseReadySourceQuery(params);
+    else q = parseCoverageQuery(params);
+  } catch { return json({ error: "invalid_coverage_query" }, 400); }
   try {
     const db = serviceClient();
+    if (ready) return json(await readySourceCoverage(db, ready));
+    if (!q) throw new Error("invalid_coverage_query");
     if (q.companyIds) {
       // Exact-count reads must fit in full. A backend row cap must never become a false missing checkpoint.
       const { data: accounts, error: accountError, count: accountCount } = await db.from("companies")
@@ -125,6 +132,7 @@ export async function GET(req: Request) {
       consistency: "live_keyset_reconcile_membership_and_source_versions_at_end", asOf: new Date().toISOString() });
   } catch (error) {
     return json({ error: "coverage_read_unavailable", coverageVerified: false,
+      ...(ready ? { admissionVerified: false, bodyReturned: false, partial: true } : {}),
       ...(error instanceof RegistryCaptureReadError ? { reason: error.reason, retainedCaptureReturned: false } : {}) }, 503);
   }
 }
