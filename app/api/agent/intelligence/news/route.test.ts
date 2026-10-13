@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), priority: vi.fn(), reheat: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ rpc: mocks.rpc }) }));
 vi.mock("@/lib/agent/auth", async () => ({ agentAuthOk: (req: Request) => req.headers.get("authorization") === "Bearer synthetic-test-token",
@@ -6,6 +7,44 @@ vi.mock("@/lib/agent/auth", async () => ({ agentAuthOk: (req: Request) => req.he
 vi.mock("@/lib/db/triggers", () => ({ recomputePriority: mocks.priority }));
 vi.mock("@/lib/db/reheat", () => ({ reheatCompanyForFreshSignal: mocks.reheat }));
 import { GET, POST } from "./route";
+
+describe("external receipt actions on the existing authenticated news route", () => {
+  const headers = { authorization: "Bearer synthetic-test-token", "x-agent-name": "codex", "content-type": "application/json" };
+  const intakeId = "40000000-0000-4000-8000-000000000001";
+  const hash = (v: string) => createHash("sha256").update(v).digest("hex");
+  const providerRequest = JSON.stringify({ endpoint_id: "tinyfish.web.search.news", query: { query: '"Acme"', domain_type: "news", after_date: "2026-04-15", before_date: "2026-10-14", language: "en", page: 0 } });
+  const providerResponse = JSON.stringify({ status: 200, endpoint_id: "tinyfish.web.search.news", call_id: "synthetic-route-call", body: { query: '"Acme"', results: [], total_results: 0, page: 0 } });
+  const body = { action: "import_discovery", requestId: intakeId, taskId: "/root/reader", companyId: "20000000-0000-4000-8000-000000000001",
+    expectedIdentity: { name: "Acme", domain: "acme.com", netsuiteInternalId: "123" }, sourceOnly: true, lane: "news", retrievedAt: "2026-10-12T00:00:00Z",
+    providerRequest, providerResponse, requestSha256: hash(providerRequest), responseSha256: hash(providerResponse) };
+  const post = (v: unknown, h = headers) => POST(new Request("https://stanley.test/api/agent/intelligence/news", { method: "POST", headers: h, body: JSON.stringify(v) }));
+  it("keeps receipt import behind existing Codex authentication and strict source-only schema", async () => {
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "true");
+    expect((await post(body, { ...headers, authorization: "Bearer wrong" })).status).toBe(401);
+    expect((await post({ ...body, sourceOnly: false })).status).toBe(400);
+    expect((await post({ ...body, extra: "not allowed" })).status).toBe(400);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    mocks.rpc.mockResolvedValue({ data: { state: "imported", sourceCount: 0 }, error: null });
+    expect((await post(body)).status).toBe(200);
+    expect(mocks.rpc.mock.calls.map(c => c[1].p_action)).toEqual(["import", "status"]);
+    expect(mocks.rpc.mock.calls[0][0]).toBe("intelligence_external_news_intake");
+    expect(mocks.priority).not.toHaveBeenCalled(); expect(mocks.reheat).not.toHaveBeenCalled();
+  });
+  it("has only exact read-only intake recovery and no automatic uncertain retry", async () => {
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "true");
+    mocks.rpc.mockResolvedValue({ data: null, error: { code: "lost_response" } });
+    expect((await post(body)).status).toBe(409); expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    mocks.rpc.mockClear(); mocks.rpc.mockResolvedValue({ data: { state: "capturing" }, error: null });
+    expect((await GET(new Request(`https://stanley.test/api/agent/intelligence/news?intakeId=${intakeId}`, { headers }))).status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("intelligence_external_news_intake", { p_action: "status", p_payload: { requestId: intakeId } });
+    for (const suffix of ["&jobId="+intakeId, "&intakeId="+intakeId, "&all=true"]) expect((await GET(new Request(`https://stanley.test/api/agent/intelligence/news?intakeId=${intakeId}${suffix}`, { headers }))).status).toBe(400);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+  });
+  it("rejects oversized receipt envelopes before persistence", async () => {
+    expect((await post({ ...body, providerResponse: "x".repeat(256_000) })).status).toBe(413);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+});
 
 const id = "10000000-0000-4000-8000-000000000001", lease = "20000000-0000-4000-8000-000000000001";
 const originalHash = "a".repeat(64), decisionHash = "b".repeat(64);

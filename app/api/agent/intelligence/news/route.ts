@@ -7,6 +7,7 @@ import { reheatCompanyForFreshSignal } from "@/lib/db/reheat";
 import { isDeepStrictEqual } from "node:util";
 import type { NewsPacket } from "@/lib/intelligence/codexNews";
 import { isPublishableTriggerForCompany } from "@/lib/triggers/signalIntegrity";
+import { externalNewsActionSchema, externalNewsRpc, importExternalDiscovery, captureExternalDiscovery, ExternalNewsIntakeError } from "@/lib/intelligence/externalNewsIntake";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,7 +15,7 @@ const json = (data: unknown, status = 200) => NextResponse.json(data, { status, 
 function authorized(req: Request) { return agentAuthOk(req) && req.headers.get("x-agent-name") === "codex"; }
 function failure(error: unknown) {
   if (error instanceof ZodError || error instanceof SyntaxError) return json({ error: "invalid_news_review_request" }, 400);
-  return json({ error: error instanceof NewsReviewError ? error.message : "news_review_unavailable", recovery: "Read exact jobId or requestId before any retry." }, 409);
+  return json({ error: error instanceof NewsReviewError || error instanceof ExternalNewsIntakeError ? error.message : "news_review_unavailable", recovery: "Read exact jobId/requestId, or intakeId for external intake, before any retry." }, 409);
 }
 async function refreshWorklist(packet: NewsPacket) {
   const trigger = packet.publication?.trigger;
@@ -29,6 +30,12 @@ async function refreshWorklist(packet: NewsPacket) {
 export async function GET(req: Request) {
   if (!authorized(req)) return unauthorized();
   const params = new URL(req.url).searchParams;
+  if (params.has("intakeId")) {
+    const requestId = params.get("intakeId");
+    if ([...params.keys()].some(key => key !== "intakeId") || params.getAll("intakeId").length !== 1
+      || !requestId || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(requestId)) return json({ error: "exact_intake_id_required" }, 400);
+    try { return json({ intake: await externalNewsRpc("status", { requestId }) }); } catch (error) { return failure(error); }
+  }
   const jobId = params.get("jobId"), requestId = params.get("requestId");
   if ((!jobId && !requestId) || [jobId, requestId].some(v => v && !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v))) return json({ error: "exact_job_or_request_required" }, 400);
   try { return json({ job: publicNewsPacket(await newsRpc("status", { ...(jobId ? { jobId } : {}), ...(requestId ? { requestId } : {}) })) }); }
@@ -38,8 +45,14 @@ export async function POST(req: Request) {
   if (!authorized(req)) return unauthorized();
   try {
     const text = await req.text();
+    if (Buffer.byteLength(text, "utf8") > 256_000) return json({ error: "request_too_large" }, 413);
+    const parsed = JSON.parse(text);
+    if (parsed?.action === "import_discovery" || parsed?.action === "capture_discovery_url") {
+      const intake = externalNewsActionSchema.parse(parsed);
+      return json({ intake: intake.action === "import_discovery" ? await importExternalDiscovery(intake) : await captureExternalDiscovery(intake) });
+    }
     if (Buffer.byteLength(text, "utf8") > 64_000) return json({ error: "request_too_large" }, 413);
-    const body = newsActionSchema.parse(JSON.parse(text));
+    const body = newsActionSchema.parse(parsed);
     if (body.action === "claim") return json({ job: publicNewsPacket(await newsRpc("claim", body)) });
     if (body.action === "renew") return json({ job: publicNewsPacket(await newsRpc("renew", body)) });
     if (body.action === "reconcile_hold") {

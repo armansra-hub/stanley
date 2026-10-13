@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
 import { publisherArticleLinks, readNewsEvidence } from "./newsEvidence";
+import { resolveGoogleArticle } from "./googleNewsDecoder";
 vi.mock("@/lib/triggers/urlSafety", async original => ({ ...await original<typeof import("@/lib/triggers/urlSafety")>(), fetchPublicHttpText: vi.fn() }));
+vi.mock("./googleNewsDecoder", async original => ({ ...await original<typeof import("./googleNewsDecoder")>(), resolveGoogleArticle: vi.fn() }));
 const fetch = vi.mocked(fetchPublicHttpText);
 const item = { source_url: "https://news.google.com/rss/articles/token", publisher_url: "https://publisher.com", raw_excerpt: "Acme wins a new services contract" };
 beforeEach(() => { fetch.mockReset(); });
 describe("public publisher resolution", () => {
+  it("direct-only capture never invokes Google decoding after a gateway redirect", async () => {
+    fetch.mockResolvedValue({ body: '<a href="https://publisher.com/news/acme">Read</a>', status: 200, finalUrl: item.source_url, contentType: "text/html" });
+    const result = await readNewsEvidence({ ...item, source_url: "https://publisher.com/news/redirect" }, { directOnly: true });
+    expect(result.bodyAvailable).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(resolveGoogleArticle).not.toHaveBeenCalled();
+  });
   it("follows one unambiguous publisher link and saves real article text", async () => {
     fetch.mockResolvedValueOnce({ body: '<a href="https://publisher.com/news/acme">Read article</a>', status: 200, finalUrl: item.source_url, contentType: "text/html" });
     fetch.mockResolvedValueOnce({ body: `<main>${"Acme announced a new services contract. ".repeat(6)}</main>`, status: 200, finalUrl: "https://publisher.com/news/acme", contentType: "text/html" });

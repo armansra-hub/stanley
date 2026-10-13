@@ -28,11 +28,11 @@ export function publisherArticleLinks(html: string, publisherUrl?: string): stri
 /** Fetch a real publisher body when ordinary public redirects/links provide it.
  * Google public link resolution enriches ordinary redirects. No invented
  * publisher URL, consent bypass, or unrelated third-party crawler. */
-export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_excerpt" | "publisher_url" | "feed_excerpt"> & Partial<Pick<NewsItem, "signal_date">>, options: { deadlineMs?: number } = {}) {
+export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_excerpt" | "publisher_url" | "feed_excerpt"> & Partial<Pick<NewsItem, "signal_date">>, options: { deadlineMs?: number; directOnly?: boolean } = {}) {
   const deadline = options.deadlineMs ?? Date.now() + 20_000;
   let failure: SourceErrorCode = "publisher_unresolved";
   let httpStatus: number | undefined;
-  const id = googleArticleId(item.source_url);
+  const id = options.directOnly ? null : googleArticleId(item.source_url);
   const legacy = id ? legacyGoogleArticleUrl(id) : null;
   const candidates = [legacy ?? item.source_url];
   let resolutionMethod = legacy ? "base64_protobuf" : "direct_or_redirect";
@@ -44,6 +44,9 @@ export async function readNewsEvidence(item: Pick<NewsItem, "source_url" | "raw_
       const outcome = publicResponseOutcome(candidates[index], response.status, response.body);
       if (outcome.outcome !== "success") { failure = outcome.code ?? "http_error"; continue; }
       const final = validatePublicHttpUrl(response.finalUrl);
+      if (options.directOnly && /(?:^|\.)(?:google\.com|googleusercontent\.com|gstatic\.com|bing\.com)$/i.test(final.hostname.replace(/\.$/, ""))) {
+        failure = "publisher_unresolved"; break;
+      }
       if (googleGateway(final)) {
         const links = publisherArticleLinks(response.body, item.publisher_url);
         if (links.length) { candidates.push(...links.filter(url => !candidates.includes(url))); resolutionMethod = "publisher_link"; }
