@@ -73,7 +73,7 @@ it.each([undefined, "oracle_partnership"] as const)("stops finite %s before a th
   mocks.read.mockResolvedValue({ cursor: { seen: ["retained-original"], pending: [], retries: {} } });
   const result = await sweepBase(100, { sourceOnly: true, collection, ...(topic ? { topic } : {}) });
   expect(result).toMatchObject({ checked: 2, attempted: 2, unavailable: 2, succeeded: 0,
-    finiteNewsControl: { companyConcurrency: 1, feedUnavailableCompanies: 2, circuitThreshold: 2, stoppedBeforeNextReservation: true, circuitReason: "systemic_feed_unavailable" } });
+    finiteNewsControl: { companyConcurrency: 1, feedUnavailableCompanies: 2, feedFailureCompanies: 2, circuitThreshold: 2, stoppedBeforeNextReservation: true, circuitReason: "systemic_feed_unavailable" } });
   expect(mocks.pick.mock.calls).toEqual(Array.from({ length: 2 }, () => topic ? [1, 0, collection, topic] : [1, 0, collection]));
   expect(result.collection).toEqual({ runCutoff: collection.runCutoff, requestedCompanyIds: collection.companyIds,
     outcomes: collection.companyIds.map((companyId, index) => index < 2
@@ -134,22 +134,68 @@ it("defers all48 retained and24 new articles on access limits without fetching, 
     details: expect.objectContaining({ saved: 48, bodyCount: 48 }) }));
 });
 
-it("allows quiet empty and partially available non-blocked feeds while bounding finite concurrency to one company", async () => {
+it.each([undefined, "oracle_partnership"] as const)("stops finite %s after two mixed-query failures without executive fetches or lost captures", async topic => {
+  const { collection } = finiteFixture();
+  const item = { source_name: "Google News", source_url: "https://example.com/recent-announcement",
+    raw_excerpt: "Acme Logistics announcement", signal_date: new Date(Date.now() - 1000).toISOString() };
+  const queries = [{ status: "success", httpStatus: 200 }, { status: "unavailable", error: "http_error", httpStatus: 503 }];
+  mocks.news.mockResolvedValue({ items: [item], status: "success", partial: true, error: "http_error", httpStatus: 200, queries });
+  const result = await sweepBase(100, { sourceOnly: true, collection, ...(topic ? { topic } : {}) });
+  expect(result).toMatchObject({ attempted: 2, partial: 2, succeeded: 0, unavailable: 0,
+    finiteNewsControl: { feedUnavailableCompanies: 0, feedFailureCompanies: 2, circuitReason: "systemic_feed_unavailable", stoppedBeforeNextReservation: true,
+      affectedFeeds: [0, 1].map(i => ({ companyId: collection.companyIds[i], status: "success", queries: [
+        { status: "success", errorCode: null, httpStatus: 200 }, { status: "unavailable", errorCode: "http_error", httpStatus: 503 },
+      ] })) } });
+  expect(mocks.pick.mock.calls).toEqual(Array.from({ length: 2 }, () => topic ? [1, 0, collection, topic] : [1, 0, collection]));
+  expect(mocks.news).toHaveBeenCalledTimes(2); expect(mocks.executive).not.toHaveBeenCalled();
+  expect(mocks.body).toHaveBeenCalledTimes(2); expect(mocks.enqueue).toHaveBeenCalledTimes(2);
+  for (const [, , state] of mocks.write.mock.calls) expect(state).toMatchObject({ complete: false, status: "partial", details: { saved: 1, bodyCount: 1, queries } });
+  expect(result.collection).toEqual({ runCutoff: collection.runCutoff, requestedCompanyIds: collection.companyIds,
+    outcomes: collection.companyIds.map((companyId, i) => i < 2
+      ? { companyId, admission: "attempted", collectorOutcome: "partial" }
+      : { companyId, admission: "not_reserved", reason: "unknown" }),
+    coverage: "reservation_and_collector_outcomes_only", analysisCompleted: false });
+});
+
+it("allows quiet empty feeds while bounding finite concurrency to one company", async () => {
   const { collection } = finiteFixture(6);
   let active = 0, peak = 0;
   mocks.news.mockImplementation(async () => {
     peak = Math.max(peak, ++active); await Promise.resolve(); active--;
-    return { items: [], status: "empty", partial: true, error: "timeout", queries: [{ status: "empty", httpStatus: 200 }, { status: "unavailable", error: "timeout" }] };
+    return { items: [], status: "empty", queries: [{ status: "empty", httpStatus: 304 }] };
   });
   const result = await sweepBase(6, { sourceOnly: true, collection });
-  expect(peak).toBe(1); expect(result).toMatchObject({ attempted: 6, partial: 6, finiteNewsControl: { feedUnavailableCompanies: 0, circuitReason: null, stoppedBeforeNextReservation: false } });
+  expect(peak).toBe(1); expect(result).toMatchObject({ attempted: 6, succeeded: 6, finiteNewsControl: { feedUnavailableCompanies: 0, feedFailureCompanies: 0, circuitReason: null, stoppedBeforeNextReservation: false } });
   expect(mocks.executive).toHaveBeenCalledTimes(6);
   expect(result.collection?.outcomes.every(row => row.admission === "attempted")).toBe(true);
-  mocks.pick.mockClear(); mocks.executive.mockClear(); finiteFixture(6);
-  mocks.news.mockResolvedValue({ items: [], status: "empty", queries: [{ status: "empty", httpStatus: 304 }] });
-  const quiet = await sweepBase(6, { sourceOnly: true, collection });
-  expect(quiet).toMatchObject({ attempted: 6, succeeded: 6, finiteNewsControl: { feedUnavailableCompanies: 0, circuitReason: null } });
-  expect(mocks.executive).toHaveBeenCalledTimes(6);
+});
+
+it.each([undefined, []])("uses aggregate unavailable when paired query details are absent (%s)", async queries => {
+  const { collection } = finiteFixture();
+  mocks.news.mockResolvedValue({ items: [], status: "unavailable", error: "timeout", queries });
+  const result = await sweepBase(100, { sourceOnly: true, collection });
+  expect(result).toMatchObject({ attempted: 2, unavailable: 2, finiteNewsControl: {
+    feedUnavailableCompanies: 2, feedFailureCompanies: 2, circuitReason: "systemic_feed_unavailable",
+    affectedFeeds: [0, 1].map(i => ({ companyId: collection.companyIds[i], queryCount: queries?.length ?? null, queries: [] })),
+  } });
+  expect(mocks.pick).toHaveBeenCalledTimes(2); expect(mocks.executive).not.toHaveBeenCalled();
+  expect(result.collection?.outcomes.filter(row => row.admission === "not_reserved")).toHaveLength(98);
+});
+
+it.each([undefined, [{ status: "success", httpStatus: 200 }]])("preserves article-only pending debt without counting it as a feed failure (%s)", async queries => {
+  const { collection } = finiteFixture(3);
+  const item = { source_name: "Google News", source_url: "https://example.com/pending-original",
+    raw_excerpt: "Acme Logistics announcement", signal_date: new Date(Date.now() - 1000).toISOString() };
+  mocks.news.mockResolvedValue({ items: [item], status: "success", queries });
+  mocks.body.mockResolvedValue({ bodyAvailable: false, sourceUrl: item.source_url, title: item.raw_excerpt,
+    text: item.raw_excerpt, eventDate: item.signal_date, error: "timeout", metadata: {} });
+  const result = await sweepBase(3, { sourceOnly: true, collection });
+  expect(result).toMatchObject({ attempted: 3, partial: 3, finiteNewsControl: {
+    feedUnavailableCompanies: 0, feedFailureCompanies: 0, circuitReason: null, affectedFeeds: [],
+  } });
+  expect(mocks.executive).toHaveBeenCalledTimes(3); expect(mocks.body).toHaveBeenCalledTimes(3);
+  for (const [, , state] of mocks.write.mock.calls) expect(state).toMatchObject({ complete: false, status: "partial",
+    cursor: { pending: [item] }, details: { feedStatus: "success", saved: 1, headlineOnly: 1, bodyCount: 0, warningCodes: { timeout: 1 } } });
 });
 
 it("does not misclassify unavailable storage as confirmed feed failure or alter scheduled failure behavior", async () => {
@@ -163,6 +209,14 @@ it("does not misclassify unavailable storage as confirmed feed failure or alter 
   const scheduled = await sweepBase(8, { sourceOnly: true });
   expect(scheduled).toMatchObject({ attempted: 8, unavailable: 8 });
   expect(scheduled).not.toHaveProperty("finiteNewsControl");
+  expect(mocks.pick.mock.calls).toEqual([[4, 0], [4, 0]]);
+  expect(mocks.executive).toHaveBeenCalledTimes(8);
+  mocks.pick.mockClear(); mocks.executive.mockClear(); finiteFixture(8);
+  mocks.news.mockResolvedValue({ items: [], status: "empty", partial: true, error: "timeout",
+    queries: [{ status: "empty", httpStatus: 200 }, { status: "unavailable", error: "timeout" }] });
+  const mixedScheduled = await sweepBase(8, { sourceOnly: true });
+  expect(mixedScheduled).toMatchObject({ attempted: 8, partial: 8 });
+  expect(mixedScheduled).not.toHaveProperty("finiteNewsControl");
   expect(mocks.pick.mock.calls).toEqual([[4, 0], [4, 0]]);
   expect(mocks.executive).toHaveBeenCalledTimes(8);
 });

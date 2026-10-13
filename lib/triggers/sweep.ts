@@ -260,7 +260,7 @@ async function classifyLegacyHeadline(
 
 type FeedResult = { status: NewsFetchResult["status"]; queries?: Array<Pick<NewsFetchResult, "status" | "error" | "httpStatus">> };
 const accessLimitedFeed = (result: FeedResult) => result.queries?.some(query => query.error === "blocked" || [401, 403, 429].includes(query.httpStatus ?? 0)) ?? false;
-type FiniteNewsControl = { companyConcurrency: 1; feedUnavailableCompanies: number; circuitThreshold: 2;
+type FiniteNewsControl = { companyConcurrency: 1; feedUnavailableCompanies: number; feedFailureCompanies: number; circuitThreshold: 2;
   stoppedBeforeNextReservation: boolean; circuitReason: "access_limited" | "systemic_feed_unavailable" | null;
   affectedFeeds: Array<{ companyId: string; status: FeedResult["status"]; queryCount: number | null; queriesTruncated: boolean;
     queries: Array<{ status: NewsFetchResult["status"]; errorCode: NewsFetchResult["error"] | null; httpStatus: number | null }> }> };
@@ -453,7 +453,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   // Reserve immediately attempted batches and leave untouched rows oldest when
   // the 240-second source budget ends.
   const finiteSourceOnly = opts.sourceOnly === true && opts.collection !== undefined;
-  const finiteNewsControl: FiniteNewsControl = { companyConcurrency: 1, feedUnavailableCompanies: 0, circuitThreshold: 2,
+  const finiteNewsControl: FiniteNewsControl = { companyConcurrency: 1, feedUnavailableCompanies: 0, feedFailureCompanies: 0, circuitThreshold: 2,
     stoppedBeforeNextReservation: false, circuitReason: null, affectedFeeds: [] };
   let processed = 0, accessLimited = false;
   for await (const slice of rotationBatches(opts.collection ? (n, offset) => opts.topic ? pickForRotation(n, offset, opts.collection, opts.topic) : pickForRotation(n, offset, opts.collection) : pickForRotation, {
@@ -463,7 +463,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
     const completed: string[] = [];
     await Promise.all(slice.map(async (c) => {
       let outcome: SweepOutcome = "failed";
-      let feedUnavailable = false, feedAccessLimited = false;
+      let feedUnavailable = false, feedFailed = false, feedAccessLimited = false;
       outcomes.attempted++;
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
@@ -473,15 +473,16 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
           onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id),
           onFeedResult: result => {
             feedUnavailable = result.status === "unavailable";
+            feedFailed = feedUnavailable || result.queries?.some(query => query.status === "unavailable") === true;
             feedAccessLimited = accessLimitedFeed(result);
-            if (finiteSourceOnly && (feedUnavailable || feedAccessLimited)) finiteNewsControl.affectedFeeds.push({
+            if (finiteSourceOnly && (feedFailed || feedAccessLimited)) finiteNewsControl.affectedFeeds.push({
               companyId: c.id, status: result.status, queryCount: result.queries?.length ?? null, queriesTruncated: (result.queries?.length ?? 0) > 8,
               queries: (result.queries ?? []).slice(0, 8).map(query => ({ status: query.status, errorCode: query.error ?? null, httpStatus: query.httpStatus ?? null })),
             });
           } }); }
         catch (error) { sweepError(outcomes, "news", "collection", error, c.id); }
         // Exec-change (new finance leader) — claimable NetSuite-TAM leads only.
-        if (claimable && !opts.topic && !(finiteSourceOnly && (feedUnavailable || feedAccessLimited))) { try { n += await checkExecChange(c, { sourceOnly: opts.sourceOnly }); } catch (error) {
+        if (claimable && !opts.topic && !(finiteSourceOnly && (feedFailed || feedAccessLimited))) { try { n += await checkExecChange(c, { sourceOnly: opts.sourceOnly }); } catch (error) {
           sweepError(outcomes, "news:executive-change", "collection", error, c.id);
           if ((outcome as SweepOutcome) === "succeeded") outcome = "partial";
         } }
@@ -491,6 +492,8 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
       finally {
         outcomes[outcome]++; accounting.record(c.id, outcome);
         if (feedUnavailable) finiteNewsControl.feedUnavailableCompanies++;
+        // Count the company once even when only one selected query failed.
+        if (feedFailed) finiteNewsControl.feedFailureCompanies++;
         if (feedAccessLimited) accessLimited = true;
       }
     }));
@@ -501,7 +504,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
     processed += slice.length;
     // Close the generator before it can reserve another exact ID. Previously
     // attempted rows keep their real outcomes; untouched IDs remain not_reserved.
-    if (finiteSourceOnly && (accessLimited || finiteNewsControl.feedUnavailableCompanies >= 2)) {
+    if (finiteSourceOnly && (accessLimited || finiteNewsControl.feedFailureCompanies >= 2)) {
       finiteNewsControl.circuitReason = accessLimited ? "access_limited" : "systemic_feed_unavailable";
       finiteNewsControl.stoppedBeforeNextReservation = processed < limit;
       break;
