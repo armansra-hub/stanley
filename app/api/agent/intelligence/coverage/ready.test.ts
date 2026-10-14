@@ -18,6 +18,7 @@ vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: (table: 
 } }) }));
 import * as route from "./route";
 import { parseReadySourceQuery, readyTimestamp } from "@/lib/intelligence/readySourceCoverage";
+import { prepareObservation } from "@/lib/intelligence/observations";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const observed = "2026-10-13T10:00:00.123456+00:00";
 const query = "view=ready-sources&observedThrough=2026-10-13T11:00:00Z&eventStart=2026-04-15T00:00:00Z";
@@ -36,6 +37,14 @@ function seed(n = 1) {
     m.jobs.push({ id: id(1000 + i), observation_id: row.id, kind: "interpret", status: "queued", attempts: 0,
       due_at: "2026-10-13T10:00:00Z", lease_token: null, lease_until: null, codex_news_request_id: null, pending_request: null, codex_review: null });
   }
+}
+function seedAts(atsType = "ashby", date: string | null = "2026-10-12") {
+  const prepared = prepareObservation({ companyId: id(501), companyName: "Company 1", sourceKind: "job",
+    sourceUrl: "https://jobs.ashbyhq.com/example/finance", title: "Finance Controller", text: "A😀B",
+    eventDate: date, observedAt: observed, metadata: { atsType, atsToken: "PRIVATE_BOARD_TOKEN", atsJobKey: "job-key",
+      bodySchemaValidated: true, bodySchemaVersion: "ats-body-schema-v1", descriptionAvailable: true,
+      jobDateKind: atsType === "greenhouse" ? "updated" : "published_or_created", listingChange: "first_observed", isClientPlacement: false } });
+  Object.assign(m.sources[0], { source_kind: "job", evidence_text: prepared.text, event_date: prepared.eventDate, metadata: prepared.metadata });
 }
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-13T12:00:00Z"));
@@ -78,6 +87,84 @@ describe("ready retained source metadata", () => {
     expect(m.calls).toContainEqual({ table: "intelligence_jobs", method: "in", args: ["observation_id", [id(1)]] });
     expect(m.calls.filter(c => c.method === "select")).toHaveLength(5); expect(fetch).not.toHaveBeenCalled();
     expect(m.calls).toContainEqual({ table: "intelligence_jobs", method: "is", args: ["result->codexNews", null] });
+    expect(m.calls).toContainEqual({ table: "intelligence_observations", method: "in", args: ["source_kind", ["news", "website"]] });
+  });
+  it.each(["news", "website", "job"])("applies the explicit %s family before the bounded scalar scan", async sourceKind => {
+    m.scan = [];
+    const body = await (await route.GET(request(`&sourceKind=${sourceKind}`))).json();
+    expect(body.sourceKind).toBe(sourceKind); expect(body.page.cursorSourceKind).toBe(sourceKind);
+    const filter = m.calls.findIndex(c => c.method === "in" && c.args[0] === "source_kind");
+    expect(m.calls[filter].args[1]).toEqual([sourceKind]);
+    expect(filter).toBeLessThan(m.calls.findIndex(c => c.method === "limit"));
+  });
+  it.each(["&sourceKind=government", "&sourceKind=", "&sourceKind=news,job", "&sourceKind=job&sourceKind=job",
+    `&sourceKind=job&cursorObservedAt=${encodeURIComponent(observed)}&cursorId=${id(1)}`,
+    `&sourceKind=job&cursorObservedAt=${encodeURIComponent(observed)}&cursorId=${id(1)}&cursorSourceKind=website`,
+    `&cursorObservedAt=${encodeURIComponent(observed)}&cursorId=${id(1)}&cursorSourceKind=job`,
+    `&sourceKind=news&cursorObservedAt=${encodeURIComponent(observed)}&cursorId=${id(1)}&cursorSourceKind=news+website`,
+    "&cursorSourceKind=job"])("rejects invalid family or mismatched/unbound filtered cursor %s", async extra => {
+    expect((await route.GET(request(extra))).status).toBe(400); expect(m.calls).toEqual([]);
+  });
+  it("binds filtered continuations, including repeated overflow, while preserving legacy cursors", async () => {
+    seedAts();
+    const first = await (await route.GET(request("&sourceKind=job"))).json();
+    expect(first.page.nextCursor).toEqual({ observedAt: observed, id: id(1), sourceKind: "job" });
+    m.scan[0].id = id(2); m.sources[0].id = id(2); m.jobs[0].observation_id = id(2);
+    const cursor = `&cursorObservedAt=${encodeURIComponent(observed)}&cursorId=${id(1)}&cursorSourceKind=job`;
+    expect((await route.GET(request(`&sourceKind=job${cursor}`))).status).toBe(200);
+    expect((await route.GET(request(`&sourceKind=website${cursor}`))).status).toBe(400);
+    expect((await route.GET(request(cursor))).status).toBe(400);
+    seed(2); m.sources.forEach(s => Object.assign(s, { source_kind: "website", evidence_text: "A", metadata: {
+      textTruncated: false, sourceCharacters: 1, retainedCharacters: 1, meaningfulContentHash: "a".repeat(64),
+      eventDateBasis: "page_publication", discovery: { collector: "website" } } }));
+    const overflow = await (await route.GET(request("&sourceKind=website&limit=1"))).json();
+    expect(overflow.page).toMatchObject({ repeatWindow: true, nextCursor: null, cursorSourceKind: "website" });
+    expect(overflow.unreturnedEligible).toHaveLength(1);
+    seed(); m.scan[0].id = id(2); m.sources[0].id = id(2); m.jobs[0].observation_id = id(2);
+    const legacy = await (await route.GET(request(`&cursorObservedAt=${encodeURIComponent(observed)}&cursorId=${id(1)}`))).json();
+    expect(legacy.page.nextCursor).toEqual({ observedAt: observed, id: id(2) });
+  });
+  it.each(["greenhouse", "lever", "ashby", "smartrecruiters", "recruitee", "workable"])("reuses complete ATS %s bodies and preserves provider date meaning", async atsType => {
+    seedAts(atsType);
+    // The collector's prepareObservation normalizes a date-only provider value to UTC, not first-seen.
+    expect(m.sources[0].event_date).toBe("2026-10-12T00:00:00.000Z");
+    m.sources[0].event_date = "2026-10-12T00:00:00+00:00"; // persisted timestamptz representation
+    const body = await (await route.GET(request("&sourceKind=job"))).json();
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({ sourceKind: "job", eventDate: "2026-10-12T00:00:00+00:00", retainedTextCharacters: 4,
+      provenance: { eventDateBasis: null, jobDateKind: atsType === "greenhouse" ? "updated" : "published_or_created",
+        listingChange: "first_observed", isClientPlacement: false } });
+    expect(body.rows[0].provenance.jobDateMeaning).toMatch(/provider.*not.*publication.*hire/i);
+    expect(JSON.stringify(body)).not.toMatch(/PRIVATE_|atsToken|evidence_text/);
+    expect(body.admissionVerified).toBe(false); expect(body.coverageVerified).toBe(false);
+  });
+  it.each([{ bodySchemaValidated: false }, { bodySchemaVersion: "old" }, { descriptionAvailable: false },
+    { atsJobKey: "" }, { atsToken: "" }, { atsType: "unknown" }, { textTruncated: true }, { sourceTruncated: true },
+    { retainedCharacters: 3 }, { sourceCharacters: 5 }, { jobDateKind: "first_seen" }, { jobDateKind: null },
+    { jobDateKind: "updated" }, { discovery: { collector: "website" } }])("does not admit incomplete or unproven ATS metadata %j", async change => {
+    seedAts(); Object.assign(m.sources[0].metadata as object, change);
+    const body = await (await route.GET(request("&sourceKind=job"))).json();
+    expect(body.rows).toEqual([]); expect(body.scanned[0].failedGates).toContain("completeSource");
+    expect(body.coverageVerified).toBe(false);
+  });
+  it("leaves missing provider dates ineligible despite recent first-seen and never relabels them", async () => {
+    seedAts("ashby", null);
+    expect(m.sources[0].event_date).toBeNull();
+    const body = await (await route.GET(request("&sourceKind=job"))).json();
+    expect(body.rows).toEqual([]); expect(body.scanned[0].failedGates).toContain("sourceDateInWindow");
+    expect(body.coverageVerified).toBe(false);
+  });
+  it("does not silently accept a different returned source family and keeps ATS canonical job/membership gates", async () => {
+    expect((await (await route.GET(request("&sourceKind=website"))).json()).unresolvedObservationIds).toEqual([id(1)]);
+    seedAts();
+    Object.assign(m.companies[0], { status: "removed_from_tam", lists: [], tal_claimed: true });
+    expect((await (await route.GET(request("&sourceKind=job"))).json()).rows).toHaveLength(1);
+    m.jobs[0].status = "complete";
+    expect((await (await route.GET(request("&sourceKind=job"))).json()).scanned[0].failedGates).toContain("queued");
+    m.jobs[0].status = "queued"; m.jobs[0].pending_request = { requestId: "PRIVATE_PENDING" };
+    expect((await (await route.GET(request("&sourceKind=job"))).json()).scanned[0].failedGates).toContain("noPendingRequest");
+    m.jobs[0].pending_request = null; m.jobs[0].codex_review = { held: true };
+    expect((await (await route.GET(request("&sourceKind=job"))).json()).scanned[0].failedGates).toContain("noCodexReview");
   });
   it("does not echo nested malicious metadata through scalar provenance fields", async () => {
     const meta = m.sources[0].metadata as Record<string, unknown>, secret = { token: "HIDDEN_NESTED_SECRET" };

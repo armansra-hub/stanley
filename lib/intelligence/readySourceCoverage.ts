@@ -4,9 +4,10 @@ import { registryCompanyInScope } from "./retainedRegistryCapture";
 import { completeCodexSource, type NewsPacket } from "./codexNews";
 
 type Row = Record<string, unknown>;
-type Cursor = { observedAt: string; id: string };
+type SourceKind = "news" | "website" | "job";
+type Cursor = { observedAt: string; id: string; sourceKind?: SourceKind };
 export type ReadySourceQuery = { scope: CoverageQuery["scope"]; limit: number; observedThrough: string; eventStart: string;
-  cursor: Cursor | null; excludeObservationIds: string[] };
+  sourceKind: SourceKind | null; cursor: Cursor | null; excludeObservationIds: string[] };
 export const READY_SCAN_LIMIT = 256;
 const JOB_LIMIT = 1024;
 const SCALAR_FIELDS = "id,company_id,observed_at";
@@ -27,22 +28,28 @@ export function readyTimestamp(value: unknown): bigint {
   return BigInt(ms) * 1_000_000n + BigInt((m[3] ?? "").padEnd(9, "0"));
 }
 export function parseReadySourceQuery(params: URLSearchParams): ReadySourceQuery {
-  const allowed = new Set(["view", "scope", "limit", "observedThrough", "eventStart", "cursorObservedAt", "cursorId", "excludeObservationIds"]);
+  const allowed = new Set(["view", "scope", "limit", "observedThrough", "eventStart", "sourceKind", "cursorObservedAt", "cursorId", "cursorSourceKind", "excludeObservationIds"]);
   for (const key of params.keys()) if (!allowed.has(key) || params.getAll(key).length !== 1) invalid();
   const scope = params.get("scope") ?? "all", limit = params.get("limit") ?? "12";
   if (params.get("view") !== "ready-sources" || !["all", "tam", "tal"].includes(scope) || !/^[1-9][0-9]*$/.test(limit) || Number(limit) > 12) invalid();
+  const sourceKind = params.get("sourceKind") as SourceKind | null;
+  if (sourceKind !== null && !["news", "website", "job"].includes(sourceKind)) invalid();
   const observedThrough = params.get("observedThrough")!, eventStart = params.get("eventStart")!;
   const through = readyTimestamp(observedThrough);
   if (readyTimestamp(eventStart) > through || through > BigInt(Date.now()) * 1_000_000n) invalid();
-  const cursorDate = params.get("cursorObservedAt"), cursorId = params.get("cursorId");
+  const cursorDate = params.get("cursorObservedAt"), cursorId = params.get("cursorId"), cursorSourceKind = params.get("cursorSourceKind");
   if ((cursorDate === null) !== (cursorId === null)) invalid();
-  const cursor = cursorDate !== null && cursorId !== null ? { observedAt: cursorDate, id: cursorId.toLowerCase() } : null;
+  // Old unfiltered timestamp/ID cursors remain valid. A filtered cursor must explicitly
+  // bind its family; switching or dropping that filter with the binding fails closed.
+  if (cursorDate === null ? cursorSourceKind !== null
+    : (sourceKind !== null || cursorSourceKind !== null) && cursorSourceKind !== (sourceKind ?? "news+website")) invalid();
+  const cursor = cursorDate !== null && cursorId !== null ? { observedAt: cursorDate, id: cursorId.toLowerCase(), ...(sourceKind ? { sourceKind } : {}) } : null;
   if (cursor && (!UUID.test(cursor.id) || readyTimestamp(cursor.observedAt) > through)) invalid();
   const excluded = params.get("excludeObservationIds");
   const excludeObservationIds = excluded === null ? [] : excluded.split(",").map(id => id.toLowerCase());
   // Canonical job gates already exclude prior work. Carry only this window's necessary local exclusions.
   if (excludeObservationIds.length > READY_SCAN_LIMIT || excludeObservationIds.some(id => !UUID.test(id)) || new Set(excludeObservationIds).size !== excludeObservationIds.length) invalid();
-  return { scope: scope as ReadySourceQuery["scope"], limit: Number(limit), observedThrough, eventStart, cursor, excludeObservationIds };
+  return { scope: scope as ReadySourceQuery["scope"], limit: Number(limit), observedThrough, eventStart, sourceKind, cursor, excludeObservationIds };
 }
 const assert = (ok: unknown): void => { if (!ok) throw new Error("ready_source_read_inconsistent"); };
 function uniqueRows(data: unknown, ids?: Set<string>): Map<string, Row> {
@@ -59,6 +66,7 @@ function compareCursor(a: Cursor, b: Cursor): number {
   return at === bt ? a.id.localeCompare(b.id) : at > bt ? -1 : 1;
 }
 const cursorOf = (r: Row): Cursor => ({ observedAt: r.observed_at as string, id: r.id as string });
+const sourceKinds = (q: ReadySourceQuery): SourceKind[] => q.sourceKind ? [q.sourceKind] : ["news", "website"];
 function gates(source: Row, company: Row | undefined, jobs: Row[], q: ReadySourceQuery, asOf: string): Record<string, boolean> {
   const m = object(source.metadata), text = typeof source.evidence_text === "string" ? source.evidence_text : "";
   let recent = false;
@@ -66,16 +74,20 @@ function gates(source: Row, company: Row | undefined, jobs: Row[], q: ReadySourc
   const job = jobs.length === 1 ? jobs[0] : {};
   let due = false;
   try { due = readyTimestamp(job.due_at) <= readyTimestamp(asOf); } catch { /* Missing/invalid due date stays ineligible. */ }
-  // The existing news/website completeness branches consume only these observation fields.
-  // This is not a claim packet or a full-read attestation; no government/ATS branch is admitted here.
-  const supported = ["news", "website"].includes(String(source.source_kind));
+  // These are the existing document completeness branches, not a claim or full-read attestation.
+  const supported = sourceKinds(q).includes(source.source_kind as SourceKind);
+  // ATS event_date is the provider's j.date, never local first-seen. Greenhouse
+  // supplies updated_at; Ashby's published_or_created label can also use updatedAt.
+  // Keep those collected labels without claiming publication or an actual hire.
+  const jobDateProvenance = object(m.discovery).collector === "job"
+    && m.jobDateKind === (m.atsType === "greenhouse" ? "updated" : "published_or_created");
   const complete = supported && completeCodexSource({ snapshot: { observation: {
     source_kind: source.source_kind, evidence_text: text, metadata: m,
   } } } as NewsPacket) && (source.source_kind === "news"
     ? ["feed_publication", "source_publication", "page_publication"].includes(String(m.eventDateBasis))
-    : m.eventDateBasis === "page_publication");
+    : source.source_kind === "job" ? jobDateProvenance : m.eventDateBasis === "page_publication");
   return { companyInScope: !!company && registryCompanyInScope(company, q.scope), current: source.is_current === true,
-    sourceKindSupported: ["news", "website"].includes(String(source.source_kind)), feedbackClear: source.feedback_excluded === false,
+    sourceKindSupported: supported, feedbackClear: source.feedback_excluded === false,
     sourceDateInWindow: recent, notInterpreted: source.interpreted_at === null && source.attributes === null,
     notExcluded: !q.excludeObservationIds.includes(String(source.id)), completeSource: !!complete && text.trim().length > 0,
     oneInterpretJob: jobs.length === 1, queued: job.kind === "interpret" && job.status === "queued",
@@ -98,7 +110,10 @@ function candidate(source: Row, company: Row, job: Row, checked: Record<string, 
       articleBodyAvailable: bool(m.articleBodyAvailable), evidenceKind: text(m.evidenceKind),
       textTruncated: bool(m.textTruncated), sourceTruncated: bool(m.sourceTruncated),
       sourceCharacters: count(m.sourceCharacters), retainedCharacters: count(m.retainedCharacters),
-      discovery: strings(m.discovery, ["url", "title", "collector", "eventDate"]) },
+       discovery: strings(m.discovery, ["url", "title", "collector", "eventDate"]),
+       ...(source.source_kind === "job" ? { atsType: text(m.atsType), jobDateKind: text(m.jobDateKind),
+         listingChange: text(m.listingChange), isClientPlacement: bool(m.isClientPlacement),
+         jobDateMeaning: "Provider listing timestamp; not proof of first publication or an actual hire. published_or_created may include an updated timestamp." } : {}) },
     gates: checked, admissionVerified: false, bodyReturned: false,
     nextStep: "Exact jobs/evidence/identity/dedupe read, then canonical claim and full independent source review." };
 }
@@ -106,7 +121,7 @@ function candidate(source: Row, company: Row, job: Row, checked: Record<string, 
 export async function readySourceCoverage(db: ReturnType<typeof serviceClient>, q: ReadySourceQuery) {
   const asOf = new Date().toISOString();
   let scan = db.from("intelligence_observations").select(SCALAR_FIELDS).eq("is_current", true)
-    .in("source_kind", ["news", "website"]).lte("observed_at", q.observedThrough);
+    .in("source_kind", sourceKinds(q)).lte("observed_at", q.observedThrough);
   if (q.cursor) scan = scan.or(`observed_at.lt.${q.cursor.observedAt},and(observed_at.eq.${q.cursor.observedAt},id.gt.${q.cursor.id})`);
   const scanned = await scan.order("observed_at", { ascending: false }).order("id", { ascending: true }).limit(READY_SCAN_LIMIT + 1);
   if (scanned.error) throw new Error("ready_source_scan_unavailable");
@@ -151,7 +166,7 @@ export async function readySourceCoverage(db: ReturnType<typeof serviceClient>, 
   const eligible: ReturnType<typeof candidate>[] = [], unresolvedObservationIds: string[] = [];
   const scannedRows = window.map(scalar => {
     const id = scalar.id as string, source = sourceById.get(id);
-    if (!source || source.company_id !== scalar.company_id || source.is_current !== true || !["news", "website"].includes(String(source.source_kind))
+    if (!source || source.company_id !== scalar.company_id || source.is_current !== true || !sourceKinds(q).includes(source.source_kind as SourceKind)
       || readyTimestamp(source.observed_at) !== readyTimestamp(scalar.observed_at)) {
       unresolvedObservationIds.push(id); return { observationId: id, companyId: scalar.company_id, observedAt: scalar.observed_at, eligible: false, failedGates: ["observation_changed_or_missing"], currentnessVerified: false };
     }
@@ -167,13 +182,14 @@ export async function readySourceCoverage(db: ReturnType<typeof serviceClient>, 
   // A short nonempty response may be a backend row cap. Only an empty read closes this frontier.
   const hasOlder = all.length > READY_SCAN_LIMIT ? true : window.length ? null : false;
   const repeatWindow = overflow.length > 0 || unresolvedObservationIds.length > 0;
-  return { view: "ready-sources", scope: q.scope, observedThrough: q.observedThrough, eventStart: q.eventStart, asOf,
+  const nextCursor = repeatWindow ? q.cursor : window.length ? { ...cursorOf(window[window.length - 1]), ...(q.sourceKind ? { sourceKind: q.sourceKind } : {}) } : null;
+  return { view: "ready-sources", scope: q.scope, sourceKind: q.sourceKind, observedThrough: q.observedThrough, eventStart: q.eventStart, asOf,
     rows, scanned: scannedRows, unreturnedEligible: overflow, unresolvedObservationIds,
     page: { scanLimit: READY_SCAN_LIMIT, scannedCount: window.length, limit: q.limit, eligibleInWindow: eligible.length,
       hasOlder, partial: window.length > 0 || repeatWindow, repeatWindow, inputCursor: q.cursor,
-      nextCursor: repeatWindow ? q.cursor : window.length ? cursorOf(window[window.length - 1]) : null,
+      nextCursor, cursorSourceKind: q.sourceKind ?? "news+website",
       continuation: repeatWindow ? "Retain overflow IDs; resolve missing/changed IDs. Repeat this cursor excluding processed IDs before advancing."
-        : window.length ? "Continue with nextCursor and the same observedThrough/eventStart; a short page does not prove exhaustion."
+        : window.length ? "Continue with nextCursor and the same sourceKind/observedThrough/eventStart; pass cursorSourceKind with filtered cursors. A short page does not prove exhaustion."
           : "Empty bounded frontier; this is not account or workflow completion." },
     admissionVerified: false, coverageVerified: false, bodyReturned: false,
     consistency: "Live multi-read metadata, not an atomic snapshot. Exact canonical claim must revalidate membership, currentness, lease, pending work and completeness.",
