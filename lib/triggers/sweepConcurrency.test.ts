@@ -136,6 +136,69 @@ it.each([200, 401, 403, 429])("stops finite mode after the first access-limited 
   expect(result.collection?.outcomes.filter(row => row.admission === "not_reserved")).toHaveLength(99);
 });
 
+const accessDiagnostic = { schema: "google-news-http-error-v1", bodyPrefixSha256: "a".repeat(64), bodyPrefixBytes: 1103,
+  bodyComplete: true, readStop: "end", category: "unusual_traffic", encoding: "identity", mediaType: "text/html",
+  retryAfterSeconds: null, retryAfterDate: null };
+
+it.each(["unusual_traffic", "human_verification", "access_denied", "rate_limited"])("stops after the first finite503 %s restriction and preserves deferred evidence", async category => {
+  const { collection } = finiteFixture();
+  const pending = [{ source_name: "Google News", source_url: "https://example.com/retained-article",
+    raw_excerpt: "Acme Logistics retained announcement", signal_date: new Date().toISOString() }];
+  const retries = { retained: { attempts: 2, after: "2026-12-01T00:00:00Z" } };
+  mocks.read.mockResolvedValue({ cursor: { pending, retries, seen: ["prior-original"] } });
+  const diagnostic = { ...accessDiagnostic, category };
+  const requestContext = { attempts: 1, conditionalFirstRequest: false, unretained304Recovery: false };
+  const queries = unavailable.queries.map(query => ({ ...query, errorDiagnostics: diagnostic, requestContext }));
+  mocks.news.mockResolvedValue({ ...unavailable, queries });
+  const result = await sweepBase(100, { sourceOnly: true, collection, topic: "oracle_partnership" });
+  expect(result).toMatchObject({ attempted: 1, unavailable: 1, succeeded: 0,
+    finiteNewsControl: { companyConcurrency: 1, feedUnavailableCompanies: 1, feedFailureCompanies: 1,
+      circuitThreshold: 2, circuitReason: "access_limited", stoppedBeforeNextReservation: true,
+      affectedFeeds: [{ queries: queries.map(() => ({ status: "unavailable", errorCode: "http_error", httpStatus: 503, errorDiagnostics: diagnostic, requestContext })) }] } });
+  expect(mocks.pick.mock.calls).toEqual([[1, 0, collection, "oracle_partnership"]]);
+  expect(mocks.news).toHaveBeenCalledTimes(1);
+  expect(mocks.body).not.toHaveBeenCalled(); expect(mocks.enqueue).not.toHaveBeenCalled(); expect(mocks.executive).not.toHaveBeenCalled();
+  expect(mocks.write).toHaveBeenCalledWith(collection.companyIds[0], "news:oracle_partnership", expect.objectContaining({ complete: false,
+    cursor: expect.objectContaining({ pending, retries, seen: ["prior-original"] }),
+    details: expect.objectContaining({ queries, saved: 0, bodyCount: 0, articleCaptureDeferred: true, deferredArticleCount: 1 }) }));
+  expect(result.collection?.outcomes.filter(row => row.admission === "not_reserved")).toHaveLength(99);
+  expect(result.errors[0].httpDiagnostics?.[0]).toMatchObject({ httpStatus: 503, errorDiagnostics: diagnostic, requestContext });
+});
+
+it("recognizes a mixed200/503 diagnostic restriction without losing new or retained articles", async () => {
+  const { collection } = finiteFixture();
+  const item = { source_name: "Google News", source_url: "https://example.com/new-article", raw_excerpt: "Acme Logistics announcement", signal_date: new Date().toISOString() };
+  mocks.news.mockResolvedValue({ items: [item], status: "success", partial: true, error: "http_error", httpStatus: 200,
+    queries: [{ status: "success", httpStatus: 200 }, { status: "unavailable", error: "http_error", httpStatus: 503, errorDiagnostics: accessDiagnostic }] });
+  const result = await sweepBase(100, { sourceOnly: true, collection });
+  expect(result).toMatchObject({ attempted: 1, partial: 1, finiteNewsControl: { feedUnavailableCompanies: 0, feedFailureCompanies: 1, circuitReason: "access_limited" } });
+  expect(mocks.pick).toHaveBeenCalledTimes(1); expect(mocks.body).not.toHaveBeenCalled(); expect(mocks.executive).not.toHaveBeenCalled();
+  expect(mocks.write.mock.calls[0][2]).toMatchObject({ cursor: { pending: [item] }, details: { articleCaptureDeferred: true, deferredArticleCount: 1 } });
+});
+
+it.each([
+  undefined, { ...accessDiagnostic, category: "service_unavailable" }, { ...accessDiagnostic, category: "unrecognized" },
+  { ...accessDiagnostic, category: "untrusted-new-category" }, { ...accessDiagnostic, schema: "untrusted" },
+  { ...accessDiagnostic, bodyPrefixSha256: "invalid" }, { ...accessDiagnostic, bodyPrefixBytes: "1103" },
+  { ...accessDiagnostic, bodyComplete: false },
+])("retains the two-company fallback for generic503 or invalid access diagnostics (%j)", async errorDiagnostics => {
+  const { collection } = finiteFixture();
+  mocks.news.mockResolvedValue({ ...unavailable, queries: unavailable.queries.map(query => ({ ...query, errorDiagnostics })) });
+  const result = await sweepBase(100, { sourceOnly: true, collection });
+  expect(result).toMatchObject({ attempted: 2, unavailable: 2,
+    finiteNewsControl: { feedFailureCompanies: 2, circuitReason: "systemic_feed_unavailable", stoppedBeforeNextReservation: true } });
+  expect(mocks.pick).toHaveBeenCalledTimes(2); expect(mocks.news).toHaveBeenCalledTimes(2);
+  expect(result.collection?.outcomes.filter(row => row.admission === "not_reserved")).toHaveLength(98);
+});
+
+it("does not trust restriction metadata on successful200/304 results", async () => {
+  const { collection } = finiteFixture(3);
+  mocks.news.mockResolvedValue({ items: [], status: "empty", queries: [200, 304].map(httpStatus => ({ status: "empty", httpStatus, errorDiagnostics: accessDiagnostic })) });
+  const result = await sweepBase(3, { sourceOnly: true, collection });
+  expect(result).toMatchObject({ attempted: 3, succeeded: 3, finiteNewsControl: { feedFailureCompanies: 0, circuitReason: null, stoppedBeforeNextReservation: false } });
+  expect(mocks.news).toHaveBeenCalledTimes(3); expect(mocks.executive).toHaveBeenCalledTimes(3);
+});
+
 it("defers all48 retained and24 new articles on access limits without fetching, losing debt, or advancing body retries", async () => {
   const { collection, companies } = finiteFixture();
   const items = Array.from({ length: 72 }, (_, index) => ({ source_name: "Google News", source_url: `https://news.google.com/rss/articles/article-${index}`,

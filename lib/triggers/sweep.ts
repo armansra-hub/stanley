@@ -260,7 +260,15 @@ async function classifyLegacyHeadline(
 }
 
 type FeedResult = { status: NewsFetchResult["status"]; queries?: Array<Pick<NewsFetchResult, "status" | "error" | "httpStatus" | "errorDiagnostics" | "requestContext">> };
-const accessLimitedFeed = (result: FeedResult) => result.queries?.some(query => query.error === "blocked" || [401, 403, 429].includes(query.httpStatus ?? 0)) ?? false;
+const accessLimitedFeed = (result: FeedResult) => result.queries?.some(query => {
+  if (query.error === "blocked" || [401, 403, 429].includes(query.httpStatus ?? 0)) return true;
+  // Some access restrictions arrive as503. Keep that status/error intact while
+  // applying the existing stop/defer guard to validated diagnostic categories.
+  const status = query.httpStatus ?? 0;
+  if (query.status !== "unavailable" || !(status >= 400 && status <= 599)) return false;
+  const diagnostic = httpErrorDiagnostics(query.errorDiagnostics);
+  return diagnostic !== undefined && ["unusual_traffic", "human_verification", "access_denied", "rate_limited"].includes(diagnostic.category);
+}) ?? false;
 type FiniteNewsControl = { companyConcurrency: 1; feedUnavailableCompanies: number; feedFailureCompanies: number; circuitThreshold: 2;
   stoppedBeforeNextReservation: boolean; circuitReason: "access_limited" | "systemic_feed_unavailable" | null;
   affectedFeeds: Array<{ companyId: string; status: FeedResult["status"]; queryCount: number | null; queriesTruncated: boolean;
