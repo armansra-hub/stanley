@@ -5,6 +5,8 @@ import { z } from "zod";
 import { serviceClient } from "@/lib/supabase/server";
 import { validatePublicHttpUrl } from "@/lib/triggers/urlSafety";
 import { readNewsEvidence } from "@/lib/sources/newsEvidence";
+import { sitePageEvidence } from "@/lib/sources/siteDiscovery";
+import { publicResponseOutcome } from "@/lib/sources/outcomes";
 import { canonicalEvidenceUrl, intelligenceEnabled, INTELLIGENCE_VERSION, prepareObservation } from "./observations";
 
 const uuid = z.string().uuid(), hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -20,9 +22,21 @@ export const externalNewsActionSchema = z.discriminatedUnion("action", [
     requestSha256: hash, responseSha256: hash }).strict(),
   z.object({ action: z.literal("capture_discovery_url"), requestId: uuid, taskId: actor, companyId: uuid,
     expectedIdentity: identity, sourceOnly: z.literal(true), discoveryId: uuid, position: z.number().int().min(1).max(24) }).strict(),
+  z.object({ action: z.literal("import_retained_http"), requestId: uuid, taskId: actor, companyId: uuid,
+    expectedIdentity: identity, sourceOnly: z.literal(true), observationId: uuid, expectedContentHash: hash,
+    receipt: z.object({ sourceKind: z.literal("retained_http"), attestorTaskId: actor,
+      requestedUrl: z.string().min(1).max(2048), finalUrl: z.string().min(1).max(2048), fetchedAt: timestamp,
+      status: z.literal(200), redirectCount: z.literal(0), completeResponse: z.literal(true),
+      headers: z.object({ "content-type": z.string().min(1).max(200), date: z.string().max(200).optional(),
+        "last-modified": z.string().max(200).optional(), etag: z.string().max(500).optional() }).strict(),
+      // These are saved decoded HTTP response bytes, not a claim about wire
+      // compression or independent network authenticity. Preserve bytes exactly.
+      bodyBase64: z.string().min(1).max(240_000), bodyBytes: z.number().int().min(1).max(180_000), bodySha256: hash,
+    }).strict() }).strict(),
 ]);
 type Import = Extract<z.infer<typeof externalNewsActionSchema>, { action: "import_discovery" }>;
 type Capture = Extract<z.infer<typeof externalNewsActionSchema>, { action: "capture_discovery_url" }>;
+type RetainedHttp = Extract<z.infer<typeof externalNewsActionSchema>, { action: "import_retained_http" }>;
 const searchRequest = z.object({ endpoint_id: endpoint, query: z.object({ query: z.string().min(1).max(900),
   domain_type: z.enum(["web", "news"]), after_date: z.iso.date(), before_date: z.iso.date(),
   language: z.string().regex(/^[a-z]{2}$/), page: z.number().int().min(0).max(100) }).strict(),
@@ -95,6 +109,59 @@ export async function importExternalDiscovery(input: Import) {
   const saved = await externalNewsRpc("import", prepared);
   const readback = await externalNewsRpc("status", { requestId: input.requestId });
   if (!saved || !isDeepStrictEqual(saved, readback)) fail("external_import_readback_unconfirmed");
+  return readback;
+}
+
+/** Pure preparation: no network request and no caller-supplied extracted text or
+ * date. Authenticated attestation establishes provenance, hashes only integrity. */
+export function prepareRetainedHttpArticle(input: RetainedHttp, now = Date.now()) {
+  const r = input.receipt;
+  const validStrings = (v: unknown): boolean => typeof v === "string"
+    ? !/\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(v)
+    : !v || typeof v !== "object" || Object.values(v).every(validStrings);
+  if (!validStrings(input)) fail("retained_http_malformed_text");
+  if (r.attestorTaskId !== input.taskId || Date.parse(r.fetchedAt) > now) fail("retained_http_attestation_invalid");
+  const url = directUrl(r.requestedUrl);
+  if (r.finalUrl !== r.requestedUrl || url !== r.requestedUrl || directUrl(r.finalUrl) !== url
+    || new URL(url).pathname.replace(/\/+$/, "").length < 2) fail("retained_http_exact_article_url_required");
+  if (!/^text\/html(?:\s*;\s*charset\s*=\s*["']?utf-8["']?)?\s*$/i.test(r.headers["content-type"])) fail("retained_http_utf8_html_required");
+  const bytes = Buffer.from(r.bodyBase64, "base64");
+  if (bytes.toString("base64") !== r.bodyBase64 || bytes.length !== r.bodyBytes || bytes.length > 180_000
+    || createHash("sha256").update(bytes).digest("hex") !== r.bodySha256) fail("retained_http_byte_binding_mismatch");
+  let html: string;
+  try { html = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return fail("retained_http_malformed_utf8"); }
+  if (!validStrings(html)) fail("retained_http_malformed_text");
+  if (publicResponseOutcome(url, r.status, html).outcome !== "success"
+    || !/<html\b/i.test(html) || !/<body\b/i.test(html) || !/<\/body\s*>/i.test(html)
+    || !/<\/html\s*>(?:\s|<!--[\s\S]*?-->)*$/i.test(html)) fail("retained_http_incomplete_or_blocked");
+  const page = sitePageEvidence(html, url);
+  if (page.truncated || page.text.length < 160 || !page.title) fail("retained_http_incomplete_original");
+  const published = [...new Set(page.sourceDates.filter(d => d.kind === "published").map(d => d.value))];
+  const publication = published.length === 1 && Date.parse(published[0]) <= Date.parse(r.fetchedAt) ? published[0] : null;
+  const { bodyBase64: _raw, ...provenance } = r;
+  const observation = prepareObservation({ companyId: input.companyId, companyName: input.expectedIdentity.name,
+    companyDomain: input.expectedIdentity.domain, netsuiteInternalId: input.expectedIdentity.netsuiteInternalId,
+    sourceKind: "news", sourceUrl: url, title: page.title, text: page.text, eventDate: publication, observedAt: r.fetchedAt,
+    metadata: { evidenceKind: "article_body", articleBodyAvailable: true, sourceOnly: true, textTruncated: false,
+      sourceDates: page.sourceDates, eventDateBasis: publication ? "page_publication" : "unknown",
+      ...(page.companyIdentity ? { publisherIdentity: page.companyIdentity } : {}), identityClaims: page.identityClaims,
+      retainedHttp: { ...provenance, operationId: input.requestId, priorObservationId: input.observationId,
+        expectedContentHash: input.expectedContentHash, networkIndependentlyVerified: false, rawBodyLocation: "intake_operation_request" },
+      discovery: { collector: "retained_http", url: r.requestedUrl, title: page.title, eventDate: publication } } });
+  if (observation.metadata.textTruncated) fail("retained_http_incomplete_original");
+  // No generated import time enters this deterministic operation payload.
+  return { ...input, title: page.title, observation, version: INTELLIGENCE_VERSION };
+}
+
+export async function importRetainedHttpArticle(input: RetainedHttp) {
+  if (!intelligenceEnabled()) fail("source_capture_disabled");
+  const prepared = prepareRetainedHttpArticle(input);
+  // This also bounds the prepared RPC envelope; reject whole, never trim bytes.
+  if (Buffer.byteLength(JSON.stringify(prepared), "utf8") > 290_000) fail("retained_http_prepared_payload_too_large");
+  const saved = await externalNewsRpc("import_retained_http", prepared);
+  const readback = await externalNewsRpc("status", { requestId: input.requestId });
+  if (!saved || !isDeepStrictEqual(saved, readback)) fail("retained_http_readback_unconfirmed");
   return readback;
 }
 

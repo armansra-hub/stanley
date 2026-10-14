@@ -41,7 +41,7 @@ try {
     create table intelligence_directed_research_jobs(company_id uuid primary key,context_revision bigint not null default 0);`);
   await db.exec((await source("0059_intelligence_evidence_and_work.sql")).split("-- Source-key lock")[0]+"commit;");
   await db.exec(await source("0014_app_events.sql"));
-  await db.exec("alter table intelligence_observations add column feedback_excluded boolean not null default false; update intelligence_config set enabled=true;");
+  await db.exec("alter table intelligence_observations add column feedback_excluded boolean not null default false; alter table intelligence_jobs add column codex_news_request_id uuid; update intelligence_config set enabled=true;");
   const research = await source("0062_intelligence_feedback_and_research.sql");
   await db.exec(research.slice(research.indexOf("create table public.intelligence_research_attempts"),research.indexOf("create function public.intelligence_research_claim")));
   await db.exec((await source("0074_directed_research_discovery.sql")).split("create or replace function")[0]+"commit;");
@@ -63,6 +63,13 @@ try {
   const migration = await source("0152_external_news_receipt_intake.sql");
   await test("migration compiles/reapplies with actual canonical DDL; service-only RPC",async()=>{
     await db.exec(migration); await db.exec(migration);
+    const originalDefinition=await scalar("select pg_get_functiondef('intelligence_external_news_intake(text,jsonb)'::regprocedure) value");
+    await db.exec(await source("0153_retained_http_article_intake.sql"));
+    await db.exec(await source("0153_retained_http_article_intake.sql"));
+    const changedDefinition=await scalar("select pg_get_functiondef('intelligence_external_news_intake(text,jsonb)'::regprocedure) value");
+    // The entire existing TinyFish implementation after the new branch is identical.
+    const anchor="  if p_action='import' then";
+    assert.equal(changedDefinition.slice(changedDefinition.indexOf(anchor)),originalDefinition.slice(originalDefinition.indexOf(anchor)));
     for(const role of ["anon","authenticated"]) assert.equal(await scalar("select has_function_privilege($1,'intelligence_external_news_intake(text,jsonb)','EXECUTE') value",[role]),false);
     assert.equal(await scalar("select has_function_privilege('service_role','intelligence_external_news_intake(text,jsonb)','EXECUTE') value"),true);
   });
@@ -158,6 +165,79 @@ try {
       const r=await rpc("finish_capture",f);assert.equal(r.state,"captured");
       assert.equal(await scalar("select event_date value from intelligence_observations where id=$1",[r.observationId]),null);
       assert.deepEqual(await scalar("select metadata->'sourceDates' value from intelligence_observations where id=$1",[r.observationId]),dates);
+    }
+  });
+  async function retained() {
+    const url=`https://acme.com/news/${randomUUID()}`,head="Exact retained headline",hash=sha(head+url);
+    const seed=await scalar(`select intelligence_observe($1,$2,'news',$3,'Headline',$4,$5,null,'2026-10-12T00:00:00Z',
+      '{"evidenceKind":"headline_only","articleBodyAvailable":false,"textTruncated":false}', '[]','evidence-v2') value`,[company,sha(url),url,head,hash]);
+    const p={action:"import_retained_http",requestId:randomUUID(),taskId:"/root/reader",companyId:company,expectedIdentity:identity,sourceOnly:true,
+      observationId:seed.id,expectedContentHash:hash,title:"Acme expansion",version:"evidence-v2"};
+    const text="Acme has completed its own new warehouse and now offers additional storage. ".repeat(8);
+    const html=`<html><head><title>Acme expansion</title></head><body><main>${text}</main></body></html>`;
+    p.receipt={sourceKind:"retained_http",attestorTaskId:p.taskId,requestedUrl:url,finalUrl:url,fetchedAt:"2026-10-14T00:49:35.552Z",status:200,
+      redirectCount:0,completeResponse:true,headers:{"content-type":"text/html; charset=utf-8"},bodyBase64:Buffer.from(html).toString("base64"),bodyBytes:Buffer.byteLength(html),bodySha256:sha(html)};
+    const {bodyBase64,...provenance}=p.receipt;
+    p.observation={url,sourceKey:sha(url),text,contentHash:sha(text+url),observedAt:p.receipt.fetchedAt,eventDate:null,
+      sections:[{id:"s1",start:0,end:text.length,text}],metadata:{companyName:identity.name,companyDomain:identity.domain,evidenceKind:"article_body",articleBodyAvailable:true,
+        textTruncated:false,eventDateBasis:"unknown",sourceDates:[],retainedCharacters:text.length,sourceCharacters:text.length,
+        retainedHttp:{...provenance,operationId:p.requestId,priorObservationId:p.observationId,expectedContentHash:hash,networkIndependentlyVerified:false,rawBodyLocation:"intake_operation_request"}}};
+    return p;
+  }
+  await test("retained HTTP atomically creates canonical body/job with fetch time and immutable old source/jobs/failure; exact request recovery",async()=>{
+    const p=await retained(),old=await scalar("select to_jsonb(o) value from intelligence_observations o where id=$1",[p.observationId]);
+    const oldJobs=await scalar("select jsonb_agg(to_jsonb(j) order by id) value from intelligence_jobs j where observation_id=$1",[p.observationId]);
+    const before=await state();await db.exec("alter table app_events add constraint reject_retained check(kind<>'intelligence.external_news.retained_http') not valid");
+    await assert.rejects(rpc("import_retained_http",p),/reject_retained/);assert.deepEqual(await state(),before);
+    await db.exec("alter table app_events drop constraint reject_retained");
+    const result=await rpc("import_retained_http",p);assert.equal(result.state,"captured");assert.notEqual(result.observationId,p.observationId);
+    assert.equal(result.provider,"retained_http");assert.equal(result.networkIndependentlyVerified,false);assert.equal(result.analysisCompleted,false);
+    const afterOld=await scalar("select to_jsonb(o) value from intelligence_observations o where id=$1",[p.observationId]);
+    assert.deepEqual(afterOld,{...old,is_current:false});
+    assert.deepEqual(await scalar("select jsonb_agg(to_jsonb(j) order by id) value from intelligence_jobs j where observation_id=$1",[p.observationId]),oldJobs);
+    assert.equal(await scalar("select observed_at=$2::timestamptz value from intelligence_observations where id=$1",[result.observationId,p.receipt.fetchedAt]),true);
+    assert.equal(await scalar("select count(*)::int value from intelligence_jobs where observation_id=$1 and status='queued' and attempts=0",[result.observationId]),1);
+    const after=await state();assert.deepEqual(after.attempts,before.attempts);assert.deepEqual(after.states,before.states);
+    assert.deepEqual(await rpc("import_retained_http",p),result);assert.deepEqual(await rpc("status",{requestId:p.requestId}),result);assert.deepEqual(await state(),after);
+    await assert.rejects(rpc("import_retained_http",{...p,title:"changed"}),/request_conflict/);
+    const newId=randomUUID(),sameBody={...p,requestId:newId,observationId:result.observationId,expectedContentHash:p.observation.contentHash,
+      observation:{...p.observation,metadata:{...p.observation.metadata,retainedHttp:{...p.observation.metadata.retainedHttp,operationId:newId,priorObservationId:result.observationId,expectedContentHash:p.observation.contentHash}}}};
+    const reused=await rpc("import_retained_http",sameBody);assert.equal(reused.state,"reused");assert.equal(reused.observationId,result.observationId);
+    const reuseState=await state();assert.deepEqual(reuseState.observations,after.observations);assert.deepEqual(reuseState.jobs,after.jobs);
+  });
+  await test("retained exact URL/hash/identity/currentness and whole raw-byte/date bindings reject without writes",async()=>{
+    const p=await retained(),before=await state();
+    for(const patch of [{expectedContentHash:"0".repeat(64)},{expectedIdentity:{...identity,domain:"other.com"}},
+      {observation:{...p.observation,url:"https://acme.com/wrong"}},{receipt:{...p.receipt,bodySha256:"0".repeat(64)}},
+      {observation:{...p.observation,observedAt:"2026-10-14T01:00:00Z"}},{observation:{...p.observation,eventDate:"2026-10-12T00:00:00Z"}}]){
+      await assert.rejects(rpc("import_retained_http",{...p,...patch}));assert.deepEqual(await state(),before);
+    }
+    await db.query("update intelligence_observations set is_current=false where id=$1",[p.observationId]);
+    await assert.rejects(rpc("import_retained_http",p),/source_binding_changed/);
+    const stale=await retained();
+    await db.query("update intelligence_observations set observed_at=$2::timestamptz+interval '1 second' where id=$1",[stale.observationId,stale.receipt.fetchedAt]);
+    const unchanged=await state();await assert.rejects(rpc("import_retained_http",stale),/capture_precedes_current_source/);assert.deepEqual(await state(),unchanged);
+  });
+  await test("retained import never bypasses claimed, held, completed, uncertain, feedback or previously attempted source jobs",async()=>{
+    for(const change of ["status='running',lease_token=gen_random_uuid(),lease_until=now()+interval '20 minutes'",
+      "result='{\"codexNews\":{\"hold\":\"identity_gap\"}}'","status='complete',finished_at=now()",
+      "result='{\"pendingRequest\":{\"id\":\"unknown\"}}'","attempts=1","codex_news_request_id=gen_random_uuid()"]){
+      const p=await retained();await db.query(`update intelligence_jobs set ${change} where observation_id=$1`,[p.observationId]);
+      const before=await state();await assert.rejects(rpc("import_retained_http",p),/requires_reconciliation/);assert.deepEqual(await state(),before);
+    }
+    const p=await retained();await db.query("update intelligence_observations set feedback_excluded=true where id=$1",[p.observationId]);
+    await assert.rejects(rpc("import_retained_http",p),/source_binding_changed/);
+    const q=await retained();await db.query("insert into intelligence_research_attempts(company_id,source_url,lease_token,lease_until) values($1,$2,$3,now()+interval '1 hour')",[company,q.receipt.requestedUrl,randomUUID()]);
+    await assert.rejects(rpc("import_retained_http",q),/requires_reconciliation/);
+    const v=await retained();await db.query("insert into intelligence_observations(company_id,source_key,source_kind,source_url,title,evidence_text,content_hash) values($1,$2,'news',$3,'Concurrent native','Native text','otherhash')",[company,v.observation.sourceKey,v.observation.url]);
+    await assert.rejects(rpc("import_retained_http",v),/source_version_conflict/);
+  });
+  await test("retained import honors canonical TAM-or-claimed-TAL membership without altering it",async()=>{
+    for(const [status,lists,claimed,allowed] of [["removed_from_tam",[],true,true],["removed_from_tam",["netsuite_tam"],false,false],["new",["tam_duplicate","netsuite_tam"],true,false],["new",[],false,false]]){
+      const p=await retained();await db.query("update companies set status=$2,lists=$3,tal_claimed=$4 where id=$1",[company,status,lists,claimed]);
+      if(allowed)assert.equal((await rpc("import_retained_http",p)).state,"captured");
+      else await assert.rejects(rpc("import_retained_http",p),/not_in_scope/);
+      await db.query("update companies set status='new',lists=array['netsuite_tam'],tal_claimed=false where id=$1",[company]);
     }
   });
   console.log(JSON.stringify({passed:checks.length,checks,networkCalls:0,productionWrites:0}));

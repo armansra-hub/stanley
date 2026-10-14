@@ -44,6 +44,22 @@ describe("external receipt actions on the existing authenticated news route", ()
     expect((await post({ ...body, providerResponse: "x".repeat(256_000) })).status).toBe(413);
     expect(mocks.rpc).not.toHaveBeenCalled();
   });
+  it("keeps saved HTTP import behind the same auth, strict schema, and source-only RPC/readback", async () => {
+    const html = `<html><head><title>Official expansion</title></head><body><main>${"Acme opened its new warehouse. ".repeat(15)}</main></body></html>`;
+    const value = { action: "import_retained_http", requestId: intakeId, taskId: "/root/reader", companyId: body.companyId,
+      expectedIdentity: body.expectedIdentity, sourceOnly: true, observationId: "30000000-0000-4000-8000-000000000001", expectedContentHash: "a".repeat(64),
+      receipt: { sourceKind: "retained_http", attestorTaskId: "/root/reader", requestedUrl: "https://acme.com/expansion", finalUrl: "https://acme.com/expansion",
+        fetchedAt: "2026-01-01T00:00:00Z", status: 200, redirectCount: 0, completeResponse: true, headers: { "content-type": "text/html; charset=utf-8" },
+        bodyBase64: Buffer.from(html).toString("base64"), bodyBytes: Buffer.byteLength(html), bodySha256: hash(html) } };
+    expect((await post(value, { ...headers, authorization: "Bearer wrong" })).status).toBe(401);
+    expect((await post({ ...value, eventDate: "2026-10-12" })).status).toBe(400);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    vi.stubEnv("STANLEY_INTELLIGENCE_ENABLED", "true");
+    mocks.rpc.mockResolvedValue({ data: { state: "captured", analysisCompleted: false }, error: null });
+    expect((await post(value)).status).toBe(200);
+    expect(mocks.rpc.mock.calls.map(c => c[1].p_action)).toEqual(["import_retained_http", "status"]);
+    expect(mocks.priority).not.toHaveBeenCalled(); expect(mocks.reheat).not.toHaveBeenCalled();
+  });
 });
 
 const id = "10000000-0000-4000-8000-000000000001", lease = "20000000-0000-4000-8000-000000000001";

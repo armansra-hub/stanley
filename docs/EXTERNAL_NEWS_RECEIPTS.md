@@ -1,7 +1,7 @@
 # Existing news route: external discovery receipts
 
-`POST /api/agent/intelligence/news` accepts two source-only actions under the
-existing agent-token authentication and `x-agent-name: codex` header. Both require
+`POST /api/agent/intelligence/news` accepts source-only actions under the
+existing agent-token authentication and `x-agent-name: codex` header. All require
 a durable UUID `requestId`, actual `taskId`, exact `companyId`, `sourceOnly: true`
 and `expectedIdentity: {name, domain, netsuiteInternalId}` matching the current
 canonical account. Scope is current TAM or canonical claimed TAL, excluding
@@ -27,6 +27,29 @@ must be applied before these actions are used.
   Existing current observations and previously attempted/held URLs are preserved.
   Failed, truncated or oversized bodies are explicit holds, without substituting
   a headline as a complete original.
+- `import_retained_http` (requires migration `0153_retained_http_article_intake.sql`):
+  import one authentic already saved public HTML response for an exact existing
+  news observation. Supply `observationId`, its `expectedContentHash`, and a
+  strict `receipt`: `sourceKind: "retained_http"`, actual `attestorTaskId` equal
+  to `taskId`, identical canonical `requestedUrl`/`finalUrl`, actual `fetchedAt`,
+  `status: 200`, `redirectCount: 0`, `completeResponse: true`, allowlisted
+  `headers` (`content-type`, optional `date`, `last-modified`, `etag`), and
+  `bodyBase64`, `bodyBytes`, `bodySha256`. These are exact saved decoded HTTP
+  response bytes, at most 180 KB, encoded as canonical base64 with SHA-256.
+  UTF-8 HTML only; malformed bytes, NUL/unpaired-surrogate strings, blocked,
+  incomplete, oversized or redirected responses are rejected whole. No fetch
+  occurs. The server extracts text, sections, identity and original date metadata;
+  no caller text/event-date override is accepted. `observedAt` is the saved fetch
+  time, never import time. Raw bytes remain in the immutable intake operation.
+  Hashes prove integrity, not independent network authenticity; the receipt
+  explicitly preserves the authenticated attestor and that limitation.
+  SQL locks/rechecks current account/source identity, URL and hash, and refuses
+  to replace claimed, uncertain, held, interpreted or completed work. An identical
+  complete current body can be acknowledged without altering its jobs. Otherwise
+  only an unreviewed, explicitly incomplete current original may receive a new
+  canonical observation/job. Old bodies, dates, jobs and provider-failure ledgers
+  remain unchanged; only normal source-version currentness advances. The exact
+  operation is atomic/idempotent and supports the same `intakeId` readback.
 
 A single non-future `published` timestamp extracted from the original is retained
 as `eventDate` with `page_publication` provenance. Conflicting, missing, modified
@@ -52,8 +75,11 @@ ledger must remain in the caller's exclusion set until independently reconciled.
 The returned capture `observationId` is only a source nomination. Normal current
 job, full-original, independent-review, live-trigger dedupe and canonical finish
 gates still apply. No source import promotes frozen-sweep or whole-account
-coverage. Original HTTP bytes are not claimed retained; the existing extractor's
-normalized body, dates, identity metadata and truncation limits are preserved.
+coverage. The discovery-fetch path does not claim retained original HTTP bytes;
+the retained-HTTP action preserves the attested bytes in its operation receipt.
+Both preserve the extractor's normalized body, dates, identity metadata and
+truncation limits. Transport completeness is not a model's full-original read
+or a substantive completeness judgment; the existing review gates still apply.
 
 Validation: `node scripts/validate-external-news-intake-sql.mjs` uses the existing
 offline PGlite installation and actual canonical DDL / observation RPC. It never

@@ -7,7 +7,7 @@ import { reheatCompanyForFreshSignal } from "@/lib/db/reheat";
 import { isDeepStrictEqual } from "node:util";
 import type { NewsPacket } from "@/lib/intelligence/codexNews";
 import { isPublishableTriggerForCompany } from "@/lib/triggers/signalIntegrity";
-import { externalNewsActionSchema, externalNewsRpc, importExternalDiscovery, captureExternalDiscovery, ExternalNewsIntakeError } from "@/lib/intelligence/externalNewsIntake";
+import { externalNewsActionSchema, externalNewsRpc, importExternalDiscovery, captureExternalDiscovery, importRetainedHttpArticle, ExternalNewsIntakeError } from "@/lib/intelligence/externalNewsIntake";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -47,9 +47,10 @@ export async function POST(req: Request) {
     const text = await req.text();
     if (Buffer.byteLength(text, "utf8") > 256_000) return json({ error: "request_too_large" }, 413);
     const parsed = JSON.parse(text);
-    if (parsed?.action === "import_discovery" || parsed?.action === "capture_discovery_url") {
+    if (parsed?.action === "import_discovery" || parsed?.action === "capture_discovery_url" || parsed?.action === "import_retained_http") {
       const intake = externalNewsActionSchema.parse(parsed);
-      return json({ intake: intake.action === "import_discovery" ? await importExternalDiscovery(intake) : await captureExternalDiscovery(intake) });
+      return json({ intake: intake.action === "import_discovery" ? await importExternalDiscovery(intake)
+        : intake.action === "import_retained_http" ? await importRetainedHttpArticle(intake) : await captureExternalDiscovery(intake) });
     }
     if (Buffer.byteLength(text, "utf8") > 64_000) return json({ error: "request_too_large" }, 413);
     const body = newsActionSchema.parse(parsed);
