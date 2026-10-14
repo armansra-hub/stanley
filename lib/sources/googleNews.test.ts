@@ -11,6 +11,34 @@ const RSS = `<?xml version="1.0"?><rss version="2.0"><channel><item>
 const response = (body: string, status = 200) => ({ body, status, finalUrl: "https://news.google.com/rss/search", contentType: "application/rss+xml" });
 beforeEach(() => { fetch.mockReset(); });
 describe("RSS outcome semantics", () => {
+  it("keeps unavailable outcomes and request counts while retaining redacted error diagnostics", async () => {
+    const diagnostic = { schema: "google-news-http-error-v1", bodyPrefixSha256: "a".repeat(64), bodyPrefixBytes: 30,
+      bodyComplete: true, readStop: "end", category: "service_unavailable", encoding: "identity", mediaType: "text/html", retryAfterSeconds: 60, retryAfterDate: null } as const;
+    fetch.mockResolvedValue({ ...response("", 503), errorDiagnostics: diagnostic });
+    const result = await fetchNewsForCompanyResult({ name: "Acme", domain: "acme.com" }, 24, { topic: "oracle_partnership" });
+    expect(result).toMatchObject({ status: "unavailable", partial: true, error: "http_error", items: [], queries: [
+      { httpStatus: 503, errorDiagnostics: diagnostic, requestContext: { attempts: 1, conditionalFirstRequest: false, unretained304Recovery: false } },
+      { httpStatus: 503, errorDiagnostics: diagnostic, requestContext: { attempts: 1, conditionalFirstRequest: false, unretained304Recovery: false } },
+    ] });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls.every(([, options]) => options?.googleNewsErrorDiagnostics === true)).toBe(true);
+  });
+
+  it("records only the existing unretained304 recovery and never retries an HTTP failure", async () => {
+    fetch.mockResolvedValueOnce(response("", 304)).mockResolvedValueOnce(response("", 503));
+    expect(await fetchNewsItemsResult("Acme")).toMatchObject({ status: "unavailable", httpStatus: 503, error: "http_error",
+      requestContext: { attempts: 2, conditionalFirstRequest: false, unretained304Recovery: true } });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    fetch.mockReset(); fetch.mockResolvedValue(response("", 503));
+    const url = googleNewsRss("Acme");
+    expect(await fetchNewsItemsResult("Acme", 6, { cache: { items: [], validators: { url, etag: '"old"' } } })).toMatchObject({
+      status: "unavailable", requestContext: { attempts: 1, conditionalFirstRequest: true, unretained304Recovery: false },
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    fetch.mockReset(); fetch.mockResolvedValueOnce(response("", 304)).mockRejectedValueOnce(new Error("HTTP fetch timed out"));
+    expect(await fetchNewsItemsResult("Acme")).toMatchObject({ status: "unavailable", error: "timeout", requestContext: { attempts: 2 } });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("adds Oracle-specific queries only after explicit opt-in and retains unavailable outcomes", async () => {
     fetch.mockResolvedValue(response("Blocked", 403));
     const selected = await fetchNewsForCompanyResult({ name: "Acme", domain: "acme.com" }, 24, { topic: "oracle_partnership" });

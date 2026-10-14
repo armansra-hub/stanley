@@ -1,9 +1,11 @@
+import { httpFailureSamples, type HttpFailureSample } from "@/lib/sources/outcomes";
+
 /** Company outcomes, independent of the timestamps used to reserve rotation work. */
 export type SweepOutcome = "succeeded" | "partial" | "unavailable" | "failed" | "unsupported" | "skipped";
 export type SweepCompanyReceipt = { companyId: string; outcome: SweepOutcome; reason: string; captured: boolean; complete: boolean; completionStamped: boolean };
 export type SweepOutcomes = Record<SweepOutcome | "attempted", number> & {
   error_count: number;
-  errors: { companyId?: string; source: string; stage: string; code: string; databaseCode?: string }[];
+  errors: { companyId?: string; source: string; stage: string; code: string; databaseCode?: string; httpDiagnostics?: HttpFailureSample[] }[];
 };
 
 export function newSweepOutcomes(): SweepOutcomes {
@@ -11,7 +13,7 @@ export function newSweepOutcomes(): SweepOutcomes {
 }
 
 /** Keep a bounded diagnostic sample even when an entire provider or store fails. */
-export function sweepError(stats: SweepOutcomes, source: string, stage: string, error: unknown, companyId?: string): void {
+export function sweepError(stats: SweepOutcomes, source: string, stage: string, error: unknown, companyId?: string, queries?: unknown): void {
   stats.error_count++;
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const databaseCode = /(?:persistence|state read|state write|checkpoint read|checkpoint write|jobs read|lifecycle write|pattern read|pattern receipt) failed:\s*([A-Z0-9]{5})\b/i.exec(message)?.[1].toUpperCase();
@@ -22,6 +24,7 @@ export function sweepError(stats: SweepOutcomes, source: string, stage: string, 
     : /cursor/i.test(message) ? "cursor_changed"
     : /403|forbidden|blocked/i.test(message) ? "blocked"
     : "source_failure";
+  const diagnostics = source === "news" && stage === "feed" ? httpFailureSamples(queries) : [];
   if (stats.errors.length < 10) stats.errors.push({ ...(companyId ? { companyId } : {}), source, stage,
-    code, ...(databaseCode ? { databaseCode } : {}) });
+    code, ...(databaseCode ? { databaseCode } : {}), ...(diagnostics.length ? { httpDiagnostics: diagnostics } : {}) });
 }

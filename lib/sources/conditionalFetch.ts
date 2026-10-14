@@ -1,4 +1,5 @@
 import { fetchPublicHttpText, type PublicHttpFetchOptions, type PublicHttpTextResponse } from "@/lib/triggers/urlSafety";
+import type { HttpRequestContext } from "./outcomes";
 
 export type HttpValidators = { etag?: string; lastModified?: string; url: string };
 export function retainedValidators(value: unknown, url: string): HttpValidators | undefined {
@@ -14,9 +15,11 @@ export function responseValidators(response: PublicHttpTextResponse): HttpValida
 }
 /** A 304 is usable only when the caller has retained the exact representation.
  * Missing cache / unsolicited 304 gets one bounded unconditional recovery. */
-export async function fetchConditionalText(url: string, options: PublicHttpFetchOptions, cache?: { validators?: HttpValidators; retained: boolean }, fetchText = fetchPublicHttpText) {
+export async function fetchConditionalText(url: string, options: PublicHttpFetchOptions, cache?: { validators?: HttpValidators; retained: boolean }, fetchText = fetchPublicHttpText,
+  onAttempt?: (context: HttpRequestContext) => void) {
   const validators = cache?.retained ? retainedValidators(cache.validators, url) : undefined;
   const started = Date.now();
+  onAttempt?.({ attempts: 1, conditionalFirstRequest: Boolean(validators), unretained304Recovery: false });
   const response = await fetchText(url, { ...options,
     ...(validators?.etag ? { ifNoneMatch: validators.etag } : {}),
     ...(validators?.lastModified ? { ifModifiedSince: validators.lastModified } : {}),
@@ -24,6 +27,7 @@ export async function fetchConditionalText(url: string, options: PublicHttpFetch
   if (response.status !== 304 || (validators && cache?.retained && new URL(response.finalUrl).toString() === new URL(url).toString())) return response;
   const remaining = (options.timeoutMs ?? 7000) - (Date.now() - started);
   if (remaining < 250) throw new Error("HTTP fetch timed out");
+  onAttempt?.({ attempts: 2, conditionalFirstRequest: Boolean(validators), unretained304Recovery: true });
   const recovered = await fetchText(url, { ...options, timeoutMs: remaining });
   if (recovered.status === 304) throw new Error("Unsolicited 304 without retained representation");
   return recovered;

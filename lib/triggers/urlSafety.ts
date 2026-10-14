@@ -4,8 +4,10 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { createHash } from "node:crypto";
 import { createGunzip, createInflate, createBrotliDecompress } from "node:zlib";
 import type { Transform } from "node:stream";
+import { httpErrorCategory, type HttpErrorDiagnostics } from "@/lib/sources/outcomes";
 
 export interface ResolvedPublicAddress {
   address: string;
@@ -246,18 +248,22 @@ function requestPinnedBytes(
   accept: string,
   conditional: { ifNoneMatch?: string; ifModifiedSince?: string } = {},
   jsonBody?: string,
-): Promise<{ status: number; location: string | null; body: Uint8Array; contentType: string | null; etag?: string; lastModified?: string }> {
+  captureErrorDiagnostics = false,
+): Promise<{ status: number; location: string | null; body: Uint8Array; contentType: string | null; etag?: string; lastModified?: string; errorDiagnostics?: HttpErrorDiagnostics }> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let diagnosticTimer: ReturnType<typeof setTimeout> | undefined;
+    let finishDiagnostic: ((reason: HttpErrorDiagnostics["readStop"]) => void) | undefined;
     let decoder: Transform | undefined;
     const finish = (
-      result: { status: number; location: string | null; body: Uint8Array; contentType: string | null; etag?: string; lastModified?: string } | null,
+      result: { status: number; location: string | null; body: Uint8Array; contentType: string | null; etag?: string; lastModified?: string; errorDiagnostics?: HttpErrorDiagnostics } | null,
       error?: Error,
     ) => {
       if (settled) return;
       settled = true;
       if (deadlineTimer) clearTimeout(deadlineTimer);
+      if (diagnosticTimer) clearTimeout(diagnosticTimer);
       if (error) { decoder?.destroy(); reject(error); }
       else resolve(result!);
     };
@@ -286,6 +292,45 @@ function requestPinnedBytes(
       const validators = { ...(typeof response.headers.etag === "string" ? { etag: response.headers.etag.slice(0, 1000) } : {}),
         ...(typeof response.headers["last-modified"] === "string" ? { lastModified: response.headers["last-modified"].slice(0, 100) } : {}) };
       const status = response.statusCode ?? 0;
+      if (captureErrorDiagnostics && status >= 400 && status <= 599) {
+        // Diagnostic-only opt-in: never return the body or change the observed
+        // HTTP result because an error page stalls, is oversized, or disconnects.
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        const rawEncoding = response.headers["content-encoding"];
+        const encoding = rawEncoding === undefined ? "identity" : typeof rawEncoding === "string"
+          && ["identity", "gzip", "x-gzip", "deflate", "br"].includes(rawEncoding.trim().toLowerCase())
+          ? rawEncoding.trim().toLowerCase() as HttpErrorDiagnostics["encoding"] : "other";
+        const mime = contentType?.split(";", 1)[0].trim().toLowerCase();
+        const mediaType = mime === undefined ? null : ["text/html", "text/plain", "application/xml", "text/xml", "application/rss+xml", "application/json"].includes(mime)
+          ? mime as HttpErrorDiagnostics["mediaType"] : "other";
+        const retryAfter = response.headers["retry-after"];
+        const seconds = typeof retryAfter === "string" && /^\d{1,6}$/.test(retryAfter) && Number(retryAfter) <= 604800 ? Number(retryAfter) : null;
+        const date = typeof retryAfter === "string" && /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(retryAfter)
+          && Number.isFinite(Date.parse(retryAfter)) ? new Date(retryAfter).toISOString() : null;
+        finishDiagnostic = readStop => {
+          if (settled) return;
+          const prefix = Buffer.concat(chunks);
+          finish({ status, location, body: new Uint8Array(), contentType, ...validators, errorDiagnostics: {
+            schema: "google-news-http-error-v1", bodyPrefixSha256: createHash("sha256").update(prefix).digest("hex"), bodyPrefixBytes: bytes,
+            bodyComplete: readStop === "end", readStop, category: httpErrorCategory(prefix, encoding), encoding, mediaType,
+            retryAfterSeconds: seconds, retryAfterDate: date,
+          } });
+          response.destroy();
+        };
+        response.on("data", (chunk: Buffer | string) => {
+          if (settled) return;
+          const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          const retained = Buffer.from(part.subarray(0, 8192 - bytes));
+          chunks.push(retained); bytes += retained.length;
+          if (bytes === 8192) finishDiagnostic?.("byte_limit");
+        });
+        response.once("end", () => finishDiagnostic?.("end"));
+        response.once("error", () => finishDiagnostic?.("stream_error"));
+        response.once("close", () => finishDiagnostic?.("stream_error"));
+        diagnosticTimer = setTimeout(() => finishDiagnostic?.("time_limit"), 250);
+        return;
+      }
       if ([301, 302, 303, 307, 308].includes(status) || status < 200 || status >= 300) {
         response.destroy();
         finish({ status, location, body: new Uint8Array(), contentType, ...validators });
@@ -337,6 +382,7 @@ function requestPinnedBytes(
     // cannot extend it indefinitely by trickling bytes.
     deadlineTimer = setTimeout(
       () => {
+        if (finishDiagnostic) { finishDiagnostic("time_limit"); request.destroy(); return; }
         const error = new Error("HTTP fetch timed out");
         // After the response ends, request.destroy alone need not emit an error.
         finish(null, error);
@@ -344,7 +390,7 @@ function requestPinnedBytes(
       },
       timeoutMs,
     );
-    request.once("error", (error) => finish(null, error));
+    request.once("error", (error) => finishDiagnostic ? finishDiagnostic("stream_error") : finish(null, error));
     request.end(jsonBody);
   });
 }
@@ -359,6 +405,7 @@ export interface PublicHttpTextResponse extends PublicHttpStatus {
   contentType: string | null;
   etag?: string;
   lastModified?: string;
+  errorDiagnostics?: HttpErrorDiagnostics;
 }
 
 export interface PublicHttpBytesResponse extends PublicHttpStatus {
@@ -366,6 +413,7 @@ export interface PublicHttpBytesResponse extends PublicHttpStatus {
   contentType: string | null;
   etag?: string;
   lastModified?: string;
+  errorDiagnostics?: HttpErrorDiagnostics;
 }
 
 export async function fetchPublicHttpText(rawUrl: string, opts: PublicHttpFetchOptions = {}): Promise<PublicHttpTextResponse> {
@@ -387,6 +435,8 @@ export async function postPublicHttpJson(rawUrl: string, payload: Record<string,
 }
 
 export interface PublicHttpFetchOptions {
+  /** Google RSS only; a capped wire prefix is hashed/classified, never returned. */
+  googleNewsErrorDiagnostics?: boolean;
   timeoutMs?: number;
   maxRedirects?: number;
   maxBytes?: number;
@@ -432,7 +482,8 @@ export async function fetchPublicHttpBytes(
     if (remainingForRequest <= 0) throw new Error("HTTP fetch timed out");
     // Validators describe this exact URL representation; never forward them to
     // a redirect target whose previous representation has not been retained.
-    const response = await requestPinnedBytes(current, addresses[0], remainingForRequest, maxBytes, accept, redirects === 0 ? conditional : {});
+    const response = await requestPinnedBytes(current, addresses[0], remainingForRequest, maxBytes, accept, redirects === 0 ? conditional : {}, undefined,
+      opts.googleNewsErrorDiagnostics === true && current.hostname === "news.google.com" && current.pathname === "/rss/search");
     if (![301, 302, 303, 307, 308].includes(response.status) || !response.location) {
       return { ...response, finalUrl: current.toString() };
     }

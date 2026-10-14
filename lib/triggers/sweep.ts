@@ -15,6 +15,7 @@ import { enqueueObservation, intelligenceEnabled } from "@/lib/intelligence/obse
 import { readSourceState, writeSourceState } from "@/lib/intelligence/sourceState";
 import { readNewsEvidence } from "@/lib/sources/newsEvidence";
 import { newSweepOutcomes, sweepError, type SweepOutcome, type SweepOutcomes } from "./sweepOutcomes";
+import { httpErrorDiagnostics, httpRequestContext, type HttpErrorDiagnostics, type HttpRequestContext } from "@/lib/sources/outcomes";
 import {
   isCareerEvidenceUrl,
   isFinanceHireEligible,
@@ -258,12 +259,13 @@ async function classifyLegacyHeadline(
   return queueCandidate(company, { type, summary: it.raw_excerpt, source_name: it.source_name, source_url: it.source_url, signal_date: it.signal_date });
 }
 
-type FeedResult = { status: NewsFetchResult["status"]; queries?: Array<Pick<NewsFetchResult, "status" | "error" | "httpStatus">> };
+type FeedResult = { status: NewsFetchResult["status"]; queries?: Array<Pick<NewsFetchResult, "status" | "error" | "httpStatus" | "errorDiagnostics" | "requestContext">> };
 const accessLimitedFeed = (result: FeedResult) => result.queries?.some(query => query.error === "blocked" || [401, 403, 429].includes(query.httpStatus ?? 0)) ?? false;
 type FiniteNewsControl = { companyConcurrency: 1; feedUnavailableCompanies: number; feedFailureCompanies: number; circuitThreshold: 2;
   stoppedBeforeNextReservation: boolean; circuitReason: "access_limited" | "systemic_feed_unavailable" | null;
   affectedFeeds: Array<{ companyId: string; status: FeedResult["status"]; queryCount: number | null; queriesTruncated: boolean;
-    queries: Array<{ status: NewsFetchResult["status"]; errorCode: NewsFetchResult["error"] | null; httpStatus: number | null }> }> };
+    queries: Array<{ status: NewsFetchResult["status"]; errorCode: NewsFetchResult["error"] | null; httpStatus: number | null;
+      errorDiagnostics?: HttpErrorDiagnostics; requestContext?: HttpRequestContext }> }> };
 
 export async function checkCompanyNews(company: NewsCompany, opts: { llm?: boolean; classifierDeadlineMs?: number; sourceOnly?: boolean; topic?: "oracle_partnership";
   onOutcome?: (outcome: SweepOutcome) => void; onError?: (stage: string, error: unknown) => void; onFeedResult?: (result: FeedResult) => void;
@@ -464,20 +466,24 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
     await Promise.all(slice.map(async (c) => {
       let outcome: SweepOutcome = "failed";
       let feedUnavailable = false, feedFailed = false, feedAccessLimited = false;
+      let feedQueries: FeedResult["queries"];
       outcomes.attempted++;
       try {
         const claimable = !!(c as { claimable?: boolean }).claimable;
         let n = 0;
         try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs, sourceOnly: opts.sourceOnly, ...(opts.topic ? { topic: opts.topic } : {}),
           ...(finiteSourceOnly ? { deferArticlesOnAccessLimit: true } : {}),
-          onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id),
+          onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id, stage === "feed" ? feedQueries : undefined),
           onFeedResult: result => {
+            feedQueries = result.queries;
             feedUnavailable = result.status === "unavailable";
             feedFailed = feedUnavailable || result.queries?.some(query => query.status === "unavailable") === true;
             feedAccessLimited = accessLimitedFeed(result);
             if (finiteSourceOnly && (feedFailed || feedAccessLimited)) finiteNewsControl.affectedFeeds.push({
               companyId: c.id, status: result.status, queryCount: result.queries?.length ?? null, queriesTruncated: (result.queries?.length ?? 0) > 8,
-              queries: (result.queries ?? []).slice(0, 8).map(query => ({ status: query.status, errorCode: query.error ?? null, httpStatus: query.httpStatus ?? null })),
+              queries: (result.queries ?? []).slice(0, 8).map(query => ({ status: query.status, errorCode: query.error ?? null, httpStatus: query.httpStatus ?? null,
+                ...(httpErrorDiagnostics(query.errorDiagnostics) ? { errorDiagnostics: httpErrorDiagnostics(query.errorDiagnostics) } : {}),
+                ...(httpRequestContext(query.requestContext) ? { requestContext: httpRequestContext(query.requestContext) } : {}) })),
             });
           } }); }
         catch (error) { sweepError(outcomes, "news", "collection", error, c.id); }

@@ -1,3 +1,5 @@
+import { httpErrorDiagnostics, httpRequestContext } from "@/lib/sources/outcomes";
+
 /** Read-only projections. Never return raw job results, leases or provider cursors. */
 export const COMPANY_FIELDS = "id,name,domain,website_raw,city,state,netsuite_internal_id,status,lists,tal_claimed,record_dead,description,subindustry,ns_industry,last_checked_at,ats_checked_at,site_checked_at,fmcsa_checked_at,sos_checked_at";
 export const OBSERVATION_FIELDS = "id,company_id,source_kind,source_url,title,evidence_text,content_hash,event_date,observed_at,is_current,feedback_excluded,metadata,sections";
@@ -66,6 +68,8 @@ function retainedNewsDiagnostics(value: unknown) {
     queries: queries?.slice(0, 8).map((value, index) => { const query = record(value); return {
       ordinal: index + 1, status: feedStatus(query.status), errorCode: diagnosticCode(query.error), httpStatus: httpStatus(query.httpStatus),
       unchanged: typeof query.unchanged === "boolean" ? query.unchanged : null,
+       ...(httpErrorDiagnostics(query.errorDiagnostics) ? { errorDiagnostics: httpErrorDiagnostics(query.errorDiagnostics) } : {}),
+       ...(httpRequestContext(query.requestContext) ? { requestContext: httpRequestContext(query.requestContext) } : {}),
     }; }) ?? null,
     queryCount: queries?.length ?? null, queriesTruncated: queries !== null && queries.length > 8,
     captureCounts: Object.fromEntries(["saved", "bodyCount", "headlineOnly", "storageFailures", "processingFailures"].map(key => [key, diagnosticCount(details[key])])),

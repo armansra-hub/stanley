@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { checkCompanyNews, sweepBase } from "./sweep";
+import { sourceProjection } from "@/lib/intelligence/manualCoverage";
 
 const mocks = vi.hoisted(() => ({ pick: vi.fn(), checked: vi.fn(), news: vi.fn(), write: vi.fn(), read: vi.fn(), executive: vi.fn(), body: vi.fn(), enqueue: vi.fn() }));
 vi.mock("@/lib/intelligence/observations", () => ({ enqueueObservation: mocks.enqueue, intelligenceEnabled: () => true }));
@@ -65,6 +66,38 @@ function finiteFixture(count = 100) {
 }
 const unavailable = { items: [], status: "unavailable", error: "http_error", httpStatus: 503,
   queries: [1, 2].map(() => ({ query: "private retrieval text", status: "unavailable", error: "http_error", httpStatus: 503 })) };
+
+it.each([false, true])("propagates bounded failure diagnostics through existing source, scheduled and finite receipts (finite=%s)", async finite => {
+  const { collection } = finiteFixture(3);
+  const diagnostic = { schema: "google-news-http-error-v1", bodyPrefixSha256: "a".repeat(64), bodyPrefixBytes: 80, bodyComplete: true,
+    readStop: "end", category: "service_unavailable", encoding: "identity", mediaType: "text/html", retryAfterSeconds: 30, retryAfterDate: null };
+  const requestContext = { attempts: 2, conditionalFirstRequest: false, unretained304Recovery: true };
+  const queries = [{ status: "empty", httpStatus: 200 }, { query: "private query", status: "unavailable", error: "http_error", httpStatus: 503, errorDiagnostics: diagnostic, requestContext }];
+  mocks.news.mockResolvedValue({ items: [], status: "empty", partial: true, error: "http_error", httpStatus: 200, queries });
+  const result = await sweepBase(3, { sourceOnly: true, ...(finite ? { collection } : {}) });
+  expect(result).toMatchObject({ attempted: finite ? 2 : 3, partial: finite ? 2 : 3, succeeded: 0 });
+  expect(mocks.news).toHaveBeenCalledTimes(finite ? 2 : 3);
+  expect(mocks.executive).toHaveBeenCalledTimes(finite ? 0 : 3);
+  const state = mocks.write.mock.calls[0][2];
+  expect(state.details.queries).toEqual(queries);
+  expect(result.errors[0]).toMatchObject({ source: "news", stage: "feed", code: "source_failure", httpDiagnostics: [
+    { ordinal: 2, httpStatus: 503, errorDiagnostics: diagnostic, requestContext },
+  ] });
+  expect(JSON.stringify(result)).not.toContain("private query");
+  if (finite) expect(result.finiteNewsControl).toMatchObject({ feedFailureCompanies: 2, feedUnavailableCompanies: 0, circuitReason: "systemic_feed_unavailable",
+    affectedFeeds: [{ queries: [{ httpStatus: 200 }, { httpStatus: 503, errorDiagnostics: diagnostic, requestContext }] }, expect.anything()] });
+  // The retained source projection revalidates every field, not merely a trusted TS type.
+  const hostile = { ...diagnostic, rawBody: "secret-body", cookie: "secret-cookie", mediaType: { secret: true }, retryAfterDate: "secret-date" };
+  const projected = sourceProjection({ source_key: "news:google", error_details: { ...state.details, queries: [
+    { ...queries[1], errorDiagnostics: hostile, requestContext: { ...requestContext, token: "secret-token" } },
+    { ...queries[1], errorDiagnostics: { ...diagnostic, bodyPrefixSha256: "secret-invalid" }, requestContext: { attempts: 99, conditionalFirstRequest: "secret" } },
+  ] } });
+  const json = JSON.stringify(projected);
+  expect(json).not.toMatch(/secret|private query|rawBody|cookie|token/);
+  expect(projected).toMatchObject({ newsDiagnostics: { queries: [
+    { errorDiagnostics: { ...diagnostic, mediaType: null }, requestContext }, { ordinal: 2 },
+  ] } });
+});
 
 it.each([undefined, "oracle_partnership"] as const)("stops finite %s before a third reservation and preserves all exact unattempted IDs", async topic => {
   const { collection } = finiteFixture();

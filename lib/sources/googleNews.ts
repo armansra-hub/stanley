@@ -4,7 +4,7 @@ import { googleNewsRss } from "@/config/news";
 import { parseDateLoose } from "@/lib/time";
 import type { Candidate } from "@/lib/ingest/types";
 import { fetchPublicHttpText } from "@/lib/triggers/urlSafety";
-import { publicResponseOutcome, sourceErrorCode, type SourceErrorCode } from "./outcomes";
+import { publicResponseOutcome, sourceErrorCode, httpErrorDiagnostics, type SourceErrorCode, type HttpErrorDiagnostics, type HttpRequestContext } from "./outcomes";
 import { fetchConditionalText, responseValidators, retainedValidators, type HttpValidators } from "./conditionalFetch";
 import { normalizeFeedXml } from "./feedXml";
 import { unicodePrefix } from "@/lib/textBounds";
@@ -31,7 +31,8 @@ async function parsePublicFeed(url: string) {
 export interface NewsItem { source_name: string; source_url: string; raw_excerpt: string; signal_date: string | null; publisher_url?: string; feed_excerpt?: string; discovery_query?: string }
 export type NewsFeedCache = { validators?: HttpValidators; items: NewsItem[] };
 export type NewsFetchOptions = { deadlineMs?: number; cache?: NewsFeedCache };
-export type NewsFetchResult = { items: NewsItem[]; status: "success" | "empty" | "unavailable"; error?: SourceErrorCode; httpStatus?: number; cache?: NewsFeedCache; unchanged?: boolean };
+export type NewsFetchResult = { items: NewsItem[]; status: "success" | "empty" | "unavailable"; error?: SourceErrorCode; httpStatus?: number; cache?: NewsFeedCache; unchanged?: boolean;
+  errorDiagnostics?: HttpErrorDiagnostics; requestContext?: HttpRequestContext };
 
 export function readNewsFeedCache(value: unknown): NewsFeedCache | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -48,19 +49,21 @@ export function readNewsFeedCache(value: unknown): NewsFeedCache | undefined {
 /** A parsed empty feed is healthy. HTTP and parse errors are separately visible. */
 export async function fetchNewsItemsResult(query: string, n = 6, options: NewsFetchOptions = {}): Promise<NewsFetchResult> {
   let response;
+  let requestContext: HttpRequestContext | undefined;
   try {
     const url = googleNewsRss(query);
     const timeoutMs = Math.min(10000, (options.deadlineMs ?? Date.now() + 10000) - Date.now());
     if (timeoutMs < 250) return { items: [], status: "unavailable", error: "timeout" };
-    response = await fetchConditionalText(url, { timeoutMs, maxBytes: 4000000, accept: "application/rss+xml,application/atom+xml,application/xml,text/xml" },
-      { validators: options.cache?.validators, retained: Boolean(options.cache) });
+    response = await fetchConditionalText(url, { timeoutMs, maxBytes: 4000000, accept: "application/rss+xml,application/atom+xml,application/xml,text/xml", googleNewsErrorDiagnostics: true },
+      { validators: options.cache?.validators, retained: Boolean(options.cache) }, undefined, context => { requestContext = context; });
     if (response.status === 304 && options.cache) {
       const items = options.cache.items.slice(0, n);
       return { items, status: items.length ? "success" : "empty", httpStatus: 304, unchanged: true, cache: options.cache };
     }
     const outcome = publicResponseOutcome(url, response.status, response.body);
-    if (outcome.outcome !== "success") return { items: [], status: "unavailable", error: outcome.code ?? "http_error", httpStatus: response.status };
-  } catch (error) { return { items: [], status: "unavailable", error: sourceErrorCode(error) }; }
+    if (outcome.outcome !== "success") return { items: [], status: "unavailable", error: outcome.code ?? "http_error", httpStatus: response.status,
+      ...(httpErrorDiagnostics(response.errorDiagnostics) ? { errorDiagnostics: httpErrorDiagnostics(response.errorDiagnostics) } : {}), ...(requestContext ? { requestContext } : {}) };
+  } catch (error) { return { items: [], status: "unavailable", error: sourceErrorCode(error), ...(requestContext ? { requestContext } : {}) }; }
   try {
     if (!/<(?:rss|feed|rdf:RDF)\b/i.test(response.body)) throw new Error("Not a feed");
     const feed = await parser.parseString(normalizeFeedXml(response.body).xml);
@@ -72,7 +75,7 @@ export async function fetchNewsItemsResult(query: string, n = 6, options: NewsFe
         ...(item.contentSnippet ? { feed_excerpt: unicodePrefix(item.contentSnippet, 2000) } : {}) };
     }).filter(item => item.source_url && item.raw_excerpt);
     return { items, status: items.length ? "success" : "empty", httpStatus: response.status, cache: { items, validators: responseValidators(response) } };
-  } catch { return { items: [], status: "unavailable", error: "parse_error", httpStatus: response.status }; }
+  } catch { return { items: [], status: "unavailable", error: "parse_error", httpStatus: response.status, ...(requestContext ? { requestContext } : {}) }; }
 }
 
 export type CompanyNewsContext = { name: string; domain?: string | null; publicAliases?: string[]; subindustry?: string | null; city?: string | null; state?: string | null };
@@ -112,7 +115,8 @@ export async function fetchNewsForCompanyResult(company: string | CompanyNewsCon
   }));
   return { items, status: failed.length === results.length ? "unavailable" as const : items.length ? "success" as const : "empty" as const,
     error: failed[0]?.error, httpStatus: results[0]?.httpStatus, partial: failed.length > 0, caches, nextCycle: cycle + 1,
-    queries: selected.map((query, index) => ({ query, status: results[index].status, httpStatus: results[index].httpStatus, error: results[index].error, unchanged: results[index].unchanged ?? false })) };
+    queries: selected.map((query, index) => ({ query, status: results[index].status, httpStatus: results[index].httpStatus, error: results[index].error, unchanged: results[index].unchanged ?? false,
+      ...(results[index].errorDiagnostics ? { errorDiagnostics: results[index].errorDiagnostics } : {}), ...(results[index].requestContext ? { requestContext: results[index].requestContext } : {}) })) };
 }
 
 /** Free Google News RSS fetch for an arbitrary query. Top N recent items. */
