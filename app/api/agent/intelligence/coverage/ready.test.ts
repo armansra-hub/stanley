@@ -17,7 +17,7 @@ vi.mock("@/lib/supabase/server", () => ({ serviceClient: () => ({ from: (table: 
   }; return chain;
 } }) }));
 import * as route from "./route";
-import { parseReadySourceQuery, readyTimestamp } from "@/lib/intelligence/readySourceCoverage";
+import { parseReadySourceQuery, readyTimestamp, READY_ROW_METADATA_BYTES } from "@/lib/intelligence/readySourceCoverage";
 import { prepareObservation } from "@/lib/intelligence/observations";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const observed = "2026-10-13T10:00:00.123456+00:00";
@@ -57,7 +57,7 @@ describe("ready retained source metadata", () => {
     m.auth = false; expect((await route.GET(request())).status).toBe(401); expect(m.calls).toEqual([]);
     expect(Object.keys(route).sort()).toEqual(["GET", "dynamic", "maxDuration"].sort()); expect(fetch).not.toHaveBeenCalled();
   });
-  it.each(["&limit=13", "&limit=0", "&limit=01", "&scope=other", "&after=" + id(1), "&companyId=" + id(1),
+  it.each(["&limit=101", "&limit=0", "&limit=01", "&scope=other", "&after=" + id(1), "&companyId=" + id(1),
     "&token=SECRET", "&view=ready-sources", "&cursorId=" + id(1), "&cursorObservedAt=" + observed,
     "&cursorObservedAt=2026-10-13T10:00:00Z&cursorId=bad", "&excludeObservationIds=", "&excludeObservationIds=bad",
     `&excludeObservationIds=${id(1)},${id(1)}`, "&cursorObservedAt=2026-10-13T11:00:00.000000001Z&cursorId=" + id(1)])("rejects malformed query %s before data access", async extra => {
@@ -228,6 +228,54 @@ describe("ready retained source metadata", () => {
     expect(body.page).toMatchObject({ partial: true, repeatWindow: true, nextCursor: null, inputCursor: null, eligibleInWindow: 14 });
     const second = await (await route.GET(request(`&excludeObservationIds=${body.rows.map((r: { observationId: string }) => r.observationId).join(",")}`))).json();
     expect(second.rows).toHaveLength(2); expect(second.page.repeatWindow).toBe(false);
+  });
+  it("returns 100 metadata rows and drains a 140-row window in two reads without enlarging the scan or admitting work", async () => {
+    seed(140);
+    const first = await (await route.GET(request("&limit=100"))).json();
+    expect(first.rows).toHaveLength(100); expect(first.unreturnedEligible).toHaveLength(40);
+    expect(first.page).toMatchObject({ limit: 100, scanLimit: 256, scannedCount: 140, eligibleInWindow: 140,
+      repeatWindow: true, nextCursor: null, rowMetadataByteLimited: false });
+    expect(first.admissionVerified).toBe(false); expect(first.bodyReturned).toBe(false);
+    expect(first.rows.every((r: { admissionVerified: boolean }) => r.admissionVerified === false)).toBe(true);
+    expect(JSON.stringify(first)).not.toMatch(/PRIVATE_|evidence_text|lease_token|pending_request/);
+    const excluded = first.rows.map((r: { observationId: string }) => r.observationId).join(",");
+    const second = await (await route.GET(request(`&limit=100&excludeObservationIds=${excluded}`))).json();
+    expect(second.rows).toHaveLength(40); expect(second.unreturnedEligible).toEqual([]);
+    expect(second.page).toMatchObject({ repeatWindow: false, nextCursor: { observedAt: observed, id: id(140) } });
+    expect(new Set([...first.rows, ...second.rows].map(r => r.observationId)).size).toBe(140);
+    expect(m.calls.filter(c => c.table === "intelligence_observations" && c.method === "limit").map(c => c.args[0])).toEqual([257, 256, 257, 256]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("keeps complete UTF8 provenance and every overflow pointer when metadata reaches the byte budget", async () => {
+    seed(4);
+    const dates = Array.from({ length: 20 }, () => ({ kind: "界".repeat(4096), value: "界".repeat(4096), source: "界".repeat(4096) }));
+    m.sources.forEach(s => Object.assign(s.metadata as object, { sourceDates: dates }));
+    const first = await (await route.GET(request("&limit=100"))).json();
+    expect(first.rows).toHaveLength(2); expect(first.rows[0].provenance.sourceDates).toEqual(dates);
+    expect(first.page).toMatchObject({ rowMetadataByteLimited: true, rowMetadataByteLimit: READY_ROW_METADATA_BYTES,
+      repeatWindow: true, nextCursor: null });
+    expect(first.page.rowMetadataBytes).toBe(Buffer.byteLength(JSON.stringify(first.rows), "utf8"));
+    expect(first.page.rowMetadataBytes).toBeLessThanOrEqual(READY_ROW_METADATA_BYTES);
+    expect(first.unreturnedEligible).toEqual([{ observationId: id(3), jobId: id(1003) }, { observationId: id(4), jobId: id(1004) }]);
+    const second = await (await route.GET(request(`&limit=100&excludeObservationIds=${id(1)},${id(2)}`))).json();
+    expect(second.rows).toHaveLength(2); expect(second.rows[0].provenance.sourceDates).toEqual(dates);
+    expect(second.page).toMatchObject({ repeatWindow: false, rowMetadataByteLimited: false, nextCursor: { observedAt: observed, id: id(4) } });
+  });
+  it("delivers an individually oversized first row whole and then continues without stranding later rows", async () => {
+    seed(2);
+    const title = `Acquisition ${"x".repeat(READY_ROW_METADATA_BYTES)}`;
+    m.sources[0].title = title;
+    const first = await (await route.GET(request("&limit=100"))).json();
+    expect(first.rows).toHaveLength(1); expect(first.rows[0].title).toBe(title);
+    expect(first.unreturnedEligible).toEqual([{ observationId: id(2), jobId: id(1002) }]);
+    expect(first.page).toMatchObject({ rowMetadataByteLimited: true, repeatWindow: true, nextCursor: null });
+    expect(first.page.rowMetadataBytes).toBe(Buffer.byteLength(JSON.stringify(first.rows), "utf8"));
+    expect(first.page.rowMetadataBytes).toBeGreaterThan(READY_ROW_METADATA_BYTES);
+    const second = await (await route.GET(request(`&limit=100&excludeObservationIds=${id(1)}`))).json();
+    expect(second.rows).toHaveLength(1); expect(second.rows[0].observationId).toBe(id(2));
+    expect(second.unreturnedEligible).toEqual([]);
+    expect(second.page).toMatchObject({ repeatWindow: false, rowMetadataByteLimited: false, nextCursor: { observedAt: observed, id: id(2) } });
+    expect(first.coverageVerified).toBe(false); expect(second.coverageVerified).toBe(false);
   });
   it("bounds details to256 and advances a deterministic microsecond timestamp/id cursor only after the window is drained", async () => {
     seed(257); m.sources.pop(); m.jobs.pop(); m.companies.pop();

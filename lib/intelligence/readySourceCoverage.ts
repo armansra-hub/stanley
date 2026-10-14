@@ -9,6 +9,9 @@ type Cursor = { observedAt: string; id: string; sourceKind?: SourceKind };
 export type ReadySourceQuery = { scope: CoverageQuery["scope"]; limit: number; observedThrough: string; eventStart: string;
   sourceKind: SourceKind | null; cursor: Cursor | null; excludeObservationIds: string[] };
 export const READY_SCAN_LIMIT = 256;
+// Metadata discovery pages are independent of canonical job admission/claim limits.
+export const READY_METADATA_LIMIT = 100;
+export const READY_ROW_METADATA_BYTES = 2 * 1024 * 1024;
 const JOB_LIMIT = 1024;
 const SCALAR_FIELDS = "id,company_id,observed_at";
 const COMPANY_FIELDS = "id,name,domain,website_raw,netsuite_internal_id,status,lists,tal_claimed,record_dead";
@@ -31,7 +34,7 @@ export function parseReadySourceQuery(params: URLSearchParams): ReadySourceQuery
   const allowed = new Set(["view", "scope", "limit", "observedThrough", "eventStart", "sourceKind", "cursorObservedAt", "cursorId", "cursorSourceKind", "excludeObservationIds"]);
   for (const key of params.keys()) if (!allowed.has(key) || params.getAll(key).length !== 1) invalid();
   const scope = params.get("scope") ?? "all", limit = params.get("limit") ?? "12";
-  if (params.get("view") !== "ready-sources" || !["all", "tam", "tal"].includes(scope) || !/^[1-9][0-9]*$/.test(limit) || Number(limit) > 12) invalid();
+  if (params.get("view") !== "ready-sources" || !["all", "tam", "tal"].includes(scope) || !/^[1-9][0-9]*$/.test(limit) || Number(limit) > READY_METADATA_LIMIT) invalid();
   const sourceKind = params.get("sourceKind") as SourceKind | null;
   if (sourceKind !== null && !["news", "website", "job"].includes(sourceKind)) invalid();
   const observedThrough = params.get("observedThrough")!, eventStart = params.get("eventStart")!;
@@ -178,7 +181,17 @@ export async function readySourceCoverage(db: ReturnType<typeof serviceClient>, 
   const concrete = (v: unknown) => /\b(acquir\w*|acquisition|merger|funding|financing|raises?|series [a-f]|investment|expan\w*|new facilit\w*|appoint\w*|chief financial|CFO|launch\w*|partners?\w*|Oracle)\b/i.test(String(v));
   eligible.sort((a, b) => Number(concrete(b.title)) - Number(concrete(a.title)) ||
     compareCursor({ observedAt: a.eventDate as string, id: a.observationId as string }, { observedAt: b.eventDate as string, id: b.observationId as string }));
-  const rows = eligible.slice(0, q.limit), overflow = eligible.slice(q.limit).map(r => ({ observationId: r.observationId, jobId: r.jobId }));
+  // Keep whole metadata records and the existing overflow continuation. Always
+  // deliver the first eligible row so the soft byte budget cannot strand it.
+  const rows: typeof eligible = [];
+  let rowMetadataBytes = 2; // JSON array brackets
+  for (const row of eligible.slice(0, q.limit)) {
+    const bytes = Buffer.byteLength(JSON.stringify(row), "utf8") + (rows.length ? 1 : 0);
+    if (rows.length > 0 && rowMetadataBytes + bytes > READY_ROW_METADATA_BYTES) break;
+    rows.push(row); rowMetadataBytes += bytes;
+  }
+  const rowMetadataByteLimited = rows.length < Math.min(q.limit, eligible.length);
+  const overflow = eligible.slice(rows.length).map(r => ({ observationId: r.observationId, jobId: r.jobId }));
   // A short nonempty response may be a backend row cap. Only an empty read closes this frontier.
   const hasOlder = all.length > READY_SCAN_LIMIT ? true : window.length ? null : false;
   const repeatWindow = overflow.length > 0 || unresolvedObservationIds.length > 0;
@@ -186,6 +199,7 @@ export async function readySourceCoverage(db: ReturnType<typeof serviceClient>, 
   return { view: "ready-sources", scope: q.scope, sourceKind: q.sourceKind, observedThrough: q.observedThrough, eventStart: q.eventStart, asOf,
     rows, scanned: scannedRows, unreturnedEligible: overflow, unresolvedObservationIds,
     page: { scanLimit: READY_SCAN_LIMIT, scannedCount: window.length, limit: q.limit, eligibleInWindow: eligible.length,
+      rowMetadataByteLimit: READY_ROW_METADATA_BYTES, rowMetadataBytes, rowMetadataByteLimited,
       hasOlder, partial: window.length > 0 || repeatWindow, repeatWindow, inputCursor: q.cursor,
       nextCursor, cursorSourceKind: q.sourceKind ?? "news+website",
       continuation: repeatWindow ? "Retain overflow IDs; resolve missing/changed IDs. Repeat this cursor excluding processed IDs before advancing."
