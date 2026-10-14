@@ -23,6 +23,69 @@ export type ObservationInput = {
   governmentJsonCapture?: { requestSha256: string };
 };
 
+const diagnosticFields = ["p_company", "p_source_key", "p_source_kind", "p_url", "p_title", "p_text", "p_hash", "p_event_date", "p_observed_at", "p_metadata", "p_sections", "p_version"] as const;
+export type ObservationStorageDiagnostics = {
+  schema: "observation-unicode-diagnostics-v1"; scanComplete: boolean; samplesTruncated: boolean;
+  examinedCodeUnits: number; examinedStrings: number; visitedNodes: number;
+  samples: Array<{ field: typeof diagnosticFields[number]; path: number[]; member: "key" | "value";
+    stringCodeUnits: number; examinedCodeUnits: number; complete: boolean;
+    nulCount: number; unpairedHighCount: number; unpairedLowCount: number; utf16leSha256?: string }>;
+};
+
+/** Inspect the rejected arguments without changing them or retaining their text/key names.
+ * Bounds: 256 nodes, 96 strings, 131072 code units total, 65536 per string, depth8, samples8.
+ * A hash is exact UTF-16LE only for a fully examined string, including malformed units. */
+export function observationStorageDiagnostics(payload: Record<string, unknown>): ObservationStorageDiagnostics {
+  const out: ObservationStorageDiagnostics = { schema: "observation-unicode-diagnostics-v1", scanComplete: true,
+    samplesTruncated: false, examinedCodeUnits: 0, examinedStrings: 0, visitedNodes: 0, samples: [] };
+  const seen = new WeakSet<object>();
+  const inspect = (value: string, field: typeof diagnosticFields[number], path: number[], member: "key" | "value") => {
+    if (out.examinedStrings >= 96 || out.examinedCodeUnits >= 131072) { out.scanComplete = false; return; }
+    const count = Math.min(value.length, 65536, 131072 - out.examinedCodeUnits), complete = count === value.length;
+    let nulCount = 0, unpairedHighCount = 0, unpairedLowCount = 0;
+    for (let i = 0; i < count; i++) {
+      const unit = value.charCodeAt(i);
+      if (unit === 0) nulCount++;
+      else if (unit >= 0xd800 && unit <= 0xdbff) {
+        if (i + 1 < count && value.charCodeAt(i + 1) >= 0xdc00 && value.charCodeAt(i + 1) <= 0xdfff) i++;
+        else if (i + 1 < count || complete) unpairedHighCount++; // A clipped final unit is unknown.
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) unpairedLowCount++;
+    }
+    out.examinedStrings++; out.examinedCodeUnits += count;
+    if (!complete) out.scanComplete = false;
+    if (nulCount || unpairedHighCount || unpairedLowCount || !complete) {
+      if (out.samples.length < 8) out.samples.push({ field, path, member, stringCodeUnits: value.length,
+        examinedCodeUnits: count, complete, nulCount, unpairedHighCount, unpairedLowCount,
+        ...(complete ? { utf16leSha256: createHash("sha256").update(Buffer.from(value, "utf16le")).digest("hex") } : {}) });
+      else out.samplesTruncated = true;
+    }
+  };
+  const visit = (value: unknown, field: typeof diagnosticFields[number], path: number[]) => {
+    if (out.visitedNodes >= 256 || out.examinedStrings >= 96 || out.examinedCodeUnits >= 131072 || path.length > 8) { out.scanComplete = false; return; }
+    out.visitedNodes++;
+    if (typeof value === "string") { inspect(value, field, path, "value"); return; }
+    if (value == null || typeof value === "number" || typeof value === "boolean") return;
+    if (typeof value !== "object" || seen.has(value)) { out.scanComplete = false; return; }
+    const proto = Object.getPrototypeOf(value);
+    if (!Array.isArray(value) && proto !== Object.prototype && proto !== null) { out.scanComplete = false; return; }
+    seen.add(value);
+    let ordinal = 0;
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      if (ordinal >= 256 || out.visitedNodes >= 256 || out.examinedStrings >= 96 || out.examinedCodeUnits >= 131072) { out.scanComplete = false; break; }
+      const childPath = [...path, ordinal++], descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (childPath.length > 8) { out.scanComplete = false; break; }
+      inspect(key, field, childPath, "key");
+      if (!descriptor || !("value" in descriptor)) { out.scanComplete = false; continue; }
+      visit(descriptor.value, field, childPath);
+    }
+  };
+  // Diagnostic failure must never mask the observed database failure.
+  try { for (const field of diagnosticFields) visit(payload[field], field, []); }
+  catch { out.scanComplete = false; }
+  return out;
+}
+
 export function canonicalEvidenceUrl(raw: string): string {
   const url = validatePublicHttpUrl(raw);
   url.hash = "";
@@ -111,13 +174,18 @@ export function prepareObservation(input: ObservationInput) {
 export async function enqueueObservation(input: ObservationInput): Promise<{ id: string; queued: boolean } | null> {
   if (!intelligenceEnabled()) return null;
   const prepared = prepareObservation(input);
-  const { data, error } = await serviceClient().rpc("intelligence_observe", {
+  const payload = {
     p_company: input.companyId, p_source_key: prepared.sourceKey, p_source_kind: input.sourceKind,
     p_url: prepared.url, p_title: unicodePrefix(input.title, 500), p_text: prepared.text, p_hash: prepared.contentHash,
     p_event_date: prepared.eventDate, p_observed_at: prepared.observedAt, p_metadata: prepared.metadata,
     p_sections: prepared.sections, p_version: INTELLIGENCE_VERSION,
-  });
-  if (error) throw new Error(`Observation persistence failed: ${error.code ?? "database_error"}`);
+  };
+  const { data, error } = await serviceClient().rpc("intelligence_observe", payload);
+  if (error) {
+    const failure = new Error(`Observation persistence failed: ${error.code ?? "database_error"}`);
+    if (error.code === "22P05" || error.code === "22P02") Object.assign(failure, { observationDiagnostics: observationStorageDiagnostics(payload) });
+    throw failure;
+  }
   if (data?.disabled) return null;
   if (!data?.id) throw new Error("Observation persistence returned no identity");
   return { id: String(data.id), queued: data.queued === true };
