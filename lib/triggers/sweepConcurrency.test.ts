@@ -140,6 +140,87 @@ const accessDiagnostic = { schema: "google-news-http-error-v1", bodyPrefixSha256
   bodyComplete: true, readStop: "end", category: "unusual_traffic", encoding: "identity", mediaType: "text/html",
   retryAfterSeconds: null, retryAfterDate: null };
 
+it.each(["unusual_traffic", "human_verification", "access_denied", "rate_limited"])("finishes only the current scheduled group on a validated503 %s restriction", async category => {
+  const { companies } = finiteFixture(12);
+  const attempted: string[] = [];
+  const settled: string[] = [];
+  let active = 0, peak = 0;
+  let release: () => void = () => {};
+  const remaining = new Promise<void>(resolve => { release = resolve; });
+  const diagnostic = { ...accessDiagnostic, category };
+  const queries = unavailable.queries.map(query => ({ ...query, errorDiagnostics: diagnostic }));
+  mocks.news.mockImplementation(async (company: { id: string }) => {
+    attempted.push(company.id); peak = Math.max(peak, ++active);
+    if (company.id === companies[0].id) { release(); }
+    else await remaining;
+    active--; settled.push(company.id);
+    return { ...unavailable, queries };
+  });
+  const result = await sweepBase(12);
+  expect(result).toMatchObject({ checked: 4, attempted: 4, unavailable: 4, succeeded: 0,
+    finiteNewsControl: { companyConcurrency: 4, circuitThreshold: null, feedFailureCompanies: 4,
+      feedUnavailableCompanies: 4, circuitReason: "access_limited", stoppedBeforeNextReservation: true } });
+  expect(peak).toBeGreaterThan(1);
+  expect(attempted).toEqual(companies.slice(0, 4).map(c => c.id));
+  expect(settled).toHaveLength(4);
+  expect(mocks.pick.mock.calls).toEqual([[4, 0]]);
+  expect(mocks.executive).not.toHaveBeenCalled();
+  expect(mocks.write).toHaveBeenCalledTimes(4);
+  expect(mocks.checked.mock.calls.flatMap(([ids]) => ids)).toEqual([]);
+  expect(result).not.toHaveProperty("collection");
+  expect(result.finiteNewsControl?.affectedFeeds).toHaveLength(4);
+  expect(result.errors[0].httpDiagnostics?.[0]).toMatchObject({ httpStatus: 503, errorDiagnostics: diagnostic });
+});
+
+it("preserves every deferred scheduled article and retry while finishing successful in-flight peers truthfully", async () => {
+  const { companies } = finiteFixture(8);
+  const pending = Array.from({ length: 55 }, (_, index) => ({ source_name: "Google News", source_url: `https://example.com/pending-${index}`,
+    raw_excerpt: `Acme Logistics retained announcement ${index}`, signal_date: new Date().toISOString() }));
+  const fresh = { ...pending[0], source_url: "https://example.com/new-article" };
+  const retries = { retained: { attempts: 3, after: "2026-12-01T00:00:00Z" } };
+  mocks.read.mockImplementation(async (id, key) => id === companies[0].id && key === "news:google"
+    ? { cursor: { pending, retries, seen: ["prior-original"] } } : { cursor: null });
+  mocks.news.mockImplementation(async company => company.id === companies[0].id
+    ? { items: [pending[0], fresh], status: "success", partial: true, error: "http_error", httpStatus: 200,
+      queries: [{ status: "success", httpStatus: 200 }, { status: "unavailable", error: "http_error", httpStatus: 503, errorDiagnostics: accessDiagnostic }] }
+    : { items: [], status: "empty", queries: [{ status: "empty", httpStatus: 200 }] });
+  const result = await sweepBase(8);
+  expect(result).toMatchObject({ attempted: 4, succeeded: 3, partial: 1, unavailable: 0,
+    finiteNewsControl: { companyConcurrency: 4, feedFailureCompanies: 1, circuitReason: "access_limited", stoppedBeforeNextReservation: true } });
+  expect(mocks.pick.mock.calls).toEqual([[4, 0]]);
+  expect(mocks.write).toHaveBeenCalledWith(companies[0].id, "news:google", expect.objectContaining({ complete: false, status: "partial",
+    cursor: expect.objectContaining({ pending: [...pending, fresh], retries, seen: ["prior-original"] }),
+    details: expect.objectContaining({ saved: 0, bodyCount: 0, articleCaptureDeferred: true, deferredArticleCount: 56 }) }));
+  expect(mocks.body).not.toHaveBeenCalled(); expect(mocks.enqueue).not.toHaveBeenCalled();
+  expect(mocks.executive).toHaveBeenCalledTimes(3);
+  expect(mocks.checked.mock.calls.flatMap(([ids]) => ids)).toEqual(companies.slice(1, 4).map(c => c.id));
+});
+
+it.each([undefined, { ...accessDiagnostic, category: "service_unavailable" }, { ...accessDiagnostic, category: "unknown" },
+  { ...accessDiagnostic, bodyPrefixSha256: "invalid" }])("does not broaden the scheduled stop to generic503 or malformed diagnostics (%j)", async errorDiagnostics => {
+  finiteFixture(8);
+  mocks.news.mockResolvedValue({ ...unavailable, queries: unavailable.queries.map(query => ({ ...query, errorDiagnostics })) });
+  const result = await sweepBase(8);
+  expect(result).toMatchObject({ checked: 8, attempted: 8, unavailable: 8 });
+  expect(result).not.toHaveProperty("finiteNewsControl");
+  expect(mocks.pick.mock.calls).toEqual([[4, 0], [4, 0]]);
+  expect(mocks.executive).toHaveBeenCalledTimes(8);
+  expect(mocks.write.mock.calls.every(([, , state]) => state.details.articleCaptureDeferred === undefined)).toBe(true);
+});
+
+it("reports earlier scheduled failures accurately when a later group encounters an access restriction", async () => {
+  const { companies } = finiteFixture(12);
+  mocks.news.mockImplementation(async company => companies.findIndex(c => c.id === company.id) < 4 ? unavailable
+    : { ...unavailable, queries: unavailable.queries.map(query => ({ ...query, errorDiagnostics: accessDiagnostic })) });
+  const result = await sweepBase(12);
+  expect(result).toMatchObject({ checked: 8, attempted: 8, unavailable: 8,
+    finiteNewsControl: { companyConcurrency: 4, circuitThreshold: null, feedFailureCompanies: 8,
+      feedUnavailableCompanies: 8, circuitReason: "access_limited", stoppedBeforeNextReservation: true } });
+  expect(mocks.pick.mock.calls).toEqual([[4, 0], [4, 0]]);
+  expect(mocks.executive).toHaveBeenCalledTimes(4);
+  expect(result.finiteNewsControl?.affectedFeeds.map(row => row.companyId)).toEqual(companies.slice(0, 8).map(c => c.id));
+});
+
 it.each(["unusual_traffic", "human_verification", "access_denied", "rate_limited"])("stops after the first finite503 %s restriction and preserves deferred evidence", async category => {
   const { collection } = finiteFixture();
   const pending = [{ source_name: "Google News", source_url: "https://example.com/retained-article",

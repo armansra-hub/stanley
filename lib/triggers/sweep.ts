@@ -269,7 +269,7 @@ const accessLimitedFeed = (result: FeedResult) => result.queries?.some(query => 
   const diagnostic = httpErrorDiagnostics(query.errorDiagnostics);
   return diagnostic !== undefined && ["unusual_traffic", "human_verification", "access_denied", "rate_limited"].includes(diagnostic.category);
 }) ?? false;
-type FiniteNewsControl = { companyConcurrency: 1; feedUnavailableCompanies: number; feedFailureCompanies: number; circuitThreshold: 2;
+type FiniteNewsControl = { companyConcurrency: 1 | 4; feedUnavailableCompanies: number; feedFailureCompanies: number; circuitThreshold: 2 | null;
   stoppedBeforeNextReservation: boolean; circuitReason: "access_limited" | "systemic_feed_unavailable" | null;
   affectedFeeds: Array<{ companyId: string; status: FeedResult["status"]; queryCount: number | null; queriesTruncated: boolean;
     queries: Array<{ status: NewsFetchResult["status"]; errorCode: NewsFetchResult["error"] | null; httpStatus: number | null;
@@ -463,11 +463,12 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
   // Reserve immediately attempted batches and leave untouched rows oldest when
   // the 240-second source budget ends.
   const finiteSourceOnly = opts.sourceOnly === true && opts.collection !== undefined;
-  const finiteNewsControl: FiniteNewsControl = { companyConcurrency: 1, feedUnavailableCompanies: 0, feedFailureCompanies: 0, circuitThreshold: 2,
+  const companyConcurrency = finiteSourceOnly ? 1 : 4;
+  const finiteNewsControl: FiniteNewsControl = { companyConcurrency, feedUnavailableCompanies: 0, feedFailureCompanies: 0, circuitThreshold: finiteSourceOnly ? 2 : null,
     stoppedBeforeNextReservation: false, circuitReason: null, affectedFeeds: [] };
   let processed = 0, accessLimited = false;
   for await (const slice of rotationBatches(opts.collection ? (n, offset) => opts.topic ? pickForRotation(n, offset, opts.collection, opts.topic) : pickForRotation(n, offset, opts.collection) : pickForRotation, {
-    limit, batchSize: finiteSourceOnly ? 1 : 4, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
+    limit, batchSize: companyConcurrency, offset: opts.offset, ...(companies ? { snapshot: companies } : {}),
   })) {
     const classifierDeadlineMs = Date.now() + HEADLINE_CLASSIFIER_BATCH_BUDGET_MS;
     const completed: string[] = [];
@@ -480,14 +481,14 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
         const claimable = !!(c as { claimable?: boolean }).claimable;
         let n = 0;
         try { n = await checkCompanyNews(c, { llm: claimable && !intelligenceEnabled(), classifierDeadlineMs, sourceOnly: opts.sourceOnly, ...(opts.topic ? { topic: opts.topic } : {}),
-          ...(finiteSourceOnly ? { deferArticlesOnAccessLimit: true } : {}),
+          deferArticlesOnAccessLimit: true,
           onOutcome: value => { outcome = value; }, onError: (stage, error) => sweepError(outcomes, "news", stage, error, c.id, stage === "feed" ? feedQueries : undefined),
           onFeedResult: result => {
             feedQueries = result.queries;
             feedUnavailable = result.status === "unavailable";
             feedFailed = feedUnavailable || result.queries?.some(query => query.status === "unavailable") === true;
             feedAccessLimited = accessLimitedFeed(result);
-            if (finiteSourceOnly && (feedFailed || feedAccessLimited)) finiteNewsControl.affectedFeeds.push({
+            if (feedFailed || feedAccessLimited) finiteNewsControl.affectedFeeds.push({
               companyId: c.id, status: result.status, queryCount: result.queries?.length ?? null, queriesTruncated: (result.queries?.length ?? 0) > 8,
               queries: (result.queries ?? []).slice(0, 8).map(query => ({ status: query.status, errorCode: query.error ?? null, httpStatus: query.httpStatus ?? null,
                 ...(httpErrorDiagnostics(query.errorDiagnostics) ? { errorDiagnostics: httpErrorDiagnostics(query.errorDiagnostics) } : {}),
@@ -496,7 +497,7 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
           } }); }
         catch (error) { sweepError(outcomes, "news", "collection", error, c.id); }
         // Exec-change (new finance leader) — claimable NetSuite-TAM leads only.
-        if (claimable && !opts.topic && !(finiteSourceOnly && (feedFailed || feedAccessLimited))) { try { n += await checkExecChange(c, { sourceOnly: opts.sourceOnly }); } catch (error) {
+        if (claimable && !opts.topic && !feedAccessLimited && !(finiteSourceOnly && feedFailed)) { try { n += await checkExecChange(c, { sourceOnly: opts.sourceOnly }); } catch (error) {
           sweepError(outcomes, "news:executive-change", "collection", error, c.id);
           if ((outcome as SweepOutcome) === "succeeded") outcome = "partial";
         } }
@@ -516,9 +517,10 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
     try { if (!opts.topic) await markChecked(completed); }
     catch (error) { for (const id of completed) accounting.record(id, "failed"); outcomes.succeeded -= completed.length; outcomes.failed += completed.length; sweepError(outcomes, "news", "completion_stamp", error); }
     processed += slice.length;
-    // Close the generator before it can reserve another exact ID. Previously
-    // attempted rows keep their real outcomes; untouched IDs remain not_reserved.
-    if (finiteSourceOnly && (accessLimited || finiteNewsControl.feedFailureCompanies >= 2)) {
+    // Finish every reserved company before closing the generator. Scheduled runs
+    // keep their four in-flight outcomes; no later group is reserved or stamped.
+    // Generic feed failures retain the two-company fallback only in finite mode.
+    if (accessLimited || (finiteSourceOnly && finiteNewsControl.feedFailureCompanies >= 2)) {
       finiteNewsControl.circuitReason = accessLimited ? "access_limited" : "systemic_feed_unavailable";
       finiteNewsControl.stoppedBeforeNextReservation = processed < limit;
       break;
@@ -529,5 +531,5 @@ export async function sweepBase(limit = 50, opts: { finance?: boolean; offset?: 
     try { await recomputePriority(cid); } catch (error) { sweepError(outcomes, "news", "priority", error, cid); }
   }
   return { ...outcomes, ...accounting.result(), checked: processed, companies_triggered: touched.size, news_triggers: news, finance_triggers: finance, erp_triggers: erp, sourceOnly: opts.sourceOnly === true, ...(opts.topic ? { topic: opts.topic } : {}),
-    ...(finiteSourceOnly ? { finiteNewsControl } : {}) };
+    ...(finiteSourceOnly || accessLimited ? { finiteNewsControl } : {}) };
 }
